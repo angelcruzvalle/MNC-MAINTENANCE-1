@@ -453,44 +453,47 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
 
 function Dashboard({ state, dispatch, setTab }) {
   const { workOrders:wos=[], equipment:eqs=[], preventiveMaintenance:pms=[], parts=[] } = state;
-  const today_s = today();
-  const openWOs      = wos.filter(w=>w.status==="Open").length;
-  const inProgWOs    = wos.filter(w=>w.status==="In Progress").length;
-  const awaitParts   = wos.filter(w=>w.status==="Awaiting Parts").length;
-  const onHoldWOs    = wos.filter(w=>w.status==="On Hold").length;
-  const completedMo  = wos.filter(w=>w.status==="Completed"&&(w.completed||"").slice(0,7)===today_s.slice(0,7)).length;
-  const outOfSvc     = eqs.filter(e=>e.status==="Out of Service / Deadline").length;
-  const withDefic    = eqs.filter(e=>e.status==="Operational with Deficiencies").length;
-  const pmOverdue    = pms.filter(p=>p.status==="Overdue").length;
-  const pmDueSoon    = pms.filter(p=>p.status==="Due Soon").length;
-  const lowStock     = parts.filter(p=>p.lowStockAlert!==false&&p.qty<=(p.minQty||0)).length;
-  const totalCost    = w => (+w.laborCost||0)+(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0))+(+w.partsCost||0);
-  const spendMo      = wos.filter(w=>w.status==="Completed"&&(w.completed||"").slice(0,7)===today_s.slice(0,7)).reduce((s,w)=>s+totalCost(w),0);
-  const activeWOCost = wos.filter(w=>w.status!=="Completed").reduce((s,w)=>s+totalCost(w),0);
-  const urgentWOs    = wos.filter(w=>w.status!=="Completed").sort((a,b)=>({High:0,Medium:1,Low:2}[a.priority]??3)-({High:0,Medium:1,Low:2}[b.priority]??3)).slice(0,6);
-  const servicesDue  = pms.filter(p=>p.status==="Overdue"||p.status==="Due Soon").map(pm=>({...pm, eqName:eqs.find(e=>e.id===pm.equipment)?.name||pm.equipment})).sort((a,b)=>(a.nextDue||"").localeCompare(b.nextDue||"")).slice(0,6);
-  const deadlineEqs  = eqs.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies").slice(0,6);
-  const dot = color => <span style={{ display:"inline-block", width:8, height:8, borderRadius:"50%", background:color, marginRight:6, flexShrink:0 }}/>;
-
-  const defaultLayout = ["workorders","pm","equipment","parts","urgent","services","deadline","spending"];
   const settings = state.settings || {};
+  const today_s = today();
+  const monthKey = today_s.slice(0,7);
+  const openWOs = wos.filter(w=>w.status==="Open").length;
+  const inProgWOs = wos.filter(w=>w.status==="In Progress").length;
+  const awaitParts = wos.filter(w=>w.status==="Awaiting Parts").length;
+  const activeWOs = wos.filter(w=>w.status!=="Completed").length;
+  const highPriority = wos.filter(w=>w.status!=="Completed" && w.priority==="High").length;
+  const completedMo = wos.filter(w=>w.status==="Completed" && (w.completed||"").slice(0,7)===monthKey).length;
+  const outOfSvc = eqs.filter(e=>e.status==="Out of Service / Deadline").length;
+  const withDefic = eqs.filter(e=>e.status==="Operational with Deficiencies").length;
+  const pmOverdue = pms.filter(p=>p.status==="Overdue").length;
+  const pmDueSoon = pms.filter(p=>p.status==="Due Soon").length;
+  const lowStock = parts.filter(p=>p.lowStockAlert!==false && (+p.qty||0)<=(+p.minQty||0)).length;
+  const totalCost = w => (+w.laborCost||0)+(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0))+(+w.partsCost||0);
+  const spendMo = wos.filter(w=>w.status==="Completed" && (w.completed||"").slice(0,7)===monthKey).reduce((s,w)=>s+totalCost(w),0);
+  const activeWOCost = wos.filter(w=>w.status!=="Completed").reduce((s,w)=>s+totalCost(w),0);
+  const urgentWOs = wos.filter(w=>w.status!=="Completed").sort((a,b)=>({High:0,Medium:1,Low:2}[a.priority]??3)-({High:0,Medium:1,Low:2}[b.priority]??3)).slice(0,7);
+  const servicesDue = pms.filter(p=>p.status==="Overdue"||p.status==="Due Soon").map(pm=>({...pm, eqName:eqs.find(e=>e.id===pm.equipment)?.name||pm.equipment})).sort((a,b)=>(a.nextDue||"").localeCompare(b.nextDue||"")).slice(0,7);
+  const deadlineEqs = eqs.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies").slice(0,7);
+  const criticalParts = parts.filter(p=>p.lowStockAlert!==false && (+p.qty||0)<=(+p.minQty||0)).slice(0,7);
+
+  const [customize, setCustomize] = useState(false);
+  const defaultLayout = ["command","actions","workorders","pm","equipment","parts","planner","spending"];
   const layout = (settings.dashboardLayout?.length ? settings.dashboardLayout : defaultLayout).filter(id=>defaultLayout.includes(id));
   const fullLayout = [...layout, ...defaultLayout.filter(id=>!layout.includes(id))];
   const hidden = settings.dashboardHidden || [];
-  const view = settings.dashboardView || "cards";
-  const boardStyle = settings.dashboardBoardStyle || "operations";
-  const widgetSizes = settings.dashboardWidgetSizes || {};
-  const [customize, setCustomize] = useState(false);
+  const sizes = settings.dashboardWidgetSizes || {};
+  const density = settings.dashboardDensity || "comfortable";
+  const theme = settings.dashboardTheme || "mission";
   const saveDash = patch => dispatch({ type:"UPDATE_SETTINGS", payload:{ ...settings, ...patch } });
-  const setWidgetSize = (id, size) => {
-    saveDash({ dashboardWidgetSizes:{ ...widgetSizes, [id]:size } });
+  const compact = density==="compact";
+  const comfyPad = compact ? "12px" : "18px";
+
+  const lockIfEditing = e => {
+    if(!customize) return;
+    if(e.target.closest?.("[data-dash-control]")) return;
+    e.preventDefault();
+    e.stopPropagation();
   };
-  const cycleSize = id => {
-    const order = ["small","medium","large","wide","hero"];
-    const current = widgetSizes[id] || "medium";
-    const next = order[(order.indexOf(current)+1)%order.length];
-    setWidgetSize(id, next);
-  };
+  const go = tab => { if(!customize && tab) setTab(tab); };
   const moveWidget = (id, dir) => {
     const arr = [...fullLayout];
     const i = arr.indexOf(id), j = i + dir;
@@ -498,147 +501,143 @@ function Dashboard({ state, dispatch, setTab }) {
     [arr[i], arr[j]] = [arr[j], arr[i]];
     saveDash({ dashboardLayout:arr });
   };
+  const setWidgetSize = (id, size) => saveDash({ dashboardWidgetSizes:{ ...sizes, [id]:size } });
   const toggleWidget = id => saveDash({ dashboardHidden:hidden.includes(id) ? hidden.filter(x=>x!==id) : [...hidden, id] });
-  const applyDashboardPreset = preset => {
+  const resetDash = () => saveDash({ dashboardLayout:defaultLayout, dashboardHidden:[], dashboardWidgetSizes:{}, dashboardDensity:"comfortable", dashboardTheme:"mission" });
+  const applyPreset = preset => {
     const presets = {
-      operations:{
-        dashboardBoardStyle:"operations",
-        dashboardView:"cards",
-        dashboardLayout:["workorders","pm","urgent","services","equipment","deadline","parts","spending"],
-        dashboardHidden:[],
-        dashboardWidgetSizes:{ workorders:"large", pm:"medium", urgent:"wide", services:"large", equipment:"medium", deadline:"large", parts:"medium", spending:"medium" }
-      },
-      mechanic:{
-        dashboardBoardStyle:"mechanic",
-        dashboardView:"cards",
-        dashboardLayout:["urgent","services","workorders","pm","deadline","equipment","parts","spending"],
-        dashboardHidden:["spending"],
-        dashboardWidgetSizes:{ urgent:"hero", services:"wide", workorders:"large", pm:"large", deadline:"wide", equipment:"medium", parts:"medium" }
-      },
-      manager:{
-        dashboardBoardStyle:"manager",
-        dashboardView:"cards",
-        dashboardLayout:["workorders","spending","pm","equipment","deadline","parts","urgent","services"],
-        dashboardHidden:[],
-        dashboardWidgetSizes:{ workorders:"large", spending:"large", pm:"medium", equipment:"medium", deadline:"wide", parts:"medium", urgent:"medium", services:"medium" }
-      },
-      simple:{
-        dashboardBoardStyle:"simple",
-        dashboardView:"list",
-        dashboardLayout:["workorders","pm","equipment","parts","urgent","services","deadline","spending"],
-        dashboardHidden:[],
-        dashboardWidgetSizes:{ workorders:"medium", pm:"medium", equipment:"medium", parts:"medium", urgent:"medium", services:"medium", deadline:"medium", spending:"medium" }
-      }
+      mission:{ dashboardTheme:"mission", dashboardDensity:"comfortable", dashboardLayout:["command","actions","workorders","pm","equipment","parts","planner","spending"], dashboardHidden:[], dashboardWidgetSizes:{ command:"hero", actions:"wide", workorders:"large", pm:"large", equipment:"large", parts:"medium", planner:"wide", spending:"medium" } },
+      mechanic:{ dashboardTheme:"shop", dashboardDensity:"comfortable", dashboardLayout:["actions","planner","workorders","pm","equipment","parts","command","spending"], dashboardHidden:["spending"], dashboardWidgetSizes:{ actions:"wide", planner:"hero", workorders:"large", pm:"large", equipment:"medium", parts:"medium", command:"wide" } },
+      manager:{ dashboardTheme:"executive", dashboardDensity:"compact", dashboardLayout:["command","spending","workorders","pm","equipment","parts","planner","actions"], dashboardHidden:[], dashboardWidgetSizes:{ command:"wide", spending:"large", workorders:"medium", pm:"medium", equipment:"medium", parts:"medium", planner:"large", actions:"medium" } },
+      simple:{ dashboardTheme:"clean", dashboardDensity:"comfortable", dashboardLayout:["actions","workorders","pm","equipment","parts","planner","command","spending"], dashboardHidden:[], dashboardWidgetSizes:{ actions:"wide", workorders:"wide", pm:"wide", equipment:"wide", parts:"wide", planner:"wide", command:"wide", spending:"wide" } }
     };
-    saveDash(presets[preset] || presets.operations);
-  };
-  const getBoardColumns = () => {
-    if(view!=="cards") return "1fr";
-    if(boardStyle==="simple") return "repeat(2,minmax(220px,1fr))";
-    if(boardStyle==="mechanic") return "repeat(6,minmax(130px,1fr))";
-    if(boardStyle==="manager") return "repeat(4,minmax(180px,1fr))";
-    return "repeat(4,minmax(180px,1fr))";
-  };
-  const widgetShell = (id, title, tab, children, extra={}) => {
-    const size = widgetSizes[id] || "medium";
-    const sizeStyle = size==="small"
-      ? { gridColumn:"span 1", minHeight:120 }
-      : size==="large"
-      ? { gridColumn:"span 2", minHeight:240 }
-      : size==="wide"
-      ? { gridColumn:"1 / -1", minHeight:180 }
-      : size==="hero"
-      ? { gridColumn:"1 / -1", minHeight:280 }
-      : { gridColumn:"span 1", minHeight:170 };
-
-    return (
-    <div
-      key={id}
-      onClickCapture={e=>{ if(customize && !e.target.closest?.("[data-dash-control]")){ e.preventDefault(); e.stopPropagation(); } }}
-      onMouseDownCapture={e=>{ if(customize && !e.target.closest?.("[data-dash-control]")){ e.preventDefault(); e.stopPropagation(); } }}
-      onClick={e=>{ if(customize){ e.preventDefault(); e.stopPropagation(); return; } if(tab) setTab(tab); }}
-      style={{
-      background:view==="glass"?"rgba(255,255,255,.75)":"#fff",
-      backdropFilter:view==="glass"?"blur(10px)":"none",
-      border:`1px solid ${extra.danger?"#ef4444":T.border}`,
-      borderRadius:view==="compact"?4:14,
-      padding:view==="compact"?"10px 12px":"14px 16px",
-      cursor:customize?"default":(tab?"pointer":"default"),
-      boxShadow:T.shadow,
-      overflow:"hidden",
-      ...sizeStyle,
-      ...extra.style
-    }}>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
-        <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>{title}</div>
-        {customize && <div data-dash-control="true" style={{ display:"flex", gap:4, flexWrap:"wrap", alignItems:"center" }} onClick={e=>e.stopPropagation()}>
-          <Btn small variant="secondary" onClick={()=>moveWidget(id,-1)}>↑</Btn>
-          <Btn small variant="secondary" onClick={()=>moveWidget(id,1)}>↓</Btn>
-          <select value={size} onChange={e=>setWidgetSize(id,e.target.value)} title="Card size" style={{ height:28, border:`1px solid ${T.border}`, borderRadius:6, padding:"0 6px", fontSize:11, background:"#fff" }}>
-            <option value="small">Small</option>
-            <option value="medium">Medium</option>
-            <option value="large">Large</option>
-            <option value="wide">Wide</option>
-            <option value="hero">Hero</option>
-          </select>
-          <Btn small variant="secondary" onClick={()=>cycleSize(id)}>Quick Resize</Btn>
-          <Btn small variant="danger" onClick={()=>toggleWidget(id)}>Hide</Btn>
-        </div>}
-      </div>
-      <div style={{ pointerEvents:customize?"none":"auto", opacity:customize ? .98 : 1 }}>
-        {children}
-      </div>
-    </div>
-  )};
-  const widgets = {
-    workorders: widgetShell("workorders","Work Orders","workorders", <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-      {[ ["Open",openWOs,T.accent], ["In Progress",inProgWOs,T.amber], ["Awaiting Parts",awaitParts,"#7c3aed"], ["On Hold",onHoldWOs,T.muted] ].map(([l,v,c])=><div key={l} style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}><span style={{ fontFamily:T.sans, fontSize:12, color:T.subtext }}>{dot(c)}{l}</span><b style={{ fontFamily:T.mono, color:c }}>{v}</b></div>)}
-      <div style={{ gridColumn:"span 2", borderTop:`1px solid ${T.border}`, paddingTop:8, display:"flex", justifyContent:"space-between" }}><span style={{ fontSize:12, color:T.muted }}>Completed this month</span><b style={{ color:T.green }}>{completedMo}</b></div>
-    </div>, { style:{ gridColumn:view==="cards"?"span 2":"span 1" } }),
-    pm: widgetShell("pm","Preventive Maintenance","pm", <div style={{ display:"flex", flexDirection:"column", gap:6 }}>{[["Overdue",pmOverdue,T.red],["Due Soon",pmDueSoon,T.amber],["OK",pms.length-pmOverdue-pmDueSoon,T.green]].map(([l,v,c])=><div key={l} style={{ display:"flex", justifyContent:"space-between" }}><span style={{ fontSize:12, color:T.subtext }}>{dot(c)}{l}</span><b style={{ color:c }}>{v}</b></div>)}</div>, { danger:pmOverdue>0 }),
-    equipment: widgetShell("equipment","Equipment","equipment", <div style={{ display:"flex", flexDirection:"column", gap:6 }}>{[["Fully Operational",eqs.filter(e=>e.status==="Fully Operational").length,T.green],["With Deficiencies",withDefic,T.amber],["Out of Service",outOfSvc,T.red]].map(([l,v,c])=><div key={l} style={{ display:"flex", justifyContent:"space-between" }}><span style={{ fontSize:12, color:T.subtext }}>{dot(c)}{l}</span><b style={{ color:c }}>{v}</b></div>)}<div style={{ borderTop:`1px solid ${T.border}`, paddingTop:8, fontSize:11, color:T.muted }}>{eqs.length} total units</div></div>, { danger:outOfSvc>0 }),
-    parts: widgetShell("parts","Parts Inventory","parts", <><div style={{ fontSize:34, fontWeight:800, color:lowStock?T.red:T.green, lineHeight:1 }}>{lowStock}</div><div style={{ fontSize:12, color:T.muted }}>low stock items</div><div style={{ marginTop:10, fontSize:11, color:T.muted }}>{parts.length} SKUs total</div></>, { danger:lowStock>0 }),
-    urgent: widgetShell("urgent","Urgent Work Orders","workorders", urgentWOs.length ? <div style={{ display:"flex", flexDirection:"column", gap:7 }}>{urgentWOs.map(w=><div key={w.id} style={{ display:"flex", justifyContent:"space-between", gap:8, fontSize:12 }}><span style={{ color:T.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{w.title||w.id}</span><Badge label={w.priority||"Medium"} type="priority" /></div>)}</div> : <div style={{ fontSize:12, color:T.muted }}>No active work orders.</div>, { style:{ gridColumn:view==="cards"?"span 2":"span 1" } }),
-    services: widgetShell("services","Services Due","pm", servicesDue.length ? <div style={{ display:"flex", flexDirection:"column", gap:7 }}>{servicesDue.map(s=><div key={s.id} style={{ display:"flex", justifyContent:"space-between", gap:8, fontSize:12 }}><span style={{ color:T.text }}>{s.eqName}</span><Badge label={s.status} /></div>)}</div> : <div style={{ fontSize:12, color:T.muted }}>No PM services due.</div>),
-    deadline: widgetShell("deadline","Deadline / Deficient Equipment","equipment", deadlineEqs.length ? <div style={{ display:"flex", flexDirection:"column", gap:7 }}>{deadlineEqs.map(e=><div key={e.id} style={{ display:"flex", justifyContent:"space-between", gap:8, fontSize:12 }}><span style={{ color:T.text }}>{e.name}</span><Badge label={e.status} /></div>)}</div> : <div style={{ fontSize:12, color:T.muted }}>No deadline equipment.</div>, { danger:deadlineEqs.length>0 }),
-    spending: widgetShell("spending","Spending & Costs","spending", <><div style={{ fontSize:28, fontWeight:800, color:T.accent }}>${spendMo.toFixed(0)}</div><div style={{ fontSize:12, color:T.muted }}>spent this month</div><div style={{ marginTop:8, fontSize:12, color:T.muted }}>Active WO cost: <b style={{ color:T.text }}>${activeWOCost.toFixed(0)}</b></div></>)
+    saveDash(presets[preset] || presets.mission);
   };
 
-  return <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap" }}>
-      <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-        {[{id:"workorders",icon:"📋",label:"Work Orders",count:openWOs+inProgWOs+awaitParts+onHoldWOs},{id:"pm",icon:"🔧",label:"Preventive Maintenance",count:pmOverdue+pmDueSoon},{id:"equipment",icon:"🚜",label:"Equipment",count:eqs.length},{id:"parts",icon:"📦",label:"Parts",count:parts.length},{id:"usage",icon:"📊",label:"Usage",count:eqs.filter(e=>e.trackUsage).length},{id:"spending",icon:"💰",label:"Costs",count:`$${spendMo.toFixed(0)}`}].map(c=><button key={c.id} disabled={customize} onClick={()=>!customize&&setTab(c.id)} style={{ background:"#fff", border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 14px", cursor:customize?"not-allowed":"pointer", opacity:customize ? .55 : 1, boxShadow:T.shadow, display:"flex", alignItems:"center", gap:8 }}><span>{c.icon}</span><span style={{ fontWeight:700, fontSize:12 }}>{c.label}</span><span style={{ fontFamily:T.mono, color:T.accent, fontWeight:800 }}>{c.count}</span></button>)}
+  const sizeStyle = id => {
+    const size = sizes[id] || (id==="command"?"hero":id==="actions"?"wide":"large");
+    if(size==="small") return { gridColumn:"span 1", minHeight:140 };
+    if(size==="medium") return { gridColumn:"span 2", minHeight:180 };
+    if(size==="large") return { gridColumn:"span 3", minHeight:220 };
+    if(size==="wide") return { gridColumn:"span 6", minHeight:190 };
+    return { gridColumn:"1 / -1", minHeight:250 };
+  };
+  const cardBg = theme==="executive" ? "#fbfcff" : theme==="shop" ? "#fffaf0" : theme==="clean" ? "#ffffff" : "linear-gradient(180deg,#ffffff 0%,#fbfdff 100%)";
+  const pageBg = theme==="shop" ? "linear-gradient(135deg,#fff7ed,#f8fafc)" : theme==="executive" ? "linear-gradient(135deg,#f8fafc,#eef2ff)" : theme==="clean" ? T.bg : "linear-gradient(135deg,#eef6ff,#f8fafc 45%,#fff7ed)";
+
+  const Metric = ({label,value,color=T.accent,sub}) => <div style={{ background:"rgba(255,255,255,.74)", border:`1px solid ${T.border}`, borderRadius:14, padding:compact?10:14 }}>
+    <div style={{ fontSize:11, color:T.muted, fontWeight:800, textTransform:"uppercase", letterSpacing:.45 }}>{label}</div>
+    <div style={{ fontFamily:T.mono, fontSize:compact?22:30, color, fontWeight:900, marginTop:4 }}>{value}</div>
+    {sub && <div style={{ fontSize:11, color:T.subtext }}>{sub}</div>}
+  </div>;
+  const Pill = ({children,color=T.accent}) => <span style={{ display:"inline-flex", alignItems:"center", gap:6, border:`1px solid ${color}33`, color, background:`${color}12`, borderRadius:999, padding:"5px 9px", fontSize:11, fontWeight:800 }}>{children}</span>;
+  const Row = ({title,sub,badge,badgeColor=T.accent,onClick}) => <div onClick={customize?undefined:onClick} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:10, alignItems:"center", padding:compact?"8px 0":"10px 0", borderBottom:`1px solid ${T.border}`, cursor:customize||!onClick?"default":"pointer" }}>
+    <div><div style={{ fontSize:13, fontWeight:800, color:T.text }}>{title}</div>{sub && <div style={{ fontSize:11, color:T.muted, marginTop:2 }}>{sub}</div>}</div>
+    {badge && <Pill color={badgeColor}>{badge}</Pill>}
+  </div>;
+
+  const Widget = ({id,title,tab,children,accent=T.accent,subtitle}) => <section
+    key={id}
+    onClickCapture={lockIfEditing}
+    onMouseDownCapture={lockIfEditing}
+    style={{ ...sizeStyle(id), background:cardBg, border:`1px solid ${customize?accent:T.border}`, borderRadius:20, padding:comfyPad, boxShadow:customize?`0 0 0 3px ${accent}18, ${T.shadowMd}`:T.shadow, position:"relative", overflow:"hidden" }}>
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, marginBottom:12 }}>
+      <div>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}><span style={{ width:10, height:10, borderRadius:999, background:accent, display:"inline-block" }}/><h3 style={{ margin:0, fontSize:compact?14:16, color:T.text }}>{title}</h3></div>
+        {subtitle && <div style={{ fontSize:11, color:T.muted, marginTop:4 }}>{subtitle}</div>}
       </div>
-      <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-        <select value={view} onChange={e=>saveDash({ dashboardView:e.target.value })} style={{ height:36, border:`1px solid ${T.border}`, borderRadius:8, padding:"0 10px", background:"#fff", fontWeight:700 }}>
-          <option value="cards">Card View</option>
-          <option value="list">List View</option>
-          <option value="compact">Compact View</option>
-          <option value="glass">Glass View</option>
+      {customize ? <div data-dash-control="true" style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap", justifyContent:"flex-end" }}>
+        <Btn small variant="secondary" onClick={()=>moveWidget(id,-1)}>Move left</Btn>
+        <Btn small variant="secondary" onClick={()=>moveWidget(id,1)}>Move right</Btn>
+        <select value={sizes[id] || (id==="command"?"hero":id==="actions"?"wide":"large")} onChange={e=>setWidgetSize(id,e.target.value)} style={{ height:28, border:`1px solid ${T.border}`, borderRadius:8, padding:"0 8px", fontSize:11, fontWeight:700, background:"#fff" }}>
+          <option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option><option value="wide">Wide</option><option value="hero">Full Width</option>
         </select>
-        <select value={boardStyle} onChange={e=>saveDash({ dashboardBoardStyle:e.target.value })} style={{ height:36, border:`1px solid ${T.border}`, borderRadius:8, padding:"0 10px", background:"#fff", fontWeight:700 }}>
-          <option value="operations">Operations Board</option>
-          <option value="mechanic">Mechanic Focus</option>
-          <option value="manager">Manager View</option>
-          <option value="simple">Simple Clean</option>
+        <Btn small variant="danger" onClick={()=>toggleWidget(id)}>Hide</Btn>
+      </div> : tab ? <Btn small variant="secondary" onClick={()=>go(tab)}>Open</Btn> : null}
+    </div>
+    <div style={{ pointerEvents:customize?"none":"auto" }}>{children}</div>
+  </section>;
+
+  const widgets = {
+    command:<Widget id="command" title="Maintenance Command Center" subtitle="One glance status of the whole shop" accent={highPriority||pmOverdue||outOfSvc?T.red:T.green}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10 }}>
+        <Metric label="Active work" value={activeWOs} color={activeWOs?T.accent:T.green} sub={`${completedMo} completed this month`} />
+        <Metric label="High priority" value={highPriority} color={highPriority?T.red:T.green} sub="needs attention" />
+        <Metric label="PM due" value={pmOverdue+pmDueSoon} color={pmOverdue?T.red:T.amber} sub={`${pmOverdue} overdue`} />
+        <Metric label="Asset issues" value={outOfSvc+withDefic} color={outOfSvc?T.red:T.amber} sub={`${outOfSvc} deadline`} />
+        <Metric label="Low stock" value={lowStock} color={lowStock?T.amber:T.green} sub="parts to review" />
+      </div>
+      <div style={{ marginTop:14, padding:12, borderRadius:14, background:(highPriority||pmOverdue||outOfSvc)?T.redLt:T.greenLt, border:`1px solid ${(highPriority||pmOverdue||outOfSvc)?"#fecaca":"#bbf7d0"}`, fontSize:13, fontWeight:800, color:(highPriority||pmOverdue||outOfSvc)?T.red:T.green }}>
+        {(highPriority||pmOverdue||outOfSvc) ? "Focus today: clear high-priority work, overdue PM, and deadline equipment first." : "Shop status looks stable. Keep preventive maintenance moving and update records."}
+      </div>
+    </Widget>,
+    actions:<Widget id="actions" title="Quick Launch" subtitle="Fast access without hunting through menus" accent="#7c3aed">
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:10 }}>
+        {[ ["➕ Work Order","workorders","Create / review jobs"], ["🛡 PM Board","pm","Service schedule"], ["🚜 Equipment","equipment","Assets and records"], ["📦 Parts","parts","Inventory status"], ["📊 Reports","reports","PDF / Excel outputs"], ["⚙ Settings","settings","Locations and setup"] ].map(([label,tab,sub])=><button key={tab} onClick={()=>go(tab)} disabled={customize} style={{ border:`1px solid ${T.border}`, background:"#fff", borderRadius:16, padding:14, textAlign:"left", cursor:customize?"default":"pointer", boxShadow:T.shadow }}>
+          <div style={{ fontSize:15, fontWeight:900, color:T.text }}>{label}</div><div style={{ fontSize:11, color:T.muted, marginTop:4 }}>{sub}</div>
+        </button>)}
+      </div>
+    </Widget>,
+    workorders:<Widget id="workorders" title="Work Order Flow" tab="workorders" subtitle="Open, active, waiting, and completed work" accent={highPriority?T.red:T.accent}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:10 }}>
+        <Metric label="Open" value={openWOs} /><Metric label="In progress" value={inProgWOs} color={T.amber}/><Metric label="Parts" value={awaitParts} color="#7c3aed"/><Metric label="Done/mo" value={completedMo} color={T.green}/>
+      </div>
+      {urgentWOs.length ? urgentWOs.map(w=><Row key={w.id} title={`${w.id} — ${w.title||"Work Order"}`} sub={`${w.equipmentLabel||w.equipment||"No equipment"} • ${w.status}`} badge={w.priority||"Priority"} badgeColor={w.priority==="High"?T.red:w.priority==="Medium"?T.amber:T.green} onClick={()=>go("workorders")}/>) : <div style={{ color:T.muted, fontSize:13 }}>No active work orders.</div>}
+    </Widget>,
+    pm:<Widget id="pm" title="Preventive Maintenance Lane" tab="pm" subtitle="What is overdue or coming due soon" accent={pmOverdue?T.red:T.amber}>
+      <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:8 }}><Pill color={T.red}>{pmOverdue} overdue</Pill><Pill color={T.amber}>{pmDueSoon} due soon</Pill></div>
+      {servicesDue.length ? servicesDue.map(p=><Row key={p.id} title={p.eqName||"Equipment"} sub={`${p.service||p.title||"PM"} • Due ${p.nextDue||"—"}`} badge={p.status} badgeColor={p.status==="Overdue"?T.red:T.amber} onClick={()=>go("pm")}/>) : <div style={{ color:T.muted, fontSize:13 }}>No PM items due soon.</div>}
+    </Widget>,
+    equipment:<Widget id="equipment" title="Asset Health" tab="equipment" subtitle="Deadline equipment and deficiencies" accent={outOfSvc?T.red:T.green}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom:10 }}><Metric label="Total" value={eqs.length} /><Metric label="Deadline" value={outOfSvc} color={outOfSvc?T.red:T.green}/><Metric label="Deficient" value={withDefic} color={withDefic?T.amber:T.green}/></div>
+      {deadlineEqs.length ? deadlineEqs.map(e=><Row key={e.id} title={`${e.id} — ${e.name}`} sub={`${e.make||""} ${e.model||""} • ${e.location||"No location"}`} badge={e.status?.replace("Out of Service / ","")} badgeColor={e.status==="Out of Service / Deadline"?T.red:T.amber} onClick={()=>go("equipment")}/>) : <div style={{ color:T.muted, fontSize:13 }}>All equipment is clear of deadline/deficiency status.</div>}
+    </Widget>,
+    parts:<Widget id="parts" title="Parts & Inventory Watch" tab="parts" subtitle="Low stock items that can delay repairs" accent={lowStock?T.amber:T.green}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:10 }}><Metric label="Parts tracked" value={parts.length}/><Metric label="Low stock" value={lowStock} color={lowStock?T.amber:T.green}/></div>
+      {criticalParts.length ? criticalParts.map(p=><Row key={p.id} title={p.name||p.partNumber||"Part"} sub={`${p.partNumber||"No part #"} • Qty ${p.qty??0} / Min ${p.minQty??0}`} badge="Reorder" badgeColor={T.amber} onClick={()=>go("parts")}/>) : <div style={{ color:T.muted, fontSize:13 }}>No low stock alerts.</div>}
+    </Widget>,
+    planner:<Widget id="planner" title="Today’s Battle Rhythm" subtitle="Recommended order of work" accent="#0f766e">
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:10 }}>
+        <div style={{ border:`1px solid ${T.border}`, borderRadius:16, padding:14, background:"#fff" }}><div style={{ fontWeight:900 }}>1. Safety / Deadline</div><div style={{ color:T.muted, fontSize:12, marginTop:4 }}>Check {outOfSvc} deadline assets and {highPriority} high priority WOs.</div></div>
+        <div style={{ border:`1px solid ${T.border}`, borderRadius:16, padding:14, background:"#fff" }}><div style={{ fontWeight:900 }}>2. PM Due</div><div style={{ color:T.muted, fontSize:12, marginTop:4 }}>Complete overdue service before it turns into repairs.</div></div>
+        <div style={{ border:`1px solid ${T.border}`, borderRadius:16, padding:14, background:"#fff" }}><div style={{ fontWeight:900 }}>3. Parts Blockers</div><div style={{ color:T.muted, fontSize:12, marginTop:4 }}>Review {awaitParts} awaiting-parts work orders and {lowStock} low stock items.</div></div>
+        <div style={{ border:`1px solid ${T.border}`, borderRadius:16, padding:14, background:"#fff" }}><div style={{ fontWeight:900 }}>4. Documentation</div><div style={{ color:T.muted, fontSize:12, marginTop:4 }}>Close completed WOs and update equipment records.</div></div>
+      </div>
+    </Widget>,
+    spending:<Widget id="spending" title="Cost Snapshot" tab="reports" subtitle="Maintenance cost awareness" accent="#2563eb">
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10 }}><Metric label="Month spend" value={`$${spendMo.toFixed(2)}`} color="#2563eb"/><Metric label="Active estimate" value={`$${activeWOCost.toFixed(2)}`} color={T.amber}/></div>
+      <div style={{ marginTop:12, fontSize:12, color:T.muted }}>Use Reports for printable PDF and Excel/CSV exports.</div>
+    </Widget>
+  };
+
+  return <div style={{ display:"flex", flexDirection:"column", gap:14, background:pageBg, margin:-4, padding:customize?14:4, borderRadius:22 }}>
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap" }}>
+      <div><h2 style={{ margin:"0 0 4px", fontSize:28, letterSpacing:-.6 }}>Dashboard</h2><div style={{ color:T.muted, fontSize:13 }}>Your maintenance home base: find work, act fast, and see what needs attention.</div></div>
+      <div data-dash-control="true" style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+        <select value={theme} onChange={e=>saveDash({ dashboardTheme:e.target.value })} style={{ height:36, border:`1px solid ${T.border}`, borderRadius:10, padding:"0 10px", background:"#fff", fontWeight:800 }}>
+          <option value="mission">Mission Control</option><option value="shop">Shop Board</option><option value="executive">Manager Console</option><option value="clean">Clean Simple</option>
+        </select>
+        <select value={density} onChange={e=>saveDash({ dashboardDensity:e.target.value })} style={{ height:36, border:`1px solid ${T.border}`, borderRadius:10, padding:"0 10px", background:"#fff", fontWeight:800 }}>
+          <option value="comfortable">Comfortable</option><option value="compact">Compact</option>
         </select>
         <Btn onClick={()=>setCustomize(v=>!v)}>{customize?"Done Customizing":"Customize Dashboard"}</Btn>
       </div>
     </div>
-    {customize && <Card style={{ padding:14, border:`2px dashed ${T.accent}` }}>
-      <div style={{ fontSize:13, fontWeight:800, marginBottom:4 }}>Dashboard customization mode is ON</div>
-      <div style={{ fontSize:12, color:T.muted, marginBottom:10 }}>Navigation is locked while customizing, so clicking cards will not take you to another section. Use presets, move buttons, and size dropdowns to build the dashboard you like.</div>
-      <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>Organization presets</div>
+
+    {customize && <Card style={{ padding:16, border:`2px dashed ${T.accent}`, background:"#fff" }}>
+      <div style={{ fontSize:16, fontWeight:900, marginBottom:4 }}>Dashboard edit mode</div>
+      <div style={{ fontSize:12, color:T.muted, marginBottom:12 }}>Cards are locked while editing. Use presets, size controls, move buttons, and show/hide options. The dashboard is now built around action, not decoration.</div>
       <div data-dash-control="true" style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:12 }}>
-        <Btn small onClick={()=>applyDashboardPreset("operations")}>Operations Board</Btn>
-        <Btn small variant="secondary" onClick={()=>applyDashboardPreset("mechanic")}>Mechanic Focus</Btn>
-        <Btn small variant="secondary" onClick={()=>applyDashboardPreset("manager")}>Manager View</Btn>
-        <Btn small variant="secondary" onClick={()=>applyDashboardPreset("simple")}>Simple Clean</Btn>
+        <Btn small onClick={()=>applyPreset("mission")}>Mission Control</Btn>
+        <Btn small variant="secondary" onClick={()=>applyPreset("mechanic")}>Mechanic Daily Board</Btn>
+        <Btn small variant="secondary" onClick={()=>applyPreset("manager")}>Manager Console</Btn>
+        <Btn small variant="secondary" onClick={()=>applyPreset("simple")}>Clean Simple</Btn>
+        <Btn small variant="danger" onClick={resetDash}>Reset</Btn>
       </div>
-      <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>Add / remove dashboard widgets</div>
-      <div data-dash-control="true" style={{ display:"flex", flexWrap:"wrap", gap:8 }}>{fullLayout.map(id=><Btn key={id} small variant={hidden.includes(id)?"secondary":"primary"} onClick={()=>toggleWidget(id)}>{hidden.includes(id)?"Add":"Remove"} {id}</Btn>)}</div>
+      <div data-dash-control="true" style={{ display:"flex", flexWrap:"wrap", gap:8 }}>{fullLayout.map(id=><Btn key={id} small variant={hidden.includes(id)?"secondary":"primary"} onClick={()=>toggleWidget(id)}>{hidden.includes(id)?"Show":"Hide"} {id}</Btn>)}</div>
     </Card>}
-    <div style={{ display:"grid", gridTemplateColumns:getBoardColumns(), gap:10, alignItems:"stretch" }}>
+
+    <div style={{ display:"grid", gridTemplateColumns:"repeat(6,minmax(120px,1fr))", gap:12, alignItems:"stretch" }}>
       {fullLayout.filter(id=>!hidden.includes(id)).map(id=>widgets[id])}
     </div>
   </div>;
