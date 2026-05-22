@@ -134,9 +134,16 @@ const rowsToDataUri = rows => {
   const csv = [headers.map(csvEscape).join(","), ...rows.map(r=>headers.map(h=>csvEscape(r[h])).join(","))].join("\n");
   return `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`;
 };
-const reportButtonsHtml = rows => {
+const reportButtonsHtml = (rows=[], title="report") => {
   const dataUri = rowsToDataUri(rows);
-  return `<br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer;margin-right:8px">Print / Save PDF</button>${dataUri ? `<a href="${dataUri}" download="report.csv" style="padding:8px 20px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;text-decoration:none;font-family:Arial,sans-serif;font-size:13px">Download Excel CSV</a>` : ""}`;
+  const safeTitle = String(title || "report").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"") || "report";
+  const wordHtml = `<!doctype html><html><head><meta charset="utf-8"><title>${safeTitle}</title></head><body>${document?.body?.innerHTML || ""}</body></html>`;
+  const wordUri = `data:application/msword;charset=utf-8,${encodeURIComponent(wordHtml)}`;
+  return `<br><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+    <button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
+    ${dataUri ? `<a href="${dataUri}" download="${safeTitle}.csv" style="padding:8px 20px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;text-decoration:none;font-family:Arial,sans-serif;font-size:13px">Download Excel CSV</a>` : ""}
+    <a href="${wordUri}" download="${safeTitle}.doc" style="padding:8px 20px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;text-decoration:none;font-family:Arial,sans-serif;font-size:13px">Download Word</a>
+  </div>`;
 };
 
 
@@ -519,7 +526,21 @@ function Dashboard({ state, dispatch, setTab }) {
   const sizes = settings.dashboardWidgetSizes || {};
   const density = settings.dashboardDensity || "comfortable";
   const theme = settings.dashboardTheme || "mission";
-  const saveDash = patch => dispatch({ type:"UPDATE_SETTINGS", payload:{ ...settings, ...patch } });
+  const activePreset = settings.dashboardPreset || "mission";
+  const saveDash = (patch, mode="custom") => {
+    const next = { ...settings, ...patch };
+    if(mode === "custom") {
+      next.dashboardPreset = "custom";
+      next.dashboardCustomPreset = {
+        dashboardTheme: next.dashboardTheme || "mission",
+        dashboardDensity: next.dashboardDensity || "comfortable",
+        dashboardLayout: next.dashboardLayout?.length ? next.dashboardLayout : defaultLayout,
+        dashboardHidden: next.dashboardHidden || [],
+        dashboardWidgetSizes: next.dashboardWidgetSizes || {}
+      };
+    }
+    dispatch({ type:"UPDATE_SETTINGS", payload:next });
+  };
   const compact = density==="compact";
   const comfyPad = compact ? "12px" : "18px";
 
@@ -539,15 +560,20 @@ function Dashboard({ state, dispatch, setTab }) {
   };
   const setWidgetSize = (id, size) => saveDash({ dashboardWidgetSizes:{ ...sizes, [id]:size } });
   const toggleWidget = id => saveDash({ dashboardHidden:hidden.includes(id) ? hidden.filter(x=>x!==id) : [...hidden, id] });
-  const resetDash = () => saveDash({ dashboardLayout:defaultLayout, dashboardHidden:[], dashboardWidgetSizes:{}, dashboardDensity:"comfortable", dashboardTheme:"mission" });
+  const resetDash = () => applyPreset("mission");
   const applyPreset = preset => {
     const presets = {
-      mission:{ dashboardTheme:"mission", dashboardDensity:"comfortable", dashboardLayout:["command","actions","workorders","pm","equipment","parts","planner","spending"], dashboardHidden:[], dashboardWidgetSizes:{ command:"hero", actions:"wide", workorders:"large", pm:"large", equipment:"large", parts:"medium", planner:"wide", spending:"medium" } },
-      mechanic:{ dashboardTheme:"shop", dashboardDensity:"comfortable", dashboardLayout:["actions","planner","workorders","pm","equipment","parts","command","spending"], dashboardHidden:["spending"], dashboardWidgetSizes:{ actions:"wide", planner:"hero", workorders:"large", pm:"large", equipment:"medium", parts:"medium", command:"wide" } },
-      manager:{ dashboardTheme:"executive", dashboardDensity:"compact", dashboardLayout:["command","spending","workorders","pm","equipment","parts","planner","actions"], dashboardHidden:[], dashboardWidgetSizes:{ command:"wide", spending:"large", workorders:"medium", pm:"medium", equipment:"medium", parts:"medium", planner:"large", actions:"medium" } },
-      simple:{ dashboardTheme:"clean", dashboardDensity:"comfortable", dashboardLayout:["actions","workorders","pm","equipment","parts","planner","command","spending"], dashboardHidden:[], dashboardWidgetSizes:{ actions:"wide", workorders:"wide", pm:"wide", equipment:"wide", parts:"wide", planner:"wide", command:"wide", spending:"wide" } }
+      mission:{ dashboardPreset:"mission", dashboardTheme:"mission", dashboardDensity:"comfortable", dashboardLayout:["actions","command","workorders","pm","equipment","parts","planner","spending"], dashboardHidden:[], dashboardWidgetSizes:{ actions:"hero", command:"wide", workorders:"large", pm:"large", equipment:"large", parts:"medium", planner:"wide", spending:"medium" } },
+      mechanic:{ dashboardPreset:"mechanic", dashboardTheme:"shop", dashboardDensity:"comfortable", dashboardLayout:["actions","planner","workorders","pm","equipment","parts","command","spending"], dashboardHidden:["spending"], dashboardWidgetSizes:{ actions:"wide", planner:"hero", workorders:"large", pm:"large", equipment:"medium", parts:"medium", command:"wide" } },
+      manager:{ dashboardPreset:"manager", dashboardTheme:"executive", dashboardDensity:"compact", dashboardLayout:["command","spending","workorders","pm","equipment","parts","planner","actions"], dashboardHidden:[], dashboardWidgetSizes:{ command:"wide", spending:"large", workorders:"medium", pm:"medium", equipment:"medium", parts:"medium", planner:"large", actions:"medium" } },
+      simple:{ dashboardPreset:"simple", dashboardTheme:"clean", dashboardDensity:"comfortable", dashboardLayout:["actions","workorders","pm","equipment","parts","planner","command","spending"], dashboardHidden:[], dashboardWidgetSizes:{ actions:"wide", workorders:"wide", pm:"wide", equipment:"wide", parts:"wide", planner:"wide", command:"wide", spending:"wide" } }
     };
-    saveDash(presets[preset] || presets.mission);
+    if(preset === "custom") {
+      if(settings.dashboardCustomPreset) saveDash({ ...settings.dashboardCustomPreset, dashboardPreset:"custom" }, "preset");
+      else saveDash({ dashboardPreset:"custom" }, "preset");
+      return;
+    }
+    saveDash(presets[preset] || presets.mission, "preset");
   };
 
   const sizeStyle = id => {
@@ -650,11 +676,12 @@ function Dashboard({ state, dispatch, setTab }) {
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap" }}>
       <div><h2 style={{ margin:"0 0 4px", fontSize:28, letterSpacing:-.6 }}>Dashboard</h2><div style={{ color:T.muted, fontSize:13 }}>Your maintenance home base: find work, act fast, and see what needs attention.</div></div>
       <div data-dash-control="true" style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-        <select value={theme} onChange={e=>saveDash({ dashboardTheme:e.target.value })} style={{ height:36, border:`1px solid ${T.border}`, borderRadius:10, padding:"0 10px", background:"#fff", fontWeight:800 }}>
-          <option value="mission">Mission Control</option><option value="shop">Shop Board</option><option value="executive">Manager Console</option><option value="clean">Clean Simple</option>
-        </select>
-        <select value={density} onChange={e=>saveDash({ dashboardDensity:e.target.value })} style={{ height:36, border:`1px solid ${T.border}`, borderRadius:10, padding:"0 10px", background:"#fff", fontWeight:800 }}>
-          <option value="comfortable">Comfortable</option><option value="compact">Compact</option>
+        <select value={activePreset} onChange={e=>applyPreset(e.target.value)} style={{ height:36, border:`1px solid ${T.border}`, borderRadius:10, padding:"0 10px", background:"#fff", fontWeight:800 }}>
+          <option value="mission">Mission Control</option>
+          <option value="mechanic">Mechanic Daily Board</option>
+          <option value="manager">Manager Console</option>
+          <option value="simple">Clean Simple</option>
+          <option value="custom">My Custom Dashboard</option>
         </select>
         <Btn onClick={()=>setCustomize(v=>!v)}>{customize?"Done Customizing":"Customize Dashboard"}</Btn>
       </div>
@@ -662,7 +689,7 @@ function Dashboard({ state, dispatch, setTab }) {
 
     {customize && <Card style={{ padding:16, border:`2px dashed ${T.accent}`, background:"#fff" }}>
       <div style={{ fontSize:16, fontWeight:900, marginBottom:4 }}>Dashboard edit mode</div>
-      <div style={{ fontSize:12, color:T.muted, marginBottom:12 }}>Cards are locked while editing. Use presets, size controls, move buttons, and show/hide options. The dashboard is now built around action, not decoration.</div>
+      <div style={{ fontSize:12, color:T.muted, marginBottom:12 }}>Cards are locked while editing. Use presets, size controls, move buttons, and show/hide options. Any custom layout you create is saved as “My Custom Dashboard” in the dropdown.</div>
       <div data-dash-control="true" style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:12 }}>
         <Btn small onClick={()=>applyPreset("mission")}>Mission Control</Btn>
         <Btn small variant="secondary" onClick={()=>applyPreset("mechanic")}>Mechanic Daily Board</Btn>
@@ -673,7 +700,7 @@ function Dashboard({ state, dispatch, setTab }) {
       <div data-dash-control="true" style={{ display:"flex", flexWrap:"wrap", gap:8 }}>{fullLayout.map(id=><Btn key={id} small variant={hidden.includes(id)?"secondary":"primary"} onClick={()=>toggleWidget(id)}>{hidden.includes(id)?"Show":"Hide"} {id}</Btn>)}</div>
     </Card>}
 
-    <div style={{ display:"grid", gridTemplateColumns:"repeat(6,minmax(120px,1fr))", gap:12, alignItems:"stretch" }}>
+    <div onClickCapture={lockIfEditing} onMouseDownCapture={lockIfEditing} style={{ display:"grid", gridTemplateColumns:"repeat(6,minmax(120px,1fr))", gap:12, alignItems:"stretch" }}>
       {fullLayout.filter(id=>!hidden.includes(id)).map(id=>widgets[id])}
     </div>
   </div>;
@@ -707,6 +734,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const SERVICE_INTERVALS   = ["New Equipment Service","Weekly","Bi-Weekly","Monthly","Bi-Monthly","Quarterly","Bi-Annual","Annual"];
   const INSPECT_INTERVALS   = ["New Equipment Inspection","Weekly","Bi-Weekly","Monthly","Bi-Monthly","Quarterly","Bi-Annual","Annual"];
   const getIntervals = (woType) => woType==="Inspection" ? INSPECT_INTERVALS : SERVICE_INTERVALS;
+  const partCategories = [...new Set([...(state.categories||[]), ...(state.parts||[]).map(p=>p.category).filter(Boolean)])].sort((a,b)=>a.localeCompare(b));
 
   const STATUS_TABS = ["Active","Open","In Progress","Awaiting Parts","On Hold","Completed","All"];
   const PRIO_ORDER  = {"High":0,"Medium":1,"Low":2};
@@ -897,8 +925,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .val{font-size:11px;font-weight:600;color:#111;min-height:14px}.val.mn{font-family:monospace}
       .sec{border:1.5px solid #1a1a2e;border-radius:3px;overflow:hidden}
       .sh{background:#1a1a2e;color:#fff;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;padding:3px 8px}
-      .sb{padding:7px 8px;font-size:11px;color:#111;line-height:1.5;white-space:pre-wrap;min-height:55px}
-      .bg{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+      .sb{padding:7px 8px;font-size:11px;color:#111;line-height:1.5;white-space:pre-wrap;min-height:80px}
+      .bg{display:grid;grid-template-columns:1fr;gap:6px}
       .pt{width:100%;border-collapse:collapse;font-size:10px}
       .pt th{background:#f3f4f6;padding:3px 6px;text-align:left;font-size:8px;text-transform:uppercase;color:#555;font-weight:700}
       .pt td{padding:3px 6px;border-bottom:1px solid #e5e7eb}
@@ -1095,16 +1123,16 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         </Field>
 
         <Field label="Work Description / Problem Reported">
-          <textarea style={{ ...inp, minHeight:60, resize:"vertical" }} value={form.description||""} onChange={e=>setForm(f=>({...f,description:e.target.value}))} />
+          <textarea style={{ ...inp, minHeight:110, resize:"vertical" }} value={form.description||""} onChange={e=>setForm(f=>({...f,description:e.target.value}))} />
         </Field>
 
         <Field label="Mechanic Notes">
-          <textarea style={{ ...inp, minHeight:60, resize:"vertical" }} value={form.mechanicNotes||""} onChange={e=>setForm(f=>({...f,mechanicNotes:e.target.value}))} placeholder="Mechanic observations, steps taken, findings..." />
+          <textarea style={{ ...inp, minHeight:110, resize:"vertical" }} value={form.mechanicNotes||""} onChange={e=>setForm(f=>({...f,mechanicNotes:e.target.value}))} placeholder="Mechanic observations, steps taken, findings..." />
         </Field>
 
-        {/* Parts inline */}
-        <div style={{ gridColumn:"span 2", marginBottom:14 }}>
-          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:8 }}>Parts Used</label>
+        {/* Parts and Labor Summary */}
+        <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.grayLt }}>
+          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:8 }}>Parts and Labor Summary</label>
           {(form.partsUsed||[]).map((p,idx)=>(
             <div key={idx}>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 64px 90px auto auto", gap:8, marginBottom:4, alignItems:"center" }}>
@@ -1153,7 +1181,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                     <input style={inp} placeholder="$/unit" type="number" step="0.01" value={newPartForm.unitCost||""} onChange={e=>setNewPartForm(f=>({...f,unitCost:e.target.value}))} />
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr auto", gap:6 }}>
-                    <input style={inp} placeholder="Category" value={newPartForm.category||""} onChange={e=>setNewPartForm(f=>({...f,category:e.target.value}))} />
+                    <input style={inp} list="wo-part-category-options" placeholder="Category" value={newPartForm.category||""} onChange={e=>setNewPartForm(f=>({...f,category:e.target.value}))} />
+                    <datalist id="wo-part-category-options">{partCategories.map(c=><option key={c} value={c} />)}</datalist>
                     <input style={inp} placeholder="Vendor" value={newPartForm.vendor||""} onChange={e=>setNewPartForm(f=>({...f,vendor:e.target.value}))} />
                     <select style={sel} value={newPartForm.equipmentId||""} onChange={e=>{ const eq=state.equipment.find(q=>q.id===e.target.value); setNewPartForm(f=>({...f,equipmentId:e.target.value,modelFit:eq?`${eq.make||""} ${eq.model||""}`.trim():f.modelFit})); }}>
                       <option value="">Link to equipment (optional)</option>
@@ -1233,17 +1262,15 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         </div>
 
         {/* Description */}
-        {wo.description && (
-          <div style={{ background:T.grayLt, borderRadius:6, padding:"10px 12px", border:`1px solid ${T.border}` }}>
-            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Work Description</div>
-            <div style={{ fontFamily:T.sans, fontSize:13, color:T.text, lineHeight:1.6 }}>{wo.description}</div>
-          </div>
-        )}
+        <div style={{ background:T.grayLt, borderRadius:6, padding:"10px 12px", border:`1px solid ${T.border}` }}>
+          <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Work Description</div>
+          <div style={{ minHeight:90, fontFamily:T.sans, fontSize:13, color:wo.description?T.text:T.muted, lineHeight:1.6, fontStyle:wo.description?"normal":"italic" }}>{wo.description||"No work description recorded."}</div>
+        </div>
 
         {/* Mechanic Notes */}
         <div style={{ background:T.grayLt, borderRadius:6, padding:"10px 12px", border:`1px solid ${T.border}` }}>
           <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Mechanic Notes</div>
-          <div style={{ fontFamily:T.sans, fontSize:13, color:wo.mechanicNotes?T.text:T.muted, lineHeight:1.6, fontStyle:wo.mechanicNotes?"normal":"italic" }}>{wo.mechanicNotes||"No notes recorded."}</div>
+          <div style={{ minHeight:90, fontFamily:T.sans, fontSize:13, color:wo.mechanicNotes?T.text:T.muted, lineHeight:1.6, fontStyle:wo.mechanicNotes?"normal":"italic" }}>{wo.mechanicNotes||"No notes recorded."}</div>
         </div>
 
         {/* Parts & Labor Summary — below mechanic notes */}
@@ -2228,8 +2255,13 @@ function Parts({ state, dispatch }) {
   const [invUpdate, setInvUpdate] = useState(null);
   const [poForm, setPoForm]     = useState({ poNumber:"", vendor:"", date:today(), parts:[{name:"",partNumber:"",category:"",qty:"",unitCost:"",location:"",equipmentId:"",modelFit:""}] });
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
+  const partCategories = [...new Set([...(state.categories||[]), ...(state.parts||[]).map(p=>p.category).filter(Boolean)])].sort((a,b)=>a.localeCompare(b));
+  const rememberPartCategory = (category) => {
+    const clean = String(category||"").trim();
+    if(clean && !(state.categories||[]).includes(clean)) dispatch({ type:"ADD_CATEGORY", payload:clean });
+  };
 
-  const cats     = ["All",...new Set(state.parts.map(p=>p.category).filter(Boolean))];
+  const cats     = ["All",...partCategories];
   const filtered = state.parts.filter(p=>{
     const mc = catF==="All"||p.category===catF;
     const ms = `${p.name} ${p.partNumber||""} ${p.vendor||""} ${p.modelFit||""} ${p.equipmentId||""}`.toLowerCase().includes(search.toLowerCase());
@@ -2241,9 +2273,11 @@ function Parts({ state, dispatch }) {
   const openEdit = p  => { setForm({...p}); setModal(p); };
   const save = () => {
     if(!form.name) return alert("Name required.");
+    rememberPartCategory(form.category);
+    const cleanForm = { ...form, category:String(form.category||"").trim() };
     modal==="add"
-      ? dispatch({type:"ADD_PART",  payload:{...form,id:genId("PT")}})
-      : dispatch({type:"UPDATE_PART",payload:form});
+      ? dispatch({type:"ADD_PART",  payload:{...cleanForm,id:genId("PT")}})
+      : dispatch({type:"UPDATE_PART",payload:cleanForm});
     setModal(null);
   };
   const del = id => { if(confirm("Delete part?")) dispatch({type:"DELETE_PART",payload:id}); };
@@ -2287,7 +2321,8 @@ function Parts({ state, dispatch }) {
     if(!valid.length) return alert("Add at least one part.");
     valid.forEach(p=>{
       const eq = state.equipment.find(e=>e.id===p.equipmentId);
-      dispatch({type:"ADD_PART",payload:{...p,id:genId("PT"),qty:+p.qty||0,unitCost:+p.unitCost||0,minQty:1,lowStockAlert:true,vendor:poForm.vendor,poNumber:poForm.poNumber,dateReceived:poForm.date,modelFit:eq?`${eq.make||""} ${eq.model||""}`.trim():p.modelFit}});
+      rememberPartCategory(p.category);
+      dispatch({type:"ADD_PART",payload:{...p,category:String(p.category||"").trim(),id:genId("PT"),qty:+p.qty||0,unitCost:+p.unitCost||0,minQty:1,lowStockAlert:true,vendor:poForm.vendor,poNumber:poForm.poNumber,dateReceived:poForm.date,modelFit:eq?`${eq.make||""} ${eq.model||""}`.trim():p.modelFit}});
     });
     setModal(null);
     setPoForm({poNumber:"",vendor:"",date:today(),parts:[{name:"",partNumber:"",category:"",qty:"",unitCost:"",location:"",equipmentId:"",modelFit:""}]});
@@ -2298,6 +2333,7 @@ function Parts({ state, dispatch }) {
 
   return (
     <div>
+      <datalist id="part-category-options">{partCategories.map(c=><option key={c} value={c} />)}</datalist>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12, marginBottom:16 }}>
         {[["Inventory Value","$"+totalVal.toLocaleString("en-US",{minimumFractionDigits:2}),T.accent],["Total SKUs",state.parts.length,T.text],["Low Stock",state.parts.filter(p=>p.lowStockAlert!==false&&p.qty<=(p.minQty||0)).length,T.red]].map(([l,v,c])=>(
           <Card key={l} style={{ padding:"14px 16px" }}>
@@ -2417,7 +2453,7 @@ function Parts({ state, dispatch }) {
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
             <Field label="Part Number" half><input style={inp} value={form.partNumber||""} onChange={F("partNumber")} /></Field>
             <Field label="Part Name"><input style={inp} value={form.name||""} onChange={F("name")} /></Field>
-            <Field label="Category" half><input style={inp} value={form.category||""} onChange={F("category")} /></Field>
+            <Field label="Category" half><input style={inp} list="part-category-options" value={form.category||""} onChange={F("category")} placeholder="Pick or type category" /></Field>
             <div style={{ marginBottom:14, gridColumn:"span 2" }}>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>
                 Linked Equipment <span style={{ fontFamily:T.sans, fontSize:11, fontWeight:400, color:T.muted }}>(optional)</span>
@@ -2465,7 +2501,7 @@ function Parts({ state, dispatch }) {
             <div key={i} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 55px 65px 1fr 1fr auto", gap:6, marginBottom:6, alignItems:"center" }}>
               <input style={inp} placeholder="Part name*" value={p.name} onChange={e=>setPoRow(i,"name",e.target.value)} />
               <input style={inp} placeholder="Part #" value={p.partNumber} onChange={e=>setPoRow(i,"partNumber",e.target.value)} />
-              <input style={inp} placeholder="Category" value={p.category} onChange={e=>setPoRow(i,"category",e.target.value)} />
+              <input style={inp} list="part-category-options" placeholder="Category" value={p.category} onChange={e=>setPoRow(i,"category",e.target.value)} />
               <input style={inp} type="number" placeholder="Qty" value={p.qty} onChange={e=>setPoRow(i,"qty",e.target.value)} />
               <input style={inp} type="number" step="0.01" placeholder="0.00" value={p.unitCost} onChange={e=>setPoRow(i,"unitCost",e.target.value)} />
               <input style={inp} placeholder="Location" value={p.location} onChange={e=>setPoRow(i,"location",e.target.value)} />
