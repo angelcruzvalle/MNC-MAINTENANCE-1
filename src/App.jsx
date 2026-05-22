@@ -478,6 +478,7 @@ function Dashboard({ state, dispatch, setTab }) {
   const fullLayout = [...layout, ...defaultLayout.filter(id=>!layout.includes(id))];
   const hidden = settings.dashboardHidden || [];
   const view = settings.dashboardView || "cards";
+  const boardStyle = settings.dashboardBoardStyle || "operations";
   const widgetSizes = settings.dashboardWidgetSizes || {};
   const [customize, setCustomize] = useState(false);
   const saveDash = patch => dispatch({ type:"UPDATE_SETTINGS", payload:{ ...settings, ...patch } });
@@ -498,6 +499,46 @@ function Dashboard({ state, dispatch, setTab }) {
     saveDash({ dashboardLayout:arr });
   };
   const toggleWidget = id => saveDash({ dashboardHidden:hidden.includes(id) ? hidden.filter(x=>x!==id) : [...hidden, id] });
+  const applyDashboardPreset = preset => {
+    const presets = {
+      operations:{
+        dashboardBoardStyle:"operations",
+        dashboardView:"cards",
+        dashboardLayout:["workorders","pm","urgent","services","equipment","deadline","parts","spending"],
+        dashboardHidden:[],
+        dashboardWidgetSizes:{ workorders:"large", pm:"medium", urgent:"wide", services:"large", equipment:"medium", deadline:"large", parts:"medium", spending:"medium" }
+      },
+      mechanic:{
+        dashboardBoardStyle:"mechanic",
+        dashboardView:"cards",
+        dashboardLayout:["urgent","services","workorders","pm","deadline","equipment","parts","spending"],
+        dashboardHidden:["spending"],
+        dashboardWidgetSizes:{ urgent:"hero", services:"wide", workorders:"large", pm:"large", deadline:"wide", equipment:"medium", parts:"medium" }
+      },
+      manager:{
+        dashboardBoardStyle:"manager",
+        dashboardView:"cards",
+        dashboardLayout:["workorders","spending","pm","equipment","deadline","parts","urgent","services"],
+        dashboardHidden:[],
+        dashboardWidgetSizes:{ workorders:"large", spending:"large", pm:"medium", equipment:"medium", deadline:"wide", parts:"medium", urgent:"medium", services:"medium" }
+      },
+      simple:{
+        dashboardBoardStyle:"simple",
+        dashboardView:"list",
+        dashboardLayout:["workorders","pm","equipment","parts","urgent","services","deadline","spending"],
+        dashboardHidden:[],
+        dashboardWidgetSizes:{ workorders:"medium", pm:"medium", equipment:"medium", parts:"medium", urgent:"medium", services:"medium", deadline:"medium", spending:"medium" }
+      }
+    };
+    saveDash(presets[preset] || presets.operations);
+  };
+  const getBoardColumns = () => {
+    if(view!=="cards") return "1fr";
+    if(boardStyle==="simple") return "repeat(2,minmax(220px,1fr))";
+    if(boardStyle==="mechanic") return "repeat(6,minmax(130px,1fr))";
+    if(boardStyle==="manager") return "repeat(4,minmax(180px,1fr))";
+    return "repeat(4,minmax(180px,1fr))";
+  };
   const widgetShell = (id, title, tab, children, extra={}) => {
     const size = widgetSizes[id] || "medium";
     const sizeStyle = size==="small"
@@ -511,7 +552,12 @@ function Dashboard({ state, dispatch, setTab }) {
       : { gridColumn:"span 1", minHeight:170 };
 
     return (
-    <div key={id} onClick={()=>{ if(!customize && tab) setTab(tab); }} style={{
+    <div
+      key={id}
+      onClickCapture={e=>{ if(customize && !e.target.closest?.("[data-dash-control]")){ e.preventDefault(); e.stopPropagation(); } }}
+      onMouseDownCapture={e=>{ if(customize && !e.target.closest?.("[data-dash-control]")){ e.preventDefault(); e.stopPropagation(); } }}
+      onClick={e=>{ if(customize){ e.preventDefault(); e.stopPropagation(); return; } if(tab) setTab(tab); }}
+      style={{
       background:view==="glass"?"rgba(255,255,255,.75)":"#fff",
       backdropFilter:view==="glass"?"blur(10px)":"none",
       border:`1px solid ${extra.danger?"#ef4444":T.border}`,
@@ -525,7 +571,7 @@ function Dashboard({ state, dispatch, setTab }) {
     }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
         <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>{title}</div>
-        {customize && <div style={{ display:"flex", gap:4, flexWrap:"wrap", alignItems:"center" }} onClick={e=>e.stopPropagation()}>
+        {customize && <div data-dash-control="true" style={{ display:"flex", gap:4, flexWrap:"wrap", alignItems:"center" }} onClick={e=>e.stopPropagation()}>
           <Btn small variant="secondary" onClick={()=>moveWidget(id,-1)}>↑</Btn>
           <Btn small variant="secondary" onClick={()=>moveWidget(id,1)}>↓</Btn>
           <select value={size} onChange={e=>setWidgetSize(id,e.target.value)} title="Card size" style={{ height:28, border:`1px solid ${T.border}`, borderRadius:6, padding:"0 6px", fontSize:11, background:"#fff" }}>
@@ -539,7 +585,9 @@ function Dashboard({ state, dispatch, setTab }) {
           <Btn small variant="danger" onClick={()=>toggleWidget(id)}>Hide</Btn>
         </div>}
       </div>
-      {children}
+      <div style={{ pointerEvents:customize?"none":"auto", opacity:customize ? .98 : 1 }}>
+        {children}
+      </div>
     </div>
   )};
   const widgets = {
@@ -568,16 +616,29 @@ function Dashboard({ state, dispatch, setTab }) {
           <option value="compact">Compact View</option>
           <option value="glass">Glass View</option>
         </select>
+        <select value={boardStyle} onChange={e=>saveDash({ dashboardBoardStyle:e.target.value })} style={{ height:36, border:`1px solid ${T.border}`, borderRadius:8, padding:"0 10px", background:"#fff", fontWeight:700 }}>
+          <option value="operations">Operations Board</option>
+          <option value="mechanic">Mechanic Focus</option>
+          <option value="manager">Manager View</option>
+          <option value="simple">Simple Clean</option>
+        </select>
         <Btn onClick={()=>setCustomize(v=>!v)}>{customize?"Done Customizing":"Customize Dashboard"}</Btn>
       </div>
     </div>
     {customize && <Card style={{ padding:14, border:`2px dashed ${T.accent}` }}>
       <div style={{ fontSize:13, fontWeight:800, marginBottom:4 }}>Dashboard customization mode is ON</div>
-      <div style={{ fontSize:12, color:T.muted, marginBottom:10 }}>Cards will not open sections while customizing. Use the size dropdown on each card to stretch it.</div>
+      <div style={{ fontSize:12, color:T.muted, marginBottom:10 }}>Navigation is locked while customizing, so clicking cards will not take you to another section. Use presets, move buttons, and size dropdowns to build the dashboard you like.</div>
+      <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>Organization presets</div>
+      <div data-dash-control="true" style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:12 }}>
+        <Btn small onClick={()=>applyDashboardPreset("operations")}>Operations Board</Btn>
+        <Btn small variant="secondary" onClick={()=>applyDashboardPreset("mechanic")}>Mechanic Focus</Btn>
+        <Btn small variant="secondary" onClick={()=>applyDashboardPreset("manager")}>Manager View</Btn>
+        <Btn small variant="secondary" onClick={()=>applyDashboardPreset("simple")}>Simple Clean</Btn>
+      </div>
       <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>Add / remove dashboard widgets</div>
-      <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>{fullLayout.map(id=><Btn key={id} small variant={hidden.includes(id)?"secondary":"primary"} onClick={()=>toggleWidget(id)}>{hidden.includes(id)?"Add":"Remove"} {id}</Btn>)}</div>
+      <div data-dash-control="true" style={{ display:"flex", flexWrap:"wrap", gap:8 }}>{fullLayout.map(id=><Btn key={id} small variant={hidden.includes(id)?"secondary":"primary"} onClick={()=>toggleWidget(id)}>{hidden.includes(id)?"Add":"Remove"} {id}</Btn>)}</div>
     </Card>}
-    <div style={{ display:"grid", gridTemplateColumns:view==="cards"?"repeat(4,1fr)":"1fr", gap:10 }}>
+    <div style={{ display:"grid", gridTemplateColumns:getBoardColumns(), gap:10, alignItems:"stretch" }}>
       {fullLayout.filter(id=>!hidden.includes(id)).map(id=>widgets[id])}
     </div>
   </div>;
