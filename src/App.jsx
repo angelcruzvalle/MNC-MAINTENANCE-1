@@ -839,7 +839,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const openAdd = () => {
     setEqSearch("");
-    setForm({ status:"Open", equipmentStatus:"Fully Operational", priority:"Medium", created:today(), due:today(), tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], mechanicNotes:"", faultEnabled:false, faultDescription:"", repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"" });
+    setForm({ status:"Open", equipmentStatus:"Fully Operational", priority:"Medium", created:today(), due:today(), tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], mechanicNotes:"", faultEnabled:true, faultDescription:"", repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"" });
     setModal("pick"); /* Go straight to equipment — type chosen in the form */
   };
 
@@ -894,8 +894,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   };
 
   const save = (isEdit) => {
-    if(!form.title)     return alert("Title required.");
     if(!form.equipment) return alert("Equipment required.");
+    if(!(form.faultDescription||"").trim()) return alert("Fault Description required.");
     const prevWO = isEdit ? state.workOrders.find(w=>w.id===form.id) : null;
 
     /* Figure out inventory consumption delta */
@@ -912,15 +912,26 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
     const partsTotal = newParts.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
     if(isEdit) {
-      dispatch({type:"UPDATE_WO", payload:{...form, partsCost:partsTotal}});
+      dispatch({type:"UPDATE_WO", payload:{...form, title:form.faultDescription||form.woType||"Work Order", faultEnabled:true, partsCost:partsTotal}});
     } else {
-      dispatch({type:"ADD_WO", payload:{...form, id:genWOId(form.equipment), partsCost:partsTotal}});
+      dispatch({type:"ADD_WO", payload:{...form, title:form.faultDescription||form.woType||"Work Order", faultEnabled:true, id:genWOId(form.equipment), partsCost:partsTotal}});
     }
     setModal(null);
     setDetailWO(null);
   };
 
   const del = id => { if(confirm("Delete this work order?")){ dispatch({type:"DELETE_WO",payload:id}); setModal(null); setDetailWO(null); }};
+
+  const quickUpdateWO = (wo, changes) => {
+    const nextStatus = changes.status || wo.status || "Open";
+    const next = {
+      ...wo,
+      ...changes,
+      equipmentStatus: nextStatus === "Completed" ? "Fully Operational" : (changes.equipmentStatus || wo.equipmentStatus || "Fully Operational"),
+      completed: nextStatus === "Completed" ? (wo.completed || today()) : (changes.status && changes.status !== "Completed" ? "" : wo.completed),
+    };
+    dispatch({ type:"UPDATE_WO", payload:next });
+  };
 
   /* ---- Print Work Order ---- */
   const printWO = (wo) => {
@@ -934,7 +945,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const companyPhone = ws.phone || gs.phone || "";
     const companyEmail = ws.email || gs.email || "";
     const companyAddr  = `${gs.address||""} ${gs.cityState||""}`.trim();
-    const woTypeLabel = wo.woType ? `${wo.woType} Work Order` : (ws.headerText || "MAINTENANCE WORK ORDER");
+    const woTypeLabel = ws.headerText || "MAINTENANCE WORK ORDER";
     const partsUsed  = wo.partsUsed || [];
     const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
     const laborTotal = +(wo.laborCost||0);
@@ -1016,7 +1027,6 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         <div class="cell s2"><div class="lbl">Assigned Mechanic</div><div class="val">${wo.tech||"&nbsp;"}</div></div>
         <div class="cell"><div class="lbl">Priority</div><div class="val"><span class="${wo.priority==="High"?"phi":wo.priority==="Medium"?"pmd":"plo"}">${wo.priority||"Low"}</span></div></div>
       </div>
-      ${(wo.woType && wo.woType!=="Repair")||wo.serviceInterval?`<div class="row c22"><div class="cell"><div class="lbl">Work Order Type</div><div class="val">${wo.woType||"Service"} Work Order</div></div><div class="cell"><div class="lbl">${wo.woType==="Inspection"?"Inspection Interval":"Service Interval"}</div><div class="val">${wo.serviceInterval||"N/A"}</div></div></div>`:wo.woType?`<div class="row c2"><div class="cell"><div class="lbl">Work Order Type</div><div class="val">${wo.woType} Work Order</div></div><div class="cell"><div class="lbl">Work Order Title</div><div class="val">${wo.title||"&nbsp;"}</div></div></div>`:""}
       <div class="sec">
         <div class="sh">Equipment Information</div>
         <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr;border:none">
@@ -1026,7 +1036,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div class="cell"><div class="lbl">Serial # / EIL #</div><div class="val mn">${eq?.serial||"&nbsp;"} / ${eq?.eilNumber||"&nbsp;"}</div></div>
         </div>
       </div>
-      ${wo.faultEnabled ? `<div class="sec"><div class="sh">Fault Description</div><div class="sb" style="min-height:60px">${wo.faultDescription||"&nbsp;"}</div></div>` : ""}
+      <div class="sec"><div class="sh">Fault Description</div><div class="sb" style="min-height:60px">${wo.faultDescription||"&nbsp;"}</div></div>
       <div class="sec"><div class="sh">Work Description &amp; Work Performed</div><div class="sb">${wo.description||"&nbsp;"}</div></div>
       ${typeSpecificPrint}
       <div class="bg">
@@ -1094,7 +1104,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               const active = form.woType===t.id;
               return (
                 <button key={t.id} type="button"
-                  onClick={()=>setForm(f=>({ ...f, woType:t.id, serviceInterval:"", title:buildTitle(t.id,"") }))}
+                  onClick={()=>setForm(f=>({ ...f, woType:t.id, serviceInterval:"" }))}
                   style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:6, padding:"12px 8px", borderRadius:8, border:`2px solid ${active?t.color:T.border}`, background:active?t.bg:"#fff", cursor:"pointer", transition:"all .15s" }}>
                   <span style={{ fontSize:22 }}>{t.icon}</span>
                   <span style={{ fontFamily:T.sans, fontSize:12, fontWeight:active?700:500, color:active?t.color:T.subtext, textAlign:"center", lineHeight:1.3 }}>{t.id}</span>
@@ -1115,7 +1125,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                 const isSpecial = interval.startsWith("New Equipment");
                 return (
                   <button key={interval} type="button"
-                    onClick={()=>setForm(f=>({...f, serviceInterval:interval, title:buildTitle(f.woType,interval)}))}
+                    onClick={()=>setForm(f=>({...f, serviceInterval:interval}))}
                     style={{ padding:"6px 13px", borderRadius:6, border:`1px solid ${active?(isSpecial?"#7c3aed":T.accent):T.border}`, background:active?(isSpecial?"#f5f3ff":T.accentLt):"#fff", color:active?(isSpecial?"#7c3aed":T.accent):T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:active?700:400 }}>
                     {isSpecial ? "★ " : ""}{interval}
                   </button>
@@ -1125,18 +1135,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           </div>
         )}
 
-        <Field label={form.woType==="Repair" ? "Repair Work Order Title" : "Work Order Title"}>
-          <input style={inp} value={form.title||""} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder={form.woType==="Repair"?"Example: Hydraulic leak at lift cylinder":needsInterval?"Select interval above to auto-fill...":"Enter work order title..."} />
-        </Field>
-
-        <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.grayLt }}>
-          <label style={{ display:"flex", alignItems:"center", gap:10, fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:form.faultEnabled?8:0 }}>
-            <input type="checkbox" checked={!!form.faultEnabled} onChange={e=>setForm(f=>({...f,faultEnabled:e.target.checked,faultDescription:e.target.checked?f.faultDescription:""}))} />
-            Add Fault Description to this Work Order
-          </label>
-          {form.faultEnabled && (
-            <textarea style={{ ...inp, minHeight:90, resize:"vertical", background:"#fff" }} value={form.faultDescription||""} onChange={e=>setForm(f=>({...f,faultDescription:e.target.value}))} placeholder="Describe the fault, complaint, symptom, or failure that needs to appear on the work order and reports..." />
-          )}
+        <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:"#fff" }}>
+          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:6 }}>Fault Description <span style={{ color:T.red }}>*</span></label>
+          <textarea style={{ ...inp, minHeight:90, resize:"vertical", background:"#fff" }} value={form.faultDescription||""} onChange={e=>setForm(f=>({...f,faultEnabled:true,faultDescription:e.target.value}))} placeholder="Describe the fault, complaint, symptom, or failure..." />
         </div>
 
         {form.woType==="Service" && (
@@ -1221,17 +1222,6 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <input style={inp} type="number" value={form.laborCost||0} onChange={e=>setForm(f=>({...f,laborCost:e.target.value}))} />
         </Field>
 
-        <Field label="Status" half>
-          <select style={sel} value={form.status||"Open"} onChange={e=>setForm(f=>({...f,status:e.target.value}))}>
-            {["Open","In Progress","Awaiting Parts","On Hold","Completed"].map(s=><option key={s}>{s}</option>)}
-          </select>
-        </Field>
-        <Field label="Equipment Operational Status" half>
-          <select style={sel} value={form.equipmentStatus||(form.status==="Completed"?"Fully Operational":"Fully Operational")} onChange={e=>setForm(f=>({...f,equipmentStatus:e.target.value}))}>
-            {["Fully Operational","Operational with Deficiencies","Out of Service / Deadline"].map(s=><option key={s}>{s}</option>)}
-          </select>
-          <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:4 }}>This updates the selected equipment status. Completed work orders set equipment back to Fully Operational.</div>
-        </Field>
         <Field label="Priority" half>
           <select style={sel} value={form.priority||"Medium"} onChange={e=>setForm(f=>({...f,priority:e.target.value}))}>
             {["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}
@@ -1531,7 +1521,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-              {["WO #","Type","Title","Equipment","Mechanic","Priority","Status","Due","Cost",""].map(h=>(
+              {["WO #","Type","Fault","Equipment","Mechanic","Priority","Status","Due","Cost",""].map(h=>(
                 <th key={h} style={{ padding:"10px 14px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4, whiteSpace:"nowrap" }}>{h}</th>
               ))}
             </tr>
@@ -1552,7 +1542,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                     {typeInfo ? <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"2px 8px", borderRadius:4, background:typeInfo.bg, color:typeInfo.color, fontSize:11, fontWeight:600 }}>{typeInfo.icon} {typeInfo.id}</span> : <span style={{ color:T.muted }}>—</span>}
                   </td>
                   <td style={{ padding:"11px 14px" }}>
-                    <div style={{ fontWeight:500, color:T.text }}>{wo.title}</div>
+                    <div style={{ fontWeight:500, color:T.text }}>{wo.faultDescription || wo.title || "—"}</div>
                     {wo.serviceInterval && <div style={{ fontSize:11, color:T.accent, marginTop:1 }}>{wo.serviceInterval}</div>}
                   </td>
                   <td style={{ padding:"11px 14px", color:T.subtext, whiteSpace:"nowrap" }}>
@@ -1564,7 +1554,13 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                   <td style={{ padding:"11px 14px" }}><Badge label={wo.status} /></td>
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:wo.due&&wo.due<today()&&wo.status!=="Completed"?T.red:T.subtext, whiteSpace:"nowrap" }}>{wo.due}</td>
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:T.subtext, whiteSpace:"nowrap" }}>{total>0?`$${total.toFixed(0)}`:"—"}</td>
-                  <td style={{ padding:"4px 10px", whiteSpace:"nowrap", display:"flex", gap:6 }} onClick={e=>e.stopPropagation()}>
+                  <td style={{ padding:"4px 10px", whiteSpace:"nowrap", display:"flex", gap:6, alignItems:"center" }} onClick={e=>e.stopPropagation()}>
+                    <select title="Change Work Order Status" value={wo.status||"Open"} onChange={e=>quickUpdateWO(wo,{status:e.target.value})} style={{ ...sel, width:118, padding:"5px 7px", fontSize:11 }}>
+                      {["Open","In Progress","Awaiting Parts","On Hold","Completed"].map(s=><option key={s}>{s}</option>)}
+                    </select>
+                    <select title="Change Equipment Status" value={wo.status==="Completed"?"Fully Operational":(wo.equipmentStatus||eq?.status||"Fully Operational")} onChange={e=>quickUpdateWO(wo,{equipmentStatus:e.target.value})} disabled={wo.status==="Completed"} style={{ ...sel, width:144, padding:"5px 7px", fontSize:11, opacity:wo.status==="Completed"?.65:1 }}>
+                      {["Fully Operational","Operational with Deficiencies","Out of Service / Deadline"].map(s=><option key={s}>{s}</option>)}
+                    </select>
                     <button
                       title="Edit Work Order"
                       onClick={e=>{ e.stopPropagation(); openEdit(wo); }}
@@ -2758,7 +2754,7 @@ function PM({ state, dispatch }) {
         created:today(), due:sch.nextDueDate||today(),
         tech:"", laborHours:0, laborCost:0, partsCost:0,
         description:`Auto-generated: ${sch.task}`,
-        mechanicNotes:"", faultEnabled:false, faultDescription:"", partsUsed:[], scheduleId:sch.id,
+        mechanicNotes:"", faultEnabled:true, faultDescription:"", partsUsed:[], scheduleId:sch.id,
       }});
       const logs    = (state.usageLogs||[]).filter(l=>l.equipmentId===sch.equipmentId);
       const curUsage = sch.usageType==="mileage"
