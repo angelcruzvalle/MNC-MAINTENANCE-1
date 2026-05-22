@@ -53,9 +53,20 @@ function reducer(state, { type, payload }) {
   switch(type) {
     case "READ_NOTIF":    return { ...state, notifications: state.notifications.map(n => n.id===payload ? {...n,read:true} : n) };
     case "READ_ALL":      return { ...state, notifications: state.notifications.map(n => ({...n,read:true})) };
-    case "ADD_WO":        return { ...state, workOrders: [payload,...state.workOrders], notifications:[{id:`N${Date.now()}`,type:"wo",msg:`Work Order ${payload.id} created`,time:"Just now",read:false},...state.notifications] };
+    case "ADD_WO": {
+      const equipmentStatus = payload.status==="Completed" ? "Fully Operational" : (payload.equipmentStatus || null);
+      const equipment = equipmentStatus
+        ? state.equipment.map(e => e.id===payload.equipment ? { ...e, status:equipmentStatus } : e)
+        : state.equipment;
+      return { ...state, equipment, workOrders: [payload,...state.workOrders], notifications:[{id:`N${Date.now()}`,type:"wo",msg:`Work Order ${payload.id} created`,time:"Just now",read:false},...state.notifications] };
+    }
     case "UPDATE_WO": {
-      const updated = state.workOrders.map(w => w.id===payload.id ? payload : w);
+      const payloadWithStatus = payload.status==="Completed" ? { ...payload, equipmentStatus:"Fully Operational" } : payload;
+      const updated = state.workOrders.map(w => w.id===payload.id ? payloadWithStatus : w);
+      const equipmentStatus = payloadWithStatus.equipmentStatus || null;
+      const equipment = equipmentStatus
+        ? state.equipment.map(e => e.id===payloadWithStatus.equipment ? { ...e, status:equipmentStatus } : e)
+        : state.equipment;
       /* If WO is being completed and is linked to a PM schedule, advance the schedule */
       if(payload.status==="Completed" && payload.scheduleId) {
         const sch = (state.pmSchedules||[]).find(s=>s.id===payload.scheduleId);
@@ -68,10 +79,10 @@ function reducer(state, { type, payload }) {
             nextDueDate: sch.timeInterval ? (() => { const d=new Date(payload.completed||new Date()); if(sch.timeUnit==="days")d.setDate(d.getDate()+(+sch.timeInterval)); if(sch.timeUnit==="weeks")d.setDate(d.getDate()+(+sch.timeInterval)*7); if(sch.timeUnit==="months")d.setMonth(d.getMonth()+(+sch.timeInterval)); if(sch.timeUnit==="years")d.setFullYear(d.getFullYear()+(+sch.timeInterval)); return d.toISOString().split("T")[0]; })() : sch.nextDueDate,
             nextDueUsage: sch.usageInterval ? curU+(+sch.usageInterval) : sch.nextDueUsage,
           };
-          return { ...state, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
+          return { ...state, equipment, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
         }
       }
-      return { ...state, workOrders: updated };
+      return { ...state, equipment, workOrders: updated };
     }
     case "DELETE_WO":     return { ...state, workOrders: state.workOrders.filter(w => w.id!==payload) };
     case "ADD_EQ":        return { ...state, equipment: [payload,...state.equipment] };
@@ -828,12 +839,12 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const openAdd = () => {
     setEqSearch("");
-    setForm({ status:"Open", priority:"Medium", created:today(), due:today(), tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], mechanicNotes:"", faultEnabled:false, faultDescription:"", repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"" });
+    setForm({ status:"Open", equipmentStatus:"Fully Operational", priority:"Medium", created:today(), due:today(), tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], mechanicNotes:"", faultEnabled:false, faultDescription:"", repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"" });
     setModal("pick"); /* Go straight to equipment — type chosen in the form */
   };
 
   const pickType = (typeId) => { setForm(f=>({...f, woType:typeId, title:buildTitle(typeId,"")})); setModal("pick"); };
-  const pickEquipment = (item) => { setForm(f=>({...f, equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||null, parentId:item.parentId||null})); setModal("form"); };
+  const pickEquipment = (item) => { const eq = state.equipment.find(e=>e.id===item.id); setForm(f=>({...f, equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||null, parentId:item.parentId||null, equipmentStatus:eq?.status||"Fully Operational"})); setModal("form"); };
 
   /* Click row to open the editable Work Order form */
   const openEdit = (wo) => {
@@ -917,8 +928,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const gs = state.settings || {};
     const eq = state.equipment.find(e=>e.id===wo.equipment);
     /* Pull company info from WO settings first, then global settings */
-    const companyName = ws.companyName || gs.companyName || "Maintenance Department";
-    const companyLogo = ws.logo || gs.logo || "";
+    const companyName = gs.companyName || "Maintenance Department";
+    const companyLogo = gs.logo || "";
     const companyDept = ws.department || gs.department || "";
     const companyPhone = ws.phone || gs.phone || "";
     const companyEmail = ws.email || gs.email || "";
@@ -936,6 +947,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       return "";
     })();
     const woCsv = rowsToDataUri(woRows);
+    const printedDate = new Date().toLocaleDateString();
+    const assignedMechanicName = wo.tech || "";
 
     const win = window.open("","_blank","width=900,height=700");
     if(!win){ alert("Please allow pop-ups to print work orders."); return; }
@@ -1039,10 +1052,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       </div>
       ${ws.footerText?`<div class="sec"><div class="sh">Remarks</div><div class="sb" style="min-height:28px;font-size:10px">${ws.footerText}</div></div>`:""}
       <div class="sigs">
-        <div class="sc"><div class="sw"><div class="sl"></div><div class="slb">Mechanic / Supervisor Signature</div></div><div class="sw"><div class="sl"></div><div class="slb">Print Name</div></div></div>
-        <div class="sc"><div class="sw"><div class="sl"></div><div class="slb">Date</div></div></div>
+        <div class="sc"><div class="sw"><div class="sl"></div><div class="slb">Mechanic Signature</div></div><div class="sw"><div class="sl" style="height:auto;min-height:24px;padding:5px 0;font-size:12px;font-weight:700">${assignedMechanicName||"&nbsp;"}</div><div class="slb">Printed Name</div></div></div>
+        <div class="sc"><div class="sw"><div class="sl" style="height:auto;min-height:24px;padding:5px 0;font-size:12px;font-weight:700">${printedDate}</div><div class="slb">Date Printed</div></div></div>
       </div>
-      <div class="ftr"><span>${companyName} - Maintenance Dept.</span><span>WO# ${wo.id} | ${new Date().toLocaleDateString()}</span></div>
+      <div class="ftr"><span>${companyName} - Maintenance Dept.</span><span>WO# ${wo.id} | ${printedDate}</span></div>
     </div>
     <div class="pbtn">
       <button class="bpr" onclick="window.print()">Print / Save PDF</button>
@@ -1213,6 +1226,12 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             {["Open","In Progress","Awaiting Parts","On Hold","Completed"].map(s=><option key={s}>{s}</option>)}
           </select>
         </Field>
+        <Field label="Equipment Operational Status" half>
+          <select style={sel} value={form.equipmentStatus||(form.status==="Completed"?"Fully Operational":"Fully Operational")} onChange={e=>setForm(f=>({...f,equipmentStatus:e.target.value}))}>
+            {["Fully Operational","Operational with Deficiencies","Out of Service / Deadline"].map(s=><option key={s}>{s}</option>)}
+          </select>
+          <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:4 }}>This updates the selected equipment status. Completed work orders set equipment back to Fully Operational.</div>
+        </Field>
         <Field label="Priority" half>
           <select style={sel} value={form.priority||"Medium"} onChange={e=>setForm(f=>({...f,priority:e.target.value}))}>
             {["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}
@@ -1321,7 +1340,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
     const completeWO = () => {
       const completedDate = today();
-      const updated = { ...wo, status:"Completed", completed:completedDate };
+      const updated = { ...wo, status:"Completed", equipmentStatus:"Fully Operational", completed:completedDate };
       dispatch({ type:"UPDATE_WO", payload:updated });
       setModal(null); setDetailWO(null);
       if(confirm("Work order completed. Would you like to print it?")) printWO(updated);
@@ -3344,9 +3363,7 @@ function UserProfile({ state, dispatch, onClose }) {
 function WOSettings({ state, dispatch, onClose }) {
   const s = state.woSettings || {};
   const [form, setForm] = useState({
-    companyName: s.companyName||"National Cemetery Administration",
     headerText:  s.headerText||"Maintenance Work Order",
-    logo:        s.logo||"",
     showEquipment: s.showEquipment!==false,
     showTech:      s.showTech!==false,
     showDates:     s.showDates!==false,
@@ -3374,31 +3391,20 @@ function WOSettings({ state, dispatch, onClose }) {
     reader.readAsDataURL(file);
   };
 
-  const save = () => { dispatch({ type:"UPDATE_WO_SETTINGS", payload:form }); onClose(); };
+  const save = () => { const { companyName, logo, ...cleanForm } = form; dispatch({ type:"UPDATE_WO_SETTINGS", payload:cleanForm }); onClose(); };
 
   return (
     <Modal title="Work Order Settings" onClose={onClose}>
       <div style={{ display:"flex", flexDirection:"column", gap:14, marginBottom:14 }}>
-        <Field label="Company / Organization Name">
-          <input style={inp} value={form.companyName} onChange={F("companyName")} />
-        </Field>
+        <div style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt, fontFamily:T.sans, fontSize:12, color:T.subtext }}>
+          Company / Organization name and logo are controlled in main Settings.
+        </div>
         <Field label="Work Order Header Title">
           <input style={inp} value={form.headerText} onChange={F("headerText")} />
         </Field>
         <Field label="Footer / Notes Text">
           <textarea style={{ ...inp, minHeight:56, resize:"vertical" }} value={form.footerText} onChange={F("footerText")} placeholder="e.g. Authorized signatures required…" />
         </Field>
-        <div>
-          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:6 }}>Logo</label>
-          <div style={{ display:"flex", gap:12, alignItems:"center" }}>
-            {form.logo && <img src={form.logo} alt="logo" style={{ height:48, objectFit:"contain", border:`1px solid ${T.border}`, borderRadius:6, padding:4 }} />}
-            <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.accent, cursor:"pointer", padding:"7px 14px", border:`1px solid ${T.accent}`, borderRadius:6 }}>
-              📁 Upload Logo
-              <input type="file" accept="image/*" onChange={handleLogo} style={{ display:"none" }} />
-            </label>
-            {form.logo && <button onClick={()=>setForm(f=>({...f,logo:""}))} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12 }}>Remove</button>}
-          </div>
-        </div>
       </div>
       <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:8 }}>Fields to show on printed Work Order</div>
       <Toggle label="Equipment" k="showEquipment" />
