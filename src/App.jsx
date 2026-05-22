@@ -1135,6 +1135,28 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           </div>
         )}
 
+        <Field label="Equipment Status" half>
+          <select style={sel} value={form.equipmentStatus||"Fully Operational"} onChange={e=>setForm(f=>({...f,equipmentStatus:e.target.value}))}>
+            {["Fully Operational","Operational with Deficiencies","Out of Service / Deadline"].map(s=><option key={s}>{s}</option>)}
+          </select>
+        </Field>
+
+        <Field label="Priority" half>
+          <select style={sel} value={form.priority||"Medium"} onChange={e=>setForm(f=>({...f,priority:e.target.value}))}>
+            {["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}
+          </select>
+        </Field>
+
+        <Field label="Date Created" half>
+          <input style={inp} type="date" value={form.created||""} onChange={e=>setForm(f=>({...f,created:e.target.value}))} />
+        </Field>
+        <Field label="Due Date" half>
+          <input style={inp} type="date" value={form.due||""} onChange={e=>setForm(f=>({...f,due:e.target.value}))} />
+        </Field>
+        <Field label="Date Completed" half>
+          <input style={inp} type="date" value={form.completed||""} onChange={e=>setForm(f=>({...f,completed:e.target.value}))} />
+        </Field>
+
         <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:"#fff" }}>
           <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:6 }}>Fault Description <span style={{ color:T.red }}>*</span></label>
           <textarea style={{ ...inp, minHeight:90, resize:"vertical", background:"#fff" }} value={form.faultDescription||""} onChange={e=>setForm(f=>({...f,faultEnabled:true,faultDescription:e.target.value}))} placeholder="Describe the fault, complaint, symptom, or failure..." />
@@ -1182,61 +1204,6 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           </TypeSection>
         )}
 
-        {/* Mechanic inline */}
-        <div style={{ gridColumn:"span 2", marginBottom:0 }}>
-          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Mechanic</label>
-          <div style={{ display:"flex", gap:8, alignItems:"flex-start", flexWrap:"wrap" }}>
-            <select style={{ ...sel, flex:1, minWidth:180 }} value={form.techId||""} onChange={e=>{ if(e.target.value==="__new__"){ setShowNewTech(true); } else { selectTech(e.target.value); setShowNewTech(false); } }}>
-              <option value="">-- Select Mechanic --</option>
-              {technicians.map(t=><option key={t.id} value={t.id}>{t.name}{t.laborRate?` ($${t.laborRate}/hr)`:""}</option>)}
-              <option value="__new__">+ Add New Mechanic...</option>
-            </select>
-            {form.techId && <div style={{ fontFamily:T.mono, fontSize:11, color:T.muted, paddingTop:8 }}>Rate: ${technicians.find(t=>t.id===form.techId)?.laborRate||0}/hr</div>}
-          </div>
-          {showNewTech && (
-            <div style={{ marginTop:10, background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:8, padding:"12px 14px", display:"grid", gridTemplateColumns:"1fr 1fr 1fr auto", gap:8, alignItems:"flex-end" }}>
-              <div>
-                <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, display:"block", marginBottom:4 }}>Full Name</label>
-                <input style={inp} value={newTech.name} onChange={e=>setNewTech(n=>({...n,name:e.target.value}))} placeholder="First Last" />
-              </div>
-              <div>
-                <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, display:"block", marginBottom:4 }}>Position</label>
-                <input style={inp} value={newTech.position} onChange={e=>setNewTech(n=>({...n,position:e.target.value}))} placeholder="Mechanic" />
-              </div>
-              <div>
-                <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, display:"block", marginBottom:4 }}>Labor Rate ($/hr)</label>
-                <input style={inp} type="number" value={newTech.laborRate} onChange={e=>setNewTech(n=>({...n,laborRate:e.target.value}))} placeholder="45" />
-              </div>
-              <div style={{ display:"flex", gap:6 }}>
-                <Btn small onClick={addNewTech}>Save</Btn>
-                <Btn small variant="secondary" onClick={()=>setShowNewTech(false)}>X</Btn>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <Field label="Labor Hours" half>
-          <input style={inp} type="number" value={form.laborHours||0} onChange={e=>{ const hrs=+e.target.value; const rate=techObj?.laborRate||0; setForm(f=>({...f,laborHours:hrs,laborCost:rate?hrs*rate:f.laborCost})); }} />
-        </Field>
-        <Field label="Labor Cost ($)" half>
-          <input style={inp} type="number" value={form.laborCost||0} onChange={e=>setForm(f=>({...f,laborCost:e.target.value}))} />
-        </Field>
-
-        <Field label="Priority" half>
-          <select style={sel} value={form.priority||"Medium"} onChange={e=>setForm(f=>({...f,priority:e.target.value}))}>
-            {["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}
-          </select>
-        </Field>
-        <Field label="Date Created" half>
-          <input style={inp} type="date" value={form.created||""} onChange={e=>setForm(f=>({...f,created:e.target.value}))} />
-        </Field>
-        <Field label="Due Date" half>
-          <input style={inp} type="date" value={form.due||""} onChange={e=>setForm(f=>({...f,due:e.target.value}))} />
-        </Field>
-        <Field label="Date Completed" half>
-          <input style={inp} type="date" value={form.completed||""} onChange={e=>setForm(f=>({...f,completed:e.target.value}))} />
-        </Field>
-
         <Field label="Work Description / Problem Reported">
           <textarea style={{ ...inp, minHeight:110, resize:"vertical" }} value={form.description||""} onChange={e=>setForm(f=>({...f,description:e.target.value}))} />
         </Field>
@@ -1245,9 +1212,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <textarea style={{ ...inp, minHeight:110, resize:"vertical" }} value={form.mechanicNotes||""} onChange={e=>setForm(f=>({...f,mechanicNotes:e.target.value}))} placeholder="Mechanic observations, steps taken, findings..." />
         </Field>
 
-        {/* Parts and Labor Summary */}
+        {/* Parts */}
         <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.grayLt }}>
-          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:8 }}>Parts and Labor Summary</label>
+          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:8 }}>Parts</label>
           {(form.partsUsed||[]).map((p,idx)=>(
             <div key={idx}>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 64px 90px auto auto", gap:8, marginBottom:4, alignItems:"center" }}>
@@ -1313,6 +1280,49 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             + Add Part
           </button>
         </div>
+
+        {/* Mechanic inline */}
+        <div style={{ gridColumn:"span 2", marginBottom:0 }}>
+          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Mechanic</label>
+          <div style={{ display:"flex", gap:8, alignItems:"flex-start", flexWrap:"wrap" }}>
+            <select style={{ ...sel, flex:1, minWidth:180 }} value={form.techId||""} onChange={e=>{ if(e.target.value==="__new__"){ setShowNewTech(true); } else { selectTech(e.target.value); setShowNewTech(false); } }}>
+              <option value="">-- Select Mechanic --</option>
+              {technicians.map(t=><option key={t.id} value={t.id}>{t.name}{t.laborRate?` ($${t.laborRate}/hr)`:""}</option>)}
+              <option value="__new__">+ Add New Mechanic...</option>
+            </select>
+            {form.techId && <div style={{ fontFamily:T.mono, fontSize:11, color:T.muted, paddingTop:8 }}>Rate: ${technicians.find(t=>t.id===form.techId)?.laborRate||0}/hr</div>}
+          </div>
+          {showNewTech && (
+            <div style={{ marginTop:10, background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:8, padding:"12px 14px", display:"grid", gridTemplateColumns:"1fr 1fr 1fr auto", gap:8, alignItems:"flex-end" }}>
+              <div>
+                <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, display:"block", marginBottom:4 }}>Full Name</label>
+                <input style={inp} value={newTech.name} onChange={e=>setNewTech(n=>({...n,name:e.target.value}))} placeholder="First Last" />
+              </div>
+              <div>
+                <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, display:"block", marginBottom:4 }}>Position</label>
+                <input style={inp} value={newTech.position} onChange={e=>setNewTech(n=>({...n,position:e.target.value}))} placeholder="Mechanic" />
+              </div>
+              <div>
+                <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, display:"block", marginBottom:4 }}>Labor Rate ($/hr)</label>
+                <input style={inp} type="number" value={newTech.laborRate} onChange={e=>setNewTech(n=>({...n,laborRate:e.target.value}))} placeholder="45" />
+              </div>
+              <div style={{ display:"flex", gap:6 }}>
+                <Btn small onClick={addNewTech}>Save</Btn>
+                <Btn small variant="secondary" onClick={()=>setShowNewTech(false)}>X</Btn>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <Field label="Labor Hours" half>
+          <input style={inp} type="number" value={form.laborHours||0} onChange={e=>{ const hrs=+e.target.value; const rate=techObj?.laborRate||0; setForm(f=>({...f,laborHours:hrs,laborCost:rate?hrs*rate:f.laborCost})); }} />
+        </Field>
+        <Field label="Labor Cost ($)" half>
+          <input style={inp} type="number" value={form.laborCost||0} onChange={e=>setForm(f=>({...f,laborCost:e.target.value}))} />
+        </Field>
+
+
+
 
       </div>
     );
@@ -1533,10 +1543,14 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               const partsTotal = (wo.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
               const total = (+wo.laborCost||0)+partsTotal+(+wo.partsCost||0);
               const typeInfo = WO_TYPES.find(t=>t.id===wo.woType);
+              const rowStatus = wo.status==="Completed" ? "Fully Operational" : (wo.equipmentStatus || eq?.status || "Fully Operational");
+              const rowBg = rowStatus==="Out of Service / Deadline" ? "#fff5f5" : rowStatus==="Operational with Deficiencies" ? "#fffbeb" : (i%2===0?"#fff":T.grayLt);
+              const rowHover = rowStatus==="Out of Service / Deadline" ? "#fee2e2" : rowStatus==="Operational with Deficiencies" ? "#fef3c7" : T.accentLt;
+              const rowBorder = rowStatus==="Out of Service / Deadline" ? "4px solid #ef4444" : rowStatus==="Operational with Deficiencies" ? "4px solid #f59e0b" : "4px solid transparent";
               return (
-                <tr key={wo.id} onClick={()=>openEdit(wo)} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer", transition:"background .12s" }}
-                  onMouseEnter={e=>e.currentTarget.style.background=T.accentLt}
-                  onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"#fff":T.grayLt}>
+                <tr key={wo.id} onClick={()=>openEdit(wo)} style={{ borderBottom:`1px solid ${T.border}`, borderLeft:rowBorder, background:rowBg, cursor:"pointer", transition:"background .12s" }}
+                  onMouseEnter={e=>e.currentTarget.style.background=rowHover}
+                  onMouseLeave={e=>e.currentTarget.style.background=rowBg}>
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:11, color:T.muted, whiteSpace:"nowrap" }}>{wo.id}</td>
                   <td style={{ padding:"11px 14px" }}>
                     {typeInfo ? <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"2px 8px", borderRadius:4, background:typeInfo.bg, color:typeInfo.color, fontSize:11, fontWeight:600 }}>{typeInfo.icon} {typeInfo.id}</span> : <span style={{ color:T.muted }}>—</span>}
