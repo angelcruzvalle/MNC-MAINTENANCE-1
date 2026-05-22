@@ -494,7 +494,7 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
 
 /* DASHBOARD */
 
-function Dashboard({ state, dispatch, setTab }) {
+function Dashboard({ state, dispatch, setTab, onSettings }) {
   const { workOrders:wos=[], equipment:eqs=[], preventiveMaintenance:pms=[], parts=[] } = state;
   const settings = state.settings || {};
   const today_s = today();
@@ -581,8 +581,8 @@ function Dashboard({ state, dispatch, setTab }) {
     return { gridColumn:"1 / -1", minHeight:245 };
   };
 
-  const ActionBtn = ({ icon, label, tab, accent=T.accent }) => (
-    <button onClick={()=>go(tab)} disabled={customize} style={{ display:"flex", alignItems:"center", gap:10, border:`1px solid ${T.border}`, background:"#fff", borderRadius:16, padding:"13px 14px", cursor:customize?"default":"pointer", opacity:customize ? .85 : 1, textAlign:"left", boxShadow:"0 8px 20px rgba(15,23,42,.06)" }}>
+  const ActionBtn = ({ icon, label, tab, accent=T.accent, onClick }) => (
+    <button onClick={()=>{ if(customize) return; if(onClick) onClick(); else go(tab); }} disabled={customize} style={{ display:"flex", alignItems:"center", gap:10, border:`1px solid ${T.border}`, background:"#fff", borderRadius:16, padding:"13px 14px", cursor:customize?"default":"pointer", opacity:customize ? .85 : 1, textAlign:"left", boxShadow:"0 8px 20px rgba(15,23,42,.06)" }}>
       <span style={{ width:34, height:34, borderRadius:12, background:accent+"18", color:accent, display:"grid", placeItems:"center", fontSize:17 }}>{icon}</span>
       <span style={{ display:"flex", flexDirection:"column", lineHeight:1.15 }}><b style={{ fontSize:13 }}>{label}</b><small style={{ color:T.muted, marginTop:3 }}>Open</small></span>
     </button>
@@ -600,8 +600,35 @@ function Dashboard({ state, dispatch, setTab }) {
       {badge && <span style={{ alignSelf:"center", border:`1px solid ${color}`, color, borderRadius:999, padding:"3px 8px", fontSize:11, fontWeight:900, whiteSpace:"nowrap" }}>{badge}</span>}
     </button>
   );
-  const Widget = ({ id, title, subtitle, children, accent=T.accent }) => (
-    <Card style={{ ...sizeStyle(id), padding:0, overflow:"hidden", borderRadius:22, border:`1px solid ${T.border}`, background:"#fff", boxShadow:"0 12px 30px rgba(15,23,42,.08)", position:"relative" }}>
+
+  const cardHidden = settings.dashboardCardHidden || {};
+  const itemCatalog = {
+    focus:{ quick:"Quick actions", metrics:"Status summary" },
+    today:{ plan:"Daily game plan" },
+    workorders:{ metrics:"Work order counts", list:"Work order list" },
+    pm:{ metrics:"PM counts", list:"PM due list" },
+    equipment:{ metrics:"Equipment counts", list:"Equipment alert list" },
+    inventory:{ metrics:"Inventory counts", list:"Low stock list" },
+    activity:{ list:"Recent activity list" },
+    costs:{ metrics:"Cost metrics", note:"Export reminder" }
+  };
+  const isItemHidden = (card,item) => (cardHidden[card] || []).includes(item);
+  const setItemHidden = (card,item,hide=true) => {
+    const current = cardHidden[card] || [];
+    const nextList = hide ? [...new Set([...current,item])] : current.filter(x=>x!==item);
+    saveDash({ dashboardCardHidden:{ ...cardHidden, [card]:nextList } });
+  };
+  const DashItem = ({ card, item, children }) => {
+    if(isItemHidden(card,item)) return null;
+    return <div style={{ position:"relative", paddingTop:customize?6:0 }}>
+      {customize && <button data-dash-control="true" title="Remove this item from this card" onClick={()=>setItemHidden(card,item,true)} style={{ position:"absolute", top:-6, right:-6, width:22, height:22, borderRadius:999, border:`1px solid ${T.border}`, background:"#fff", color:T.red, fontWeight:950, cursor:"pointer", lineHeight:"18px", boxShadow:"0 4px 12px rgba(15,23,42,.12)" }}>×</button>}
+      {children}
+    </div>;
+  };
+  const Widget = ({ id, title, subtitle, children, accent=T.accent }) => {
+    const hiddenItems = cardHidden[id] || [];
+    const addable = Object.entries(itemCatalog[id] || {}).filter(([key])=>hiddenItems.includes(key));
+    return <Card style={{ ...sizeStyle(id), padding:0, overflow:"hidden", borderRadius:22, border:`1px solid ${T.border}`, background:"#fff", boxShadow:"0 12px 30px rgba(15,23,42,.08)", position:"relative" }}>
       <div style={{ height:5, background:accent }} />
       <div style={{ padding:18 }}>
         <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:10, marginBottom:14 }}>
@@ -612,13 +639,17 @@ function Dashboard({ state, dispatch, setTab }) {
             <select value={sizes[id] || "large"} onChange={e=>setWidgetSize(id,e.target.value)} style={{ ...smallControl, width:86 }}>
               <option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option><option value="wide">Wide</option><option value="hero">Hero</option>
             </select>
+            <select value="" onChange={e=>{ if(e.target.value) setItemHidden(id,e.target.value,false); e.target.value=""; }} title="Add hidden item back to this card" style={{ ...smallControl, width:96 }}>
+              <option value="">+ Add</option>
+              {addable.map(([key,label])=><option key={key} value={key}>{label}</option>)}
+            </select>
             <button onClick={()=>toggleWidget(id)} style={{ ...smallControl }}>Hide</button>
           </div>}
         </div>
         {children}
       </div>
-    </Card>
-  );
+    </Card>;
+  };
   const smallControl = { height:28, border:`1px solid ${T.border}`, background:"#fff", borderRadius:9, padding:"0 8px", fontSize:11, fontWeight:900, cursor:"pointer" };
 
   const quickActions = <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))", gap:10 }}>
@@ -626,47 +657,47 @@ function Dashboard({ state, dispatch, setTab }) {
     <ActionBtn icon="🚜" label="Add Equipment" tab="equipment" accent="#16a34a" />
     <ActionBtn icon="🛠️" label="PM Schedule" tab="pm" accent="#d97706" />
     <ActionBtn icon="📦" label="Parts" tab="parts" accent="#7c3aed" />
-    <ActionBtn icon="📊" label="Reports" tab="reports" accent="#0f766e" />
-    <ActionBtn icon="⚙️" label="Settings" tab="settings" accent="#475569" />
+    <ActionBtn icon="📊" label="Reports" tab="reports_combined" accent="#0f766e" />
+    <ActionBtn icon="⚙️" label="Settings" onClick={onSettings} accent="#475569" />
   </div>;
 
   const widgets = {
     focus:<Widget id="focus" title="Shop Pulse" subtitle="A calm snapshot of what needs attention" accent={highPriority||pmOverdue||outOfSvc?T.red:T.green}>
-      {quickActions}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginTop:14 }}>
+      <DashItem card="focus" item="quick">{quickActions}</DashItem>
+      <DashItem card="focus" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginTop:14 }}>
         <Metric label="Readiness" value={`${readiness}%`} sub={`${readyAssets}/${eqs.length || 0} ready`} color={readiness>=85?T.green:readiness>=70?T.amber:T.red}/>
         <Metric label="Active WOs" value={activeWOs} sub={`${highPriority} high priority`} color={highPriority?T.red:T.accent}/>
         <Metric label="PM Attention" value={pmOverdue+pmDueSoon} sub={`${pmOverdue} overdue`} color={pmOverdue?T.red:T.amber}/>
         <Metric label="Low Stock" value={lowStock} sub="parts to review" color={lowStock?T.amber:T.green}/>
-      </div>
+      </div></DashItem>
     </Widget>,
     today:<Widget id="today" title="Today’s Game Plan" subtitle="Simple order of work for the day" accent="#0f766e">
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:10 }}>
+      <DashItem card="today" item="plan"><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:10 }}>
         {[{n:"1",t:"Protect uptime",d:`Check ${outOfSvc} deadline assets and ${withDefic} deficiencies.`},{n:"2",t:"Clear PM risk",d:`Handle ${pmOverdue} overdue and ${pmDueSoon} due soon services.`},{n:"3",t:"Unblock repairs",d:`Review ${awaitParts} awaiting-parts work orders.`},{n:"4",t:"Close the loop",d:`Update notes, parts used, labor, and completed jobs.`}].map(x=><div key={x.n} style={{ border:`1px solid ${T.border}`, borderRadius:18, padding:14, background:"#fff" }}><div style={{ display:"flex", gap:10 }}><b style={{ width:28, height:28, borderRadius:10, background:T.accentLt, color:T.accent, display:"grid", placeItems:"center" }}>{x.n}</b><div><b>{x.t}</b><div style={{ color:T.muted, fontSize:12, marginTop:4 }}>{x.d}</div></div></div></div>)}
-      </div>
+      </div></DashItem>
     </Widget>,
     workorders:<Widget id="workorders" title="Work Orders" subtitle="Current workload without digging" accent={highPriority?T.red:T.accent}>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(90px,1fr))", gap:8, marginBottom:12 }}><Metric label="Open" value={openWOs}/><Metric label="In Prog" value={inProgWOs}/><Metric label="Parts" value={awaitParts}/><Metric label="On Hold" value={onHoldWOs} color={onHoldWOs?T.red:T.green}/><Metric label="Done Mo" value={completedMo} color={T.green}/></div>
-      {(urgentWOs.length ? urgentWOs : recentWOs).map(w=><MiniRow key={w.id} title={`${w.woNumber||w.id} — ${w.title||w.type||"Work Order"}`} sub={`${w.equipmentName||w.equipment||"No equipment"} • ${w.status||"Open"}`} badge={w.priority||w.status} color={w.priority==="High"?T.red:T.accent} tab="workorders" />)}
+      <DashItem card="workorders" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(90px,1fr))", gap:8, marginBottom:12 }}><Metric label="Open" value={openWOs}/><Metric label="In Prog" value={inProgWOs}/><Metric label="Parts" value={awaitParts}/><Metric label="On Hold" value={onHoldWOs} color={onHoldWOs?T.red:T.green}/></div></DashItem>
+      <DashItem card="workorders" item="list">{(urgentWOs.length ? urgentWOs : recentWOs).map(w=><MiniRow key={w.id} title={`${w.woNumber||w.id} — ${w.title||w.type||"Work Order"}`} sub={`${w.equipmentName||w.equipment||"No equipment"} • ${w.status||"Open"}`} badge={w.priority||w.status} color={w.priority==="High"?T.red:T.accent} tab="workorders" />)}</DashItem>
     </Widget>,
     pm:<Widget id="pm" title="Preventive Maintenance" subtitle="Due services and inspections" accent={pmOverdue?T.red:T.amber}>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:12 }}><Metric label="Overdue" value={pmOverdue} color={pmOverdue?T.red:T.green}/><Metric label="Due Soon" value={pmDueSoon} color={pmDueSoon?T.amber:T.green}/></div>
-      {servicesDue.length ? servicesDue.map(p=><MiniRow key={p.id} title={p.title||p.service||"PM Item"} sub={`${p.eqName||"Equipment"} • Due ${p.nextDue||"N/A"}`} badge={p.status} color={p.status==="Overdue"?T.red:T.amber} tab="pm" />) : <div style={{ color:T.muted, fontSize:13 }}>No PM due right now.</div>}
+      <DashItem card="pm" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:12 }}><Metric label="Overdue" value={pmOverdue} color={pmOverdue?T.red:T.green}/><Metric label="Due Soon" value={pmDueSoon} color={pmDueSoon?T.amber:T.green}/></div></DashItem>
+      <DashItem card="pm" item="list">{servicesDue.length ? servicesDue.map(p=><MiniRow key={p.id} title={p.title||p.service||"PM Item"} sub={`${p.eqName||"Equipment"} • Due ${p.nextDue||"N/A"}`} badge={p.status} color={p.status==="Overdue"?T.red:T.amber} tab="pm" />) : <div style={{ color:T.muted, fontSize:13 }}>No PM due right now.</div>}</DashItem>
     </Widget>,
     equipment:<Widget id="equipment" title="Equipment Health" subtitle="Readiness and problem assets" accent={outOfSvc?T.red:T.green}>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom:12 }}><Metric label="Total" value={eqs.length}/><Metric label="Deadline" value={outOfSvc} color={outOfSvc?T.red:T.green}/><Metric label="Deficient" value={withDefic} color={withDefic?T.amber:T.green}/></div>
-      {deadlineEqs.length ? deadlineEqs.map(e=><MiniRow key={e.id} title={`${e.id} — ${e.name}`} sub={`${e.make||""} ${e.model||""} • ${e.location||"No location"}`} badge={e.status?.replace("Out of Service / ","")} color={e.status==="Out of Service / Deadline"?T.red:T.amber} tab="equipment" />) : <div style={{ color:T.muted, fontSize:13 }}>No deadline or deficient equipment.</div>}
+      <DashItem card="equipment" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom:12 }}><Metric label="Total" value={eqs.length}/><Metric label="Deadline" value={outOfSvc} color={outOfSvc?T.red:T.green}/><Metric label="Deficient" value={withDefic} color={withDefic?T.amber:T.green}/></div></DashItem>
+      <DashItem card="equipment" item="list">{deadlineEqs.length ? deadlineEqs.map(e=><MiniRow key={e.id} title={`${e.id} — ${e.name}`} sub={`${e.make||""} ${e.model||""} • ${e.location||"No location"}`} badge={e.status?.replace("Out of Service / ","")} color={e.status==="Out of Service / Deadline"?T.red:T.amber} tab="equipment" />) : <div style={{ color:T.muted, fontSize:13 }}>No deadline or deficient equipment.</div>}</DashItem>
     </Widget>,
     inventory:<Widget id="inventory" title="Parts & Inventory" subtitle="Stock issues before they delay work" accent={lowStock?T.amber:T.green}>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:12 }}><Metric label="Tracked" value={parts.length}/><Metric label="Low Stock" value={lowStock} color={lowStock?T.amber:T.green}/></div>
-      {criticalParts.length ? criticalParts.map(p=><MiniRow key={p.id} title={p.name||p.partNumber||"Part"} sub={`${p.partNumber||"No part #"} • Qty ${p.qty??0} / Min ${p.minQty??0}`} badge="Reorder" color={T.amber} tab="parts" />) : <div style={{ color:T.muted, fontSize:13 }}>Inventory looks good.</div>}
+      <DashItem card="inventory" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:12 }}><Metric label="Tracked" value={parts.length}/><Metric label="Low Stock" value={lowStock} color={lowStock?T.amber:T.green}/></div></DashItem>
+      <DashItem card="inventory" item="list">{criticalParts.length ? criticalParts.map(p=><MiniRow key={p.id} title={p.name||p.partNumber||"Part"} sub={`${p.partNumber||"No part #"} • Qty ${p.qty??0} / Min ${p.minQty??0}`} badge="Reorder" color={T.amber} tab="parts" />) : <div style={{ color:T.muted, fontSize:13 }}>Inventory looks good.</div>}</DashItem>
     </Widget>,
     activity:<Widget id="activity" title="Recent Activity" subtitle="Latest movement in the shop" accent="#64748b">
-      {recentWOs.length ? recentWOs.map(w=><MiniRow key={w.id} title={w.title||w.type||"Work Order"} sub={`${w.woNumber||w.id} • ${w.status||"Open"} • ${w.created||"No date"}`} badge={w.priority||w.status} color={w.priority==="High"?T.red:T.accent} tab="workorders" />) : <div style={{ color:T.muted, fontSize:13 }}>No recent work order activity.</div>}
+      <DashItem card="activity" item="list">{recentWOs.length ? recentWOs.map(w=><MiniRow key={w.id} title={w.title||w.type||"Work Order"} sub={`${w.woNumber||w.id} • ${w.status||"Open"} • ${w.created||"No date"}`} badge={w.priority||w.status} color={w.priority==="High"?T.red:T.accent} tab="workorders" />) : <div style={{ color:T.muted, fontSize:13 }}>No recent work order activity.</div>}</DashItem>
     </Widget>,
     costs:<Widget id="costs" title="Cost Snapshot" subtitle="Basic monthly maintenance awareness" accent="#2563eb">
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10 }}><Metric label="Month Spend" value={`$${spendMo.toFixed(2)}`} color="#2563eb"/><Metric label="Completed" value={completedMo} sub="this month" color={T.green}/></div>
-      <div style={{ marginTop:12, color:T.muted, fontSize:12 }}>Use Reports to export PDF, Excel, or Word documents.</div>
+      <DashItem card="costs" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10 }}><Metric label="Month Spend" value={`$${spendMo.toFixed(2)}`} color="#2563eb"/><Metric label="Completed" value={completedMo} sub="this month" color={T.green}/></div></DashItem>
+      <DashItem card="costs" item="note"><div style={{ marginTop:12, color:T.muted, fontSize:12 }}>Use Reports to export PDF, Excel, or Word documents.</div></DashItem>
     </Widget>
   };
 
@@ -4773,7 +4804,7 @@ export default function App() {
   const displayName = profile.firstName ? `${profile.firstName} ${profile.lastName}` : "J. Martinez";
 
   const pages = {
-    dashboard:        <Dashboard        state={state} dispatch={dispatch} setTab={setTab} />,
+    dashboard:        <Dashboard        state={state} dispatch={dispatch} setTab={setTab} onSettings={()=>setShowSettings(true)} />,
     workorders:       <WorkOrders       state={state} dispatch={dispatch} woSettings={state.woSettings} onWOSettings={()=>setShowWOSettings(true)} />,
     equipment:        <Equipment        state={state} dispatch={dispatch} />,
     parts:            <Parts            state={state} dispatch={dispatch} />,
