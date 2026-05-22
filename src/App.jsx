@@ -112,6 +112,33 @@ function reducer(state, { type, payload }) {
 const genId = p => `${p}-${String(Date.now()).slice(-5)}`;
 const today = () => new Date().toISOString().split("T")[0];
 
+
+const csvEscape = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+const downloadCSV = (filename, rows=[]) => {
+  if(!rows.length){ alert("No data available to export."); return; }
+  const headers = Object.keys(rows[0]);
+  const csv = [headers.map(csvEscape).join(","), ...rows.map(r=>headers.map(h=>csvEscape(r[h])).join(","))].join("\n");
+  const blob = new Blob([csv], { type:"text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename.endsWith(".csv") ? filename : `${filename}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
+const rowsToDataUri = rows => {
+  if(!rows?.length) return "";
+  const headers = Object.keys(rows[0]);
+  const csv = [headers.map(csvEscape).join(","), ...rows.map(r=>headers.map(h=>csvEscape(r[h])).join(","))].join("\n");
+  return `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`;
+};
+const reportButtonsHtml = rows => {
+  const dataUri = rowsToDataUri(rows);
+  return `<br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer;margin-right:8px">Print / Save PDF</button>${dataUri ? `<a href="${dataUri}" download="report.csv" style="padding:8px 20px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;text-decoration:none;font-family:Arial,sans-serif;font-size:13px">Download Excel CSV</a>` : ""}`;
+};
+
 /* -- STATUS STYLES -- */
 const statusStyle = {
   "Open":                          { color:"#1e40af", bg:"#eff6ff",  border:"#bfdbfe" },
@@ -424,11 +451,9 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
 
 /* DASHBOARD */
 
-function Dashboard({ state, setTab }) {
-  const { workOrders:wos, equipment:eqs, preventiveMaintenance:pms, parts } = state;
+function Dashboard({ state, dispatch, setTab }) {
+  const { workOrders:wos=[], equipment:eqs=[], preventiveMaintenance:pms=[], parts=[] } = state;
   const today_s = today();
-
-  /* KPI counts */
   const openWOs      = wos.filter(w=>w.status==="Open").length;
   const inProgWOs    = wos.filter(w=>w.status==="In Progress").length;
   const awaitParts   = wos.filter(w=>w.status==="Awaiting Parts").length;
@@ -442,241 +467,66 @@ function Dashboard({ state, setTab }) {
   const totalCost    = w => (+w.laborCost||0)+(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0))+(+w.partsCost||0);
   const spendMo      = wos.filter(w=>w.status==="Completed"&&(w.completed||"").slice(0,7)===today_s.slice(0,7)).reduce((s,w)=>s+totalCost(w),0);
   const activeWOCost = wos.filter(w=>w.status!=="Completed").reduce((s,w)=>s+totalCost(w),0);
+  const urgentWOs    = wos.filter(w=>w.status!=="Completed").sort((a,b)=>({High:0,Medium:1,Low:2}[a.priority]??3)-({High:0,Medium:1,Low:2}[b.priority]??3)).slice(0,6);
+  const servicesDue  = pms.filter(p=>p.status==="Overdue"||p.status==="Due Soon").map(pm=>({...pm, eqName:eqs.find(e=>e.id===pm.equipment)?.name||pm.equipment})).sort((a,b)=>(a.nextDue||"").localeCompare(b.nextDue||"")).slice(0,6);
+  const deadlineEqs  = eqs.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies").slice(0,6);
+  const dot = color => <span style={{ display:"inline-block", width:8, height:8, borderRadius:"50%", background:color, marginRight:6, flexShrink:0 }}/>;
 
-  const deadlineEqs  = eqs.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies");
-  const servicesDue  = pms.filter(p=>p.status==="Overdue"||p.status==="Due Soon")
-    .map(pm=>({...pm, eqName:eqs.find(e=>e.id===pm.equipment)?.name||pm.equipment}))
-    .sort((a,b)=>(a.nextDue||"").localeCompare(b.nextDue||""));
-  const urgentWOs    = wos.filter(w=>w.status!=="Completed")
-    .sort((a,b)=>({High:0,Medium:1,Low:2}[a.priority]??3)-({High:0,Medium:1,Low:2}[b.priority]??3)).slice(0,6);
-
-  /* Status dot */
-  const dot = (color) => <span style={{ display:"inline-block", width:8, height:8, borderRadius:"50%", background:color, marginRight:6, flexShrink:0 }}/>;
-
-  /* Shop health score */
-  const issues = outOfSvc*3 + withDefic*2 + pmOverdue*2 + pmDueSoon + lowStock + (openWOs>5?2:0);
-  const health = issues===0?"All Systems Operational":issues<=3?"Minor Issues":issues<=8?"Attention Needed":"Critical — Action Required";
-  const healthColor = issues===0?T.green:issues<=3?T.amber:T.red;
-
-  return (
-    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-
-      {/* This Month summary */}
-      <div style={{ background:"#fff", border:`1px solid ${T.border}`, borderRadius:10, padding:"14px 20px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:14, boxShadow:T.shadow }}>
-        <div>
-          <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.5, fontWeight:700 }}>Welcome</div>
-          <div style={{ fontFamily:T.sans, fontSize:18, fontWeight:700, color:T.text, marginTop:2 }}>Maintenance Shop Overview</div>
-        </div>
-        <div style={{ textAlign:"right" }}>
-          <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>This Month Spending</div>
-          <div style={{ fontFamily:T.sans, fontSize:24, fontWeight:800, color:T.accent }}>${spendMo.toFixed(0)}</div>
-          <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted }}>{completedMo} WOs closed</div>
-        </div>
+  const defaultLayout = ["workorders","pm","equipment","parts","urgent","services","deadline","spending"];
+  const settings = state.settings || {};
+  const layout = (settings.dashboardLayout?.length ? settings.dashboardLayout : defaultLayout).filter(id=>defaultLayout.includes(id));
+  const fullLayout = [...layout, ...defaultLayout.filter(id=>!layout.includes(id))];
+  const hidden = settings.dashboardHidden || [];
+  const view = settings.dashboardView || "cards";
+  const [customize, setCustomize] = useState(false);
+  const saveDash = patch => dispatch({ type:"UPDATE_SETTINGS", payload:{ ...settings, ...patch } });
+  const moveWidget = (id, dir) => {
+    const arr = [...fullLayout];
+    const i = arr.indexOf(id), j = i + dir;
+    if(i<0 || j<0 || j>=arr.length) return;
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+    saveDash({ dashboardLayout:arr });
+  };
+  const toggleWidget = id => saveDash({ dashboardHidden:hidden.includes(id) ? hidden.filter(x=>x!==id) : [...hidden, id] });
+  const widgetShell = (id, title, tab, children, extra={}) => (
+    <div key={id} onClick={()=>tab&&setTab(tab)} style={{ background:"#fff", border:`1px solid ${extra.danger?"#ef4444":T.border}`, borderRadius:8, padding:"14px 16px", cursor:tab?"pointer":"default", boxShadow:T.shadow, minHeight:view==="list"?"auto":150, ...extra.style }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+        <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>{title}</div>
+        {customize && <div style={{ display:"flex", gap:4 }} onClick={e=>e.stopPropagation()}><Btn small variant="secondary" onClick={()=>moveWidget(id,-1)}>↑</Btn><Btn small variant="secondary" onClick={()=>moveWidget(id,1)}>↓</Btn><Btn small variant="danger" onClick={()=>toggleWidget(id)}>Hide</Btn></div>}
       </div>
-
-      {/* Quick Access cards */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))", gap:10 }}>
-        {[
-          {id:"workorders", icon:"📋", label:"Work Orders",       count:openWOs+inProgWOs+awaitParts+onHoldWOs, sub:"active"},
-          {id:"equipment",  icon:"🚜", label:"Equipment",          count:eqs.length, sub:"units"},
-          {id:"inventory",  icon:"📋", label:"Equipment Inventory",count:eqs.length, sub:"items"},
-          {id:"parts",      icon:"📦", label:"Parts Inventory",    count:parts.length, sub:"SKUs"},
-          {id:"pm",         icon:"🔧", label:"Preventive Maint.",  count:pmOverdue+pmDueSoon, sub:"due"},
-          {id:"usage",      icon:"📊", label:"Usage Tracking",     count:eqs.filter(e=>e.trackUsage).length, sub:"tracked"},
-          {id:"spending",   icon:"💰", label:"Spending & Costs",   count:`$${spendMo.toFixed(0)}`, sub:"this month"},
-        ].map(c=>(
-          <button key={c.id} onClick={()=>setTab(c.id)} style={{ background:"#fff", border:`1px solid ${T.border}`, borderRadius:8, padding:"14px 12px", cursor:"pointer", boxShadow:T.shadow, textAlign:"center", display:"flex", flexDirection:"column", alignItems:"center", gap:4, transition:"transform .1s, border-color .1s" }}
-            onMouseEnter={e=>{ e.currentTarget.style.borderColor=T.accent; e.currentTarget.style.transform="translateY(-2px)"; }}
-            onMouseLeave={e=>{ e.currentTarget.style.borderColor=T.border; e.currentTarget.style.transform="translateY(0)"; }}>
-            <span style={{ fontSize:24, lineHeight:1 }}>{c.icon}</span>
-            <span style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text }}>{c.label}</span>
-            <span style={{ fontFamily:T.mono, fontSize:14, fontWeight:700, color:T.accent }}>{c.count}</span>
-            <span style={{ fontFamily:T.sans, fontSize:10, color:T.muted, textTransform:"uppercase", letterSpacing:.3 }}>{c.sub}</span>
-          </button>
-        ))}
-      </div>
-
-      {/* KPI Grid */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
-        {/* Work Orders block */}
-        <div onClick={()=>setTab("workorders")} style={{ background:"#fff", border:`1px solid ${T.border}`, borderRadius:8, padding:"14px 16px", cursor:"pointer", boxShadow:T.shadow, gridColumn:"span 2", display:"flex", gap:0, overflow:"hidden" }}>
-          <div style={{ flex:1, borderRight:`1px solid ${T.border}`, paddingRight:14 }}>
-            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5, marginBottom:8 }}>Work Orders</div>
-            <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
-              {[["Open", openWOs, T.accent],["In Progress", inProgWOs, T.amber],["Awaiting Parts", awaitParts, "#7c3aed"],["On Hold", onHoldWOs, T.muted]].map(([l,v,c])=>(
-                <div key={l} style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <div style={{ display:"flex", alignItems:"center" }}>{dot(c)}<span style={{ fontFamily:T.sans, fontSize:12, color:T.subtext }}>{l}</span></div>
-                  <span style={{ fontFamily:T.mono, fontSize:14, fontWeight:700, color:c }}>{v}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div style={{ flex:1, paddingLeft:14 }}>
-            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5, marginBottom:8 }}>This Month</div>
-            <div style={{ fontFamily:T.sans, fontSize:36, fontWeight:800, color:T.green, lineHeight:1 }}>{completedMo}</div>
-            <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted }}>WOs completed</div>
-            <div style={{ marginTop:10, fontFamily:T.sans, fontSize:11, color:T.muted }}>Active WO cost</div>
-            <div style={{ fontFamily:T.sans, fontSize:18, fontWeight:700, color:T.accent }}>${activeWOCost.toFixed(0)}</div>
-          </div>
-        </div>
-
-        {/* Equipment status */}
-        <div onClick={()=>setTab("equipment")} style={{ background:"#fff", border:`1px solid ${outOfSvc>0?"#ef4444":T.border}`, borderRadius:8, padding:"14px 16px", cursor:"pointer", boxShadow:T.shadow }}>
-          <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5, marginBottom:8 }}>Equipment</div>
-          <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
-            {[["Fully Operational", eqs.filter(e=>e.status==="Fully Operational").length, T.green],
-              ["w/ Deficiencies",    withDefic, T.amber],
-              ["Out of Service",     outOfSvc,  T.red]].map(([l,v,c])=>(
-              <div key={l} style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                <div style={{ display:"flex", alignItems:"center" }}>{dot(c)}<span style={{ fontFamily:T.sans, fontSize:11, color:T.subtext }}>{l}</span></div>
-                <span style={{ fontFamily:T.mono, fontSize:14, fontWeight:700, color:c }}>{v}</span>
-              </div>
-            ))}
-          </div>
-          <div style={{ marginTop:8, paddingTop:8, borderTop:`1px solid ${T.border}`, fontFamily:T.sans, fontSize:10, color:T.muted }}>{eqs.length} total units</div>
-        </div>
-
-        {/* PM status */}
-        <div onClick={()=>setTab("pm")} style={{ background:"#fff", border:`1px solid ${pmOverdue>0?"#ef4444":T.border}`, borderRadius:8, padding:"14px 16px", cursor:"pointer", boxShadow:T.shadow }}>
-          <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5, marginBottom:8 }}>PM Services</div>
-          <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
-            {[["Overdue",  pmOverdue,                                             T.red],
-              ["Due Soon", pmDueSoon,                                             T.amber],
-              ["OK",       pms.length-pmOverdue-pmDueSoon,                       T.green]].map(([l,v,c])=>(
-              <div key={l} style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                <div style={{ display:"flex", alignItems:"center" }}>{dot(c)}<span style={{ fontFamily:T.sans, fontSize:11, color:T.subtext }}>{l}</span></div>
-                <span style={{ fontFamily:T.mono, fontSize:14, fontWeight:700, color:c }}>{v}</span>
-              </div>
-            ))}
-          </div>
-          <div style={{ marginTop:8, paddingTop:8, borderTop:`1px solid ${T.border}`, fontFamily:T.sans, fontSize:10, color:T.muted }}>{pms.length} scheduled services</div>
-        </div>
-      </div>
-
-      {/* Main detail row */}
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
-
-        {/* Deadline / Deficiency Equipment */}
-        <Card style={{ padding:0, overflow:"hidden" }}>
-          <div style={{ padding:"12px 16px", background:outOfSvc>0?"#fef2f2":T.grayLt, borderBottom:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-            <span style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:outOfSvc>0?T.red:T.text }}>🚨 Deadline & Deficiency</span>
-            <Btn small variant="secondary" onClick={()=>setTab("equipment")}>View All</Btn>
-          </div>
-          {deadlineEqs.length===0
-            ? <div style={{ padding:"20px 16px", fontFamily:T.sans, fontSize:13, color:T.green }}>✓ All equipment operational</div>
-            : <div>
-                {deadlineEqs.slice(0,5).map(eq=>{
-                  const openWO = wos.filter(w=>w.equipment===eq.id&&w.status!=="Completed");
-                  return (
-                    <div key={eq.id} style={{ padding:"10px 16px", borderBottom:`1px solid ${T.border}`, borderLeft:`3px solid ${eq.status==="Out of Service / Deadline"?T.red:T.amber}` }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-                        <div>
-                          <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:600, color:T.text }}>{eq.name}</div>
-                          <div style={{ fontFamily:T.mono, fontSize:10, color:T.muted }}>{eq.id} · {eq.location||"—"}</div>
-                          {eq.faultDescription&&<div style={{ fontFamily:T.sans, fontSize:11, color:T.subtext, marginTop:2, maxWidth:240, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{eq.faultDescription}</div>}
-                        </div>
-                        <div style={{ textAlign:"right", flexShrink:0 }}>
-                          <Badge label={eq.status==="Out of Service / Deadline"?"OOS":"Deficiency"} />
-                          {openWO.length>0&&<div style={{ fontFamily:T.mono, fontSize:10, color:T.accent, marginTop:4 }}>{openWO.length} open WO{openWO.length>1?"s":""}</div>}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-                {deadlineEqs.length>5&&<div style={{ padding:"8px 16px", fontFamily:T.sans, fontSize:12, color:T.muted }}>+{deadlineEqs.length-5} more</div>}
-              </div>
-          }
-        </Card>
-
-        {/* Services Due */}
-        <Card style={{ padding:0, overflow:"hidden" }}>
-          <div style={{ padding:"12px 16px", background:pmOverdue>0?"#fffbeb":T.grayLt, borderBottom:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-            <span style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:pmOverdue>0?T.amber:T.text }}>🔧 Services Due</span>
-            <Btn small variant="secondary" onClick={()=>setTab("pm")}>View All</Btn>
-          </div>
-          {servicesDue.length===0
-            ? <div style={{ padding:"20px 16px", fontFamily:T.sans, fontSize:13, color:T.green }}>✓ All PM services up to date</div>
-            : <div>
-                {servicesDue.slice(0,6).map(pm=>(
-                  <div key={pm.id} style={{ padding:"9px 16px", borderBottom:`1px solid ${T.border}`, borderLeft:`3px solid ${pm.status==="Overdue"?T.red:T.amber}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                    <div>
-                      <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.text }}>{pm.task}</div>
-                      <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted }}>{pm.eqName}</div>
-                    </div>
-                    <div style={{ textAlign:"right", flexShrink:0 }}>
-                      <Badge label={pm.status} />
-                      <div style={{ fontFamily:T.mono, fontSize:11, color:pm.status==="Overdue"?T.red:T.amber, marginTop:3 }}>{pm.nextDue||"—"}</div>
-                    </div>
-                  </div>
-                ))}
-                {servicesDue.length>6&&<div style={{ padding:"8px 16px", fontFamily:T.sans, fontSize:12, color:T.muted }}>+{servicesDue.length-6} more</div>}
-              </div>
-          }
-        </Card>
-      </div>
-
-      {/* Active Work Orders */}
-      <Card style={{ padding:0, overflow:"hidden" }}>
-        <div style={{ padding:"12px 16px", background:T.grayLt, borderBottom:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <span style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text }}>📋 Active Work Orders</span>
-          <Btn small variant="secondary" onClick={()=>setTab("workorders")}>View All</Btn>
-        </div>
-        {urgentWOs.length===0
-          ? <div style={{ padding:"20px 16px", fontFamily:T.sans, fontSize:13, color:T.green }}>✓ No open work orders</div>
-          : <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, fontFamily:T.sans }}>
-              <thead><tr style={{ background:T.grayLt }}>
-                {["WO#","Type","Title","Equipment","Mechanic","Priority","Status","Due"].map(h=>(
-                  <th key={h} style={{ padding:"6px 12px", textAlign:"left", fontWeight:600, fontSize:10, color:T.muted, textTransform:"uppercase", letterSpacing:.4, whiteSpace:"nowrap" }}>{h}</th>
-                ))}
-              </tr></thead>
-              <tbody>
-                {urgentWOs.map((wo,i)=>{
-                  const eq = eqs.find(e=>e.id===wo.equipment);
-                  return (
-                    <tr key={wo.id} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
-                      <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:T.muted }}>{wo.id}</td>
-                      <td style={{ padding:"9px 12px" }}><Badge label={wo.woType||"—"} /></td>
-                      <td style={{ padding:"9px 12px", fontWeight:500, color:T.text, maxWidth:200 }}>{wo.title}</td>
-                      <td style={{ padding:"9px 12px", color:T.subtext }}>{eq?.name||wo.equipment}</td>
-                      <td style={{ padding:"9px 12px", color:T.subtext }}>{wo.tech||"—"}</td>
-                      <td style={{ padding:"9px 12px" }}><Badge label={wo.priority} type="priority" /></td>
-                      <td style={{ padding:"9px 12px" }}><Badge label={wo.status} /></td>
-                      <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:wo.due&&wo.due<today_s?T.red:T.subtext, whiteSpace:"nowrap" }}>{wo.due||"—"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-        }
-      </Card>
-
-      {/* Low Stock + Parts row */}
-      {lowStock>0 && (
-        <Card style={{ padding:0, overflow:"hidden" }}>
-          <div style={{ padding:"12px 16px", background:"#faf5ff", borderBottom:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-            <span style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:"#7c3aed" }}>📦 Low Stock Alert ({lowStock})</span>
-            <Btn small variant="secondary" onClick={()=>setTab("parts")}>View All</Btn>
-          </div>
-          <div style={{ display:"flex", flexWrap:"wrap", gap:0 }}>
-            {parts.filter(p=>p.lowStockAlert!==false&&p.qty<=(p.minQty||0)).slice(0,8).map((p,i)=>(
-              <div key={p.id} style={{ padding:"8px 16px", borderBottom:`1px solid ${T.border}`, borderRight:i%2===0?`1px solid ${T.border}`:"none", flex:"0 0 50%", boxSizing:"border-box", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                <div>
-                  <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:500, color:T.text }}>{p.name}</div>
-                  <div style={{ fontFamily:T.mono, fontSize:10, color:T.muted }}>{p.partNumber}</div>
-                </div>
-                <div style={{ textAlign:"right" }}>
-                  <div style={{ fontFamily:T.mono, fontSize:16, fontWeight:700, color:T.red }}>{p.qty}</div>
-                  <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted }}>min: {p.minQty}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
+      {children}
     </div>
   );
-}
+  const widgets = {
+    workorders: widgetShell("workorders","Work Orders","workorders", <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+      {[ ["Open",openWOs,T.accent], ["In Progress",inProgWOs,T.amber], ["Awaiting Parts",awaitParts,"#7c3aed"], ["On Hold",onHoldWOs,T.muted] ].map(([l,v,c])=><div key={l} style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}><span style={{ fontFamily:T.sans, fontSize:12, color:T.subtext }}>{dot(c)}{l}</span><b style={{ fontFamily:T.mono, color:c }}>{v}</b></div>)}
+      <div style={{ gridColumn:"span 2", borderTop:`1px solid ${T.border}`, paddingTop:8, display:"flex", justifyContent:"space-between" }}><span style={{ fontSize:12, color:T.muted }}>Completed this month</span><b style={{ color:T.green }}>{completedMo}</b></div>
+    </div>, { style:{ gridColumn:view==="cards"?"span 2":"span 1" } }),
+    pm: widgetShell("pm","Preventive Maintenance","pm", <div style={{ display:"flex", flexDirection:"column", gap:6 }}>{[["Overdue",pmOverdue,T.red],["Due Soon",pmDueSoon,T.amber],["OK",pms.length-pmOverdue-pmDueSoon,T.green]].map(([l,v,c])=><div key={l} style={{ display:"flex", justifyContent:"space-between" }}><span style={{ fontSize:12, color:T.subtext }}>{dot(c)}{l}</span><b style={{ color:c }}>{v}</b></div>)}</div>, { danger:pmOverdue>0 }),
+    equipment: widgetShell("equipment","Equipment","equipment", <div style={{ display:"flex", flexDirection:"column", gap:6 }}>{[["Fully Operational",eqs.filter(e=>e.status==="Fully Operational").length,T.green],["With Deficiencies",withDefic,T.amber],["Out of Service",outOfSvc,T.red]].map(([l,v,c])=><div key={l} style={{ display:"flex", justifyContent:"space-between" }}><span style={{ fontSize:12, color:T.subtext }}>{dot(c)}{l}</span><b style={{ color:c }}>{v}</b></div>)}<div style={{ borderTop:`1px solid ${T.border}`, paddingTop:8, fontSize:11, color:T.muted }}>{eqs.length} total units</div></div>, { danger:outOfSvc>0 }),
+    parts: widgetShell("parts","Parts Inventory","parts", <><div style={{ fontSize:34, fontWeight:800, color:lowStock?T.red:T.green, lineHeight:1 }}>{lowStock}</div><div style={{ fontSize:12, color:T.muted }}>low stock items</div><div style={{ marginTop:10, fontSize:11, color:T.muted }}>{parts.length} SKUs total</div></>, { danger:lowStock>0 }),
+    urgent: widgetShell("urgent","Urgent Work Orders","workorders", urgentWOs.length ? <div style={{ display:"flex", flexDirection:"column", gap:7 }}>{urgentWOs.map(w=><div key={w.id} style={{ display:"flex", justifyContent:"space-between", gap:8, fontSize:12 }}><span style={{ color:T.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{w.title||w.id}</span><Badge label={w.priority||"Medium"} type="priority" /></div>)}</div> : <div style={{ fontSize:12, color:T.muted }}>No active work orders.</div>, { style:{ gridColumn:view==="cards"?"span 2":"span 1" } }),
+    services: widgetShell("services","Services Due","pm", servicesDue.length ? <div style={{ display:"flex", flexDirection:"column", gap:7 }}>{servicesDue.map(s=><div key={s.id} style={{ display:"flex", justifyContent:"space-between", gap:8, fontSize:12 }}><span style={{ color:T.text }}>{s.eqName}</span><Badge label={s.status} /></div>)}</div> : <div style={{ fontSize:12, color:T.muted }}>No PM services due.</div>),
+    deadline: widgetShell("deadline","Deadline / Deficient Equipment","equipment", deadlineEqs.length ? <div style={{ display:"flex", flexDirection:"column", gap:7 }}>{deadlineEqs.map(e=><div key={e.id} style={{ display:"flex", justifyContent:"space-between", gap:8, fontSize:12 }}><span style={{ color:T.text }}>{e.name}</span><Badge label={e.status} /></div>)}</div> : <div style={{ fontSize:12, color:T.muted }}>No deadline equipment.</div>, { danger:deadlineEqs.length>0 }),
+    spending: widgetShell("spending","Spending & Costs","spending", <><div style={{ fontSize:28, fontWeight:800, color:T.accent }}>${spendMo.toFixed(0)}</div><div style={{ fontSize:12, color:T.muted }}>spent this month</div><div style={{ marginTop:8, fontSize:12, color:T.muted }}>Active WO cost: <b style={{ color:T.text }}>${activeWOCost.toFixed(0)}</b></div></>)
+  };
 
+  return <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap" }}>
+      <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+        {[{id:"workorders",icon:"📋",label:"Work Orders",count:openWOs+inProgWOs+awaitParts+onHoldWOs},{id:"pm",icon:"🔧",label:"Preventive Maintenance",count:pmOverdue+pmDueSoon},{id:"equipment",icon:"🚜",label:"Equipment",count:eqs.length},{id:"parts",icon:"📦",label:"Parts",count:parts.length},{id:"usage",icon:"📊",label:"Usage",count:eqs.filter(e=>e.trackUsage).length},{id:"spending",icon:"💰",label:"Costs",count:`$${spendMo.toFixed(0)}`}].map(c=><button key={c.id} onClick={()=>setTab(c.id)} style={{ background:"#fff", border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 14px", cursor:"pointer", boxShadow:T.shadow, display:"flex", alignItems:"center", gap:8 }}><span>{c.icon}</span><span style={{ fontWeight:700, fontSize:12 }}>{c.label}</span><span style={{ fontFamily:T.mono, color:T.accent, fontWeight:800 }}>{c.count}</span></button>)}
+      </div>
+      <div style={{ display:"flex", gap:8 }}>
+        <Btn variant="secondary" onClick={()=>saveDash({ dashboardView:view==="cards"?"list":"cards" })}>{view==="cards"?"List View":"Card View"}</Btn>
+        <Btn onClick={()=>setCustomize(v=>!v)}>{customize?"Done Customizing":"Customize Dashboard"}</Btn>
+      </div>
+    </div>
+    {customize && <Card style={{ padding:14 }}><div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>Add / remove dashboard widgets</div><div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>{fullLayout.map(id=><Btn key={id} small variant={hidden.includes(id)?"secondary":"primary"} onClick={()=>toggleWidget(id)}>{hidden.includes(id)?"Add":"Remove"} {id}</Btn>)}</div></Card>}
+    <div style={{ display:"grid", gridTemplateColumns:view==="cards"?"repeat(4,1fr)":"1fr", gap:10 }}>
+      {fullLayout.filter(id=>!hidden.includes(id)).map(id=>widgets[id])}
+    </div>
+  </div>;
+}
 
 function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const [modal, setModal]     = useState(null); // null|"type"|"pick"|"form"|"detail"|"edit"
@@ -866,6 +716,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
     const laborTotal = +(wo.laborCost||0);
     const grandTotal = laborTotal + partsTotal + (+(wo.partsCost||0));
+    const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", Labor:laborTotal.toFixed(2), Parts:partsTotal.toFixed(2), Total:grandTotal.toFixed(2), Problem:wo.problem||wo.description||"", Notes:wo.mechanicNotes||""}];
+    const woCsv = rowsToDataUri(woRows);
 
     const win = window.open("","_blank","width=900,height=700");
     if(!win){ alert("Please allow pop-ups to print work orders."); return; }
@@ -973,8 +825,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       <div class="ftr"><span>${companyName} - Maintenance Dept.</span><span>WO# ${wo.id} | ${new Date().toLocaleDateString()}</span></div>
     </div>
     <div class="pbtn">
-      <button class="bpr" onclick="window.print()">Print</button>
-      <button class="bpdf" onclick="window.print()">Save as PDF</button>
+      <button class="bpr" onclick="window.print()">Print / Save PDF</button>
+      <a href="${woCsv}" download="work-order-${wo.id}.csv" style="padding:9px 24px;font-size:13px;font-weight:700;border-radius:6px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;text-decoration:none;font-family:Arial,sans-serif">Download Excel CSV</a>
     </div>
     </body></html>`);
     win.document.close();
@@ -1724,7 +1576,10 @@ function Equipment({ state, dispatch }) {
         <input style={inp} value={form.serial||""} onChange={e=>setForm(f=>({...f,serial:e.target.value}))} />
       </Field>
       <Field label="Location" half>
-        <input style={inp} value={form.location||""} onChange={e=>setForm(f=>({...f,location:e.target.value}))} placeholder="Main Shop, Motor Pool..." />
+        <input style={inp} list="equipment-location-list" value={form.location||""} onChange={e=>setForm(f=>({...f,location:e.target.value}))} placeholder="Select or type location..." />
+        <datalist id="equipment-location-list">
+          {[...new Set([...(state.settings?.locations||[]), ...(state.equipment||[]).map(e=>e.location).filter(Boolean)])].map(l=><option key={l} value={l} />)}
+        </datalist>
       </Field>
       <Field label="Acquisition Date" half>
         <input style={inp} type="date" value={form.acquisitionDate||""} onChange={e=>setForm(f=>({...f,acquisitionDate:e.target.value}))} />
@@ -1950,6 +1805,7 @@ function Equipment({ state, dispatch }) {
           <input style={{ ...inp, flex:1, minWidth:200 }} placeholder="Search by name, make, model, serial, EIL #, location…" value={search} onChange={e=>setSearch(e.target.value)} />
           <Btn variant="secondary" onClick={()=>{
             const reportEqs = state.equipment.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies");
+            const exportRows = reportEqs.map(e=>({Status:e.status||"", Name:e.name||"", "Make/Model":`${e.make||""} ${e.model||""}`.trim(), "Serial #":e.serial||"", "EIL #":e.eilNumber||"", "Fault Date":e.faultDate||"", "Fault Description":e.faultDescription||""}));
             const win = window.open("","_blank");
             win.document.write(`<html><head><title>Equipment Status Report</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{font-size:20px;margin-bottom:4px}p{font-size:12px;color:#666;margin:0 0 20px}.section{margin-bottom:28px}h2{font-size:14px;margin-bottom:8px;padding:6px 10px;border-radius:4px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#f3f4f6;padding:7px 10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px}td{padding:7px 10px;border-bottom:1px solid #e5e7eb}.red{background:#fef2f2;color:#7f1d1d}.yellow{background:#fffbeb;color:#92400e}@media print{button{display:none}}</style></head><body>`);
             win.document.write(`<h1>Equipment Status Report</h1><p>Generated: ${new Date().toLocaleDateString()} — NCA Maintenance Manager</p>`);
@@ -1966,7 +1822,7 @@ function Equipment({ state, dispatch }) {
               win.document.write(`</table></div>`);
             }
             if(!oos.length&&!def.length) win.document.write(`<p>No equipment in deadline or deficiency status.</p>`);
-            win.document.write(`<br/><button onclick="window.print()">🖨 Print / Save as PDF</button></body></html>`);
+            win.document.write(reportButtonsHtml(exportRows)+`</body></html>`);
             win.document.close();
           }}>🖨 Deadline Report</Btn>
           <Btn onClick={openAdd}>+ Add New Equipment</Btn>
@@ -2260,7 +2116,7 @@ function Parts({ state, dispatch }) {
         }).join("")}
         <tr class="total-row"><td colspan="7" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">$${totalVal.toFixed(2)}</td><td></td></tr>
       </table>
-      <br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
+      ${reportButtonsHtml(exportRows)}
       </body></html>`);
     win.document.close();
   };
@@ -3694,6 +3550,7 @@ function ReportPartsInv({ state }) {
   const totalVal = state.parts.reduce((s,p)=>s+(+p.qty*(+p.unitCost||0)),0);
   const lowParts = state.parts.filter(p=>p.lowStockAlert!==false&&p.qty<=(p.minQty||0));
   const sorted = [...state.parts].sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||""));
+  const exportRows = sorted.map(p=>{ const eq = p.equipmentId?state.equipment.find(e=>e.id===p.equipmentId):null; return {"Part #":p.partNumber||"", Name:p.name||"", Category:p.category||"", Location:p.location||"", "Equipment / Model":eq?`${eq.name} (${eq.id})`:(p.modelFit||""), "Unit $":(+p.unitCost||0).toFixed(2), Qty:p.qty||0, "Total $":(p.qty*(+p.unitCost||0)).toFixed(2)}; });
 
   const print = () => {
     const win = window.open("","_blank","width=900,height=700");
@@ -3712,7 +3569,7 @@ function ReportPartsInv({ state }) {
         }).join("")}
         <tr class="total-row"><td colspan="7" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">$${totalVal.toFixed(2)}</td><td></td></tr>
       </table>
-      <br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
+      ${reportButtonsHtml(exportRows)}
       </body></html>`);
     win.document.close();
   };
@@ -3724,7 +3581,7 @@ function ReportPartsInv({ state }) {
           <Card key={l} style={{ padding:"14px 16px" }}><div style={{ fontFamily:T.sans, fontSize:22, fontWeight:700, color:c }}>{v}</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{l}</div></Card>
         ))}
       </div>
-      <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:12 }}><Btn onClick={print}>Print Inventory Report</Btn></div>
+      <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginBottom:12 }}><Btn onClick={print}>Print / PDF</Btn><Btn variant="secondary" onClick={()=>downloadCSV("parts-inventory-report.csv", exportRows)}>Excel CSV</Btn></div>
       <Card style={{ padding:0, overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead><tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
@@ -3806,11 +3663,12 @@ function ReportUsage({ state }) {
       if(Object.keys(months).length===0) body+=`<tr><td colspan="5" style="color:#999;font-style:italic">No logs recorded</td></tr>`;
       body+=`</table>`;
     });
-    body+=`<br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button></body></html>`;
+    body+=`${reportButtonsHtml(exportRows)}</body></html>`;
     win.document.write(body); win.document.close();
   };
 
   const eqList = selEq==="all" ? trackableEq : trackableEq.filter(e=>e.id===selEq);
+  const exportRows = eqList.flatMap(eq=>logsFor(eq.id).map(l=>({ Equipment:eq.name, "Equip #":eq.id, Date:l.date, Hours:l.hours||"", Mileage:l.mileage||"", "Fuel gal":l.fuel||"", Notes:l.notes||"" })));
 
   return (
     <div>
@@ -3826,7 +3684,8 @@ function ReportUsage({ state }) {
               <button key={v} onClick={()=>setViewMode(v)} style={{ padding:"6px 14px", border:"none", borderLeft:i>0?`1px solid ${T.border}`:"none", background:viewMode===v?T.accent:"#fff", color:viewMode===v?"#fff":T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:viewMode===v?600:400 }}>{l}</button>
             ))}
           </div>
-          <Btn small onClick={printUsageReport}>Print Report</Btn>
+          <Btn small onClick={printUsageReport}>Print / PDF</Btn>
+          <Btn small variant="secondary" onClick={()=>downloadCSV("usage-report.csv", exportRows)}>Excel CSV</Btn>
         </div>
       </Card>
 
@@ -3900,6 +3759,7 @@ function ReportDeadline({ state }) {
   const oos  = state.equipment.filter(e=>e.status==="Out of Service / Deadline");
   const def  = state.equipment.filter(e=>e.status==="Operational with Deficiencies");
   const openWO = (eqId) => state.workOrders.filter(w=>w.equipment===eqId && w.status!=="Completed");
+  const exportRows = [...oos.map(eq=>({Status:"Out of Service / Deadline", "Equip #":eq.id, Name:eq.name, "Fault Date":eq.faultDate||"", "Fault Description":eq.faultDescription||"", "Open Work Orders":openWO(eq.id).map(w=>`${w.id} (${w.status})`).join(", ")})), ...def.map(eq=>({Status:"Operational with Deficiencies", "Equip #":eq.id, Name:eq.name, "Fault Date":eq.faultDate||"", "Fault Description":eq.faultDescription||"", "Open Work Orders":openWO(eq.id).map(w=>`${w.id} (${w.status})`).join(", ")}))];
 
   const printReport = () => {
     const win = window.open("","_blank","width=900,height=700");
@@ -3922,15 +3782,16 @@ function ReportDeadline({ state }) {
       ${def.length?`<h2 style="color:#d97706">Operational w/ Deficiencies (${def.length})</h2>
       <table><tr><th>Equip #</th><th>Name</th><th>Fault Date</th><th>Fault Description</th><th>Work Orders</th></tr>${rows(def,"#fffdf0","")}</table>`:""}
       ${!oos.length&&!def.length?`<p>No equipment in deadline or deficiency status.</p>`:""}
-      <br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
+      ${reportButtonsHtml(exportRows)}
       </body></html>`);
     win.document.close();
   };
 
   return (
     <div>
-      <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:14 }}>
-        <Btn onClick={printReport}>Print Report</Btn>
+      <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginBottom:14 }}>
+        <Btn onClick={printReport}>Print / PDF</Btn>
+        <Btn variant="secondary" onClick={()=>downloadCSV("deadline-deficiency-report.csv", exportRows)}>Excel CSV</Btn>
       </div>
       {[{list:oos,label:"Out of Service / Deadline",color:T.red,bg:"#fff5f5",leftBorder:"4px solid #ef4444"},
         {list:def,label:"Operational with Deficiencies",color:T.amber,bg:"#fffdf0",leftBorder:"4px solid #f59e0b"}].map(({list,label,color,bg,leftBorder})=>(
@@ -3979,11 +3840,12 @@ function ReportPM({ state }) {
     const m = new Date(); m.setDate(1);
     return d >= m;
   });
+  const eqName = (id) => state.equipment.find(e=>e.id===id)?.name||id;
+  const exportRows = [...overdue.map(p=>({Group:"Overdue", Equipment:eqName(p.equipment), Task:p.task, Interval:p.interval, "Last Done":p.lastDone||"", "Next Due":p.nextDue||"", Status:p.status})), ...dueSoon.map(p=>({Group:"Due Soon", Equipment:eqName(p.equipment), Task:p.task, Interval:p.interval, "Last Done":p.lastDone||"", "Next Due":p.nextDue||"", Status:p.status})), ...completed.map(p=>({Group:"Completed This Month", Equipment:eqName(p.equipment), Task:p.task, Interval:p.interval, "Last Done":p.lastDone||"", "Next Due":p.nextDue||"", Status:p.status}))];
 
   const printPMReport = () => {
     const win = window.open("","_blank","width=900,height=700");
     if(!win) return;
-    const eqName = (id) => state.equipment.find(e=>e.id===id)?.name||id;
     const pmRows = (list) => list.map(p=>`<tr><td>${eqName(p.equipment)}</td><td>${p.task}</td><td>${p.interval}</td><td>${p.lastDone||"—"}</td><td>${p.nextDue||"—"}</td><td>${p.status}</td></tr>`).join("");
     win.document.write(`<!DOCTYPE html><html><head><title>PM Report</title>
       <style>body{font-family:Arial,sans-serif;padding:24px}h2{font-size:14px;margin:16px 0 6px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px;text-transform:uppercase}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}@media print{button{display:none}}</style>
@@ -4010,7 +3872,8 @@ function ReportPM({ state }) {
             <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext }}>Miles/hrs before service:</label>
             <input type="number" style={{ ...inp, width:70 }} value={mileageLookAhead} onChange={e=>setMileageLookAhead(+e.target.value)} min={1} />
           </div>
-          <Btn small onClick={printPMReport}>Print PM Report</Btn>
+          <Btn small onClick={printPMReport}>Print / PDF</Btn>
+          <Btn small variant="secondary" onClick={()=>downloadCSV("pm-report.csv", exportRows)}>Excel CSV</Btn>
         </div>
       </Card>
       {[{list:overdue,label:"Overdue",color:T.red},{list:dueSoon,label:`Due within ${lookAheadDays} days`,color:T.amber},{list:completed,label:"Completed This Month",color:T.green}].map(({list,label,color})=>(
@@ -4053,7 +3916,9 @@ function ReportSpending({ state }) {
   const monthTotal = monthly.reduce((s,w)=>s+totalCost(w),0);
   const fyTotal    = annual.reduce((s,w)=>s+totalCost(w),0);
 
+  const spendingRows = (list) => list.map(w=>({"WO #":w.id, Title:w.title||"", Equipment:state.equipment.find(e=>e.id===w.equipment)?.name||w.equipment, Mechanic:w.tech||"", Date:w.completed||w.created||"", Labor:(+w.laborCost||0).toFixed(2), Parts:(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0)).toFixed(2), Total:totalCost(w).toFixed(2)}));
   const printSpending = (list, title) => {
+    const rows = spendingRows(list);
     const win = window.open("","_blank","width=900,height=700");
     if(!win) return;
     win.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
@@ -4062,7 +3927,7 @@ function ReportSpending({ state }) {
       <table><tr><th>WO #</th><th>Title</th><th>Equipment</th><th>Mechanic</th><th>Date</th><th>Labor</th><th>Parts</th><th>Total</th></tr>
       ${list.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${state.equipment.find(e=>e.id===w.equipment)?.name||w.equipment}</td><td>${w.tech||"—"}</td><td>${w.completed||w.created||"—"}</td><td>$${(+w.laborCost||0).toFixed(2)}</td><td>$${(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0)).toFixed(2)}</td><td><b>$${totalCost(w).toFixed(2)}</b></td></tr>`).join("")}
       <tr style="font-weight:700;background:#f3f4f6"><td colspan="7">TOTAL</td><td>$${list.reduce((s,w)=>s+totalCost(w),0).toFixed(2)}</td></tr>
-      </table><br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button></body></html>`);
+      </table>${reportButtonsHtml(rows)}</body></html>`);
     win.document.close();
   };
 
@@ -4073,13 +3938,13 @@ function ReportSpending({ state }) {
           <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>This Month</div>
           <div style={{ fontFamily:T.sans, fontSize:32, fontWeight:800, color:T.accent, margin:"6px 0" }}>${monthTotal.toFixed(2)}</div>
           <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>{monthly.length} completed WOs</div>
-          <Btn small onClick={()=>printSpending(monthly,"Monthly Spending Report")} style={{ marginTop:10 }}>Print Monthly Report</Btn>
+          <div style={{ display:"flex", gap:8, marginTop:10 }}><Btn small onClick={()=>printSpending(monthly,"Monthly Spending Report")}>Print / PDF</Btn><Btn small variant="secondary" onClick={()=>downloadCSV("monthly-spending-report.csv", spendingRows(monthly))}>Excel CSV</Btn></div>
         </Card>
         <Card style={{ padding:"16px 20px" }}>
           <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Fiscal Year (Oct-Sep)</div>
           <div style={{ fontFamily:T.sans, fontSize:32, fontWeight:800, color:T.accent, margin:"6px 0" }}>${fyTotal.toFixed(2)}</div>
           <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>{annual.length} completed WOs</div>
-          <Btn small onClick={()=>printSpending(annual,"FY Spending Report")} style={{ marginTop:10 }}>Print FY Report</Btn>
+          <div style={{ display:"flex", gap:8, marginTop:10 }}><Btn small onClick={()=>printSpending(annual,"FY Spending Report")}>Print / PDF</Btn><Btn small variant="secondary" onClick={()=>downloadCSV("fy-spending-report.csv", spendingRows(annual))}>Excel CSV</Btn></div>
         </Card>
       </div>
     </div>
@@ -4652,7 +4517,11 @@ export default function App() {
   const initialState = (() => {
     try {
       const saved = localStorage.getItem("ncaState");
-      if(saved) return JSON.parse(saved);
+      if(saved) {
+        const parsed = JSON.parse(saved);
+        const locs = [...new Set([...(parsed.settings?.locations||[]), parsed.settings?.location, ...(parsed.equipment||[]).map(e=>e.location)].filter(Boolean))];
+        return { ...INIT, ...parsed, settings:{ ...(parsed.settings||{}), locations:locs } };
+      }
     } catch(e) { console.warn("Failed to load saved state:", e); }
     return { ...INIT, inventoryItems:[], profile:null, woSettings:null };
   })();
@@ -4729,10 +4598,10 @@ export default function App() {
           {settings?.logo && (
             <img src={settings.logo} alt="logo" style={{ height:36, maxWidth:80, objectFit:"contain", borderRadius:4 }} />
           )}
-          <div>
+          <button onClick={()=>setTab("dashboard")} title="Go to dashboard" style={{ background:"none", border:"none", padding:0, textAlign:"left", cursor:"pointer" }}>
             <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, letterSpacing:-.3, lineHeight:1.2 }}>{companyName}</div>
             <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, letterSpacing:.3 }}>National Cemetery Administration</div>
-          </div>
+          </button>
           <span style={{ color:T.border, fontSize:18 }}>›</span>
           <span style={{ fontFamily:T.sans, fontSize:13, color:T.subtext, fontWeight:500 }}>{PAGE_TITLES[tab]}</span>
         </div>
