@@ -32,54 +32,21 @@ const T = {
 };
 
 const INIT = {
-  notifications: [
-    { id:"N1", type:"wo",    msg:"Work Order WO-004 created by R. Thompson", time:"10 min ago", read:false },
-    { id:"N2", type:"pm",    msg:"PM Due: Hustler Mower — Oil Change in 3 days", time:"1 hr ago", read:false },
-    { id:"N3", type:"insp",  msg:"Inspection Due: F-250 Truck — Annual Safety Check", time:"2 hrs ago", read:false },
-    { id:"N4", type:"stock", msg:"Low Stock Alert: Hydraulic Fluid (2 gal remaining)", time:"Yesterday", read:true },
-    { id:"N5", type:"wo",    msg:"Work Order WO-003 updated to In Progress", time:"Yesterday", read:true },
-  ],
-  technicians: [
-    { id:"TECH-001", name:"J. Martinez", position:"Mechanic", laborRate:45 },
-    { id:"TECH-002", name:"R. Thompson", position:"Mechanic", laborRate:45 },
-  ],
+  notifications: [],
+  technicians: [],
   categories: ["Mowers","Vehicles","Tractors","Irrigation","Tools","Trailers"],
-  usageLogs: [
-    { id:"UL-001", equipmentId:"EQ-002", date:"2026-05-20", hours:"", mileage:1240, fuel:18.5, notes:"Weekly mileage log" },
-    { id:"UL-002", equipmentId:"EQ-004", date:"2026-05-18", hours:520, mileage:"", fuel:12.0, notes:"Monthly hours check" },
-  ],
-  workOrders: [
-    { id:"WO-001", title:"Mower blade replacement",    equipment:"EQ-001", status:"Completed",   priority:"High",   woType:"Service",    created:"2026-05-01", due:"2026-05-05", completed:"2026-05-03", tech:"J. Martinez", laborHours:2, laborCost:90,  partsCost:120, description:"Replace worn blades on zero-turn mower.", mechanicNotes:"" },
-    { id:"WO-002", title:"F-250 oil change",           equipment:"EQ-002", status:"In Progress", priority:"Medium", woType:"Service",    created:"2026-05-18", due:"2026-05-22", completed:null,         tech:"J. Martinez", laborHours:1, laborCost:45,  partsCost:38,  description:"Routine oil change and filter replacement.", mechanicNotes:"" },
-    { id:"WO-003", title:"Irrigation pump inspection", equipment:"EQ-003", status:"Open",        priority:"Low",    woType:"Inspection", created:"2026-05-20", due:"2026-05-28", completed:null,         tech:"J. Martinez", laborHours:0, laborCost:0,   partsCost:0,   description:"Inspect pump seals and pressure.", mechanicNotes:"" },
-    { id:"WO-004", title:"Tractor hydraulic leak",     equipment:"EQ-004", status:"Open",        priority:"High",   woType:"Repair",     created:"2026-05-20", due:"2026-05-21", completed:null,         tech:"R. Thompson", laborHours:0, laborCost:0,   partsCost:0,   description:"Hydraulic line leak near loader arm.", mechanicNotes:"" },
-  ],
-  equipment: [
-    { id:"EQ-001", name:"Hustler Zero-Turn Mower",  category:"Mowers",   type:"Mowing",     make:"Hustler",   model:"X-ONE",  year:2022, serial:"HZ-220431",        eilNumber:"EIL-2201", status:"Fully Operational",             location:"Main Shop",  acquisitionDate:"2022-03-15", acquisitionCost:12500, warrantyStart:"2022-03-15", warrantyEnd:"2025-03-15", notes:"Primary mowing unit.",            faultDescription:"", faultDate:"", trackUsage:false, usageType:"hours", attachments:[] },
-    { id:"EQ-002", name:"Ford F-250 Service Truck", category:"Vehicles",  type:"Vehicle",    make:"Ford",      model:"F-250",  year:2021, serial:"1FT7W2BT4MED00001", eilNumber:"EIL-2102", status:"Operational with Deficiencies", location:"Motor Pool", acquisitionDate:"2021-06-01", acquisitionCost:48000, warrantyStart:"2021-06-01", warrantyEnd:"2024-06-01", notes:"Daily driver for groundskeeping.", faultDescription:"Right rear brake caliper sticking, reduced stopping power.", faultDate:"2026-05-15", trackUsage:true, usageType:"mileage", attachments:[] },
-    { id:"EQ-003", name:"Irrigation Pump Station",  category:"Irrigation",type:"Irrigation", make:"Grundfos",  model:"CM5-4",  year:2019, serial:"GF-190012",         eilNumber:"EIL-1903", status:"Fully Operational",             location:"Section C",  acquisitionDate:"2019-09-10", acquisitionCost:8200,  warrantyStart:"2019-09-10", warrantyEnd:"2022-09-10", notes:"Controls sections A-D.",          faultDescription:"", faultDate:"", trackUsage:false, usageType:"hours", attachments:[] },
-    { id:"EQ-004", name:"John Deere 5075E Tractor", category:"Tractors",  type:"Tractor",    make:"John Deere",model:"5075E",  year:2020, serial:"JD-200754",         eilNumber:"EIL-2004", status:"Out of Service / Deadline",     location:"Main Shop",  acquisitionDate:"2020-02-20", acquisitionCost:55000, warrantyStart:"2020-02-20", warrantyEnd:"2023-02-20", notes:"Loader hydraulic leak.", faultDescription:"Hydraulic line ruptured near loader arm. Unit unsafe to operate.", faultDate:"2026-05-20", trackUsage:true, usageType:"hours",
-      attachments:[
-        { id:"AT-001", name:"Sweeper Broom", make:"Paladin", model:"72in Angle Broom", serial:"PB-7201", eilNumber:"EE-4401", acquisitionDate:"2020-02-20", acquisitionCost:3200, notes:"72 inch hydraulic angle broom." },
-        { id:"AT-002", name:"Snow Plow",     make:"Meyer",   model:"7.5ft Pro",         serial:"MP-9901", eilNumber:"EE-4402", acquisitionDate:"2020-02-20", acquisitionCost:2800, notes:"7.5 ft straight blade plow." },
-        { id:"AT-003", name:"Pallet Forks",  make:"Generic", model:"48in 4000lb",       serial:"PF-0031", eilNumber:"EE-4403", acquisitionDate:"2021-05-10", acquisitionCost:950,  notes:"48 inch, 4000 lb capacity forks." },
-      ]
-    },
-  ],
-  preventiveMaintenance: [
-    { id:"PM-001", equipment:"EQ-001", task:"Engine Oil & Filter",     interval:"3 months",  lastDone:"2026-05-03", nextDue:"2026-08-03", status:"OK" },
-    { id:"PM-002", equipment:"EQ-001", task:"Blade Sharpening",        interval:"1 month",   lastDone:"2026-05-03", nextDue:"2026-06-03", status:"OK" },
-    { id:"PM-003", equipment:"EQ-002", task:"Oil Change 6.7L Diesel",  interval:"6 months",  lastDone:"2025-11-18", nextDue:"2026-05-22", status:"Due Soon" },
-    { id:"PM-004", equipment:"EQ-002", task:"Annual Safety Inspection", interval:"12 months", lastDone:"2025-05-10", nextDue:"2026-05-10", status:"Overdue" },
-    { id:"PM-005", equipment:"EQ-003", task:"Pump Seal Inspection",    interval:"6 months",  lastDone:"2025-11-10", nextDue:"2026-06-01", status:"OK" },
-    { id:"PM-006", equipment:"EQ-004", task:"Hydraulic Fluid & Filter", interval:"6 months", lastDone:"2025-10-15", nextDue:"2026-05-21", status:"Overdue" },
-  ],
-  parts: [
-    { id:"PT-001", name:"Mower Blade Set (3pk)",   partNumber:"HZ-BLD-3PK", category:"Blades",  vendor:"Hustler Parts",  unitCost:40, qty:3, minQty:2, location:"Shelf A1" },
-    { id:"PT-002", name:"Oil Filter - F-250 6.7L", partNumber:"FL-820S",    category:"Filters", vendor:"NAPA Auto",      unitCost:12, qty:6, minQty:4, location:"Shelf B3" },
-    { id:"PT-003", name:"Hydraulic Fluid (1 gal)", partNumber:"HYD-AW46",   category:"Fluids",  vendor:"Grainger",       unitCost:18, qty:2, minQty:3, location:"Fluid Cabinet" },
-    { id:"PT-004", name:"Air Filter - Mower",       partNumber:"KAW-11013",  category:"Filters", vendor:"Kawasaki Parts", unitCost:22, qty:1, minQty:2, location:"Shelf A2" },
-  ],
+  usageLogs: [],
+  workOrders: [],
+  equipment: [],
+  preventiveMaintenance: [],
+  parts: [],
+  pmSchedules: [],
+  pmTasks: [],
+  inventoryItems: [],
+  profile: null,
+  settings: null,
+  woSettings: null,
+  setupComplete: false,
 };
 
 function reducer(state, { type, payload }) {
@@ -136,6 +103,8 @@ function reducer(state, { type, payload }) {
     case "ADD_USAGE_LOG": return { ...state, usageLogs: [...(state.usageLogs||[]), payload] };
     case "DELETE_USAGE_LOG": return { ...state, usageLogs: (state.usageLogs||[]).filter(u=>u.id!==payload) };
     case "UPDATE_SETTINGS": return { ...state, settings: payload };
+    case "COMPLETE_SETUP":  return { ...state, settings: payload.settings, profile: payload.profile, technicians: payload.technicians, categories: payload.categories, setupComplete: true };
+    case "RESET_SETUP":     return { ...state, setupComplete: false };
     default: return state;
   }
 }
@@ -4217,7 +4186,10 @@ function SystemSettings({ state, dispatch, onClose }) {
       </div>
 
       <div style={{ display:"flex", gap:8, justifyContent:"space-between", alignItems:"center", marginTop:16, paddingTop:12, borderTop:`1px solid ${T.border}` }}>
-        <Btn variant="danger" onClick={()=>{ if(confirm("⚠ This will permanently delete ALL data (work orders, equipment, parts, etc.) from this browser. Continue?")){ localStorage.removeItem("ncaState"); window.location.reload(); } }}>Reset All Data</Btn>
+        <div style={{ display:"flex", gap:8 }}>
+          <Btn variant="danger" onClick={()=>{ if(confirm("⚠ This will permanently delete ALL data (work orders, equipment, parts, etc.) from this browser. Continue?")){ localStorage.removeItem("ncaState"); window.location.reload(); } }}>Reset All Data</Btn>
+          <Btn variant="secondary" onClick={()=>{ if(confirm("Restart the setup wizard? Your data will be kept but you'll be taken through the introduction again.")){ dispatch({type:"RESET_SETUP"}); onClose(); }}}>Restart Setup Wizard</Btn>
+        </div>
         <div style={{ display:"flex", gap:8 }}>
           <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
           <Btn onClick={save}>Save Settings</Btn>
@@ -4227,7 +4199,287 @@ function SystemSettings({ state, dispatch, onClose }) {
   );
 }
 
-/* APP */
+/* SETUP WIZARD - first-run onboarding */
+
+function SetupWizard({ onComplete }) {
+  const [step, setStep] = useState(1);
+  const [data, setData] = useState({
+    /* Organization */
+    companyName: "",
+    department: "",
+    location: "",
+    phone: "",
+    email: "",
+    logo: "",
+    /* Address */
+    siteName: "",
+    region: "",
+    address: "",
+    cityState: "",
+    /* Locations list */
+    locations: [],
+    _newLoc: "",
+    /* Categories */
+    categories: ["Mowers","Vehicles","Tractors","Irrigation","Tools","Trailers"],
+    _newCat: "",
+    /* User profile */
+    firstName: "",
+    lastName: "",
+    position: "Mechanic",
+    profilePhone: "",
+    profileEmail: "",
+    laborRate: 45,
+    /* Additional mechanics */
+    mechanics: [],
+    _newMechName: "",
+    _newMechRate: 45,
+    /* Preferences */
+    accentColor: "#0052cc",
+    defaultPriority: "Medium",
+    dateFormat: "MM/DD/YYYY",
+    currency: "USD",
+    showCostsOnWO: true,
+    requireTech: false,
+  });
+
+  const F = k => e => setData(d=>({...d,[k]:e.target.value}));
+
+  const handleLogo = e => {
+    const file = e.target.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setData(d=>({...d, logo:ev.target.result}));
+    reader.readAsDataURL(file);
+  };
+
+  const addLocation = () => { if(data._newLoc.trim()) setData(d=>({...d,locations:[...d.locations,d._newLoc.trim()],_newLoc:""})); };
+  const removeLocation = i => setData(d=>({...d,locations:d.locations.filter((_,j)=>j!==i)}));
+  const addCategory = () => { if(data._newCat.trim()) setData(d=>({...d,categories:[...d.categories,d._newCat.trim()],_newCat:""})); };
+  const removeCategory = i => setData(d=>({...d,categories:d.categories.filter((_,j)=>j!==i)}));
+  const addMechanic = () => { if(data._newMechName.trim()) setData(d=>({...d,mechanics:[...d.mechanics,{name:d._newMechName.trim(),laborRate:+d._newMechRate||45}],_newMechName:"",_newMechRate:45})); };
+  const removeMechanic = i => setData(d=>({...d,mechanics:d.mechanics.filter((_,j)=>j!==i)}));
+
+  const totalSteps = 5;
+  const next = () => {
+    if(step===1 && !data.companyName.trim()) { alert("Company name is required."); return; }
+    if(step===4 && !data.firstName.trim()) { alert("Your first name is required."); return; }
+    if(step<totalSteps) setStep(s=>s+1);
+    else finish();
+  };
+  const back = () => step>1 && setStep(s=>s-1);
+
+  const finish = () => {
+    const settings = {
+      companyName: data.companyName,
+      department: data.department,
+      location: data.location,
+      phone: data.phone,
+      email: data.email,
+      logo: data.logo,
+      siteName: data.siteName,
+      region: data.region,
+      address: data.address,
+      cityState: data.cityState,
+      locations: data.locations,
+      accentColor: data.accentColor,
+      defaultPriority: data.defaultPriority,
+      laborRateDefault: data.laborRate,
+      dateFormat: data.dateFormat,
+      currency: data.currency,
+      showCostsOnWO: data.showCostsOnWO,
+      requireTech: data.requireTech,
+    };
+    const profile = {
+      firstName: data.firstName,
+      lastName: data.lastName,
+      position: data.position,
+      phone: data.profilePhone,
+      email: data.profileEmail,
+    };
+    const allMechanics = [
+      { id:"TECH-001", name:`${data.firstName} ${data.lastName}`.trim(), position:data.position, laborRate:+data.laborRate||45 },
+      ...data.mechanics.map((m,i)=>({ id:`TECH-${String(i+2).padStart(3,"0")}`, name:m.name, position:"Mechanic", laborRate:+m.laborRate||45 })),
+    ];
+    onComplete({ settings, profile, technicians:allMechanics, categories:data.categories });
+  };
+
+  const StepIndicator = () => (
+    <div style={{ display:"flex", gap:4, marginBottom:24, justifyContent:"center" }}>
+      {Array.from({length:totalSteps}).map((_,i)=>(
+        <div key={i} style={{ flex:1, maxWidth:60, height:4, borderRadius:2, background:i+1<=step?T.accent:T.border, transition:"background .3s" }}/>
+      ))}
+    </div>
+  );
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"linear-gradient(135deg, #f8fafc 0%, #e0f2fe 100%)", zIndex:9999, overflow:"auto", padding:"24px 16px" }}>
+      <div style={{ maxWidth:680, margin:"40px auto", background:"#fff", borderRadius:14, boxShadow:"0 10px 40px rgba(0,0,0,.12)", padding:"32px 36px" }}>
+        <StepIndicator />
+
+        {/* Step 1: Welcome + Company */}
+        {step===1 && (
+          <>
+            <div style={{ textAlign:"center", marginBottom:24 }}>
+              <div style={{ fontSize:48, marginBottom:8 }}>👋</div>
+              <h2 style={{ margin:0, fontFamily:T.sans, fontSize:24, fontWeight:800, color:T.text }}>Welcome to your Maintenance Manager</h2>
+              <p style={{ margin:"8px 0 0", fontFamily:T.sans, fontSize:14, color:T.muted }}>Let's set things up. This takes about 2 minutes.</p>
+            </div>
+            <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Step 1 of {totalSteps} — Your Organization</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
+              <Field label="Company / Organization Name *"><input style={inp} value={data.companyName} onChange={F("companyName")} placeholder="e.g. National Cemetery Administration" autoFocus /></Field>
+              <Field label="Department" half><input style={inp} value={data.department} onChange={F("department")} placeholder="e.g. Maintenance Department" /></Field>
+              <Field label="Phone" half><input style={inp} value={data.phone} onChange={F("phone")} placeholder="(555) 000-0000" /></Field>
+              <Field label="Email"><input style={inp} type="email" value={data.email} onChange={F("email")} placeholder="maintenance@example.gov" /></Field>
+            </div>
+            <div style={{ marginBottom:14 }}>
+              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:6 }}>Organization Logo (optional)</label>
+              <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+                {data.logo && <img src={data.logo} alt="logo" style={{ height:64, maxWidth:120, objectFit:"contain", border:`1px solid ${T.border}`, borderRadius:6, padding:4, background:"#fff" }} />}
+                <label style={{ fontFamily:T.sans, fontSize:13, fontWeight:600, color:T.accent, cursor:"pointer", padding:"8px 16px", border:`2px solid ${T.accent}`, borderRadius:7 }}>
+                  {data.logo?"Change Logo":"Upload Logo"}
+                  <input type="file" accept="image/*" onChange={handleLogo} style={{ display:"none" }} />
+                </label>
+                {data.logo && <button onClick={()=>setData(d=>({...d,logo:""}))} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>Remove</button>}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Step 2: Site / Foundation */}
+        {step===2 && (
+          <>
+            <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Step 2 of {totalSteps} — Site Information</div>
+            <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.muted }}>Tell us about your facility.</p>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
+              <Field label="Site / Facility Name"><input style={inp} value={data.siteName} onChange={F("siteName")} placeholder="e.g. Miami National Cemetery" /></Field>
+              <Field label="Region / District" half><input style={inp} value={data.region} onChange={F("region")} placeholder="e.g. Southeast Region" /></Field>
+              <Field label="Address" half><input style={inp} value={data.address} onChange={F("address")} placeholder="Street address" /></Field>
+              <Field label="City, State"><input style={inp} value={data.cityState} onChange={F("cityState")} placeholder="Miami, FL" /></Field>
+            </div>
+            <div style={{ marginBottom:14 }}>
+              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Equipment Locations (optional)</label>
+              <p style={{ margin:"0 0 8px", fontFamily:T.sans, fontSize:12, color:T.muted }}>Add the locations where your equipment is stored (e.g. Main Shop, Motor Pool, Section A). You can add more later.</p>
+              <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+                <input style={{ ...inp, flex:1 }} placeholder="Location name..." value={data._newLoc} onChange={F("_newLoc")} onKeyDown={e=>e.key==="Enter"&&addLocation()} />
+                <Btn small onClick={addLocation}>Add</Btn>
+              </div>
+              {data.locations.length>0 && (
+                <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                  {data.locations.map((loc,i)=>(
+                    <span key={i} style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 10px", background:T.accentLt, border:`1px solid ${T.accent}44`, borderRadius:6, fontFamily:T.sans, fontSize:12, color:T.accent }}>
+                      {loc} <button onClick={()=>removeLocation(i)} style={{ background:"none", border:"none", color:T.accent, cursor:"pointer", fontSize:14, lineHeight:1, padding:0 }}>×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Step 3: Equipment Categories */}
+        {step===3 && (
+          <>
+            <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Step 3 of {totalSteps} — Equipment Categories</div>
+            <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.muted }}>What types of equipment will you manage? We've pre-loaded common categories — add or remove as needed.</p>
+            <div style={{ display:"flex", gap:8, marginBottom:12 }}>
+              <input style={{ ...inp, flex:1 }} placeholder="New category (e.g. Generators)..." value={data._newCat} onChange={F("_newCat")} onKeyDown={e=>e.key==="Enter"&&addCategory()} />
+              <Btn small onClick={addCategory}>Add</Btn>
+            </div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+              {data.categories.map((cat,i)=>(
+                <span key={i} style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 12px", background:"#fff", border:`1px solid ${T.border}`, borderRadius:7, fontFamily:T.sans, fontSize:13, color:T.text }}>
+                  {cat} <button onClick={()=>removeCategory(i)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:16, lineHeight:1, padding:0 }}>×</button>
+                </span>
+              ))}
+              {data.categories.length===0 && <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted, fontStyle:"italic" }}>No categories yet — add some above.</span>}
+            </div>
+          </>
+        )}
+
+        {/* Step 4: User Profile */}
+        {step===4 && (
+          <>
+            <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Step 4 of {totalSteps} — Your Profile</div>
+            <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.muted }}>Tell us about yourself. You'll be the first mechanic in the system.</p>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
+              <Field label="First Name *" half><input style={inp} value={data.firstName} onChange={F("firstName")} placeholder="John" autoFocus /></Field>
+              <Field label="Last Name" half><input style={inp} value={data.lastName} onChange={F("lastName")} placeholder="Smith" /></Field>
+              <Field label="Position" half><input style={inp} value={data.position} onChange={F("position")} placeholder="Mechanic, Supervisor..." /></Field>
+              <Field label="Labor Rate ($/hr)" half><input style={inp} type="number" value={data.laborRate} onChange={F("laborRate")} placeholder="45" /></Field>
+              <Field label="Phone" half><input style={inp} value={data.profilePhone} onChange={F("profilePhone")} /></Field>
+              <Field label="Email" half><input style={inp} type="email" value={data.profileEmail} onChange={F("profileEmail")} /></Field>
+            </div>
+
+            <div style={{ marginTop:8 }}>
+              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Additional Mechanics (optional)</label>
+              <p style={{ margin:"0 0 8px", fontFamily:T.sans, fontSize:12, color:T.muted }}>Add other mechanics in your shop. You can add more later.</p>
+              <div style={{ display:"grid", gridTemplateColumns:"2fr 100px auto", gap:6, marginBottom:8 }}>
+                <input style={inp} placeholder="Full name" value={data._newMechName} onChange={F("_newMechName")} onKeyDown={e=>e.key==="Enter"&&addMechanic()} />
+                <input style={inp} type="number" placeholder="$/hr" value={data._newMechRate} onChange={F("_newMechRate")} />
+                <Btn small onClick={addMechanic}>Add</Btn>
+              </div>
+              {data.mechanics.length>0 && (
+                <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                  {data.mechanics.map((m,i)=>(
+                    <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"7px 12px", background:T.grayLt, borderRadius:6, border:`1px solid ${T.border}` }}>
+                      <span style={{ fontFamily:T.sans, fontSize:13 }}>{m.name} <span style={{ color:T.muted, fontSize:11, marginLeft:6 }}>${m.laborRate}/hr</span></span>
+                      <button onClick={()=>removeMechanic(i)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:16, lineHeight:1 }}>×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Step 5: Preferences + Review */}
+        {step===5 && (
+          <>
+            <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Step 5 of {totalSteps} — Preferences</div>
+            <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.muted }}>Final touches — these can all be changed later in Settings.</p>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
+              <Field label="Default Work Order Priority" half>
+                <select style={sel} value={data.defaultPriority} onChange={F("defaultPriority")}>{["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}</select>
+              </Field>
+              <Field label="Date Format" half>
+                <select style={sel} value={data.dateFormat} onChange={F("dateFormat")}>{["MM/DD/YYYY","DD/MM/YYYY","YYYY-MM-DD"].map(d=><option key={d}>{d}</option>)}</select>
+              </Field>
+              <Field label="Currency" half>
+                <select style={sel} value={data.currency} onChange={F("currency")}>{["USD","EUR","GBP","CAD"].map(c=><option key={c}>{c}</option>)}</select>
+              </Field>
+              <Field label="Accent Color" half>
+                <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+                  <input type="color" value={data.accentColor} onChange={F("accentColor")} style={{ width:44, height:36, border:`1px solid ${T.border}`, borderRadius:6, cursor:"pointer", padding:2 }} />
+                  <div style={{ flex:1, height:8, borderRadius:4, background:data.accentColor }}/>
+                </div>
+              </Field>
+            </div>
+
+            {/* Review summary */}
+            <div style={{ background:T.accentLt, border:`1px solid ${T.accent}44`, borderRadius:10, padding:"16px 18px", marginTop:8 }}>
+              <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.accent, marginBottom:10 }}>✓ Review Your Setup</div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"6px 16px", fontFamily:T.sans, fontSize:12 }}>
+                <div><span style={{ color:T.muted }}>Company:</span> <b style={{ color:T.text }}>{data.companyName||"—"}</b></div>
+                <div><span style={{ color:T.muted }}>Site:</span> <b style={{ color:T.text }}>{data.siteName||"—"}</b></div>
+                <div><span style={{ color:T.muted }}>Your Name:</span> <b style={{ color:T.text }}>{data.firstName} {data.lastName}</b></div>
+                <div><span style={{ color:T.muted }}>Mechanics:</span> <b style={{ color:T.text }}>{1+data.mechanics.length}</b></div>
+                <div><span style={{ color:T.muted }}>Locations:</span> <b style={{ color:T.text }}>{data.locations.length}</b></div>
+                <div><span style={{ color:T.muted }}>Categories:</span> <b style={{ color:T.text }}>{data.categories.length}</b></div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Nav buttons */}
+        <div style={{ display:"flex", justifyContent:"space-between", marginTop:24, paddingTop:16, borderTop:`1px solid ${T.border}` }}>
+          {step>1 ? <Btn variant="secondary" onClick={back}>← Back</Btn> : <div/>}
+          <Btn onClick={next} style={{ minWidth:120, justifyContent:"center" }}>
+            {step===totalSteps ? "Finish Setup →" : "Next →"}
+          </Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const PAGE_TITLES = {
   dashboard:        "Maintenance Dashboard",
@@ -4295,6 +4547,11 @@ export default function App() {
     reports_spending: <ReportSpending   state={state} />,
     reports_combined: <ReportCombined   state={state} />,
   };
+
+  /* First-run setup wizard */
+  if(!state.setupComplete) {
+    return <SetupWizard onComplete={(setupData)=>dispatch({type:"COMPLETE_SETUP",payload:setupData})} />;
+  }
 
   return (
     <div style={{ minHeight:"100vh", background:T.bg, fontFamily:T.sans }}>
