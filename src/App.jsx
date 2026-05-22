@@ -1,4 +1,4 @@
-import { useState, useReducer, useEffect } from "react";
+import { useState, useReducer, useEffect, useRef } from "react";
 import React from "react";
 
 const fontLink = document.createElement("link");
@@ -202,6 +202,64 @@ function Modal({ title, onClose, children }) {
     </div>
   );
 }
+
+/* Reusable Document Uploader - handles attachments (PDF, images, etc.) stored as base64 */
+function DocUploader({ documents=[], onChange, label="Documents", category }) {
+  const fileInput = useRef(null);
+  const handleUpload = (e) => {
+    const files = Array.from(e.target.files || []);
+    if(files.length===0) return;
+    Promise.all(files.map(f => new Promise((res,rej) => {
+      const reader = new FileReader();
+      reader.onload = () => res({
+        id: `DOC${Date.now()}${Math.random().toString(36).substr(2,5)}`,
+        name: f.name,
+        type: f.type,
+        size: f.size,
+        data: reader.result,
+        category: category||"General",
+        uploaded: new Date().toISOString().split("T")[0],
+      });
+      reader.onerror = rej;
+      reader.readAsDataURL(f);
+    }))).then(newDocs => {
+      onChange([...(documents||[]), ...newDocs]);
+      if(fileInput.current) fileInput.current.value = "";
+    });
+  };
+  const removeDoc = (id) => onChange(documents.filter(d=>d.id!==id));
+  const openDoc = (doc) => { const w = window.open(); if(w) w.document.write(`<iframe src="${doc.data}" style="border:none;width:100%;height:100vh"></iframe>`); };
+  const fmtSize = (b) => b<1024?`${b}B`:b<1024*1024?`${(b/1024).toFixed(1)}KB`:`${(b/1024/1024).toFixed(1)}MB`;
+  return (
+    <div>
+      <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:8 }}>{label}</label>
+      <input ref={fileInput} type="file" multiple onChange={handleUpload} style={{ display:"none" }} accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx" />
+      <button type="button" onClick={()=>fileInput.current?.click()} style={{ background:T.grayLt, border:`1px dashed ${T.border}`, borderRadius:6, padding:"10px 16px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600, width:"100%", textAlign:"center" }}>
+        📎 Click to upload files (PDF, images, Office docs)
+      </button>
+      {(documents||[]).length > 0 && (
+        <div style={{ marginTop:10, display:"flex", flexDirection:"column", gap:6 }}>
+          {documents.map(doc=>(
+            <div key={doc.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"7px 12px", background:T.grayLt, borderRadius:6, border:`1px solid ${T.border}` }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, flex:1, minWidth:0 }}>
+                <span style={{ fontSize:18 }}>{doc.type?.startsWith("image")?"🖼️":doc.type?.includes("pdf")?"📄":"📎"}</span>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{doc.name}</div>
+                  <div style={{ fontFamily:T.mono, fontSize:10, color:T.muted }}>{doc.category} · {fmtSize(doc.size)} · {doc.uploaded}</div>
+                </div>
+              </div>
+              <div style={{ display:"flex", gap:4 }}>
+                <button type="button" onClick={()=>openDoc(doc)} style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:5, padding:"3px 8px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:600 }}>View</button>
+                <button type="button" onClick={()=>removeDoc(doc.id)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:18, lineHeight:1, padding:"0 4px" }}>×</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 /* -- NOTIFICATION PANEL -- */
 function NotifPanel({ notifications, dispatch, onClose }) {
@@ -414,6 +472,28 @@ function Dashboard({ state, setTab }) {
           <div style={{ fontFamily:T.sans, fontSize:24, fontWeight:800, color:T.accent }}>${spendMo.toFixed(0)}</div>
           <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted }}>{completedMo} WOs closed</div>
         </div>
+      </div>
+
+      {/* Quick Access cards */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))", gap:10 }}>
+        {[
+          {id:"workorders", icon:"📋", label:"Work Orders",       count:openWOs+inProgWOs+awaitParts+onHoldWOs, sub:"active"},
+          {id:"equipment",  icon:"🚜", label:"Equipment",          count:eqs.length, sub:"units"},
+          {id:"inventory",  icon:"📋", label:"Equipment Inventory",count:eqs.length, sub:"items"},
+          {id:"parts",      icon:"📦", label:"Parts Inventory",    count:parts.length, sub:"SKUs"},
+          {id:"pm",         icon:"🔧", label:"Preventive Maint.",  count:pmOverdue+pmDueSoon, sub:"due"},
+          {id:"usage",      icon:"📊", label:"Usage Tracking",     count:eqs.filter(e=>e.trackUsage).length, sub:"tracked"},
+          {id:"spending",   icon:"💰", label:"Spending & Costs",   count:`$${spendMo.toFixed(0)}`, sub:"this month"},
+        ].map(c=>(
+          <button key={c.id} onClick={()=>setTab(c.id)} style={{ background:"#fff", border:`1px solid ${T.border}`, borderRadius:8, padding:"14px 12px", cursor:"pointer", boxShadow:T.shadow, textAlign:"center", display:"flex", flexDirection:"column", alignItems:"center", gap:4, transition:"transform .1s, border-color .1s" }}
+            onMouseEnter={e=>{ e.currentTarget.style.borderColor=T.accent; e.currentTarget.style.transform="translateY(-2px)"; }}
+            onMouseLeave={e=>{ e.currentTarget.style.borderColor=T.border; e.currentTarget.style.transform="translateY(0)"; }}>
+            <span style={{ fontSize:24, lineHeight:1 }}>{c.icon}</span>
+            <span style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text }}>{c.label}</span>
+            <span style={{ fontFamily:T.mono, fontSize:14, fontWeight:700, color:T.accent }}>{c.count}</span>
+            <span style={{ fontFamily:T.sans, fontSize:10, color:T.muted, textTransform:"uppercase", letterSpacing:.3 }}>{c.sub}</span>
+          </button>
+        ))}
       </div>
 
       {/* KPI Grid */}
@@ -772,8 +852,15 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   /* ---- Print Work Order ---- */
   const printWO = (wo) => {
     const ws = woSettings || {};
+    const gs = state.settings || {};
     const eq = state.equipment.find(e=>e.id===wo.equipment);
-    const companyName = ws.companyName || "National Cemetery Administration";
+    /* Pull company info from WO settings first, then global settings */
+    const companyName = ws.companyName || gs.companyName || "Maintenance Department";
+    const companyLogo = ws.logo || gs.logo || "";
+    const companyDept = ws.department || gs.department || "";
+    const companyPhone = ws.phone || gs.phone || "";
+    const companyEmail = ws.email || gs.email || "";
+    const companyAddr  = `${gs.address||""} ${gs.cityState||""}`.trim();
     const woTypeLabel = wo.woType ? `${wo.woType} Work Order` : (ws.headerText || "MAINTENANCE WORK ORDER");
     const partsUsed  = wo.partsUsed || [];
     const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
@@ -831,7 +918,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     </style></head><body>
     <div class="page">
       <div class="hdr">
-        <div class="hdr-logo">${ws.logo?`<img src="${ws.logo}" alt="logo">`:`<div class="hdr-logo-text">${companyName}</div>`}</div>
+        <div class="hdr-logo">${companyLogo?`<img src="${companyLogo}" alt="logo">`:`<div class="hdr-logo-text">${companyName}</div>`}</div>
         <div class="hdr-center"><div class="hdr-company">${companyName}</div><div class="hdr-type">${woTypeLabel}</div></div>
         <div class="hdr-right"><div class="hdr-wol">Work Order No.</div><div class="hdr-won">${wo.id}</div>
           <div class="hdr-status st-${(wo.status||"open").toLowerCase().slice(0,2)}">${wo.status||"Open"}</div>
@@ -1686,6 +1773,9 @@ function Equipment({ state, dispatch }) {
       <Field label="Notes">
         <textarea style={{ ...inp, minHeight:60, resize:"vertical" }} value={form.notes||""} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} />
       </Field>
+      <div style={{ gridColumn:"span 2", marginBottom:14 }}>
+        <DocUploader label="Documents Folder (purchase receipts, inspections, manuals, repairs, etc.)" category="General" documents={form.documents||[]} onChange={docs=>setForm(f=>({...f,documents:docs}))} />
+      </div>
     </div>
     );
   };
@@ -1834,6 +1924,17 @@ function Equipment({ state, dispatch }) {
 
           {/* Attachments / Implements */}
           <AttachmentsCard eq={eq} dispatch={dispatch} />
+
+          {/* Documents Folder */}
+          <Card style={{ marginTop:16 }}>
+            <h4 style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>📁 Documents Folder ({(eq.documents||[]).length})</h4>
+            <DocUploader
+              label=""
+              category="General"
+              documents={eq.documents||[]}
+              onChange={docs=>dispatch({type:"UPDATE_EQ",payload:{...eq,documents:docs}})}
+            />
+          </Card>
 
         </div>
         )}
@@ -3401,12 +3502,15 @@ function EquipmentInventory({ state, dispatch }) {
     if(!turnInForm.reason)      return alert("Enter turn-in reason.");
     const item = items.find(i=>i.id===turnInForm.equipmentId);
     if(!item) return;
-    const updated = {...item, turnInStatus:"Pending Turn-in", turnInReason:turnInForm.reason, turnInDate:turnInForm.date, turnInPaperwork:turnInForm.paperwork};
+    /* Merge turn-in docs into the item's documents folder so they show under the equipment */
+    const tiDocs = (turnInForm.documents||[]).map(d=>({...d, category:"Turn-in"}));
+    const mergedDocs = [...(item.documents||[]), ...tiDocs];
+    const payloadBase = { turnInStatus:"Pending Turn-in", turnInReason:turnInForm.reason, turnInDate:turnInForm.date, turnInPaperwork:turnInForm.paperwork, turnInDocuments:tiDocs, documents:mergedDocs };
     if(item._source==="equipment") {
       const orig = state.equipment.find(e=>e.id===item.id);
-      dispatch({type:"UPDATE_EQ", payload:{...orig, turnInStatus:"Pending Turn-in", turnInReason:turnInForm.reason, turnInDate:turnInForm.date, turnInPaperwork:turnInForm.paperwork}});
+      dispatch({type:"UPDATE_EQ", payload:{...orig, ...payloadBase}});
     } else {
-      dispatch({type:"UPDATE_INV", payload:updated});
+      dispatch({type:"UPDATE_INV", payload:{...item, ...payloadBase}});
     }
     setModal(null);
   };
@@ -3515,6 +3619,9 @@ function EquipmentInventory({ state, dispatch }) {
             <Field label="Acquisition Date" half><input style={inp} type="date" value={form.acquisitionDate||""} onChange={F("acquisitionDate")} /></Field>
             <Field label="Acquisition Cost ($)" half><input style={inp} type="number" value={form.acquisitionCost||""} onChange={F("acquisitionCost")} /></Field>
             <Field label="Notes"><textarea style={{ ...inp, minHeight:60, resize:"vertical" }} value={form.notes||""} onChange={F("notes")} /></Field>
+            <div style={{ gridColumn:"span 2", marginBottom:14 }}>
+              <DocUploader label="Documents Folder (receipts, manuals, inspections, repairs, etc.)" category="General" documents={form.documents||[]} onChange={docs=>setForm(f=>({...f,documents:docs}))} />
+            </div>
             {typeof modal==="object"&&modal?.id&&(
               <div style={{ gridColumn:"span 2", marginBottom:14 }}>
                 <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:6 }}>Turn-in Status</label>
@@ -3548,9 +3655,10 @@ function EquipmentInventory({ state, dispatch }) {
             <Field label="Turn-in Date"><input style={inp} type="date" value={turnInForm.date} onChange={e=>setTurnInForm(f=>({...f,date:e.target.value}))} /></Field>
             <Field label="Reason for Turn-in *"><textarea style={{ ...inp, minHeight:70, resize:"vertical" }} value={turnInForm.reason} onChange={e=>setTurnInForm(f=>({...f,reason:e.target.value}))} placeholder="Describe the reason for turn-in..." /></Field>
             <div>
-              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Paperwork / Notes</label>
-              <textarea style={{ ...inp, minHeight:50, resize:"vertical" }} value={turnInForm.paperwork} onChange={e=>setTurnInForm(f=>({...f,paperwork:e.target.value}))} placeholder="Reference DA forms, document numbers, or additional notes..." />
+              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Reference Notes</label>
+              <textarea style={{ ...inp, minHeight:50, resize:"vertical" }} value={turnInForm.paperwork} onChange={e=>setTurnInForm(f=>({...f,paperwork:e.target.value}))} placeholder="DA forms, document numbers, additional notes..." />
             </div>
+            <DocUploader label="Turn-in Documentation" category="Turn-in" documents={turnInForm.documents||[]} onChange={docs=>setTurnInForm(f=>({...f,documents:docs}))} />
           </div>
           <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
             <Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn>
@@ -3979,7 +4087,7 @@ function ReportSpending({ state }) {
 }
 
 function ReportCombined({ state }) {
-  const [selected, setSelected] = useState({ deadline:true, pm:true, spending:false, inventory:false });
+  const [selected, setSelected] = useState({ deadline:true, pm:true, spending:false, parts:false, usage:false, equipment:false, workorders:false });
   const [lookAhead, setLookAhead] = useState(30);
   const toggle = k => setSelected(s=>({...s,[k]:!s[k]}));
 
@@ -3988,8 +4096,11 @@ function ReportCombined({ state }) {
     if(!win) return;
     const eqName = id => state.equipment.find(e=>e.id===id)?.name||id;
     const totalCost = w => (+w.laborCost||0)+(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0))+(+w.partsCost||0);
+    const allLogs = state.usageLogs || [];
+    const currentReading = (eqId, field) => { const l = allLogs.filter(x=>x.equipmentId===eqId&&x[field]).sort((a,b)=>b.date.localeCompare(a.date))[0]; return l?+(l[field]||0):0; };
+
     let body = `<!DOCTYPE html><html><head><title>Combined Report</title>
-      <style>body{font-family:Arial,sans-serif;padding:24px}h2{font-size:14px;margin:20px 0 6px;color:#1a1a2e}table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}@media print{button{display:none}}</style>
+      <style>body{font-family:Arial,sans-serif;padding:24px}h2{font-size:14px;margin:20px 0 6px;color:#1a1a2e;border-bottom:1px solid #ddd;padding-bottom:4px}table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}@media print{button{display:none}}</style>
       </head><body>${reportHeaderHTML(state, 'Combined Maintenance Report')}`;
 
     if(selected.deadline) {
@@ -4002,29 +4113,68 @@ function ReportCombined({ state }) {
     }
     if(selected.spending) {
       const wos = state.workOrders.filter(w=>w.completed);
-      body += `<h2>Completed Work Orders</h2><table><tr><th>WO#</th><th>Title</th><th>Mechanic</th><th>Total Cost</th></tr>${wos.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${w.tech||"—"}</td><td>$${totalCost(w).toFixed(2)}</td></tr>`).join("")}</table>`;
+      const total = wos.reduce((s,w)=>s+totalCost(w),0);
+      body += `<h2>Completed Work Orders — Total $${total.toFixed(2)}</h2><table><tr><th>WO#</th><th>Title</th><th>Equipment</th><th>Mechanic</th><th>Completed</th><th>Total</th></tr>${wos.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${eqName(w.equipment)}</td><td>${w.tech||"—"}</td><td>${w.completed||"—"}</td><td>$${totalCost(w).toFixed(2)}</td></tr>`).join("")}</table>`;
     }
-    if(selected.inventory) {
-      body += `<h2>Equipment Inventory (${state.equipment.length})</h2><table><tr><th>Equip #</th><th>Name</th><th>Make/Model</th><th>Serial #</th><th>Status</th></tr>${state.equipment.map(e=>`<tr><td>${e.id}</td><td>${e.name}</td><td>${e.make||""} ${e.model||""}</td><td>${e.serial||"—"}</td><td>${e.status}</td></tr>`).join("")}</table>`;
+    if(selected.parts) {
+      const lowStock = state.parts.filter(p=>p.lowStockAlert!==false&&(+(p.qty||0))<=(+(p.minQty||0)));
+      const totalVal = state.parts.reduce((s,p)=>s+(+(p.qty||0))*(+(p.unitCost||0)),0);
+      body += `<h2>Parts Inventory — ${state.parts.length} SKUs, Total Value $${totalVal.toFixed(2)}</h2>`;
+      if(lowStock.length>0) body += `<p style="color:#b91c1c;font-size:12px"><b>⚠ Low stock alerts: ${lowStock.length} items</b></p>`;
+      body += `<table><tr><th>Part #</th><th>Name</th><th>Category</th><th>Qty</th><th>Min</th><th>Unit $</th><th>Total $</th></tr>${state.parts.map(p=>`<tr style="${(+(p.qty||0))<=(+(p.minQty||0))?'background:#fee2e2':''}"><td>${p.partNumber||"—"}</td><td>${p.name}</td><td>${p.category||"—"}</td><td>${p.qty||0}</td><td>${p.minQty||0}</td><td>$${(+(p.unitCost||0)).toFixed(2)}</td><td>$${((+(p.qty||0))*(+(p.unitCost||0))).toFixed(2)}</td></tr>`).join("")}</table>`;
+    }
+    if(selected.usage) {
+      const trackable = state.equipment.filter(e=>e.trackUsage);
+      body += `<h2>Current Usage Readings (${trackable.length} tracked units)</h2><table><tr><th>Equip #</th><th>Name</th><th>Hours</th><th>Mileage</th><th>Last Entry</th></tr>${trackable.map(e=>{ const logs = allLogs.filter(l=>l.equipmentId===e.id); const last = logs.sort((a,b)=>b.date.localeCompare(a.date))[0]; return `<tr><td>${e.id}</td><td>${e.name}</td><td>${currentReading(e.id,"hours").toFixed(1)}</td><td>${currentReading(e.id,"mileage").toLocaleString()}</td><td>${last?.date||"—"}</td></tr>`; }).join("")}</table>`;
+    }
+    if(selected.equipment) {
+      body += `<h2>Equipment Roster (${state.equipment.length})</h2><table><tr><th>Equip #</th><th>Name</th><th>Make/Model</th><th>Serial #</th><th>Location</th><th>Status</th></tr>${state.equipment.map(e=>`<tr><td>${e.id}</td><td>${e.name}</td><td>${e.make||""} ${e.model||""}</td><td>${e.serial||"—"}</td><td>${e.location||"—"}</td><td>${e.status}</td></tr>`).join("")}</table>`;
+    }
+    if(selected.workorders) {
+      const active = state.workOrders.filter(w=>w.status!=="Completed");
+      body += `<h2>Active Work Orders (${active.length})</h2><table><tr><th>WO#</th><th>Title</th><th>Equipment</th><th>Mechanic</th><th>Priority</th><th>Status</th><th>Due</th></tr>${active.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${eqName(w.equipment)}</td><td>${w.tech||"—"}</td><td>${w.priority}</td><td>${w.status}</td><td>${w.due||"—"}</td></tr>`).join("")}</table>`;
     }
     body += `<br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button></body></html>`;
     win.document.write(body);
     win.document.close();
   };
 
+  const sections = [
+    ["workorders","📋 Active Work Orders","All non-completed work orders"],
+    ["deadline","🚨 Deadline Equipment","OOS and equipment with deficiencies"],
+    ["pm","🔧 PM Overdue / Due Soon","Services that need attention"],
+    ["spending","💰 Work Order Spending","Completed WOs with costs"],
+    ["parts","📦 Parts Inventory","All parts with stock levels"],
+    ["usage","📊 Equipment Usage","Current readings for tracked equipment"],
+    ["equipment","🚜 Equipment Roster","Complete equipment list"],
+  ];
+
+  const allOn  = () => setSelected(Object.fromEntries(sections.map(([k])=>[k,true])));
+  const allOff = () => setSelected({});
+  const selectedCount = Object.values(selected).filter(Boolean).length;
+
   return (
     <div>
       <Card style={{ marginBottom:16 }}>
-        <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text, marginBottom:12 }}>Select Sections to Include</div>
-        <div style={{ display:"flex", gap:12, flexWrap:"wrap" }}>
-          {[["deadline","Deadline Equipment"],["pm","PM Overdue / Due Soon"],["spending","Work Order Spending"],["inventory","Equipment Inventory"]].map(([k,l])=>(
-            <button key={k} onClick={()=>toggle(k)} style={{ padding:"8px 16px", borderRadius:7, border:`2px solid ${selected[k]?T.accent:T.border}`, background:selected[k]?T.accentLt:"#fff", color:selected[k]?T.accent:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:13, fontWeight:selected[k]?700:400 }}>
-              {selected[k]?"✓ ":""}{l}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+          <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text }}>Build Your Combined Report</div>
+          <div style={{ display:"flex", gap:6 }}>
+            <Btn small variant="secondary" onClick={allOn}>Select All</Btn>
+            <Btn small variant="secondary" onClick={allOff}>Clear</Btn>
+          </div>
+        </div>
+        <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginBottom:12 }}>Choose which sections to include. The report combines them into one printable document with your company header.</div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(280px, 1fr))", gap:10 }}>
+          {sections.map(([k,l,desc])=>(
+            <button key={k} onClick={()=>toggle(k)} style={{ padding:"12px 14px", borderRadius:8, border:`2px solid ${selected[k]?T.accent:T.border}`, background:selected[k]?T.accentLt:"#fff", color:selected[k]?T.accent:T.text, cursor:"pointer", fontFamily:T.sans, textAlign:"left", display:"flex", flexDirection:"column", gap:3 }}>
+              <span style={{ fontSize:13, fontWeight:selected[k]?700:600 }}>{selected[k]?"☑ ":"☐ "}{l}</span>
+              <span style={{ fontSize:11, color:T.muted }}>{desc}</span>
             </button>
           ))}
         </div>
-        <div style={{ marginTop:14 }}>
-          <Btn onClick={printCombined}>Generate Combined Report</Btn>
+        <div style={{ marginTop:18, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>{selectedCount} section{selectedCount!==1?"s":""} selected</span>
+          <Btn onClick={printCombined} disabled={selectedCount===0}>Generate Combined Report</Btn>
         </div>
       </Card>
     </div>
@@ -4348,9 +4498,8 @@ function SetupWizard({ onComplete }) {
         {step===2 && (
           <>
             <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Step 2 of {totalSteps} — Site Information</div>
-            <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.muted }}>Tell us about your facility.</p>
+            <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.muted }}>Tell us about where {data.companyName||"your organization"} operates.</p>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
-              <Field label="Site / Facility Name"><input style={inp} value={data.siteName} onChange={F("siteName")} placeholder="e.g. Miami National Cemetery" /></Field>
               <Field label="Region / District" half><input style={inp} value={data.region} onChange={F("region")} placeholder="e.g. Southeast Region" /></Field>
               <Field label="Address" half><input style={inp} value={data.address} onChange={F("address")} placeholder="Street address" /></Field>
               <Field label="City, State"><input style={inp} value={data.cityState} onChange={F("cityState")} placeholder="Miami, FL" /></Field>
@@ -4459,7 +4608,7 @@ function SetupWizard({ onComplete }) {
               <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.accent, marginBottom:10 }}>✓ Review Your Setup</div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"6px 16px", fontFamily:T.sans, fontSize:12 }}>
                 <div><span style={{ color:T.muted }}>Company:</span> <b style={{ color:T.text }}>{data.companyName||"—"}</b></div>
-                <div><span style={{ color:T.muted }}>Site:</span> <b style={{ color:T.text }}>{data.siteName||"—"}</b></div>
+                <div><span style={{ color:T.muted }}>Region:</span> <b style={{ color:T.text }}>{data.region||"—"}</b></div>
                 <div><span style={{ color:T.muted }}>Your Name:</span> <b style={{ color:T.text }}>{data.firstName} {data.lastName}</b></div>
                 <div><span style={{ color:T.muted }}>Mechanics:</span> <b style={{ color:T.text }}>{1+data.mechanics.length}</b></div>
                 <div><span style={{ color:T.muted }}>Locations:</span> <b style={{ color:T.text }}>{data.locations.length}</b></div>
