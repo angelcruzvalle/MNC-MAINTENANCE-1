@@ -139,6 +139,42 @@ const reportButtonsHtml = rows => {
   return `<br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer;margin-right:8px">Print / Save PDF</button>${dataUri ? `<a href="${dataUri}" download="report.csv" style="padding:8px 20px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;text-decoration:none;font-family:Arial,sans-serif;font-size:13px">Download Excel CSV</a>` : ""}`;
 };
 
+
+const getInputHistory = (fieldKey) => {
+  try { return JSON.parse(localStorage.getItem(`winMaintInputHistory:${fieldKey}`) || "[]"); }
+  catch { return []; }
+};
+const saveInputHistory = (fieldKey, value) => {
+  const v = String(value || "").trim();
+  if(!v) return;
+  try {
+    const existing = getInputHistory(fieldKey).filter(x => x.toLowerCase() !== v.toLowerCase());
+    localStorage.setItem(`winMaintInputHistory:${fieldKey}`, JSON.stringify([v, ...existing].slice(0, 30)));
+  } catch {}
+};
+function SmartInput({ historyKey, value, onChange, onBlur, listId, extraOptions=[], ...props }) {
+  const key = historyKey || props.name || props.placeholder || "general";
+  const dlId = listId || `history-${key.replace(/[^a-z0-9_-]/gi, "-")}`;
+  const [history, setHistory] = useState(()=>getInputHistory(key));
+  const remember = (val) => {
+    saveInputHistory(key, val);
+    setHistory(getInputHistory(key));
+  };
+  return (
+    <>
+      <input
+        {...props}
+        list={dlId}
+        value={value || ""}
+        onChange={onChange}
+        onBlur={(e)=>{ remember(e.target.value); onBlur?.(e); }}
+        onKeyDown={(e)=>{ if(e.key === "Enter") remember(e.currentTarget.value); props.onKeyDown?.(e); }}
+      />
+      <datalist id={dlId}>{[...new Set([...(extraOptions||[]), ...history])].map(v=><option key={v} value={v} />)}</datalist>
+    </>
+  );
+}
+
 /* -- STATUS STYLES -- */
 const statusStyle = {
   "Open":                          { color:"#1e40af", bg:"#eff6ff",  border:"#bfdbfe" },
@@ -1585,6 +1621,7 @@ function Equipment({ state, dispatch }) {
   const [statusF, setStatusF]   = useState("All");
   const [typeF, setTypeF]       = useState("All");
   const [locationF, setLocationF] = useState("All");
+  const [equipSort, setEquipSort] = useState("status");
   const [showNewCat, setShowNewCat] = useState(false);
   const [newCat, setNewCat]     = useState("");
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
@@ -1608,7 +1645,11 @@ function Equipment({ state, dispatch }) {
     const mt  = typeF==="All"   || e.type===typeF;
     const ml  = locationF==="All" || e.location===locationF;
     return ms&&mst&&mt&&ml;
-  }).sort((a,b)=>(STATUS_SORT[a.status]??99)-(STATUS_SORT[b.status]??99));
+  }).sort((a,b)=>{
+    if(equipSort==="equipAsc") return String(a.id||"").localeCompare(String(b.id||""), undefined, { numeric:true, sensitivity:"base" });
+    if(equipSort==="equipDesc") return String(b.id||"").localeCompare(String(a.id||""), undefined, { numeric:true, sensitivity:"base" });
+    return (STATUS_SORT[a.status]??99)-(STATUS_SORT[b.status]??99);
+  });
 
   const woForEq  = eq => state.workOrders.filter(w=>w.equipment===eq.id);
   const openAdd  = () => { setForm({ status:"Fully Operational", faultDescription:"", faultDate:"" }); setModal("add"); };
@@ -1647,13 +1688,13 @@ function Equipment({ state, dispatch }) {
     return (
     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
       <Field label="Equipment Name">
-        <input style={inp} value={form.name||""} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="e.g. John Deere Zero-Turn" />
+        <SmartInput historyKey="equipment.name" style={inp} value={form.name||""} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="e.g. John Deere Zero-Turn" />
       </Field>
       <Field label="Equipment #" half>
-        <input style={inp} value={form.id||""} onChange={e=>setForm(f=>({...f,id:e.target.value}))} placeholder="e.g. EQ-005" />
+        <SmartInput historyKey="equipment.id" style={inp} value={form.id||""} onChange={e=>setForm(f=>({...f,id:e.target.value}))} placeholder="e.g. EQ-005" />
       </Field>
       <Field label="EIL #" half>
-        <input style={inp} value={form.eilNumber||""} onChange={e=>setForm(f=>({...f,eilNumber:e.target.value}))} placeholder="EE#" />
+        <SmartInput historyKey="equipment.eilNumber" style={inp} value={form.eilNumber||""} onChange={e=>setForm(f=>({...f,eilNumber:e.target.value}))} placeholder="EE#" />
       </Field>
 
       {/* Category dropdown with Create New */}
@@ -1679,28 +1720,25 @@ function Equipment({ state, dispatch }) {
         </select>
       </Field>
       <Field label="Make" half>
-        <input style={inp} value={form.make||""} onChange={e=>setForm(f=>({...f,make:e.target.value}))} />
+        <SmartInput historyKey="equipment.make" style={inp} value={form.make||""} onChange={e=>setForm(f=>({...f,make:e.target.value}))} />
       </Field>
       <Field label="Model" half>
-        <input style={inp} value={form.model||""} onChange={e=>setForm(f=>({...f,model:e.target.value}))} />
+        <SmartInput historyKey="equipment.model" style={inp} value={form.model||""} onChange={e=>setForm(f=>({...f,model:e.target.value}))} />
       </Field>
       <Field label="Year" half>
-        <input style={inp} type="number" value={form.year||""} onChange={e=>setForm(f=>({...f,year:e.target.value}))} />
+        <SmartInput historyKey="equipment.year" style={inp} type="number" value={form.year||""} onChange={e=>setForm(f=>({...f,year:e.target.value}))} />
       </Field>
       <Field label="Serial Number" half>
-        <input style={inp} value={form.serial||""} onChange={e=>setForm(f=>({...f,serial:e.target.value}))} />
+        <SmartInput historyKey="equipment.serial" style={inp} value={form.serial||""} onChange={e=>setForm(f=>({...f,serial:e.target.value}))} />
       </Field>
       <Field label="Location" half>
-        <input style={inp} list="equipment-location-list" value={form.location||""} onChange={e=>setForm(f=>({...f,location:e.target.value}))} placeholder="Select or type location..." />
-        <datalist id="equipment-location-list">
-          {[...new Set([...(state.settings?.locations||[]), ...(state.equipment||[]).map(e=>e.location).filter(Boolean)])].map(l=><option key={l} value={l} />)}
-        </datalist>
+        <SmartInput historyKey="equipment.location" style={inp} listId="equipment-location-history" extraOptions={[...new Set([...(state.settings?.locations||[]), ...(state.equipment||[]).map(e=>e.location).filter(Boolean)])]} value={form.location||""} onChange={e=>setForm(f=>({...f,location:e.target.value}))} placeholder="Select or type location..." />
       </Field>
       <Field label="Acquisition Date" half>
         <input style={inp} type="date" value={form.acquisitionDate||""} onChange={e=>setForm(f=>({...f,acquisitionDate:e.target.value}))} />
       </Field>
       <Field label="Purchase Price ($)" half>
-        <input style={inp} type="number" value={form.acquisitionCost||""} onChange={e=>setForm(f=>({...f,acquisitionCost:e.target.value}))} placeholder="0.00" />
+        <SmartInput historyKey="equipment.acquisitionCost" style={inp} type="number" value={form.acquisitionCost||""} onChange={e=>setForm(f=>({...f,acquisitionCost:e.target.value}))} placeholder="0.00" />
       </Field>
       <Field label="Warranty Start Date" half>
         <input style={inp} type="date" value={form.warrantyStart||""} onChange={e=>setForm(f=>({...f,warrantyStart:e.target.value}))} />
@@ -1957,6 +1995,14 @@ function Equipment({ state, dispatch }) {
               </select>
             </div>
           ))}
+          <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+            <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Sort</label>
+            <select style={{ ...sel, width:210 }} value={equipSort} onChange={e=>setEquipSort(e.target.value)}>
+              <option value="status">Status priority</option>
+              <option value="equipAsc">Equip # ascending</option>
+              <option value="equipDesc">Equip # descending</option>
+            </select>
+          </div>
           {(statusF!=="All"||typeF!=="All"||locationF!=="All") && (
             <button onClick={()=>{setStatusF("All");setTypeF("All");setLocationF("All");}} style={{ background:"none", border:"none", color:T.accent, fontFamily:T.sans, fontSize:12, fontWeight:600, cursor:"pointer", padding:"0 0 6px", alignSelf:"flex-end" }}>
               ✕ Clear filters
