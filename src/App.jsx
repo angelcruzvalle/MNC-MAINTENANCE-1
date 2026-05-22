@@ -481,11 +481,14 @@ function Dashboard({ state, dispatch, setTab }) {
   const widgetSizes = settings.dashboardWidgetSizes || {};
   const [customize, setCustomize] = useState(false);
   const saveDash = patch => dispatch({ type:"UPDATE_SETTINGS", payload:{ ...settings, ...patch } });
+  const setWidgetSize = (id, size) => {
+    saveDash({ dashboardWidgetSizes:{ ...widgetSizes, [id]:size } });
+  };
   const cycleSize = id => {
-    const order = ["small","medium","large","wide"];
+    const order = ["small","medium","large","wide","hero"];
     const current = widgetSizes[id] || "medium";
     const next = order[(order.indexOf(current)+1)%order.length];
-    saveDash({ dashboardWidgetSizes:{ ...widgetSizes, [id]:next } });
+    setWidgetSize(id, next);
   };
   const moveWidget = (id, dir) => {
     const arr = [...fullLayout];
@@ -503,16 +506,18 @@ function Dashboard({ state, dispatch, setTab }) {
       ? { gridColumn:"span 2", minHeight:240 }
       : size==="wide"
       ? { gridColumn:"1 / -1", minHeight:180 }
+      : size==="hero"
+      ? { gridColumn:"1 / -1", minHeight:280 }
       : { gridColumn:"span 1", minHeight:170 };
 
     return (
-    <div key={id} onClick={()=>tab&&setTab(tab)} style={{
+    <div key={id} onClick={()=>{ if(!customize && tab) setTab(tab); }} style={{
       background:view==="glass"?"rgba(255,255,255,.75)":"#fff",
       backdropFilter:view==="glass"?"blur(10px)":"none",
       border:`1px solid ${extra.danger?"#ef4444":T.border}`,
       borderRadius:view==="compact"?4:14,
       padding:view==="compact"?"10px 12px":"14px 16px",
-      cursor:tab?"pointer":"default",
+      cursor:customize?"default":(tab?"pointer":"default"),
       boxShadow:T.shadow,
       overflow:"hidden",
       ...sizeStyle,
@@ -520,7 +525,19 @@ function Dashboard({ state, dispatch, setTab }) {
     }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
         <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>{title}</div>
-        {customize && <div style={{ display:"flex", gap:4, flexWrap:"wrap" }} onClick={e=>e.stopPropagation()}><Btn small variant="secondary" onClick={()=>moveWidget(id,-1)}>↑</Btn><Btn small variant="secondary" onClick={()=>moveWidget(id,1)}>↓</Btn><Btn small variant="secondary" onClick={()=>cycleSize(id)}>Resize</Btn><Btn small variant="danger" onClick={()=>toggleWidget(id)}>Hide</Btn></div>}
+        {customize && <div style={{ display:"flex", gap:4, flexWrap:"wrap", alignItems:"center" }} onClick={e=>e.stopPropagation()}>
+          <Btn small variant="secondary" onClick={()=>moveWidget(id,-1)}>↑</Btn>
+          <Btn small variant="secondary" onClick={()=>moveWidget(id,1)}>↓</Btn>
+          <select value={size} onChange={e=>setWidgetSize(id,e.target.value)} title="Card size" style={{ height:28, border:`1px solid ${T.border}`, borderRadius:6, padding:"0 6px", fontSize:11, background:"#fff" }}>
+            <option value="small">Small</option>
+            <option value="medium">Medium</option>
+            <option value="large">Large</option>
+            <option value="wide">Wide</option>
+            <option value="hero">Hero</option>
+          </select>
+          <Btn small variant="secondary" onClick={()=>cycleSize(id)}>Quick Resize</Btn>
+          <Btn small variant="danger" onClick={()=>toggleWidget(id)}>Hide</Btn>
+        </div>}
       </div>
       {children}
     </div>
@@ -542,14 +559,24 @@ function Dashboard({ state, dispatch, setTab }) {
   return <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap" }}>
       <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-        {[{id:"workorders",icon:"📋",label:"Work Orders",count:openWOs+inProgWOs+awaitParts+onHoldWOs},{id:"pm",icon:"🔧",label:"Preventive Maintenance",count:pmOverdue+pmDueSoon},{id:"equipment",icon:"🚜",label:"Equipment",count:eqs.length},{id:"parts",icon:"📦",label:"Parts",count:parts.length},{id:"usage",icon:"📊",label:"Usage",count:eqs.filter(e=>e.trackUsage).length},{id:"spending",icon:"💰",label:"Costs",count:`$${spendMo.toFixed(0)}`}].map(c=><button key={c.id} onClick={()=>setTab(c.id)} style={{ background:"#fff", border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 14px", cursor:"pointer", boxShadow:T.shadow, display:"flex", alignItems:"center", gap:8 }}><span>{c.icon}</span><span style={{ fontWeight:700, fontSize:12 }}>{c.label}</span><span style={{ fontFamily:T.mono, color:T.accent, fontWeight:800 }}>{c.count}</span></button>)}
+        {[{id:"workorders",icon:"📋",label:"Work Orders",count:openWOs+inProgWOs+awaitParts+onHoldWOs},{id:"pm",icon:"🔧",label:"Preventive Maintenance",count:pmOverdue+pmDueSoon},{id:"equipment",icon:"🚜",label:"Equipment",count:eqs.length},{id:"parts",icon:"📦",label:"Parts",count:parts.length},{id:"usage",icon:"📊",label:"Usage",count:eqs.filter(e=>e.trackUsage).length},{id:"spending",icon:"💰",label:"Costs",count:`$${spendMo.toFixed(0)}`}].map(c=><button key={c.id} disabled={customize} onClick={()=>!customize&&setTab(c.id)} style={{ background:"#fff", border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 14px", cursor:customize?"not-allowed":"pointer", opacity:customize ? .55 : 1, boxShadow:T.shadow, display:"flex", alignItems:"center", gap:8 }}><span>{c.icon}</span><span style={{ fontWeight:700, fontSize:12 }}>{c.label}</span><span style={{ fontFamily:T.mono, color:T.accent, fontWeight:800 }}>{c.count}</span></button>)}
       </div>
-      <div style={{ display:"flex", gap:8 }}>
-        <Btn variant="secondary" onClick={()=>saveDash({ dashboardView:view==="cards"?"list":"cards" })}>{view==="cards"?"List View":"Card View"}</Btn>
+      <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+        <select value={view} onChange={e=>saveDash({ dashboardView:e.target.value })} style={{ height:36, border:`1px solid ${T.border}`, borderRadius:8, padding:"0 10px", background:"#fff", fontWeight:700 }}>
+          <option value="cards">Card View</option>
+          <option value="list">List View</option>
+          <option value="compact">Compact View</option>
+          <option value="glass">Glass View</option>
+        </select>
         <Btn onClick={()=>setCustomize(v=>!v)}>{customize?"Done Customizing":"Customize Dashboard"}</Btn>
       </div>
     </div>
-    {customize && <Card style={{ padding:14 }}><div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>Add / remove dashboard widgets</div><div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>{fullLayout.map(id=><Btn key={id} small variant={hidden.includes(id)?"secondary":"primary"} onClick={()=>toggleWidget(id)}>{hidden.includes(id)?"Add":"Remove"} {id}</Btn>)}</div></Card>}
+    {customize && <Card style={{ padding:14, border:`2px dashed ${T.accent}` }}>
+      <div style={{ fontSize:13, fontWeight:800, marginBottom:4 }}>Dashboard customization mode is ON</div>
+      <div style={{ fontSize:12, color:T.muted, marginBottom:10 }}>Cards will not open sections while customizing. Use the size dropdown on each card to stretch it.</div>
+      <div style={{ fontSize:13, fontWeight:700, marginBottom:8 }}>Add / remove dashboard widgets</div>
+      <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>{fullLayout.map(id=><Btn key={id} small variant={hidden.includes(id)?"secondary":"primary"} onClick={()=>toggleWidget(id)}>{hidden.includes(id)?"Add":"Remove"} {id}</Btn>)}</div>
+    </Card>}
     <div style={{ display:"grid", gridTemplateColumns:view==="cards"?"repeat(4,1fr)":"1fr", gap:10 }}>
       {fullLayout.filter(id=>!hidden.includes(id)).map(id=>widgets[id])}
     </div>
