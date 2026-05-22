@@ -930,7 +930,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const grandTotal = laborTotal + partsTotal + (+(wo.partsCost||0));
     const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", Labor:laborTotal.toFixed(2), Parts:partsTotal.toFixed(2), Total:grandTotal.toFixed(2), Problem:wo.problem||wo.description||"", "Fault Description":wo.faultEnabled?(wo.faultDescription||""):"", "Repair Complaint":wo.repairComplaint||"", "Repair Cause":wo.repairCause||"", "Corrective Action":wo.correctiveAction||"", "Service Checklist":wo.serviceChecklist||"", "Inspection Findings":wo.inspectionFindings||"", Notes:wo.mechanicNotes||""}];
     const typeSpecificPrint = (() => {
-      if(wo.woType==="Repair") return `<div class="sec"><div class="sh">Repair Work Order Details</div><div class="twocol"><div><b>Work Order Title:</b><br>${wo.title||"&nbsp;"}</div><div><b>Failure Area:</b><br>${wo.failureArea||"&nbsp;"}</div><div><b>Complaint:</b><br>${wo.repairComplaint||"&nbsp;"}</div><div><b>Cause:</b><br>${wo.repairCause||"&nbsp;"}</div><div><b>Corrective Action:</b><br>${wo.correctiveAction||"&nbsp;"}</div><div><b>Return-to-Service:</b><br>${wo.returnToService||"&nbsp;"}</div></div></div>`;
+      if(wo.woType==="Repair") return "";
       if(wo.woType==="Service") return `<div class="sec"><div class="sh">Service Work Order Details</div><div class="twocol"><div><b>Meter / Hours:</b><br>${wo.meterReading||"&nbsp;"}</div><div><b>Next Service Due:</b><br>${wo.nextServiceDue||"&nbsp;"}</div><div style="grid-column:1/3"><b>Service Checklist:</b><br>${wo.serviceChecklist||"&nbsp;"}</div></div></div>`;
       if(wo.woType==="Inspection") return `<div class="sec"><div class="sh">Inspection Work Order Details</div><div class="twocol"><div><b>Result:</b><br>${wo.inspectionResult||"&nbsp;"}</div><div><b>Follow-Up:</b><br>${wo.followUpRequired||"&nbsp;"}</div><div style="grid-column:1/3"><b>Findings:</b><br>${wo.inspectionFindings||"&nbsp;"}</div></div></div>`;
       return "";
@@ -1003,7 +1003,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         <div class="cell s2"><div class="lbl">Assigned Mechanic</div><div class="val">${wo.tech||"&nbsp;"}</div></div>
         <div class="cell"><div class="lbl">Priority</div><div class="val"><span class="${wo.priority==="High"?"phi":wo.priority==="Medium"?"pmd":"plo"}">${wo.priority||"Low"}</span></div></div>
       </div>
-      ${wo.woType||wo.serviceInterval?`<div class="row c22"><div class="cell"><div class="lbl">Work Order Type</div><div class="val">${wo.woType||"Service"} Work Order</div></div><div class="cell"><div class="lbl">Service Interval</div><div class="val">${wo.serviceInterval||"N/A"}</div></div></div>`:""}
+      ${(wo.woType && wo.woType!=="Repair")||wo.serviceInterval?`<div class="row c22"><div class="cell"><div class="lbl">Work Order Type</div><div class="val">${wo.woType||"Service"} Work Order</div></div><div class="cell"><div class="lbl">${wo.woType==="Inspection"?"Inspection Interval":"Service Interval"}</div><div class="val">${wo.serviceInterval||"N/A"}</div></div></div>`:wo.woType?`<div class="row c2"><div class="cell"><div class="lbl">Work Order Type</div><div class="val">${wo.woType} Work Order</div></div><div class="cell"><div class="lbl">Work Order Title</div><div class="val">${wo.title||"&nbsp;"}</div></div></div>`:""}
       <div class="sec">
         <div class="sh">Equipment Information</div>
         <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr;border:none">
@@ -1013,9 +1013,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div class="cell"><div class="lbl">Serial # / EIL #</div><div class="val mn">${eq?.serial||"&nbsp;"} / ${eq?.eilNumber||"&nbsp;"}</div></div>
         </div>
       </div>
+      ${wo.faultEnabled ? `<div class="sec"><div class="sh">Fault Description</div><div class="sb" style="min-height:60px">${wo.faultDescription||"&nbsp;"}</div></div>` : ""}
       <div class="sec"><div class="sh">Work Description &amp; Work Performed</div><div class="sb">${wo.description||"&nbsp;"}</div></div>
       ${typeSpecificPrint}
-      ${wo.faultEnabled ? `<div class="sec"><div class="sh">Fault Description</div><div class="sb phi" style="min-height:60px">${wo.faultDescription||"&nbsp;"}</div></div>` : ""}
       <div class="bg">
         <div class="sec"><div class="sh">Mechanic Notes (Write-In)</div><div class="sb" style="min-height:80px">${wo.mechanicNotes||"&nbsp;"}</div></div>
         <div class="sec">
@@ -1116,34 +1116,15 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <input style={inp} value={form.title||""} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder={form.woType==="Repair"?"Example: Hydraulic leak at lift cylinder":needsInterval?"Select interval above to auto-fill...":"Enter work order title..."} />
         </Field>
 
-        {form.woType==="Repair" && (
-          <TypeSection title="Repair Work Order Block" subtitle="Use this section to capture the complaint, cause, and repair performed." accent="#7f1d1d">
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-              <div style={{ gridColumn:"span 2" }}>
-                <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>Customer / Operator Complaint</label>
-                <textarea style={{ ...inp, minHeight:80, resize:"vertical" }} value={form.repairComplaint||""} onChange={e=>setForm(f=>({...f,repairComplaint:e.target.value}))} placeholder="What did the operator report?" />
-              </div>
-              <div>
-                <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>Suspected / Found Cause</label>
-                <textarea style={{ ...inp, minHeight:80, resize:"vertical" }} value={form.repairCause||""} onChange={e=>setForm(f=>({...f,repairCause:e.target.value}))} placeholder="What caused the failure?" />
-              </div>
-              <div>
-                <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>Corrective Action</label>
-                <textarea style={{ ...inp, minHeight:80, resize:"vertical" }} value={form.correctiveAction||""} onChange={e=>setForm(f=>({...f,correctiveAction:e.target.value}))} placeholder="What repair was performed?" />
-              </div>
-              <div>
-                <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>Failure Area</label>
-                <input style={inp} value={form.failureArea||""} onChange={e=>setForm(f=>({...f,failureArea:e.target.value}))} placeholder="Hydraulic, electrical, engine, brakes..." />
-              </div>
-              <div>
-                <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>Return-to-Service Check</label>
-                <select style={sel} value={form.returnToService||"Not Checked"} onChange={e=>setForm(f=>({...f,returnToService:e.target.value}))}>
-                  {["Not Checked","Checked - Ready","Needs Follow-Up","Do Not Operate"].map(x=><option key={x}>{x}</option>)}
-                </select>
-              </div>
-            </div>
-          </TypeSection>
-        )}
+        <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.grayLt }}>
+          <label style={{ display:"flex", alignItems:"center", gap:10, fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:form.faultEnabled?8:0 }}>
+            <input type="checkbox" checked={!!form.faultEnabled} onChange={e=>setForm(f=>({...f,faultEnabled:e.target.checked,faultDescription:e.target.checked?f.faultDescription:""}))} />
+            Add Fault Description to this Work Order
+          </label>
+          {form.faultEnabled && (
+            <textarea style={{ ...inp, minHeight:90, resize:"vertical", background:"#fff" }} value={form.faultDescription||""} onChange={e=>setForm(f=>({...f,faultDescription:e.target.value}))} placeholder="Describe the fault, complaint, symptom, or failure that needs to appear on the work order and reports..." />
+          )}
+        </div>
 
         {form.woType==="Service" && (
           <TypeSection title="Service Work Order Block" subtitle="Maintenance service details for scheduled PM or routine service." accent="#1e40af">
@@ -1250,16 +1231,6 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         <Field label="Work Description / Problem Reported">
           <textarea style={{ ...inp, minHeight:110, resize:"vertical" }} value={form.description||""} onChange={e=>setForm(f=>({...f,description:e.target.value}))} />
         </Field>
-
-        <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${form.faultEnabled?"#fca5a5":T.border}`, borderRadius:8, padding:12, background:form.faultEnabled?"#fff5f5":T.grayLt }}>
-          <label style={{ display:"flex", alignItems:"center", gap:10, fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:form.faultEnabled?8:0 }}>
-            <input type="checkbox" checked={!!form.faultEnabled} onChange={e=>setForm(f=>({...f,faultEnabled:e.target.checked,faultDescription:e.target.checked?f.faultDescription:""}))} />
-            Add Fault Description to this Work Order
-          </label>
-          {form.faultEnabled && (
-            <textarea style={{ ...inp, minHeight:90, resize:"vertical", background:"#fff" }} value={form.faultDescription||""} onChange={e=>setForm(f=>({...f,faultDescription:e.target.value}))} placeholder="Describe the fault, complaint, symptom, or failure that needs to appear on the work order and reports..." />
-          )}
-        </div>
 
         <Field label="Mechanic Notes">
           <textarea style={{ ...inp, minHeight:110, resize:"vertical" }} value={form.mechanicNotes||""} onChange={e=>setForm(f=>({...f,mechanicNotes:e.target.value}))} placeholder="Mechanic observations, steps taken, findings..." />
@@ -1374,7 +1345,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               {wo.autoGenerated && <span style={{ padding:"2px 8px", borderRadius:4, background:"#f5f3ff", color:"#7c3aed", fontSize:11, fontWeight:600 }}>AUTO</span>}
             </div>
             <h3 style={{ margin:0, fontFamily:T.sans, fontSize:18, fontWeight:700, color:T.text }}>{wo.title}</h3>
-            {wo.serviceInterval && <div style={{ fontFamily:T.mono, fontSize:11, color:T.accent, marginTop:2 }}>{wo.serviceInterval}</div>}
+            {wo.serviceInterval && wo.woType!=="Repair" && <div style={{ fontFamily:T.mono, fontSize:11, color:T.accent, marginTop:2 }}>{wo.serviceInterval}</div>}
           </div>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
             <Btn small variant="secondary" onClick={()=>printWO(wo)}>Print</Btn>
@@ -1396,6 +1367,13 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           ))}
         </div>
 
+        {wo.faultEnabled && (
+          <div style={{ background:T.grayLt, borderRadius:6, padding:"10px 12px", border:`1px solid ${T.border}` }}>
+            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Fault Description</div>
+            <div style={{ minHeight:70, fontFamily:T.sans, fontSize:13, color:wo.faultDescription?T.text:T.muted, lineHeight:1.6, fontStyle:wo.faultDescription?"normal":"italic" }}>{wo.faultDescription||"No fault description recorded."}</div>
+          </div>
+        )}
+
         {/* Description */}
         <div style={{ background:T.grayLt, borderRadius:6, padding:"10px 12px", border:`1px solid ${T.border}` }}>
           <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Work Description</div>
@@ -1403,19 +1381,6 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         </div>
 
 
-
-        {wo.woType==="Repair" && (wo.repairComplaint||wo.repairCause||wo.correctiveAction||wo.failureArea||wo.returnToService) && (
-          <div style={{ background:"#fff5f5", borderRadius:6, padding:"10px 12px", border:"1px solid #fca5a5" }}>
-            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.red, textTransform:"uppercase", letterSpacing:.4, marginBottom:6 }}>Repair Block</div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, fontFamily:T.sans, fontSize:13, color:T.text }}>
-              <div><b>Complaint:</b><br />{wo.repairComplaint||"—"}</div>
-              <div><b>Failure Area:</b><br />{wo.failureArea||"—"}</div>
-              <div><b>Cause:</b><br />{wo.repairCause||"—"}</div>
-              <div><b>Corrective Action:</b><br />{wo.correctiveAction||"—"}</div>
-              <div><b>Return-to-Service:</b><br />{wo.returnToService||"—"}</div>
-            </div>
-          </div>
-        )}
 
         {wo.woType==="Service" && (wo.meterReading||wo.nextServiceDue||wo.serviceChecklist) && (
           <div style={{ background:"#eff6ff", borderRadius:6, padding:"10px 12px", border:"1px solid #bfdbfe" }}>
@@ -1436,13 +1401,6 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               <div><b>Follow-Up:</b><br />{wo.followUpRequired||"—"}</div>
               <div style={{ gridColumn:"span 2" }}><b>Findings:</b><br />{wo.inspectionFindings||"—"}</div>
             </div>
-          </div>
-        )}
-
-        {wo.faultEnabled && (
-          <div style={{ background:"#fff5f5", borderRadius:6, padding:"10px 12px", border:"1px solid #fca5a5" }}>
-            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.red, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Fault Description</div>
-            <div style={{ minHeight:70, fontFamily:T.sans, fontSize:13, color:wo.faultDescription?T.text:T.muted, lineHeight:1.6, fontStyle:wo.faultDescription?"normal":"italic" }}>{wo.faultDescription||"No fault description recorded."}</div>
           </div>
         )}
 
