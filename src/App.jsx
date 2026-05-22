@@ -4737,6 +4737,8 @@ export default function App() {
       <style>{`
         * { box-sizing:border-box; }
         body { margin:0; }
+        #root { width:100%; min-width:0; }
+        table { width:100%; }
         ::-webkit-scrollbar { width:6px; height:6px; }
         ::-webkit-scrollbar-track { background:#f1f1f1; }
         ::-webkit-scrollbar-thumb { background:#c1c7d0; border-radius:3px; }
@@ -4779,7 +4781,7 @@ export default function App() {
         </div>
       </header>
 
-      <main style={{ width:"100%", padding:"24px 32px", minHeight:"calc(100vh - 56px)" }}>
+      <main style={{ width:"100%", maxWidth:"none", padding:"16px 18px", minHeight:"calc(100vh - 56px)", overflowX:"auto" }}>
         <div style={{ marginBottom:20 }}>
           <h1 style={{ margin:0, fontFamily:T.sans, fontSize:24, fontWeight:700, color:T.text, letterSpacing:-.4 }}>{PAGE_TITLES[tab]}</h1>
           <div style={{ width:32, height:3, background:T.accent, borderRadius:2, marginTop:6 }} />
