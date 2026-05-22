@@ -478,8 +478,15 @@ function Dashboard({ state, dispatch, setTab }) {
   const fullLayout = [...layout, ...defaultLayout.filter(id=>!layout.includes(id))];
   const hidden = settings.dashboardHidden || [];
   const view = settings.dashboardView || "cards";
+  const widgetSizes = settings.dashboardWidgetSizes || {};
   const [customize, setCustomize] = useState(false);
   const saveDash = patch => dispatch({ type:"UPDATE_SETTINGS", payload:{ ...settings, ...patch } });
+  const cycleSize = id => {
+    const order = ["small","medium","large","wide"];
+    const current = widgetSizes[id] || "medium";
+    const next = order[(order.indexOf(current)+1)%order.length];
+    saveDash({ dashboardWidgetSizes:{ ...widgetSizes, [id]:next } });
+  };
   const moveWidget = (id, dir) => {
     const arr = [...fullLayout];
     const i = arr.indexOf(id), j = i + dir;
@@ -488,15 +495,36 @@ function Dashboard({ state, dispatch, setTab }) {
     saveDash({ dashboardLayout:arr });
   };
   const toggleWidget = id => saveDash({ dashboardHidden:hidden.includes(id) ? hidden.filter(x=>x!==id) : [...hidden, id] });
-  const widgetShell = (id, title, tab, children, extra={}) => (
-    <div key={id} onClick={()=>tab&&setTab(tab)} style={{ background:"#fff", border:`1px solid ${extra.danger?"#ef4444":T.border}`, borderRadius:8, padding:"14px 16px", cursor:tab?"pointer":"default", boxShadow:T.shadow, minHeight:view==="list"?"auto":150, ...extra.style }}>
+  const widgetShell = (id, title, tab, children, extra={}) => {
+    const size = widgetSizes[id] || "medium";
+    const sizeStyle = size==="small"
+      ? { gridColumn:"span 1", minHeight:120 }
+      : size==="large"
+      ? { gridColumn:"span 2", minHeight:240 }
+      : size==="wide"
+      ? { gridColumn:"1 / -1", minHeight:180 }
+      : { gridColumn:"span 1", minHeight:170 };
+
+    return (
+    <div key={id} onClick={()=>tab&&setTab(tab)} style={{
+      background:view==="glass"?"rgba(255,255,255,.75)":"#fff",
+      backdropFilter:view==="glass"?"blur(10px)":"none",
+      border:`1px solid ${extra.danger?"#ef4444":T.border}`,
+      borderRadius:view==="compact"?4:14,
+      padding:view==="compact"?"10px 12px":"14px 16px",
+      cursor:tab?"pointer":"default",
+      boxShadow:T.shadow,
+      overflow:"hidden",
+      ...sizeStyle,
+      ...extra.style
+    }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
         <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>{title}</div>
-        {customize && <div style={{ display:"flex", gap:4 }} onClick={e=>e.stopPropagation()}><Btn small variant="secondary" onClick={()=>moveWidget(id,-1)}>↑</Btn><Btn small variant="secondary" onClick={()=>moveWidget(id,1)}>↓</Btn><Btn small variant="danger" onClick={()=>toggleWidget(id)}>Hide</Btn></div>}
+        {customize && <div style={{ display:"flex", gap:4, flexWrap:"wrap" }} onClick={e=>e.stopPropagation()}><Btn small variant="secondary" onClick={()=>moveWidget(id,-1)}>↑</Btn><Btn small variant="secondary" onClick={()=>moveWidget(id,1)}>↓</Btn><Btn small variant="secondary" onClick={()=>cycleSize(id)}>Resize</Btn><Btn small variant="danger" onClick={()=>toggleWidget(id)}>Hide</Btn></div>}
       </div>
       {children}
     </div>
-  );
+  )};
   const widgets = {
     workorders: widgetShell("workorders","Work Orders","workorders", <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
       {[ ["Open",openWOs,T.accent], ["In Progress",inProgWOs,T.amber], ["Awaiting Parts",awaitParts,"#7c3aed"], ["On Hold",onHoldWOs,T.muted] ].map(([l,v,c])=><div key={l} style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}><span style={{ fontFamily:T.sans, fontSize:12, color:T.subtext }}>{dot(c)}{l}</span><b style={{ fontFamily:T.mono, color:c }}>{v}</b></div>)}
