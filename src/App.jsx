@@ -828,7 +828,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const openAdd = () => {
     setEqSearch("");
-    setForm({ status:"Open", priority:"Medium", created:today(), due:today(), tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], mechanicNotes:"", faultEnabled:false, faultDescription:"" });
+    setForm({ status:"Open", priority:"Medium", created:today(), due:today(), tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], mechanicNotes:"", faultEnabled:false, faultDescription:"", repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"" });
     setModal("pick"); /* Go straight to equipment — type chosen in the form */
   };
 
@@ -928,7 +928,13 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
     const laborTotal = +(wo.laborCost||0);
     const grandTotal = laborTotal + partsTotal + (+(wo.partsCost||0));
-    const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", Labor:laborTotal.toFixed(2), Parts:partsTotal.toFixed(2), Total:grandTotal.toFixed(2), Problem:wo.problem||wo.description||"", "Fault Description":wo.faultEnabled?(wo.faultDescription||""):"", Notes:wo.mechanicNotes||""}];
+    const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", Labor:laborTotal.toFixed(2), Parts:partsTotal.toFixed(2), Total:grandTotal.toFixed(2), Problem:wo.problem||wo.description||"", "Fault Description":wo.faultEnabled?(wo.faultDescription||""):"", "Repair Complaint":wo.repairComplaint||"", "Repair Cause":wo.repairCause||"", "Corrective Action":wo.correctiveAction||"", "Service Checklist":wo.serviceChecklist||"", "Inspection Findings":wo.inspectionFindings||"", Notes:wo.mechanicNotes||""}];
+    const typeSpecificPrint = (() => {
+      if(wo.woType==="Repair") return `<div class="sec"><div class="sh">Repair Work Order Details</div><div class="twocol"><div><b>Work Order Title:</b><br>${wo.title||"&nbsp;"}</div><div><b>Failure Area:</b><br>${wo.failureArea||"&nbsp;"}</div><div><b>Complaint:</b><br>${wo.repairComplaint||"&nbsp;"}</div><div><b>Cause:</b><br>${wo.repairCause||"&nbsp;"}</div><div><b>Corrective Action:</b><br>${wo.correctiveAction||"&nbsp;"}</div><div><b>Return-to-Service:</b><br>${wo.returnToService||"&nbsp;"}</div></div></div>`;
+      if(wo.woType==="Service") return `<div class="sec"><div class="sh">Service Work Order Details</div><div class="twocol"><div><b>Meter / Hours:</b><br>${wo.meterReading||"&nbsp;"}</div><div><b>Next Service Due:</b><br>${wo.nextServiceDue||"&nbsp;"}</div><div style="grid-column:1/3"><b>Service Checklist:</b><br>${wo.serviceChecklist||"&nbsp;"}</div></div></div>`;
+      if(wo.woType==="Inspection") return `<div class="sec"><div class="sh">Inspection Work Order Details</div><div class="twocol"><div><b>Result:</b><br>${wo.inspectionResult||"&nbsp;"}</div><div><b>Follow-Up:</b><br>${wo.followUpRequired||"&nbsp;"}</div><div style="grid-column:1/3"><b>Findings:</b><br>${wo.inspectionFindings||"&nbsp;"}</div></div></div>`;
+      return "";
+    })();
     const woCsv = rowsToDataUri(woRows);
 
     const win = window.open("","_blank","width=900,height=700");
@@ -1008,6 +1014,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         </div>
       </div>
       <div class="sec"><div class="sh">Work Description &amp; Work Performed</div><div class="sb">${wo.description||"&nbsp;"}</div></div>
+      ${typeSpecificPrint}
       ${wo.faultEnabled ? `<div class="sec"><div class="sh">Fault Description</div><div class="sb phi" style="min-height:60px">${wo.faultDescription||"&nbsp;"}</div></div>` : ""}
       <div class="bg">
         <div class="sec"><div class="sh">Mechanic Notes (Write-In)</div><div class="sb" style="min-height:80px">${wo.mechanicNotes||"&nbsp;"}</div></div>
@@ -1049,7 +1056,20 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   /* ---- WO form fields ---- */
   const renderWOForm = () => {
     const needsInterval = form.woType==="Service" || form.woType==="Inspection";
+    const typeInfo = WO_TYPES.find(t=>t.id===form.woType);
     const techObj = technicians.find(t=>t.id===form.techId);
+    const TypeSection = ({ title, subtitle, accent, children }) => (
+      <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${accent||T.border}`, borderRadius:10, padding:14, background:"#fff" }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, marginBottom:10 }}>
+          <div>
+            <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:accent||T.text, textTransform:"uppercase", letterSpacing:.5 }}>{title}</div>
+            {subtitle && <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{subtitle}</div>}
+          </div>
+          {typeInfo && <span style={{ padding:"3px 9px", borderRadius:999, background:typeInfo.bg, color:typeInfo.color, fontFamily:T.sans, fontSize:11, fontWeight:800 }}>{typeInfo.icon} {typeInfo.id}</span>}
+        </div>
+        {children}
+      </div>
+    );
     return (
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
 
@@ -1092,9 +1112,80 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           </div>
         )}
 
-        <Field label="Work Order Title">
-          <input style={inp} value={form.title||""} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder={needsInterval?"Select interval above to auto-fill...":"e.g. Repair hydraulic leak..."} />
+        <Field label={form.woType==="Repair" ? "Repair Work Order Title" : "Work Order Title"}>
+          <input style={inp} value={form.title||""} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder={form.woType==="Repair"?"Example: Hydraulic leak at lift cylinder":needsInterval?"Select interval above to auto-fill...":"Enter work order title..."} />
         </Field>
+
+        {form.woType==="Repair" && (
+          <TypeSection title="Repair Work Order Block" subtitle="Use this section to capture the complaint, cause, and repair performed." accent="#7f1d1d">
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+              <div style={{ gridColumn:"span 2" }}>
+                <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>Customer / Operator Complaint</label>
+                <textarea style={{ ...inp, minHeight:80, resize:"vertical" }} value={form.repairComplaint||""} onChange={e=>setForm(f=>({...f,repairComplaint:e.target.value}))} placeholder="What did the operator report?" />
+              </div>
+              <div>
+                <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>Suspected / Found Cause</label>
+                <textarea style={{ ...inp, minHeight:80, resize:"vertical" }} value={form.repairCause||""} onChange={e=>setForm(f=>({...f,repairCause:e.target.value}))} placeholder="What caused the failure?" />
+              </div>
+              <div>
+                <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>Corrective Action</label>
+                <textarea style={{ ...inp, minHeight:80, resize:"vertical" }} value={form.correctiveAction||""} onChange={e=>setForm(f=>({...f,correctiveAction:e.target.value}))} placeholder="What repair was performed?" />
+              </div>
+              <div>
+                <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>Failure Area</label>
+                <input style={inp} value={form.failureArea||""} onChange={e=>setForm(f=>({...f,failureArea:e.target.value}))} placeholder="Hydraulic, electrical, engine, brakes..." />
+              </div>
+              <div>
+                <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>Return-to-Service Check</label>
+                <select style={sel} value={form.returnToService||"Not Checked"} onChange={e=>setForm(f=>({...f,returnToService:e.target.value}))}>
+                  {["Not Checked","Checked - Ready","Needs Follow-Up","Do Not Operate"].map(x=><option key={x}>{x}</option>)}
+                </select>
+              </div>
+            </div>
+          </TypeSection>
+        )}
+
+        {form.woType==="Service" && (
+          <TypeSection title="Service Work Order Block" subtitle="Maintenance service details for scheduled PM or routine service." accent="#1e40af">
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+              <div>
+                <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>Meter / Hour Reading</label>
+                <input style={inp} value={form.meterReading||""} onChange={e=>setForm(f=>({...f,meterReading:e.target.value}))} placeholder="Hours, miles, or meter reading" />
+              </div>
+              <div>
+                <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>Next Service Due</label>
+                <input style={inp} value={form.nextServiceDue||""} onChange={e=>setForm(f=>({...f,nextServiceDue:e.target.value}))} placeholder="Date, hours, or mileage" />
+              </div>
+              <div style={{ gridColumn:"span 2" }}>
+                <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>Service Checklist / Items Completed</label>
+                <textarea style={{ ...inp, minHeight:90, resize:"vertical" }} value={form.serviceChecklist||""} onChange={e=>setForm(f=>({...f,serviceChecklist:e.target.value}))} placeholder="Oil, filters, grease, belts, fluids, tires, blades, battery, etc." />
+              </div>
+            </div>
+          </TypeSection>
+        )}
+
+        {form.woType==="Inspection" && (
+          <TypeSection title="Inspection Work Order Block" subtitle="Document inspection result, deficiencies, and follow-up needed." accent="#065f46">
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+              <div>
+                <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>Inspection Result</label>
+                <select style={sel} value={form.inspectionResult||"Pending"} onChange={e=>setForm(f=>({...f,inspectionResult:e.target.value}))}>
+                  {["Pending","Passed","Passed with Deficiencies","Failed / Deadline"].map(x=><option key={x}>{x}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>Follow-Up Required</label>
+                <select style={sel} value={form.followUpRequired||"No"} onChange={e=>setForm(f=>({...f,followUpRequired:e.target.value}))}>
+                  {["No","Yes","Create Repair WO","Monitor"].map(x=><option key={x}>{x}</option>)}
+                </select>
+              </div>
+              <div style={{ gridColumn:"span 2" }}>
+                <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>Inspection Findings</label>
+                <textarea style={{ ...inp, minHeight:90, resize:"vertical" }} value={form.inspectionFindings||""} onChange={e=>setForm(f=>({...f,inspectionFindings:e.target.value}))} placeholder="Record findings, deficiencies, safety concerns, or passed checks." />
+              </div>
+            </div>
+          </TypeSection>
+        )}
 
         {/* Mechanic inline */}
         <div style={{ gridColumn:"span 2", marginBottom:0 }}>
@@ -1310,6 +1401,43 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Work Description</div>
           <div style={{ minHeight:90, fontFamily:T.sans, fontSize:13, color:wo.description?T.text:T.muted, lineHeight:1.6, fontStyle:wo.description?"normal":"italic" }}>{wo.description||"No work description recorded."}</div>
         </div>
+
+
+
+        {wo.woType==="Repair" && (wo.repairComplaint||wo.repairCause||wo.correctiveAction||wo.failureArea||wo.returnToService) && (
+          <div style={{ background:"#fff5f5", borderRadius:6, padding:"10px 12px", border:"1px solid #fca5a5" }}>
+            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.red, textTransform:"uppercase", letterSpacing:.4, marginBottom:6 }}>Repair Block</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, fontFamily:T.sans, fontSize:13, color:T.text }}>
+              <div><b>Complaint:</b><br />{wo.repairComplaint||"—"}</div>
+              <div><b>Failure Area:</b><br />{wo.failureArea||"—"}</div>
+              <div><b>Cause:</b><br />{wo.repairCause||"—"}</div>
+              <div><b>Corrective Action:</b><br />{wo.correctiveAction||"—"}</div>
+              <div><b>Return-to-Service:</b><br />{wo.returnToService||"—"}</div>
+            </div>
+          </div>
+        )}
+
+        {wo.woType==="Service" && (wo.meterReading||wo.nextServiceDue||wo.serviceChecklist) && (
+          <div style={{ background:"#eff6ff", borderRadius:6, padding:"10px 12px", border:"1px solid #bfdbfe" }}>
+            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:"#1e40af", textTransform:"uppercase", letterSpacing:.4, marginBottom:6 }}>Service Block</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, fontFamily:T.sans, fontSize:13, color:T.text }}>
+              <div><b>Meter / Hours:</b><br />{wo.meterReading||"—"}</div>
+              <div><b>Next Service Due:</b><br />{wo.nextServiceDue||"—"}</div>
+              <div style={{ gridColumn:"span 2" }}><b>Service Checklist:</b><br />{wo.serviceChecklist||"—"}</div>
+            </div>
+          </div>
+        )}
+
+        {wo.woType==="Inspection" && (wo.inspectionResult||wo.followUpRequired||wo.inspectionFindings) && (
+          <div style={{ background:"#ecfdf5", borderRadius:6, padding:"10px 12px", border:"1px solid #bbf7d0" }}>
+            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:"#065f46", textTransform:"uppercase", letterSpacing:.4, marginBottom:6 }}>Inspection Block</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, fontFamily:T.sans, fontSize:13, color:T.text }}>
+              <div><b>Result:</b><br />{wo.inspectionResult||"—"}</div>
+              <div><b>Follow-Up:</b><br />{wo.followUpRequired||"—"}</div>
+              <div style={{ gridColumn:"span 2" }}><b>Findings:</b><br />{wo.inspectionFindings||"—"}</div>
+            </div>
+          </div>
+        )}
 
         {wo.faultEnabled && (
           <div style={{ background:"#fff5f5", borderRadius:6, padding:"10px 12px", border:"1px solid #fca5a5" }}>
