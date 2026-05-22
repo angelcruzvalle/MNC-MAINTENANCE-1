@@ -502,6 +502,7 @@ function Dashboard({ state, dispatch, setTab }) {
   const openWOs = wos.filter(w=>w.status==="Open").length;
   const inProgWOs = wos.filter(w=>w.status==="In Progress").length;
   const awaitParts = wos.filter(w=>w.status==="Awaiting Parts").length;
+  const onHoldWOs = wos.filter(w=>w.status==="On Hold").length;
   const activeWOs = wos.filter(w=>w.status!=="Completed").length;
   const highPriority = wos.filter(w=>w.status!=="Completed" && w.priority==="High").length;
   const completedMo = wos.filter(w=>w.status==="Completed" && (w.completed||"").slice(0,7)===monthKey).length;
@@ -645,7 +646,7 @@ function Dashboard({ state, dispatch, setTab }) {
       </div>
     </Widget>,
     workorders:<Widget id="workorders" title="Work Orders" subtitle="Current workload without digging" accent={highPriority?T.red:T.accent}>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:12 }}><Metric label="Open" value={openWOs}/><Metric label="In Prog" value={inProgWOs}/><Metric label="Parts" value={awaitParts}/><Metric label="Done Mo" value={completedMo} color={T.green}/></div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(90px,1fr))", gap:8, marginBottom:12 }}><Metric label="Open" value={openWOs}/><Metric label="In Prog" value={inProgWOs}/><Metric label="Parts" value={awaitParts}/><Metric label="On Hold" value={onHoldWOs} color={onHoldWOs?T.red:T.green}/><Metric label="Done Mo" value={completedMo} color={T.green}/></div>
       {(urgentWOs.length ? urgentWOs : recentWOs).map(w=><MiniRow key={w.id} title={`${w.woNumber||w.id} — ${w.title||w.type||"Work Order"}`} sub={`${w.equipmentName||w.equipment||"No equipment"} • ${w.status||"Open"}`} badge={w.priority||w.status} color={w.priority==="High"?T.red:T.accent} tab="workorders" />)}
     </Widget>,
     pm:<Widget id="pm" title="Preventive Maintenance" subtitle="Due services and inspections" accent={pmOverdue?T.red:T.amber}>
@@ -790,13 +791,13 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   /* Equipment picker list */
   const allPickable = [
     ...state.equipment.map(eq=>({ id:eq.id, label:eq.name, sub:`${eq.id} | ${eq.make||""} ${eq.model||""} | Serial: ${eq.serial||"—"} | EIL: ${eq.eilNumber||"—"}`, type:"Equipment", typeColor:"#1e40af", typeBg:"#eff6ff", parentName:null, parentId:null })),
-    ...state.equipment.flatMap(eq=>(eq.attachments||[]).map(at=>({ id:at.id, label:at.name, sub:`${at.id} | ${at.make||""} ${at.model||""} | Serial: ${at.serial||"—"} | EIL: ${at.eilNumber||"—"} | on: ${eq.name} (${eq.id})`, type:"Attachment", typeColor:"#065f46", typeBg:"#ecfdf5", parentName:eq.name, parentId:eq.id }))),
+    ...state.equipment.flatMap(eq=>(eq.attachments||[]).map(at=>({ id:at.id, label:at.name, sub:`${at.id} | ${at.make||""} ${at.model||""} | Serial: ${at.serial||"—"} | EIL: ${at.eilNumber||"—"} | on: ${eq.name} (${eq.id})`, type:"Attachment", typeColor:"#065f46", typeBg:"#ecfdf5", parentNomenclature:eq.name, parentId:eq.id }))),
   ];
   const filteredPickable = allPickable.filter(i=>`${i.label} ${i.sub}`.toLowerCase().includes(eqSearch.toLowerCase()));
 
   const openAdd = () => {
     setEqSearch("");
-    setForm({ status:"Open", priority:"Medium", created:today(), due:today(), tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], mechanicNotes:"" });
+    setForm({ status:"Open", priority:"Medium", created:today(), due:today(), tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], mechanicNotes:"", faultEnabled:false, faultDescription:"" });
     setModal("pick"); /* Go straight to equipment — type chosen in the form */
   };
 
@@ -824,7 +825,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   };
 
   const addNewTech = () => {
-    if(!newTech.name) return alert("Name required.");
+    if(!newTech.name) return alert("Nomenclature required.");
     const payload = { ...newTech, id:`TECH-${Date.now()}`, laborRate:+newTech.laborRate||0 };
     dispatch({ type:"ADD_TECH", payload });
     setForm(f=>({ ...f, techId:payload.id, tech:payload.name, laborCost: f.laborHours?(+f.laborHours)*(+(payload.laborRate||0)):f.laborCost }));
@@ -896,7 +897,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
     const laborTotal = +(wo.laborCost||0);
     const grandTotal = laborTotal + partsTotal + (+(wo.partsCost||0));
-    const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", Labor:laborTotal.toFixed(2), Parts:partsTotal.toFixed(2), Total:grandTotal.toFixed(2), Problem:wo.problem||wo.description||"", Notes:wo.mechanicNotes||""}];
+    const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", Labor:laborTotal.toFixed(2), Parts:partsTotal.toFixed(2), Total:grandTotal.toFixed(2), Problem:wo.problem||wo.description||"", "Fault Description":wo.faultEnabled?(wo.faultDescription||""):"", Notes:wo.mechanicNotes||""}];
     const woCsv = rowsToDataUri(woRows);
 
     const win = window.open("","_blank","width=900,height=700");
@@ -970,12 +971,13 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         <div class="sh">Equipment Information</div>
         <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr;border:none">
           <div class="cell"><div class="lbl">Equipment #</div><div class="val mn" style="font-weight:700">${wo.equipment||"&nbsp;"}</div></div>
-          <div class="cell s2"><div class="lbl">Equipment Name</div><div class="val">${eq?.name||wo.equipmentLabel||"&nbsp;"}</div></div>
+          <div class="cell s2"><div class="lbl">Nomenclature</div><div class="val">${eq?.name||wo.equipmentLabel||"&nbsp;"}</div></div>
           <div class="cell"><div class="lbl">Make / Model</div><div class="val">${eq?`${eq.make||""} ${eq.model||""}`.trim():"&nbsp;"}</div></div>
           <div class="cell"><div class="lbl">Serial # / EIL #</div><div class="val mn">${eq?.serial||"&nbsp;"} / ${eq?.eilNumber||"&nbsp;"}</div></div>
         </div>
       </div>
       <div class="sec"><div class="sh">Work Description &amp; Work Performed</div><div class="sb">${wo.description||"&nbsp;"}</div></div>
+      ${wo.faultEnabled ? `<div class="sec"><div class="sh">Fault Description</div><div class="sb phi" style="min-height:60px">${wo.faultDescription||"&nbsp;"}</div></div>` : ""}
       <div class="bg">
         <div class="sec"><div class="sh">Mechanic Notes (Write-In)</div><div class="sb" style="min-height:80px">${wo.mechanicNotes||"&nbsp;"}</div></div>
         <div class="sec">
@@ -1127,6 +1129,16 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <textarea style={{ ...inp, minHeight:110, resize:"vertical" }} value={form.description||""} onChange={e=>setForm(f=>({...f,description:e.target.value}))} />
         </Field>
 
+        <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${form.faultEnabled?"#fca5a5":T.border}`, borderRadius:8, padding:12, background:form.faultEnabled?"#fff5f5":T.grayLt }}>
+          <label style={{ display:"flex", alignItems:"center", gap:10, fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:form.faultEnabled?8:0 }}>
+            <input type="checkbox" checked={!!form.faultEnabled} onChange={e=>setForm(f=>({...f,faultEnabled:e.target.checked,faultDescription:e.target.checked?f.faultDescription:""}))} />
+            Add Fault Description to this Work Order
+          </label>
+          {form.faultEnabled && (
+            <textarea style={{ ...inp, minHeight:90, resize:"vertical", background:"#fff" }} value={form.faultDescription||""} onChange={e=>setForm(f=>({...f,faultDescription:e.target.value}))} placeholder="Describe the fault, complaint, symptom, or failure that needs to appear on the work order and reports..." />
+          )}
+        </div>
+
         <Field label="Mechanic Notes">
           <textarea style={{ ...inp, minHeight:110, resize:"vertical" }} value={form.mechanicNotes||""} onChange={e=>setForm(f=>({...f,mechanicNotes:e.target.value}))} placeholder="Mechanic observations, steps taken, findings..." />
         </Field>
@@ -1267,6 +1279,13 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Work Description</div>
           <div style={{ minHeight:90, fontFamily:T.sans, fontSize:13, color:wo.description?T.text:T.muted, lineHeight:1.6, fontStyle:wo.description?"normal":"italic" }}>{wo.description||"No work description recorded."}</div>
         </div>
+
+        {wo.faultEnabled && (
+          <div style={{ background:"#fff5f5", borderRadius:6, padding:"10px 12px", border:"1px solid #fca5a5" }}>
+            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.red, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Fault Description</div>
+            <div style={{ minHeight:70, fontFamily:T.sans, fontSize:13, color:wo.faultDescription?T.text:T.muted, lineHeight:1.6, fontStyle:wo.faultDescription?"normal":"italic" }}>{wo.faultDescription||"No fault description recorded."}</div>
+          </div>
+        )}
 
         {/* Mechanic Notes */}
         <div style={{ background:T.grayLt, borderRadius:6, padding:"10px 12px", border:`1px solid ${T.border}` }}>
@@ -1463,7 +1482,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       {modal==="pick" && (
         <Modal title="Select Equipment or Attachment" onClose={()=>setModal(null)}>
           <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.subtext }}>Choose the equipment or attachment this work order is for.</p>
-          <input style={{ ...inp, marginBottom:14 }} placeholder="Search by name, serial, EIL #..." value={eqSearch} onChange={e=>setEqSearch(e.target.value)} autoFocus />
+          <input style={{ ...inp, marginBottom:14 }} placeholder="Search by nomenclature, serial, EIL #..." value={eqSearch} onChange={e=>setEqSearch(e.target.value)} autoFocus />
           <div style={{ display:"flex", flexDirection:"column", gap:6, maxHeight:400, overflowY:"auto" }}>
             {filteredPickable.length===0 && (
               <div style={{ padding:32, textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13 }}>
@@ -1534,7 +1553,7 @@ function AttachmentsCard({ eq, dispatch }) {
   const cancel = () => { setShowForm(false); setEditId(null); setForm({}); };
 
   const save = () => {
-    if(!form.name) return alert("Attachment name is required.");
+    if(!form.name) return alert("Attachment nomenclature is required.");
     const updated = editId
       ? attachments.map(a => a.id===editId ? {...form, id:editId} : a)
       : [...attachments, { ...form, id:`AT-${String(Date.now()).slice(-5)}` }];
@@ -1689,7 +1708,7 @@ function Equipment({ state, dispatch }) {
   const openAdd  = () => { setForm({ status:"Fully Operational", faultDescription:"", faultDate:"" }); setModal("add"); };
   const openEdit = eq => { setForm({...eq}); setModal("editing"); };
   const save = () => {
-    if(!form.name) return alert("Name required.");
+    if(!form.name) return alert("Nomenclature required.");
     if(modal==="add") {
       const newId = form.id && form.id.trim() ? form.id.trim() : genId("EQ");
       dispatch({type:"ADD_EQ", payload:{...form, id:newId}});
@@ -1721,7 +1740,7 @@ function Equipment({ state, dispatch }) {
     const categories = state.categories || [];
     return (
     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
-      <Field label="Equipment Name">
+      <Field label="Nomenclature">
         <SmartInput historyKey="equipment.name" style={inp} value={form.name||""} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="e.g. John Deere Zero-Turn" />
       </Field>
       <Field label="Equipment #" half>
@@ -1989,22 +2008,22 @@ function Equipment({ state, dispatch }) {
     <div>
       <Card style={{ marginBottom:16 }}>
         <div style={{ display:"flex", gap:10, marginBottom:14, flexWrap:"wrap" }}>
-          <input style={{ ...inp, flex:1, minWidth:200 }} placeholder="Search by name, make, model, serial, EIL #, location…" value={search} onChange={e=>setSearch(e.target.value)} />
+          <input style={{ ...inp, flex:1, minWidth:200 }} placeholder="Search by nomenclature, make, model, serial, EIL #, location…" value={search} onChange={e=>setSearch(e.target.value)} />
           <Btn variant="secondary" onClick={()=>{
             const reportEqs = state.equipment.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies");
-            const exportRows = reportEqs.map(e=>({Status:e.status||"", Name:e.name||"", "Make/Model":`${e.make||""} ${e.model||""}`.trim(), "Serial #":e.serial||"", "EIL #":e.eilNumber||"", "Fault Date":e.faultDate||"", "Fault Description":e.faultDescription||""}));
+            const exportRows = reportEqs.map(e=>({Status:e.status||"", Nomenclature:e.name||"", "Make/Model":`${e.make||""} ${e.model||""}`.trim(), "Serial #":e.serial||"", "EIL #":e.eilNumber||"", "Fault Date":e.faultDate||"", "Fault Description":e.faultDescription||""}));
             const win = window.open("","_blank");
             win.document.write(`<html><head><title>Equipment Status Report</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{font-size:20px;margin-bottom:4px}p{font-size:12px;color:#666;margin:0 0 20px}.section{margin-bottom:28px}h2{font-size:14px;margin-bottom:8px;padding:6px 10px;border-radius:4px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#f3f4f6;padding:7px 10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px}td{padding:7px 10px;border-bottom:1px solid #e5e7eb}.red{background:#fef2f2;color:#7f1d1d}.yellow{background:#fffbeb;color:#92400e}@media print{button{display:none}}</style></head><body>`);
             win.document.write(`<h1>Equipment Status Report</h1><p>Generated: ${new Date().toLocaleDateString()} — NCA Maintenance Manager</p>`);
             const oos = reportEqs.filter(e=>e.status==="Out of Service / Deadline");
             const def = reportEqs.filter(e=>e.status==="Operational with Deficiencies");
             if(oos.length){
-              win.document.write(`<div class="section"><h2 class="red">🚨 Out of Service / Deadline (${oos.length})</h2><table><tr><th>Name</th><th>Make/Model</th><th>Serial #</th><th>EIL #</th><th>Fault Date</th><th>Fault Description</th></tr>`);
+              win.document.write(`<div class="section"><h2 class="red">🚨 Out of Service / Deadline (${oos.length})</h2><table><tr><th>Nomenclature</th><th>Make/Model</th><th>Serial #</th><th>EIL #</th><th>Fault Date</th><th>Fault Description</th></tr>`);
               oos.forEach(e=>win.document.write(`<tr><td><b>${e.name}</b></td><td>${e.make||""} ${e.model||""}</td><td>${e.serial||"—"}</td><td>${e.eilNumber||"—"}</td><td>${e.faultDate||"—"}</td><td>${e.faultDescription||"—"}</td></tr>`));
               win.document.write(`</table></div>`);
             }
             if(def.length){
-              win.document.write(`<div class="section"><h2 class="yellow">⚠️ Operational with Deficiencies (${def.length})</h2><table><tr><th>Name</th><th>Make/Model</th><th>Serial #</th><th>EIL #</th><th>Fault Date</th><th>Fault Description</th></tr>`);
+              win.document.write(`<div class="section"><h2 class="yellow">⚠️ Operational with Deficiencies (${def.length})</h2><table><tr><th>Nomenclature</th><th>Make/Model</th><th>Serial #</th><th>EIL #</th><th>Fault Date</th><th>Fault Description</th></tr>`);
               def.forEach(e=>win.document.write(`<tr><td><b>${e.name}</b></td><td>${e.make||""} ${e.model||""}</td><td>${e.serial||"—"}</td><td>${e.eilNumber||"—"}</td><td>${e.faultDate||"—"}</td><td>${e.faultDescription||"—"}</td></tr>`));
               win.document.write(`</table></div>`);
             }
@@ -2083,7 +2102,7 @@ function Equipment({ state, dispatch }) {
                     </div>
 
                     <div style={{ flex:1, minWidth:180, marginRight:20 }}>
-                      <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Equipment Name</div>
+                      <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Nomenclature</div>
                       <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginTop:3 }}>{eq.name}</div>
                       <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:1 }}>{eq.type||""}</div>
                     </div>
@@ -2279,7 +2298,7 @@ function Parts({ state, dispatch }) {
   const openAdd  = () => { setForm({qty:0,minQty:1,unitCost:0,lowStockAlert:true}); setModal("add"); };
   const openEdit = p  => { setForm({...p}); setModal(p); };
   const save = () => {
-    if(!form.name) return alert("Name required.");
+    if(!form.name) return alert("Nomenclature required.");
     rememberPartCategory(form.category);
     const cleanForm = { ...form, category:String(form.category||"").trim() };
     modal==="add"
@@ -2311,7 +2330,7 @@ function Parts({ state, dispatch }) {
       ${reportHeaderHTML(state, "Parts Inventory Report")}
       <p style="font-size:12px;color:#666;margin-bottom:12px">SKUs: ${state.parts.length} | Total Value: $${totalVal.toFixed(2)} | Low Stock: ${lowParts.length}</p>
       <table>
-        <tr><th>Part #</th><th>Name</th><th>Category</th><th>Location</th><th>Equipment / Model</th><th style="text-align:right">Unit $</th><th style="text-align:right">Qty</th><th style="text-align:right">Total $</th><th>New Count</th></tr>
+        <tr><th>Part #</th><th>Nomenclature</th><th>Category</th><th>Location</th><th>Equipment / Model</th><th style="text-align:right">Unit $</th><th style="text-align:right">Qty</th><th style="text-align:right">Total $</th><th>New Count</th></tr>
         ${state.parts.sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||"")).map(p=>{
           const eq = p.equipmentId ? state.equipment.find(e=>e.id===p.equipmentId) : null;
           return `<tr class="${p.qty<=(p.minQty||0)?"low":""}"><td>${p.partNumber||"—"}</td><td>${p.name}</td><td>${p.category||"—"}</td><td>${p.location||"—"}</td><td>${eq?`${eq.name} (${eq.id})`:p.modelFit||"—"}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td style="text-align:right">${p.qty}</td><td style="text-align:right">$${(p.qty*(+p.unitCost||0)).toFixed(2)}</td><td style="border-bottom:1px solid #bbb;min-width:80px">&nbsp;</td></tr>`;
@@ -2603,7 +2622,7 @@ function PM({ state, dispatch }) {
         created:today(), due:sch.nextDueDate||today(),
         tech:"", laborHours:0, laborCost:0, partsCost:0,
         description:`Auto-generated: ${sch.task}`,
-        mechanicNotes:"", partsUsed:[], scheduleId:sch.id,
+        mechanicNotes:"", faultEnabled:false, faultDescription:"", partsUsed:[], scheduleId:sch.id,
       }});
       const logs    = (state.usageLogs||[]).filter(l=>l.equipmentId===sch.equipmentId);
       const curUsage = sch.usageType==="mileage"
@@ -3542,7 +3561,7 @@ function EquipmentInventory({ state, dispatch }) {
   const openItem = item => { setForm({...item}); setModal(item); };
 
   const save = () => {
-    if(!form.name) return alert("Name required.");
+    if(!form.name) return alert("Nomenclature required.");
     if(modal==="add") {
       dispatch({type:"ADD_INV", payload:{...form, id:genId("INV"), turnInStatus:"Active"}});
     } else {
@@ -3765,7 +3784,7 @@ function ReportPartsInv({ state }) {
       <h1>Parts Inventory Report</h1>
       <p>Generated: ${new Date().toLocaleDateString()} | Total SKUs: ${state.parts.length} | Total Value: $${totalVal.toFixed(2)} | Low Stock Items: ${lowParts.length}</p>
       <table>
-        <tr><th>Part #</th><th>Name</th><th>Category</th><th>Location</th><th>Equipment / Model</th><th style="text-align:right">Unit $</th><th style="text-align:right">Qty</th><th style="text-align:right">Total $</th><th>New Count</th></tr>
+        <tr><th>Part #</th><th>Nomenclature</th><th>Category</th><th>Location</th><th>Equipment / Model</th><th style="text-align:right">Unit $</th><th style="text-align:right">Qty</th><th style="text-align:right">Total $</th><th>New Count</th></tr>
         ${sorted.map(p=>{
           const eq = p.equipmentId?state.equipment.find(e=>e.id===p.equipmentId):null;
           const low = p.qty<=(p.minQty||0)&&p.lowStockAlert!==false;
@@ -3963,7 +3982,7 @@ function ReportDeadline({ state }) {
   const oos  = state.equipment.filter(e=>e.status==="Out of Service / Deadline");
   const def  = state.equipment.filter(e=>e.status==="Operational with Deficiencies");
   const openWO = (eqId) => state.workOrders.filter(w=>w.equipment===eqId && w.status!=="Completed");
-  const exportRows = [...oos.map(eq=>({Status:"Out of Service / Deadline", "Equip #":eq.id, Name:eq.name, "Fault Date":eq.faultDate||"", "Fault Description":eq.faultDescription||"", "Open Work Orders":openWO(eq.id).map(w=>`${w.id} (${w.status})`).join(", ")})), ...def.map(eq=>({Status:"Operational with Deficiencies", "Equip #":eq.id, Name:eq.name, "Fault Date":eq.faultDate||"", "Fault Description":eq.faultDescription||"", "Open Work Orders":openWO(eq.id).map(w=>`${w.id} (${w.status})`).join(", ")}))];
+  const exportRows = [...oos.map(eq=>({Status:"Out of Service / Deadline", "Equip #":eq.id, Nomenclature:eq.name, "Fault Date":eq.faultDate||"", "Fault Description":eq.faultDescription||"", "Open Work Orders":openWO(eq.id).map(w=>`${w.id} (${w.status})`).join(", ")})), ...def.map(eq=>({Status:"Operational with Deficiencies", "Equip #":eq.id, Nomenclature:eq.name, "Fault Date":eq.faultDate||"", "Fault Description":eq.faultDescription||"", "Open Work Orders":openWO(eq.id).map(w=>`${w.id} (${w.status})`).join(", ")}))];
 
   const printReport = () => {
     const win = window.open("","_blank","width=900,height=700");
@@ -3982,9 +4001,9 @@ function ReportDeadline({ state }) {
       </head><body>
       ${reportHeaderHTML(state, "Deadline & Deficiency Report")}
       ${oos.length?`<h2 style="color:#dc2626">Out of Service / Deadline (${oos.length})</h2>
-      <table><tr><th>Equip #</th><th>Name</th><th>Fault Date</th><th>Fault Description</th><th>Work Orders</th></tr>${rows(oos,"#fff5f5","")}</table>`:""}
+      <table><tr><th>Equip #</th><th>Nomenclature</th><th>Fault Date</th><th>Fault Description</th><th>Work Orders</th></tr>${rows(oos,"#fff5f5","")}</table>`:""}
       ${def.length?`<h2 style="color:#d97706">Operational w/ Deficiencies (${def.length})</h2>
-      <table><tr><th>Equip #</th><th>Name</th><th>Fault Date</th><th>Fault Description</th><th>Work Orders</th></tr>${rows(def,"#fffdf0","")}</table>`:""}
+      <table><tr><th>Equip #</th><th>Nomenclature</th><th>Fault Date</th><th>Fault Description</th><th>Work Orders</th></tr>${rows(def,"#fffdf0","")}</table>`:""}
       ${!oos.length&&!def.length?`<p>No equipment in deadline or deficiency status.</p>`:""}
       ${reportButtonsHtml(exportRows)}
       </body></html>`);
@@ -4008,7 +4027,7 @@ function ReportDeadline({ state }) {
               <div key={eq.id} style={{ background:bg, border:`1px solid ${T.border}`, borderLeft:leftBorder, borderRadius:8, padding:"12px 18px", marginBottom:8, boxShadow:T.shadow }}>
                 <div style={{ display:"grid", gridTemplateColumns:"90px 1fr 130px 1fr", gap:16, flexWrap:"wrap" }}>
                   <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Equip #</div><div style={{ fontFamily:T.mono, fontSize:12, fontWeight:700, color:T.text, marginTop:2 }}>{eq.id}</div></div>
-                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Equipment Name</div><div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginTop:2 }}>{eq.name}</div></div>
+                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Nomenclature</div><div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginTop:2 }}>{eq.name}</div></div>
                   <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Fault Date</div><div style={{ fontFamily:T.mono, fontSize:12, color, fontWeight:700, marginTop:2 }}>{eq.faultDate||"—"}</div></div>
                   <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Fault Description</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.text, marginTop:2 }}>{eq.faultDescription||"—"}</div></div>
                 </div>
@@ -4174,7 +4193,7 @@ function ReportCombined({ state }) {
 
     if(selected.deadline) {
       const bad = state.equipment.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies");
-      body += `<h2>Deadline / Deficiency Equipment (${bad.length})</h2><table><tr><th>Equip #</th><th>Name</th><th>Status</th><th>Fault Date</th><th>Description</th></tr>${bad.map(e=>`<tr><td>${e.id}</td><td>${e.name}</td><td>${e.status}</td><td>${e.faultDate||"—"}</td><td>${e.faultDescription||"—"}</td></tr>`).join("")}</table>`;
+      body += `<h2>Deadline / Deficiency Equipment (${bad.length})</h2><table><tr><th>Equip #</th><th>Nomenclature</th><th>Status</th><th>Fault Date</th><th>Description</th></tr>${bad.map(e=>`<tr><td>${e.id}</td><td>${e.name}</td><td>${e.status}</td><td>${e.faultDate||"—"}</td><td>${e.faultDescription||"—"}</td></tr>`).join("")}</table>`;
     }
     if(selected.pm) {
       const pmBad = state.preventiveMaintenance.filter(p=>p.status==="Overdue"||p.status==="Due Soon");
@@ -4183,25 +4202,25 @@ function ReportCombined({ state }) {
     if(selected.spending) {
       const wos = state.workOrders.filter(w=>w.completed);
       const total = wos.reduce((s,w)=>s+totalCost(w),0);
-      body += `<h2>Completed Work Orders — Total $${total.toFixed(2)}</h2><table><tr><th>WO#</th><th>Title</th><th>Equipment</th><th>Mechanic</th><th>Completed</th><th>Total</th></tr>${wos.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${eqName(w.equipment)}</td><td>${w.tech||"—"}</td><td>${w.completed||"—"}</td><td>$${totalCost(w).toFixed(2)}</td></tr>`).join("")}</table>`;
+      body += `<h2>Completed Work Orders — Total $${total.toFixed(2)}</h2><table><tr><th>WO#</th><th>Title</th><th>Equipment</th><th>Fault Description</th><th>Mechanic</th><th>Completed</th><th>Total</th></tr>${wos.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${eqName(w.equipment)}</td><td>${w.faultEnabled?(w.faultDescription||"—"):"—"}</td><td>${w.tech||"—"}</td><td>${w.completed||"—"}</td><td>$${totalCost(w).toFixed(2)}</td></tr>`).join("")}</table>`;
     }
     if(selected.parts) {
       const lowStock = state.parts.filter(p=>p.lowStockAlert!==false&&(+(p.qty||0))<=(+(p.minQty||0)));
       const totalVal = state.parts.reduce((s,p)=>s+(+(p.qty||0))*(+(p.unitCost||0)),0);
       body += `<h2>Parts Inventory — ${state.parts.length} SKUs, Total Value $${totalVal.toFixed(2)}</h2>`;
       if(lowStock.length>0) body += `<p style="color:#b91c1c;font-size:12px"><b>⚠ Low stock alerts: ${lowStock.length} items</b></p>`;
-      body += `<table><tr><th>Part #</th><th>Name</th><th>Category</th><th>Qty</th><th>Min</th><th>Unit $</th><th>Total $</th></tr>${state.parts.map(p=>`<tr style="${(+(p.qty||0))<=(+(p.minQty||0))?'background:#fee2e2':''}"><td>${p.partNumber||"—"}</td><td>${p.name}</td><td>${p.category||"—"}</td><td>${p.qty||0}</td><td>${p.minQty||0}</td><td>$${(+(p.unitCost||0)).toFixed(2)}</td><td>$${((+(p.qty||0))*(+(p.unitCost||0))).toFixed(2)}</td></tr>`).join("")}</table>`;
+      body += `<table><tr><th>Part #</th><th>Nomenclature</th><th>Category</th><th>Qty</th><th>Min</th><th>Unit $</th><th>Total $</th></tr>${state.parts.map(p=>`<tr style="${(+(p.qty||0))<=(+(p.minQty||0))?'background:#fee2e2':''}"><td>${p.partNumber||"—"}</td><td>${p.name}</td><td>${p.category||"—"}</td><td>${p.qty||0}</td><td>${p.minQty||0}</td><td>$${(+(p.unitCost||0)).toFixed(2)}</td><td>$${((+(p.qty||0))*(+(p.unitCost||0))).toFixed(2)}</td></tr>`).join("")}</table>`;
     }
     if(selected.usage) {
       const trackable = state.equipment.filter(e=>e.trackUsage);
-      body += `<h2>Current Usage Readings (${trackable.length} tracked units)</h2><table><tr><th>Equip #</th><th>Name</th><th>Hours</th><th>Mileage</th><th>Last Entry</th></tr>${trackable.map(e=>{ const logs = allLogs.filter(l=>l.equipmentId===e.id); const last = logs.sort((a,b)=>b.date.localeCompare(a.date))[0]; return `<tr><td>${e.id}</td><td>${e.name}</td><td>${currentReading(e.id,"hours").toFixed(1)}</td><td>${currentReading(e.id,"mileage").toLocaleString()}</td><td>${last?.date||"—"}</td></tr>`; }).join("")}</table>`;
+      body += `<h2>Current Usage Readings (${trackable.length} tracked units)</h2><table><tr><th>Equip #</th><th>Nomenclature</th><th>Hours</th><th>Mileage</th><th>Last Entry</th></tr>${trackable.map(e=>{ const logs = allLogs.filter(l=>l.equipmentId===e.id); const last = logs.sort((a,b)=>b.date.localeCompare(a.date))[0]; return `<tr><td>${e.id}</td><td>${e.name}</td><td>${currentReading(e.id,"hours").toFixed(1)}</td><td>${currentReading(e.id,"mileage").toLocaleString()}</td><td>${last?.date||"—"}</td></tr>`; }).join("")}</table>`;
     }
     if(selected.equipment) {
-      body += `<h2>Equipment Roster (${state.equipment.length})</h2><table><tr><th>Equip #</th><th>Name</th><th>Make/Model</th><th>Serial #</th><th>Location</th><th>Status</th></tr>${state.equipment.map(e=>`<tr><td>${e.id}</td><td>${e.name}</td><td>${e.make||""} ${e.model||""}</td><td>${e.serial||"—"}</td><td>${e.location||"—"}</td><td>${e.status}</td></tr>`).join("")}</table>`;
+      body += `<h2>Equipment Roster (${state.equipment.length})</h2><table><tr><th>Equip #</th><th>Nomenclature</th><th>Make/Model</th><th>Serial #</th><th>Location</th><th>Status</th></tr>${state.equipment.map(e=>`<tr><td>${e.id}</td><td>${e.name}</td><td>${e.make||""} ${e.model||""}</td><td>${e.serial||"—"}</td><td>${e.location||"—"}</td><td>${e.status}</td></tr>`).join("")}</table>`;
     }
     if(selected.workorders) {
       const active = state.workOrders.filter(w=>w.status!=="Completed");
-      body += `<h2>Active Work Orders (${active.length})</h2><table><tr><th>WO#</th><th>Title</th><th>Equipment</th><th>Mechanic</th><th>Priority</th><th>Status</th><th>Due</th></tr>${active.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${eqName(w.equipment)}</td><td>${w.tech||"—"}</td><td>${w.priority}</td><td>${w.status}</td><td>${w.due||"—"}</td></tr>`).join("")}</table>`;
+      body += `<h2>Active Work Orders (${active.length})</h2><table><tr><th>WO#</th><th>Title</th><th>Equipment</th><th>Fault Description</th><th>Mechanic</th><th>Priority</th><th>Status</th><th>Due</th></tr>${active.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${eqName(w.equipment)}</td><td>${w.faultEnabled?(w.faultDescription||"—"):"—"}</td><td>${w.tech||"—"}</td><td>${w.priority}</td><td>${w.status}</td><td>${w.due||"—"}</td></tr>`).join("")}</table>`;
     }
     body += `<br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button></body></html>`;
     win.document.write(body);
