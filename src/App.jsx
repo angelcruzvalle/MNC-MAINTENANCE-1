@@ -936,6 +936,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   /* ---- Print Work Order ---- */
   const printWO = (wo) => {
     const ws = woSettings || {};
+    const printOpt = (key) => ws[key] !== false;
     const gs = state.settings || {};
     const eq = state.equipment.find(e=>e.id===wo.equipment);
     /* Pull company info from WO settings first, then global settings */
@@ -952,6 +953,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const grandTotal = laborTotal + partsTotal + (+(wo.partsCost||0));
     const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", Labor:laborTotal.toFixed(2), Parts:partsTotal.toFixed(2), Total:grandTotal.toFixed(2), Problem:wo.problem||wo.description||"", "Fault Description":wo.faultEnabled?(wo.faultDescription||""):"", "Repair Complaint":wo.repairComplaint||"", "Repair Cause":wo.repairCause||"", "Corrective Action":wo.correctiveAction||"", "Service Checklist":wo.serviceChecklist||"", "Inspection Findings":wo.inspectionFindings||"", Notes:wo.mechanicNotes||""}];
     const typeSpecificPrint = (() => {
+      if(!printOpt("showTypeSpecific")) return "";
       if(wo.woType==="Repair") return "";
       if(wo.woType==="Service") return `<div class="sec"><div class="sh">Service Work Order Details</div><div class="twocol"><div><b>Meter / Hours:</b><br>${wo.meterReading||"&nbsp;"}</div><div><b>Next Service Due:</b><br>${wo.nextServiceDue||"&nbsp;"}</div><div style="grid-column:1/3"><b>Service Checklist:</b><br>${wo.serviceChecklist||"&nbsp;"}</div></div></div>`;
       if(wo.woType==="Inspection") return `<div class="sec"><div class="sh">Inspection Work Order Details</div><div class="twocol"><div><b>Result:</b><br>${wo.inspectionResult||"&nbsp;"}</div><div><b>Follow-Up:</b><br>${wo.followUpRequired||"&nbsp;"}</div><div style="grid-column:1/3"><b>Findings:</b><br>${wo.inspectionFindings||"&nbsp;"}</div></div></div>`;
@@ -1018,16 +1020,13 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div class="hdr-status st-${(wo.status||"open").toLowerCase().slice(0,2)}">${wo.status||"Open"}</div>
         </div>
       </div>
-      <div class="row c3">
+      ${printOpt("showDates") ? `<div class="row c3">
         <div class="cell"><div class="lbl">Date Created</div><div class="val">${wo.created||"&nbsp;"}</div></div>
         <div class="cell"><div class="lbl">Due Date</div><div class="val">${wo.due||"&nbsp;"}</div></div>
         <div class="cell"><div class="lbl">Date Completed</div><div class="val">${wo.completed||"&nbsp;"}</div></div>
-      </div>
-      <div class="row c3">
-        <div class="cell s2"><div class="lbl">Assigned Mechanic</div><div class="val">${wo.tech||"&nbsp;"}</div></div>
-        <div class="cell"><div class="lbl">Priority</div><div class="val"><span class="${wo.priority==="High"?"phi":wo.priority==="Medium"?"pmd":"plo"}">${wo.priority||"Low"}</span></div></div>
-      </div>
-      <div class="sec">
+      </div>` : ""}
+      ${""}
+      ${printOpt("showEquipment") ? `<div class="sec">
         <div class="sh">Equipment Information</div>
         <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr;border:none">
           <div class="cell"><div class="lbl">Equipment #</div><div class="val mn" style="font-weight:700">${wo.equipment||"&nbsp;"}</div></div>
@@ -1035,15 +1034,15 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div class="cell"><div class="lbl">Make / Model</div><div class="val">${eq?`${eq.make||""} ${eq.model||""}`.trim():"&nbsp;"}</div></div>
           <div class="cell"><div class="lbl">Serial # / EIL #</div><div class="val mn">${eq?.serial||"&nbsp;"} / ${eq?.eilNumber||"&nbsp;"}</div></div>
         </div>
-      </div>
-      <div class="sec"><div class="sh">Fault Description</div><div class="sb" style="min-height:60px">${wo.faultDescription||"&nbsp;"}</div></div>
-      <div class="sec"><div class="sh">Work Description &amp; Work Performed</div><div class="sb">${wo.description||"&nbsp;"}</div></div>
+      </div>` : ""}
+      ${printOpt("showFaultDescription") ? `<div class="sec"><div class="sh">Fault Description</div><div class="sb" style="min-height:24px;padding:4px 8px;line-height:1.35">${wo.faultDescription||"&nbsp;"}</div></div>` : ""}
+      ${printOpt("showDescription") ? `<div class="sec"><div class="sh">Work Description &amp; Work Performed</div><div class="sb">${wo.description||"&nbsp;"}</div></div>` : ""}
       ${typeSpecificPrint}
       <div class="bg">
-        <div class="sec"><div class="sh">Mechanic Notes (Write-In)</div><div class="sb" style="min-height:80px">${wo.mechanicNotes||"&nbsp;"}</div></div>
-        <div class="sec">
+        ${printOpt("showMechanicNotes") ? `<div class="sec"><div class="sh">Mechanic Notes (Write-In)</div><div class="sb" style="min-height:80px">${wo.mechanicNotes||"&nbsp;"}</div></div>` : ""}
+        ${(printOpt("showParts") || printOpt("showLaborHours") || printOpt("showCosts")) ? `<div class="sec">
           <div class="sh">Parts &amp; Labor Summary</div>
-          <table class="pt">
+          ${printOpt("showParts") ? `<table class="pt">
             <thead><tr><th style="width:40%">Part / Material</th><th style="width:12%;text-align:center">Qty</th><th style="width:22%;text-align:right">Unit $</th><th style="width:26%;text-align:right">Total</th></tr></thead>
             <tbody>
               ${partsUsed.length>0
@@ -1052,20 +1051,20 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                 : `<tr><td colspan="4" style="color:#999;font-style:italic;padding:4px 6px">No parts listed</td></tr>`
               }
             </tbody>
-          </table>
-          <div class="cs">
-            <div class="cr"><span>Labor (${wo.laborHours||0} hrs)</span><span>$${laborTotal.toFixed(2)}</span></div>
-            ${!partsUsed.length&&wo.partsCost?`<div class="cr"><span>Parts Cost</span><span>$${(+wo.partsCost).toFixed(2)}</span></div>`:""}
-            <div class="ct"><span>GRAND TOTAL</span><span>$${grandTotal.toFixed(2)}</span></div>
-          </div>
-        </div>
+          </table>` : ""}
+          ${(printOpt("showLaborHours") || printOpt("showCosts")) ? `<div class="cs">
+            ${printOpt("showLaborHours") ? `<div class="cr"><span>Labor (${wo.laborHours||0} hrs)</span><span>$${laborTotal.toFixed(2)}</span></div>` : ""}
+            ${printOpt("showParts")&&!partsUsed.length&&wo.partsCost?`<div class="cr"><span>Parts Cost</span><span>$${(+wo.partsCost).toFixed(2)}</span></div>`:""}
+            ${printOpt("showCosts") ? `<div class="ct"><span>GRAND TOTAL</span><span>$${grandTotal.toFixed(2)}</span></div>` : ""}
+          </div>` : ""}
+        </div>` : ""}
       </div>
-      ${ws.footerText?`<div class="sec"><div class="sh">Remarks</div><div class="sb" style="min-height:28px;font-size:10px">${ws.footerText}</div></div>`:""}
-      <div class="sigs">
+      ${printOpt("showFooterText") && ws.footerText?`<div class="sec"><div class="sh">Remarks</div><div class="sb" style="min-height:28px;font-size:10px">${ws.footerText}</div></div>`:""}
+      ${printOpt("showSignature") ? `<div class="sigs">
         <div class="sc"><div class="sw"><div class="sl"></div><div class="slb">Mechanic Signature</div></div><div class="sw"><div class="sl" style="height:auto;min-height:24px;padding:5px 0;font-size:12px;font-weight:700">${assignedMechanicName||"&nbsp;"}</div><div class="slb">Printed Name</div></div></div>
         <div class="sc"><div class="sw"><div class="sl" style="height:auto;min-height:24px;padding:5px 0;font-size:12px;font-weight:700">${printedDate}</div><div class="slb">Date Printed</div></div></div>
-      </div>
-      <div class="ftr"><span>${companyName} - Maintenance Dept.</span><span>WO# ${wo.id} | ${printedDate}</span></div>
+      </div>` : ""}
+      ${printOpt("showFooterBar") ? `<div class="ftr"><span>${companyName} - Maintenance Dept.</span><span>WO# ${wo.id} | ${printedDate}</span></div>` : ""}
     </div>
     <div class="pbtn">
       <button class="bpr" onclick="window.print()">Print / Save PDF</button>
@@ -1136,7 +1135,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         )}
 
         <Field label="Equipment Status" half>
-          <select style={sel} value={form.equipmentStatus||"Fully Operational"} onChange={e=>setForm(f=>({...f,equipmentStatus:e.target.value}))}>
+          <select style={{...sel, minWidth:260, width:"100%"}} value={form.equipmentStatus||"Fully Operational"} onChange={e=>setForm(f=>({...f,equipmentStatus:e.target.value}))}>
             {["Fully Operational","Operational with Deficiencies","Out of Service / Deadline"].map(s=><option key={s}>{s}</option>)}
           </select>
         </Field>
@@ -1569,10 +1568,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:wo.due&&wo.due<today()&&wo.status!=="Completed"?T.red:T.subtext, whiteSpace:"nowrap" }}>{wo.due}</td>
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:T.subtext, whiteSpace:"nowrap" }}>{total>0?`$${total.toFixed(0)}`:"—"}</td>
                   <td style={{ padding:"4px 10px", whiteSpace:"nowrap", display:"flex", gap:6, alignItems:"center" }} onClick={e=>e.stopPropagation()}>
-                    <select title="Change Work Order Status" value={wo.status||"Open"} onChange={e=>quickUpdateWO(wo,{status:e.target.value})} style={{ ...sel, width:118, padding:"5px 7px", fontSize:11 }}>
+                    <select title="Change Work Order Status" value={wo.status||"Open"} onChange={e=>quickUpdateWO(wo,{status:e.target.value})} style={{ ...sel, width:145, minWidth:145, padding:"7px 10px", fontSize:12 }}>
                       {["Open","In Progress","Awaiting Parts","On Hold","Completed"].map(s=><option key={s}>{s}</option>)}
                     </select>
-                    <select title="Change Equipment Status" value={wo.status==="Completed"?"Fully Operational":(wo.equipmentStatus||eq?.status||"Fully Operational")} onChange={e=>quickUpdateWO(wo,{equipmentStatus:e.target.value})} disabled={wo.status==="Completed"} style={{ ...sel, width:144, padding:"5px 7px", fontSize:11, opacity:wo.status==="Completed"?.65:1 }}>
+                    <select title="Change Equipment Status" value={wo.status==="Completed"?"Fully Operational":(wo.equipmentStatus||eq?.status||"Fully Operational")} onChange={e=>quickUpdateWO(wo,{equipmentStatus:e.target.value})} disabled={wo.status==="Completed"} style={{ ...sel, width:240, minWidth:240, padding:"7px 10px", fontSize:12, opacity:wo.status==="Completed"?.65:1 }}>
                       {["Fully Operational","Operational with Deficiencies","Out of Service / Deadline"].map(s=><option key={s}>{s}</option>)}
                     </select>
                     <button
@@ -3379,9 +3378,15 @@ function WOSettings({ state, dispatch, onClose }) {
     showDates:     s.showDates!==false,
     showCosts:     s.showCosts!==false,
     showPriority:  s.showPriority!==false,
+    showFaultDescription: s.showFaultDescription!==false,
     showDescription: s.showDescription!==false,
+    showTypeSpecific: s.showTypeSpecific!==false,
+    showMechanicNotes: s.showMechanicNotes!==false,
     showParts:     s.showParts!==false,
     showLaborHours: s.showLaborHours!==false,
+    showSignature: s.showSignature!==false,
+    showFooterText: s.showFooterText!==false,
+    showFooterBar: s.showFooterBar!==false,
     footerText:  s.footerText||"",
   });
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
@@ -3417,14 +3422,19 @@ function WOSettings({ state, dispatch, onClose }) {
         </Field>
       </div>
       <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:8 }}>Fields to show on printed Work Order</div>
-      <Toggle label="Equipment" k="showEquipment" />
-      <Toggle label="Mechanic" k="showTech" />
+      <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginBottom:8 }}>Assigned mechanic and priority are kept inside the system but are no longer printed on the work order.</div>
+      <Toggle label="Equipment Information" k="showEquipment" />
       <Toggle label="Dates (Created / Due / Completed)" k="showDates" />
-      <Toggle label="Priority" k="showPriority" />
-      <Toggle label="Description" k="showDescription" />
-      <Toggle label="Parts Cost" k="showParts" />
+      <Toggle label="Fault Description" k="showFaultDescription" />
+      <Toggle label="Work Description / Work Performed" k="showDescription" />
+      <Toggle label="Service / Inspection Details" k="showTypeSpecific" />
+      <Toggle label="Mechanic Notes" k="showMechanicNotes" />
+      <Toggle label="Parts Table" k="showParts" />
       <Toggle label="Labor Hours & Cost" k="showLaborHours" />
-      <Toggle label="Total Cost" k="showCosts" />
+      <Toggle label="Grand Total" k="showCosts" />
+      <Toggle label="Mechanic Signature Block" k="showSignature" />
+      <Toggle label="Remarks / Footer Notes" k="showFooterText" />
+      <Toggle label="Bottom Footer Bar" k="showFooterBar" />
       <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:16 }}>
         <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
         <Btn onClick={save}>Save Settings</Btn>
