@@ -507,50 +507,54 @@ function Dashboard({ state, dispatch, setTab }) {
   const completedMo = wos.filter(w=>w.status==="Completed" && (w.completed||"").slice(0,7)===monthKey).length;
   const outOfSvc = eqs.filter(e=>e.status==="Out of Service / Deadline").length;
   const withDefic = eqs.filter(e=>e.status==="Operational with Deficiencies").length;
+  const readyAssets = Math.max(0, eqs.length - outOfSvc - withDefic);
+  const readiness = eqs.length ? Math.round((readyAssets / eqs.length) * 100) : 100;
   const pmOverdue = pms.filter(p=>p.status==="Overdue").length;
   const pmDueSoon = pms.filter(p=>p.status==="Due Soon").length;
   const lowStock = parts.filter(p=>p.lowStockAlert!==false && (+p.qty||0)<=(+p.minQty||0)).length;
   const totalCost = w => (+w.laborCost||0)+(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0))+(+w.partsCost||0);
   const spendMo = wos.filter(w=>w.status==="Completed" && (w.completed||"").slice(0,7)===monthKey).reduce((s,w)=>s+totalCost(w),0);
-  const activeWOCost = wos.filter(w=>w.status!=="Completed").reduce((s,w)=>s+totalCost(w),0);
-  const urgentWOs = wos.filter(w=>w.status!=="Completed").sort((a,b)=>({High:0,Medium:1,Low:2}[a.priority]??3)-({High:0,Medium:1,Low:2}[b.priority]??3)).slice(0,7);
-  const servicesDue = pms.filter(p=>p.status==="Overdue"||p.status==="Due Soon").map(pm=>({...pm, eqName:eqs.find(e=>e.id===pm.equipment)?.name||pm.equipment})).sort((a,b)=>(a.nextDue||"").localeCompare(b.nextDue||"")).slice(0,7);
-  const deadlineEqs = eqs.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies").slice(0,7);
-  const criticalParts = parts.filter(p=>p.lowStockAlert!==false && (+p.qty||0)<=(+p.minQty||0)).slice(0,7);
+  const urgentWOs = wos.filter(w=>w.status!=="Completed").sort((a,b)=>({High:0,Medium:1,Low:2}[a.priority]??3)-({High:0,Medium:1,Low:2}[b.priority]??3)).slice(0,5);
+  const servicesDue = pms.filter(p=>p.status==="Overdue"||p.status==="Due Soon").map(pm=>({...pm, eqName:eqs.find(e=>e.id===pm.equipment)?.name||pm.equipment})).sort((a,b)=>(a.nextDue||"").localeCompare(b.nextDue||"")).slice(0,5);
+  const deadlineEqs = eqs.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies").slice(0,5);
+  const criticalParts = parts.filter(p=>p.lowStockAlert!==false && (+p.qty||0)<=(+p.minQty||0)).slice(0,5);
+  const recentWOs = [...wos].sort((a,b)=>(b.created||"").localeCompare(a.created||"")).slice(0,5);
 
   const [customize, setCustomize] = useState(false);
-  const defaultLayout = ["command","actions","workorders","pm","equipment","parts","planner","spending"];
-  const layout = (settings.dashboardLayout?.length ? settings.dashboardLayout : defaultLayout).filter(id=>defaultLayout.includes(id));
+  const defaultLayout = ["focus","today","workorders","pm","equipment","inventory","activity","costs"];
+  const presetMap = {
+    calm:{ label:"Calm Operations", layout:["focus","today","workorders","pm","equipment","inventory","activity","costs"], hidden:[], sizes:{ focus:"hero", today:"wide", workorders:"large", pm:"large", equipment:"large", inventory:"medium", activity:"wide", costs:"medium" } },
+    mechanic:{ label:"Mechanic Daily Board", layout:["today","focus","workorders","pm","inventory","equipment","activity","costs"], hidden:["costs"], sizes:{ today:"hero", focus:"wide", workorders:"large", pm:"large", inventory:"medium", equipment:"medium", activity:"wide" } },
+    manager:{ label:"Manager Console", layout:["focus","costs","equipment","workorders","pm","inventory","activity","today"], hidden:[], sizes:{ focus:"wide", costs:"large", equipment:"large", workorders:"medium", pm:"medium", inventory:"medium", activity:"wide", today:"medium" } },
+    simple:{ label:"Simple Clean", layout:["today","workorders","pm","equipment","inventory","activity","focus","costs"], hidden:[], sizes:{ today:"wide", workorders:"wide", pm:"wide", equipment:"wide", inventory:"wide", activity:"wide", focus:"wide", costs:"wide" } }
+  };
+  const activePreset = settings.dashboardPreset || "calm";
+  const savedLayout = settings.dashboardLayout?.length ? settings.dashboardLayout : presetMap.calm.layout;
+  const layout = savedLayout.filter(id=>defaultLayout.includes(id));
   const fullLayout = [...layout, ...defaultLayout.filter(id=>!layout.includes(id))];
   const hidden = settings.dashboardHidden || [];
-  const sizes = settings.dashboardWidgetSizes || {};
-  const density = settings.dashboardDensity || "comfortable";
-  const theme = settings.dashboardTheme || "mission";
-  const activePreset = settings.dashboardPreset || "mission";
+  const sizes = settings.dashboardWidgetSizes || presetMap.calm.sizes;
   const saveDash = (patch, mode="custom") => {
     const next = { ...settings, ...patch };
     if(mode === "custom") {
       next.dashboardPreset = "custom";
       next.dashboardCustomPreset = {
-        dashboardTheme: next.dashboardTheme || "mission",
-        dashboardDensity: next.dashboardDensity || "comfortable",
-        dashboardLayout: next.dashboardLayout?.length ? next.dashboardLayout : defaultLayout,
+        dashboardLayout: next.dashboardLayout?.length ? next.dashboardLayout : fullLayout,
         dashboardHidden: next.dashboardHidden || [],
-        dashboardWidgetSizes: next.dashboardWidgetSizes || {}
+        dashboardWidgetSizes: next.dashboardWidgetSizes || sizes
       };
     }
     dispatch({ type:"UPDATE_SETTINGS", payload:next });
   };
-  const compact = density==="compact";
-  const comfyPad = compact ? "12px" : "18px";
-
-  const lockIfEditing = e => {
-    if(!customize) return;
-    if(e.target.closest?.("[data-dash-control]")) return;
-    e.preventDefault();
-    e.stopPropagation();
+  const applyPreset = preset => {
+    if(preset === "custom") {
+      if(settings.dashboardCustomPreset) saveDash({ ...settings.dashboardCustomPreset, dashboardPreset:"custom" }, "preset");
+      else saveDash({ dashboardPreset:"custom" }, "preset");
+      return;
+    }
+    const p = presetMap[preset] || presetMap.calm;
+    saveDash({ dashboardPreset:preset, dashboardLayout:p.layout, dashboardHidden:p.hidden, dashboardWidgetSizes:p.sizes }, "preset");
   };
-  const go = tab => { if(!customize && tab) setTab(tab); };
   const moveWidget = (id, dir) => {
     const arr = [...fullLayout];
     const i = arr.indexOf(id), j = i + dir;
@@ -560,147 +564,139 @@ function Dashboard({ state, dispatch, setTab }) {
   };
   const setWidgetSize = (id, size) => saveDash({ dashboardWidgetSizes:{ ...sizes, [id]:size } });
   const toggleWidget = id => saveDash({ dashboardHidden:hidden.includes(id) ? hidden.filter(x=>x!==id) : [...hidden, id] });
-  const resetDash = () => applyPreset("mission");
-  const applyPreset = preset => {
-    const presets = {
-      mission:{ dashboardPreset:"mission", dashboardTheme:"mission", dashboardDensity:"comfortable", dashboardLayout:["actions","command","workorders","pm","equipment","parts","planner","spending"], dashboardHidden:[], dashboardWidgetSizes:{ actions:"hero", command:"wide", workorders:"large", pm:"large", equipment:"large", parts:"medium", planner:"wide", spending:"medium" } },
-      mechanic:{ dashboardPreset:"mechanic", dashboardTheme:"shop", dashboardDensity:"comfortable", dashboardLayout:["actions","planner","workorders","pm","equipment","parts","command","spending"], dashboardHidden:["spending"], dashboardWidgetSizes:{ actions:"wide", planner:"hero", workorders:"large", pm:"large", equipment:"medium", parts:"medium", command:"wide" } },
-      manager:{ dashboardPreset:"manager", dashboardTheme:"executive", dashboardDensity:"compact", dashboardLayout:["command","spending","workorders","pm","equipment","parts","planner","actions"], dashboardHidden:[], dashboardWidgetSizes:{ command:"wide", spending:"large", workorders:"medium", pm:"medium", equipment:"medium", parts:"medium", planner:"large", actions:"medium" } },
-      simple:{ dashboardPreset:"simple", dashboardTheme:"clean", dashboardDensity:"comfortable", dashboardLayout:["actions","workorders","pm","equipment","parts","planner","command","spending"], dashboardHidden:[], dashboardWidgetSizes:{ actions:"wide", workorders:"wide", pm:"wide", equipment:"wide", parts:"wide", planner:"wide", command:"wide", spending:"wide" } }
-    };
-    if(preset === "custom") {
-      if(settings.dashboardCustomPreset) saveDash({ ...settings.dashboardCustomPreset, dashboardPreset:"custom" }, "preset");
-      else saveDash({ dashboardPreset:"custom" }, "preset");
-      return;
-    }
-    saveDash(presets[preset] || presets.mission, "preset");
+  const lockIfEditing = e => {
+    if(!customize) return;
+    if(e.target.closest?.("[data-dash-control]")) return;
+    e.preventDefault();
+    e.stopPropagation();
   };
-
+  const go = tab => { if(!customize && tab) setTab(tab); };
   const sizeStyle = id => {
-    const size = sizes[id] || (id==="command"?"hero":id==="actions"?"wide":"large");
-    if(size==="small") return { gridColumn:"span 1", minHeight:140 };
-    if(size==="medium") return { gridColumn:"span 2", minHeight:180 };
+    const size = sizes[id] || "large";
+    if(size==="small") return { gridColumn:"span 1", minHeight:130 };
+    if(size==="medium") return { gridColumn:"span 2", minHeight:175 };
     if(size==="large") return { gridColumn:"span 3", minHeight:220 };
     if(size==="wide") return { gridColumn:"span 6", minHeight:190 };
-    return { gridColumn:"1 / -1", minHeight:250 };
+    return { gridColumn:"1 / -1", minHeight:245 };
   };
-  const cardBg = theme==="executive" ? "#fbfcff" : theme==="shop" ? "#fffaf0" : theme==="clean" ? "#ffffff" : "linear-gradient(180deg,#ffffff 0%,#fbfdff 100%)";
-  const pageBg = theme==="shop" ? "linear-gradient(135deg,#fff7ed,#f8fafc)" : theme==="executive" ? "linear-gradient(135deg,#f8fafc,#eef2ff)" : theme==="clean" ? T.bg : "linear-gradient(135deg,#eef6ff,#f8fafc 45%,#fff7ed)";
 
-  const Metric = ({label,value,color=T.accent,sub}) => <div style={{ background:"rgba(255,255,255,.74)", border:`1px solid ${T.border}`, borderRadius:14, padding:compact?10:14 }}>
-    <div style={{ fontSize:11, color:T.muted, fontWeight:800, textTransform:"uppercase", letterSpacing:.45 }}>{label}</div>
-    <div style={{ fontFamily:T.mono, fontSize:compact?22:30, color, fontWeight:900, marginTop:4 }}>{value}</div>
-    {sub && <div style={{ fontSize:11, color:T.subtext }}>{sub}</div>}
-  </div>;
-  const Pill = ({children,color=T.accent}) => <span style={{ display:"inline-flex", alignItems:"center", gap:6, border:`1px solid ${color}33`, color, background:`${color}12`, borderRadius:999, padding:"5px 9px", fontSize:11, fontWeight:800 }}>{children}</span>;
-  const Row = ({title,sub,badge,badgeColor=T.accent,onClick}) => <div onClick={customize?undefined:onClick} style={{ display:"grid", gridTemplateColumns:"1fr auto", gap:10, alignItems:"center", padding:compact?"8px 0":"10px 0", borderBottom:`1px solid ${T.border}`, cursor:customize||!onClick?"default":"pointer" }}>
-    <div><div style={{ fontSize:13, fontWeight:800, color:T.text }}>{title}</div>{sub && <div style={{ fontSize:11, color:T.muted, marginTop:2 }}>{sub}</div>}</div>
-    {badge && <Pill color={badgeColor}>{badge}</Pill>}
-  </div>;
-
-  const Widget = ({id,title,tab,children,accent=T.accent,subtitle}) => <section
-    key={id}
-    onClickCapture={lockIfEditing}
-    onMouseDownCapture={lockIfEditing}
-    style={{ ...sizeStyle(id), background:cardBg, border:`1px solid ${customize?accent:T.border}`, borderRadius:20, padding:comfyPad, boxShadow:customize?`0 0 0 3px ${accent}18, ${T.shadowMd}`:T.shadow, position:"relative", overflow:"hidden" }}>
-    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, marginBottom:12 }}>
-      <div>
-        <div style={{ display:"flex", gap:8, alignItems:"center" }}><span style={{ width:10, height:10, borderRadius:999, background:accent, display:"inline-block" }}/><h3 style={{ margin:0, fontSize:compact?14:16, color:T.text }}>{title}</h3></div>
-        {subtitle && <div style={{ fontSize:11, color:T.muted, marginTop:4 }}>{subtitle}</div>}
-      </div>
-      {customize ? <div data-dash-control="true" style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap", justifyContent:"flex-end" }}>
-        <Btn small variant="secondary" onClick={()=>moveWidget(id,-1)}>Move left</Btn>
-        <Btn small variant="secondary" onClick={()=>moveWidget(id,1)}>Move right</Btn>
-        <select value={sizes[id] || (id==="command"?"hero":id==="actions"?"wide":"large")} onChange={e=>setWidgetSize(id,e.target.value)} style={{ height:28, border:`1px solid ${T.border}`, borderRadius:8, padding:"0 8px", fontSize:11, fontWeight:700, background:"#fff" }}>
-          <option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option><option value="wide">Wide</option><option value="hero">Full Width</option>
-        </select>
-        <Btn small variant="danger" onClick={()=>toggleWidget(id)}>Hide</Btn>
-      </div> : tab ? <Btn small variant="secondary" onClick={()=>go(tab)}>Open</Btn> : null}
+  const ActionBtn = ({ icon, label, tab, accent=T.accent }) => (
+    <button onClick={()=>go(tab)} disabled={customize} style={{ display:"flex", alignItems:"center", gap:10, border:`1px solid ${T.border}`, background:"#fff", borderRadius:16, padding:"13px 14px", cursor:customize?"default":"pointer", opacity:customize ? .85 : 1, textAlign:"left", boxShadow:"0 8px 20px rgba(15,23,42,.06)" }}>
+      <span style={{ width:34, height:34, borderRadius:12, background:accent+"18", color:accent, display:"grid", placeItems:"center", fontSize:17 }}>{icon}</span>
+      <span style={{ display:"flex", flexDirection:"column", lineHeight:1.15 }}><b style={{ fontSize:13 }}>{label}</b><small style={{ color:T.muted, marginTop:3 }}>Open</small></span>
+    </button>
+  );
+  const Metric = ({ label, value, sub, color=T.accent }) => (
+    <div style={{ border:`1px solid ${T.border}`, borderRadius:18, padding:14, background:"linear-gradient(180deg,#fff,#fbfcff)", minWidth:0 }}>
+      <div style={{ color:T.muted, fontSize:11, fontWeight:800, textTransform:"uppercase", letterSpacing:.45 }}>{label}</div>
+      <div style={{ color, fontSize:28, fontWeight:950, letterSpacing:-.8, marginTop:3 }}>{value}</div>
+      {sub && <div style={{ color:T.muted, fontSize:12, marginTop:2 }}>{sub}</div>}
     </div>
-    <div style={{ pointerEvents:customize?"none":"auto" }}>{children}</div>
-  </section>;
+  );
+  const MiniRow = ({ title, sub, badge, color=T.accent, tab }) => (
+    <button onClick={()=>go(tab)} disabled={customize} style={{ width:"100%", border:"none", background:"transparent", borderBottom:`1px solid ${T.border}`, padding:"10px 0", display:"flex", justifyContent:"space-between", gap:10, textAlign:"left", cursor:customize?"default":"pointer" }}>
+      <span style={{ minWidth:0 }}><b style={{ display:"block", fontSize:13, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{title}</b><small style={{ color:T.muted, display:"block", marginTop:2, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{sub}</small></span>
+      {badge && <span style={{ alignSelf:"center", border:`1px solid ${color}`, color, borderRadius:999, padding:"3px 8px", fontSize:11, fontWeight:900, whiteSpace:"nowrap" }}>{badge}</span>}
+    </button>
+  );
+  const Widget = ({ id, title, subtitle, children, accent=T.accent }) => (
+    <Card style={{ ...sizeStyle(id), padding:0, overflow:"hidden", borderRadius:22, border:`1px solid ${T.border}`, background:"#fff", boxShadow:"0 12px 30px rgba(15,23,42,.08)", position:"relative" }}>
+      <div style={{ height:5, background:accent }} />
+      <div style={{ padding:18 }}>
+        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:10, marginBottom:14 }}>
+          <div><h3 style={{ margin:0, fontSize:17, letterSpacing:-.35 }}>{title}</h3>{subtitle && <div style={{ color:T.muted, fontSize:12, marginTop:3 }}>{subtitle}</div>}</div>
+          {customize && <div data-dash-control="true" style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap", justifyContent:"flex-end" }}>
+            <button onClick={()=>moveWidget(id,-1)} style={{ ...smallControl }}>↑</button>
+            <button onClick={()=>moveWidget(id,1)} style={{ ...smallControl }}>↓</button>
+            <select value={sizes[id] || "large"} onChange={e=>setWidgetSize(id,e.target.value)} style={{ ...smallControl, width:86 }}>
+              <option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option><option value="wide">Wide</option><option value="hero">Hero</option>
+            </select>
+            <button onClick={()=>toggleWidget(id)} style={{ ...smallControl }}>Hide</button>
+          </div>}
+        </div>
+        {children}
+      </div>
+    </Card>
+  );
+  const smallControl = { height:28, border:`1px solid ${T.border}`, background:"#fff", borderRadius:9, padding:"0 8px", fontSize:11, fontWeight:900, cursor:"pointer" };
+
+  const quickActions = <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))", gap:10 }}>
+    <ActionBtn icon="➕" label="New Work Order" tab="workorders" accent="#2563eb" />
+    <ActionBtn icon="🚜" label="Add Equipment" tab="equipment" accent="#16a34a" />
+    <ActionBtn icon="🛠️" label="PM Schedule" tab="pm" accent="#d97706" />
+    <ActionBtn icon="📦" label="Parts" tab="parts" accent="#7c3aed" />
+    <ActionBtn icon="📊" label="Reports" tab="reports" accent="#0f766e" />
+    <ActionBtn icon="⚙️" label="Settings" tab="settings" accent="#475569" />
+  </div>;
 
   const widgets = {
-    command:<Widget id="command" title="Maintenance Command Center" subtitle="One glance status of the whole shop" accent={highPriority||pmOverdue||outOfSvc?T.red:T.green}>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10 }}>
-        <Metric label="Active work" value={activeWOs} color={activeWOs?T.accent:T.green} sub={`${completedMo} completed this month`} />
-        <Metric label="High priority" value={highPriority} color={highPriority?T.red:T.green} sub="needs attention" />
-        <Metric label="PM due" value={pmOverdue+pmDueSoon} color={pmOverdue?T.red:T.amber} sub={`${pmOverdue} overdue`} />
-        <Metric label="Asset issues" value={outOfSvc+withDefic} color={outOfSvc?T.red:T.amber} sub={`${outOfSvc} deadline`} />
-        <Metric label="Low stock" value={lowStock} color={lowStock?T.amber:T.green} sub="parts to review" />
-      </div>
-      <div style={{ marginTop:14, padding:12, borderRadius:14, background:(highPriority||pmOverdue||outOfSvc)?T.redLt:T.greenLt, border:`1px solid ${(highPriority||pmOverdue||outOfSvc)?"#fecaca":"#bbf7d0"}`, fontSize:13, fontWeight:800, color:(highPriority||pmOverdue||outOfSvc)?T.red:T.green }}>
-        {(highPriority||pmOverdue||outOfSvc) ? "Focus today: clear high-priority work, overdue PM, and deadline equipment first." : "Shop status looks stable. Keep preventive maintenance moving and update records."}
+    focus:<Widget id="focus" title="Shop Pulse" subtitle="A calm snapshot of what needs attention" accent={highPriority||pmOverdue||outOfSvc?T.red:T.green}>
+      {quickActions}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginTop:14 }}>
+        <Metric label="Readiness" value={`${readiness}%`} sub={`${readyAssets}/${eqs.length || 0} ready`} color={readiness>=85?T.green:readiness>=70?T.amber:T.red}/>
+        <Metric label="Active WOs" value={activeWOs} sub={`${highPriority} high priority`} color={highPriority?T.red:T.accent}/>
+        <Metric label="PM Attention" value={pmOverdue+pmDueSoon} sub={`${pmOverdue} overdue`} color={pmOverdue?T.red:T.amber}/>
+        <Metric label="Low Stock" value={lowStock} sub="parts to review" color={lowStock?T.amber:T.green}/>
       </div>
     </Widget>,
-    actions:<Widget id="actions" title="Quick Launch" subtitle="Fast access without hunting through menus" accent="#7c3aed">
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))", gap:10 }}>
-        {[ ["➕ Work Order","workorders","Create / review jobs"], ["🛡 PM Board","pm","Service schedule"], ["🚜 Equipment","equipment","Assets and records"], ["📦 Parts","parts","Inventory status"], ["📊 Reports","reports","PDF / Excel outputs"], ["⚙ Settings","settings","Locations and setup"] ].map(([label,tab,sub])=><button key={tab} onClick={()=>go(tab)} disabled={customize} style={{ border:`1px solid ${T.border}`, background:"#fff", borderRadius:16, padding:14, textAlign:"left", cursor:customize?"default":"pointer", boxShadow:T.shadow }}>
-          <div style={{ fontSize:15, fontWeight:900, color:T.text }}>{label}</div><div style={{ fontSize:11, color:T.muted, marginTop:4 }}>{sub}</div>
-        </button>)}
+    today:<Widget id="today" title="Today’s Game Plan" subtitle="Simple order of work for the day" accent="#0f766e">
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:10 }}>
+        {[{n:"1",t:"Protect uptime",d:`Check ${outOfSvc} deadline assets and ${withDefic} deficiencies.`},{n:"2",t:"Clear PM risk",d:`Handle ${pmOverdue} overdue and ${pmDueSoon} due soon services.`},{n:"3",t:"Unblock repairs",d:`Review ${awaitParts} awaiting-parts work orders.`},{n:"4",t:"Close the loop",d:`Update notes, parts used, labor, and completed jobs.`}].map(x=><div key={x.n} style={{ border:`1px solid ${T.border}`, borderRadius:18, padding:14, background:"#fff" }}><div style={{ display:"flex", gap:10 }}><b style={{ width:28, height:28, borderRadius:10, background:T.accentLt, color:T.accent, display:"grid", placeItems:"center" }}>{x.n}</b><div><b>{x.t}</b><div style={{ color:T.muted, fontSize:12, marginTop:4 }}>{x.d}</div></div></div></div>)}
       </div>
     </Widget>,
-    workorders:<Widget id="workorders" title="Work Order Flow" tab="workorders" subtitle="Open, active, waiting, and completed work" accent={highPriority?T.red:T.accent}>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:10 }}>
-        <Metric label="Open" value={openWOs} /><Metric label="In progress" value={inProgWOs} color={T.amber}/><Metric label="Parts" value={awaitParts} color="#7c3aed"/><Metric label="Done/mo" value={completedMo} color={T.green}/>
-      </div>
-      {urgentWOs.length ? urgentWOs.map(w=><Row key={w.id} title={`${w.id} — ${w.title||"Work Order"}`} sub={`${w.equipmentLabel||w.equipment||"No equipment"} • ${w.status}`} badge={w.priority||"Priority"} badgeColor={w.priority==="High"?T.red:w.priority==="Medium"?T.amber:T.green} onClick={()=>go("workorders")}/>) : <div style={{ color:T.muted, fontSize:13 }}>No active work orders.</div>}
+    workorders:<Widget id="workorders" title="Work Orders" subtitle="Current workload without digging" accent={highPriority?T.red:T.accent}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginBottom:12 }}><Metric label="Open" value={openWOs}/><Metric label="In Prog" value={inProgWOs}/><Metric label="Parts" value={awaitParts}/><Metric label="Done Mo" value={completedMo} color={T.green}/></div>
+      {(urgentWOs.length ? urgentWOs : recentWOs).map(w=><MiniRow key={w.id} title={`${w.woNumber||w.id} — ${w.title||w.type||"Work Order"}`} sub={`${w.equipmentName||w.equipment||"No equipment"} • ${w.status||"Open"}`} badge={w.priority||w.status} color={w.priority==="High"?T.red:T.accent} tab="workorders" />)}
     </Widget>,
-    pm:<Widget id="pm" title="Preventive Maintenance Lane" tab="pm" subtitle="What is overdue or coming due soon" accent={pmOverdue?T.red:T.amber}>
-      <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:8 }}><Pill color={T.red}>{pmOverdue} overdue</Pill><Pill color={T.amber}>{pmDueSoon} due soon</Pill></div>
-      {servicesDue.length ? servicesDue.map(p=><Row key={p.id} title={p.eqName||"Equipment"} sub={`${p.service||p.title||"PM"} • Due ${p.nextDue||"—"}`} badge={p.status} badgeColor={p.status==="Overdue"?T.red:T.amber} onClick={()=>go("pm")}/>) : <div style={{ color:T.muted, fontSize:13 }}>No PM items due soon.</div>}
+    pm:<Widget id="pm" title="Preventive Maintenance" subtitle="Due services and inspections" accent={pmOverdue?T.red:T.amber}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:12 }}><Metric label="Overdue" value={pmOverdue} color={pmOverdue?T.red:T.green}/><Metric label="Due Soon" value={pmDueSoon} color={pmDueSoon?T.amber:T.green}/></div>
+      {servicesDue.length ? servicesDue.map(p=><MiniRow key={p.id} title={p.title||p.service||"PM Item"} sub={`${p.eqName||"Equipment"} • Due ${p.nextDue||"N/A"}`} badge={p.status} color={p.status==="Overdue"?T.red:T.amber} tab="pm" />) : <div style={{ color:T.muted, fontSize:13 }}>No PM due right now.</div>}
     </Widget>,
-    equipment:<Widget id="equipment" title="Asset Health" tab="equipment" subtitle="Deadline equipment and deficiencies" accent={outOfSvc?T.red:T.green}>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom:10 }}><Metric label="Total" value={eqs.length} /><Metric label="Deadline" value={outOfSvc} color={outOfSvc?T.red:T.green}/><Metric label="Deficient" value={withDefic} color={withDefic?T.amber:T.green}/></div>
-      {deadlineEqs.length ? deadlineEqs.map(e=><Row key={e.id} title={`${e.id} — ${e.name}`} sub={`${e.make||""} ${e.model||""} • ${e.location||"No location"}`} badge={e.status?.replace("Out of Service / ","")} badgeColor={e.status==="Out of Service / Deadline"?T.red:T.amber} onClick={()=>go("equipment")}/>) : <div style={{ color:T.muted, fontSize:13 }}>All equipment is clear of deadline/deficiency status.</div>}
+    equipment:<Widget id="equipment" title="Equipment Health" subtitle="Readiness and problem assets" accent={outOfSvc?T.red:T.green}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom:12 }}><Metric label="Total" value={eqs.length}/><Metric label="Deadline" value={outOfSvc} color={outOfSvc?T.red:T.green}/><Metric label="Deficient" value={withDefic} color={withDefic?T.amber:T.green}/></div>
+      {deadlineEqs.length ? deadlineEqs.map(e=><MiniRow key={e.id} title={`${e.id} — ${e.name}`} sub={`${e.make||""} ${e.model||""} • ${e.location||"No location"}`} badge={e.status?.replace("Out of Service / ","")} color={e.status==="Out of Service / Deadline"?T.red:T.amber} tab="equipment" />) : <div style={{ color:T.muted, fontSize:13 }}>No deadline or deficient equipment.</div>}
     </Widget>,
-    parts:<Widget id="parts" title="Parts & Inventory Watch" tab="parts" subtitle="Low stock items that can delay repairs" accent={lowStock?T.amber:T.green}>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:10 }}><Metric label="Parts tracked" value={parts.length}/><Metric label="Low stock" value={lowStock} color={lowStock?T.amber:T.green}/></div>
-      {criticalParts.length ? criticalParts.map(p=><Row key={p.id} title={p.name||p.partNumber||"Part"} sub={`${p.partNumber||"No part #"} • Qty ${p.qty??0} / Min ${p.minQty??0}`} badge="Reorder" badgeColor={T.amber} onClick={()=>go("parts")}/>) : <div style={{ color:T.muted, fontSize:13 }}>No low stock alerts.</div>}
+    inventory:<Widget id="inventory" title="Parts & Inventory" subtitle="Stock issues before they delay work" accent={lowStock?T.amber:T.green}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:12 }}><Metric label="Tracked" value={parts.length}/><Metric label="Low Stock" value={lowStock} color={lowStock?T.amber:T.green}/></div>
+      {criticalParts.length ? criticalParts.map(p=><MiniRow key={p.id} title={p.name||p.partNumber||"Part"} sub={`${p.partNumber||"No part #"} • Qty ${p.qty??0} / Min ${p.minQty??0}`} badge="Reorder" color={T.amber} tab="parts" />) : <div style={{ color:T.muted, fontSize:13 }}>Inventory looks good.</div>}
     </Widget>,
-    planner:<Widget id="planner" title="Today’s Battle Rhythm" subtitle="Recommended order of work" accent="#0f766e">
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:10 }}>
-        <div style={{ border:`1px solid ${T.border}`, borderRadius:16, padding:14, background:"#fff" }}><div style={{ fontWeight:900 }}>1. Safety / Deadline</div><div style={{ color:T.muted, fontSize:12, marginTop:4 }}>Check {outOfSvc} deadline assets and {highPriority} high priority WOs.</div></div>
-        <div style={{ border:`1px solid ${T.border}`, borderRadius:16, padding:14, background:"#fff" }}><div style={{ fontWeight:900 }}>2. PM Due</div><div style={{ color:T.muted, fontSize:12, marginTop:4 }}>Complete overdue service before it turns into repairs.</div></div>
-        <div style={{ border:`1px solid ${T.border}`, borderRadius:16, padding:14, background:"#fff" }}><div style={{ fontWeight:900 }}>3. Parts Blockers</div><div style={{ color:T.muted, fontSize:12, marginTop:4 }}>Review {awaitParts} awaiting-parts work orders and {lowStock} low stock items.</div></div>
-        <div style={{ border:`1px solid ${T.border}`, borderRadius:16, padding:14, background:"#fff" }}><div style={{ fontWeight:900 }}>4. Documentation</div><div style={{ color:T.muted, fontSize:12, marginTop:4 }}>Close completed WOs and update equipment records.</div></div>
-      </div>
+    activity:<Widget id="activity" title="Recent Activity" subtitle="Latest movement in the shop" accent="#64748b">
+      {recentWOs.length ? recentWOs.map(w=><MiniRow key={w.id} title={w.title||w.type||"Work Order"} sub={`${w.woNumber||w.id} • ${w.status||"Open"} • ${w.created||"No date"}`} badge={w.priority||w.status} color={w.priority==="High"?T.red:T.accent} tab="workorders" />) : <div style={{ color:T.muted, fontSize:13 }}>No recent work order activity.</div>}
     </Widget>,
-    spending:<Widget id="spending" title="Cost Snapshot" tab="reports" subtitle="Maintenance cost awareness" accent="#2563eb">
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10 }}><Metric label="Month spend" value={`$${spendMo.toFixed(2)}`} color="#2563eb"/><Metric label="Active estimate" value={`$${activeWOCost.toFixed(2)}`} color={T.amber}/></div>
-      <div style={{ marginTop:12, fontSize:12, color:T.muted }}>Use Reports for printable PDF and Excel/CSV exports.</div>
+    costs:<Widget id="costs" title="Cost Snapshot" subtitle="Basic monthly maintenance awareness" accent="#2563eb">
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10 }}><Metric label="Month Spend" value={`$${spendMo.toFixed(2)}`} color="#2563eb"/><Metric label="Completed" value={completedMo} sub="this month" color={T.green}/></div>
+      <div style={{ marginTop:12, color:T.muted, fontSize:12 }}>Use Reports to export PDF, Excel, or Word documents.</div>
     </Widget>
   };
 
-  return <div style={{ display:"flex", flexDirection:"column", gap:14, background:pageBg, margin:-4, padding:customize?14:4, borderRadius:22 }}>
+  return <div style={{ display:"flex", flexDirection:"column", gap:16, background:"linear-gradient(135deg,#f8fafc 0%,#eef6ff 46%,#fff7ed 100%)", margin:-4, padding:customize?16:6, borderRadius:24 }}>
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap" }}>
-      <div><h2 style={{ margin:"0 0 4px", fontSize:28, letterSpacing:-.6 }}>Dashboard</h2><div style={{ color:T.muted, fontSize:13 }}>Your maintenance home base: find work, act fast, and see what needs attention.</div></div>
+      <div><h2 style={{ margin:"0 0 4px", fontSize:30, letterSpacing:-.8 }}>Dashboard</h2><div style={{ color:T.muted, fontSize:13 }}>A clean home base for maintenance work, decisions, and quick actions.</div></div>
       <div data-dash-control="true" style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-        <select value={activePreset} onChange={e=>applyPreset(e.target.value)} style={{ height:36, border:`1px solid ${T.border}`, borderRadius:10, padding:"0 10px", background:"#fff", fontWeight:800 }}>
-          <option value="mission">Mission Control</option>
+        <select value={activePreset} onChange={e=>applyPreset(e.target.value)} style={{ height:38, border:`1px solid ${T.border}`, borderRadius:12, padding:"0 12px", background:"#fff", fontWeight:900 }}>
+          <option value="calm">Calm Operations</option>
           <option value="mechanic">Mechanic Daily Board</option>
           <option value="manager">Manager Console</option>
-          <option value="simple">Clean Simple</option>
+          <option value="simple">Simple Clean</option>
           <option value="custom">My Custom Dashboard</option>
         </select>
         <Btn onClick={()=>setCustomize(v=>!v)}>{customize?"Done Customizing":"Customize Dashboard"}</Btn>
       </div>
     </div>
 
-    {customize && <Card style={{ padding:16, border:`2px dashed ${T.accent}`, background:"#fff" }}>
-      <div style={{ fontSize:16, fontWeight:900, marginBottom:4 }}>Dashboard edit mode</div>
-      <div style={{ fontSize:12, color:T.muted, marginBottom:12 }}>Cards are locked while editing. Use presets, size controls, move buttons, and show/hide options. Any custom layout you create is saved as “My Custom Dashboard” in the dropdown.</div>
+    {customize && <Card style={{ padding:16, border:`2px dashed ${T.accent}`, borderRadius:20, background:"#fff" }}>
+      <div style={{ fontSize:16, fontWeight:950, marginBottom:4 }}>Dashboard edit mode</div>
+      <div style={{ fontSize:12, color:T.muted, marginBottom:12 }}>Cards are locked while editing. Pick a preset, move cards, resize them, or hide what you do not use. Your changes save as “My Custom Dashboard.”</div>
       <div data-dash-control="true" style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:12 }}>
-        <Btn small onClick={()=>applyPreset("mission")}>Mission Control</Btn>
+        <Btn small onClick={()=>applyPreset("calm")}>Calm Operations</Btn>
         <Btn small variant="secondary" onClick={()=>applyPreset("mechanic")}>Mechanic Daily Board</Btn>
         <Btn small variant="secondary" onClick={()=>applyPreset("manager")}>Manager Console</Btn>
-        <Btn small variant="secondary" onClick={()=>applyPreset("simple")}>Clean Simple</Btn>
-        <Btn small variant="danger" onClick={resetDash}>Reset</Btn>
+        <Btn small variant="secondary" onClick={()=>applyPreset("simple")}>Simple Clean</Btn>
       </div>
       <div data-dash-control="true" style={{ display:"flex", flexWrap:"wrap", gap:8 }}>{fullLayout.map(id=><Btn key={id} small variant={hidden.includes(id)?"secondary":"primary"} onClick={()=>toggleWidget(id)}>{hidden.includes(id)?"Show":"Hide"} {id}</Btn>)}</div>
     </Card>}
 
-    <div onClickCapture={lockIfEditing} onMouseDownCapture={lockIfEditing} style={{ display:"grid", gridTemplateColumns:"repeat(6,minmax(120px,1fr))", gap:12, alignItems:"stretch" }}>
+    <div onClickCapture={lockIfEditing} onMouseDownCapture={lockIfEditing} style={{ display:"grid", gridTemplateColumns:"repeat(6,minmax(130px,1fr))", gap:14, alignItems:"stretch" }}>
       {fullLayout.filter(id=>!hidden.includes(id)).map(id=>widgets[id])}
     </div>
   </div>;
@@ -807,9 +803,14 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const pickType = (typeId) => { setForm(f=>({...f, woType:typeId, title:buildTitle(typeId,"")})); setModal("pick"); };
   const pickEquipment = (item) => { setForm(f=>({...f, equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||null, parentId:item.parentId||null})); setModal("form"); };
 
-  /* Click row to open detail */
-  const openDetail = (wo) => { setDetailWO(wo); setForm({...wo, partsUsed:wo.partsUsed||[]}); setEditMode(false); setModal("detail"); };
-  const openEdit   = (wo) => { setForm({...wo, partsUsed:wo.partsUsed||[]}); setModal("edit"); };
+  /* Click row to open the editable Work Order form */
+  const openEdit = (wo) => {
+    setDetailWO(null);
+    setEditMode(false);
+    setForm({...wo, partsUsed:wo.partsUsed||[]});
+    setModal("edit");
+  };
+  const openDetail = openEdit;
 
   /* Mechanic selection - auto-calc labor cost */
   const selectTech = (techId) => {
@@ -1370,7 +1371,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         </div>
       </div>
 
-      {/* WO Table — click anywhere on row to open detail */}
+      {/* WO Table — click anywhere on row to edit */}
       <Card style={{ padding:0, overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
@@ -1388,7 +1389,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               const total = (+wo.laborCost||0)+partsTotal+(+wo.partsCost||0);
               const typeInfo = WO_TYPES.find(t=>t.id===wo.woType);
               return (
-                <tr key={wo.id} onClick={()=>openDetail(wo)} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer", transition:"background .12s" }}
+                <tr key={wo.id} onClick={()=>openEdit(wo)} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer", transition:"background .12s" }}
                   onMouseEnter={e=>e.currentTarget.style.background=T.accentLt}
                   onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"#fff":T.grayLt}>
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:11, color:T.muted, whiteSpace:"nowrap" }}>{wo.id}</td>
@@ -1408,7 +1409,13 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                   <td style={{ padding:"11px 14px" }}><Badge label={wo.status} /></td>
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:wo.due&&wo.due<today()&&wo.status!=="Completed"?T.red:T.subtext, whiteSpace:"nowrap" }}>{wo.due}</td>
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:T.subtext, whiteSpace:"nowrap" }}>{total>0?`$${total.toFixed(0)}`:"—"}</td>
-                  <td style={{ padding:"4px 10px", whiteSpace:"nowrap" }} onClick={e=>e.stopPropagation()}>
+                  <td style={{ padding:"4px 10px", whiteSpace:"nowrap", display:"flex", gap:6 }} onClick={e=>e.stopPropagation()}>
+                    <button
+                      title="Edit Work Order"
+                      onClick={e=>{ e.stopPropagation(); openEdit(wo); }}
+                      style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:13, color:T.subtext, display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
+                      ✏️
+                    </button>
                     <button
                       title="Print Work Order"
                       onClick={e=>{ e.stopPropagation(); printWO(wo); }}
@@ -1439,7 +1446,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
       {/* Edit modal */}
       {modal==="edit" && (
-        <Modal title={`Edit ${form.id}`} onClose={()=>setModal(null)}>
+        <Modal title={`Edit Work Order — ${form.id}`} onClose={()=>setModal(null)}>
           <div style={{ background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 14px", marginBottom:14 }}>
             <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:3 }}>Equipment</div>
             <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:600, color:T.text }}>{state.equipment.find(e=>e.id===form.equipment)?.name||form.equipmentLabel||form.equipment||"—"}</div>
@@ -1447,7 +1454,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           {renderWOForm()}
           <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:8 }}>
             <Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn>
-            <Btn onClick={()=>save(true)}>Save Changes</Btn>
+            <Btn onClick={()=>save(true)}>Save Work Order Changes</Btn>
           </div>
         </Modal>
       )}
