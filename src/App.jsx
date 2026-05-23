@@ -42,6 +42,8 @@ const INIT = {
   parts: [],
   pmSchedules: [],
   pmTasks: [],
+  inspectionTasks: [],
+  inspectionSchedules: [],
   inventoryItems: [],
   profile: null,
   settings: null,
@@ -104,6 +106,12 @@ function reducer(state, { type, payload }) {
     case "ADD_PM_TASK":       return { ...state, pmTasks: [...(state.pmTasks||[]), payload] };
     case "UPDATE_PM_TASK":    return { ...state, pmTasks: (state.pmTasks||[]).map(t=>t.id===payload.id?payload:t) };
     case "DELETE_PM_TASK":    return { ...state, pmTasks: (state.pmTasks||[]).filter(t=>t.id!==payload) };
+    case "ADD_INSPECTION_TASK":       return { ...state, inspectionTasks: [...(state.inspectionTasks||[]), payload] };
+    case "UPDATE_INSPECTION_TASK":    return { ...state, inspectionTasks: (state.inspectionTasks||[]).map(t=>t.id===payload.id?payload:t) };
+    case "DELETE_INSPECTION_TASK":    return { ...state, inspectionTasks: (state.inspectionTasks||[]).filter(t=>t.id!==payload) };
+    case "ADD_INSPECTION_SCHEDULE":   return { ...state, inspectionSchedules: [...(state.inspectionSchedules||[]), payload] };
+    case "UPDATE_INSPECTION_SCHEDULE":return { ...state, inspectionSchedules: (state.inspectionSchedules||[]).map(s=>s.id===payload.id?payload:s) };
+    case "DELETE_INSPECTION_SCHEDULE":return { ...state, inspectionSchedules: (state.inspectionSchedules||[]).filter(s=>s.id!==payload) };
     case "ADD_INV":       return { ...state, inventoryItems: [...(state.inventoryItems||[]), payload] };
     case "DELETE_INV":    return { ...state, inventoryItems: (state.inventoryItems||[]).filter(i => i.id!==payload) };
     case "UPDATE_PROFILE":return { ...state, profile: payload };
@@ -478,6 +486,7 @@ function Header({ notifications, dispatch, currentPage, onMenuToggle }) {
 const NAV = [
   { id:"dashboard",  icon:"▦",  label:"Dashboard" },
   { id:"workorders", icon:"📋", label:"Work Orders" },
+  { id:"inspections", icon:"🔍", label:"Inspections" },
   { id:"equipment",  icon:"🚜", label:"Equipment" },
   { id:"inventory",  icon:"📋", label:"Equipment Inventory" },
   { id:"parts",      icon:"📦", label:"Parts Inventory" },
@@ -496,6 +505,88 @@ const NAV_REPORTS = [
 ];
 
 function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profile }) {
+  const defaultMenuGroups = [
+    { key:"main", title:"Main Menu", items:NAV },
+    { key:"reports", title:"Reports", items:NAV_REPORTS },
+  ];
+  const defaultOrder = defaultMenuGroups.flatMap(g=>g.items.map(n=>`${g.key}:${n.id}`));
+  const [editMenu, setEditMenu] = useState(false);
+  const [dragKey, setDragKey] = useState(null);
+  const [menuOrder, setMenuOrder] = useState(()=>{
+    try {
+      const saved = JSON.parse(localStorage.getItem("winmaint_menu_order") || "null");
+      if (Array.isArray(saved) && saved.length) return saved;
+    } catch {}
+    return defaultOrder;
+  });
+
+  useEffect(()=>{
+    const valid = new Set(defaultOrder);
+    setMenuOrder(prev=>{
+      const kept = (Array.isArray(prev)?prev:[]).filter(k=>valid.has(k));
+      const missing = defaultOrder.filter(k=>!kept.includes(k));
+      const next = [...kept, ...missing];
+      try { localStorage.setItem("winmaint_menu_order", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  const itemByKey = Object.fromEntries(defaultMenuGroups.flatMap(g=>g.items.map(item=>[`${g.key}:${item.id}`, { ...item, group:g.key, groupTitle:g.title }])));
+  const orderedItems = menuOrder.map(k=>itemByKey[k]).filter(Boolean);
+
+  const saveOrder = (next) => {
+    setMenuOrder(next);
+    try { localStorage.setItem("winmaint_menu_order", JSON.stringify(next)); } catch {}
+  };
+  const moveMenuItem = (key, direction) => {
+    const idx = menuOrder.indexOf(key);
+    const nextIdx = idx + direction;
+    if (idx < 0 || nextIdx < 0 || nextIdx >= menuOrder.length) return;
+    const next = [...menuOrder];
+    [next[idx], next[nextIdx]] = [next[nextIdx], next[idx]];
+    saveOrder(next);
+  };
+  const resetMenuOrder = () => saveOrder(defaultOrder);
+  const handleDrop = (targetKey) => {
+    if (!dragKey || dragKey === targetKey) return;
+    const next = [...menuOrder];
+    const from = next.indexOf(dragKey);
+    const to = next.indexOf(targetKey);
+    if (from < 0 || to < 0) return;
+    next.splice(from, 1);
+    next.splice(to, 0, dragKey);
+    saveOrder(next);
+    setDragKey(null);
+  };
+
+  const renderMenuButton = (n, idx) => {
+    const active = tab===n.id;
+    const key = `${n.group}:${n.id}`;
+    return (
+      <div key={key}
+        draggable={editMenu}
+        onDragStart={()=>editMenu && setDragKey(key)}
+        onDragOver={(e)=>{ if(editMenu) e.preventDefault(); }}
+        onDrop={()=>editMenu && handleDrop(key)}
+        style={{ margin:"1px 8px", borderRadius:8, outline:editMenu && dragKey===key?`2px dashed ${T.accent}`:"none" }}>
+        <button
+          onClick={()=> editMenu ? null : (setTab(n.id), onClose())}
+          style={{ display:"flex", alignItems:"center", gap:11, padding:"10px 12px", borderRadius:7, background:active?T.accentLt:(editMenu?"#f8fafc":"transparent"), border:editMenu?`1px dashed ${T.borderHi}`:"none", color:active?T.accent:T.subtext, cursor:editMenu?"grab":"pointer", fontFamily:T.sans, fontSize:14, fontWeight:active?600:400, textAlign:"left", width:"100%", transition:"background .12s" }}>
+          {editMenu && <span style={{ fontSize:15, color:T.muted, cursor:"grab" }}>☰</span>}
+          <span style={{ fontSize:16 }}>{n.icon}</span>
+          <span style={{ flex:1 }}>{n.label}</span>
+          {editMenu && (
+            <span style={{ display:"flex", gap:4 }} onClick={(e)=>e.stopPropagation()}>
+              <span title="Move up" onClick={()=>moveMenuItem(key, -1)} style={{ border:`1px solid ${T.border}`, borderRadius:6, padding:"1px 6px", background:"#fff", cursor:"pointer" }}>↑</span>
+              <span title="Move down" onClick={()=>moveMenuItem(key, 1)} style={{ border:`1px solid ${T.border}`, borderRadius:6, padding:"1px 6px", background:"#fff", cursor:"pointer" }}>↓</span>
+            </span>
+          )}
+        </button>
+      </div>
+    );
+  };
+
+  let lastGroup = null;
   return (
     <>
       {/* Backdrop */}
@@ -504,20 +595,20 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
       )}
       {/* Drawer */}
       <div style={{
-        position:"fixed", top:0, left:0, bottom:0, width:260,
+        position:"fixed", top:0, left:0, bottom:0, width:editMenu?300:260,
         background:"#fff", boxShadow:"4px 0 24px rgba(0,0,0,.12)",
         zIndex:1200, display:"flex", flexDirection:"column",
         transform: open?"translateX(0)":"translateX(-100%)",
-        transition:"transform .25s cubic-bezier(.4,0,.2,1)",
+        transition:"transform .25s cubic-bezier(.4,0,.2,1), width .18s",
       }}>
         {/* Drawer header — click to open Settings */}
         <div style={{ padding:"18px 20px 14px", borderBottom:`1px solid ${T.border}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-          <button onClick={()=>{ onSettings(); onClose(); }} style={{ display:"flex", alignItems:"center", gap:10, background:"none", border:"none", cursor:"pointer", padding:0, textAlign:"left", flex:1 }}
-            title="Click to open System Settings">
+          <button onClick={()=>{ if(!editMenu){ onSettings(); onClose(); } }} style={{ display:"flex", alignItems:"center", gap:10, background:"none", border:"none", cursor:editMenu?"default":"pointer", padding:0, textAlign:"left", flex:1 }}
+            title={editMenu?"Finish menu editing first":"Click to open System Settings"}>
             <div style={{ width:34, height:34, background:T.accent, borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, flexShrink:0 }}>⚙</div>
             <div>
               <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text, lineHeight:1.2 }}>{companyName||"NCA Maintenance"}</div>
-              <div style={{ fontFamily:T.sans, fontSize:10, color:T.accent }}>Tap to open Settings</div>
+              <div style={{ fontFamily:T.sans, fontSize:10, color:T.accent }}>{editMenu?"Menu reorder mode":"Tap to open Settings"}</div>
             </div>
           </button>
           <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, color:T.muted, cursor:"pointer", lineHeight:1, padding:0 }}>×</button>
@@ -525,29 +616,29 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
 
         {/* Nav items */}
         <div style={{ flex:1, overflowY:"auto", padding:"10px 0" }}>
-          <p style={{ margin:"0 0 4px", padding:"0 16px", fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.8 }}>Main Menu</p>
-          {NAV.map(n=>{
-            const active = tab===n.id;
+          {editMenu && (
+            <div style={{ margin:"0 12px 10px", padding:"10px", border:`1px solid ${T.border}`, borderRadius:9, background:"#f8fafc", fontFamily:T.sans, fontSize:12, color:T.subtext, lineHeight:1.35 }}>
+              Drag a section up or down, or use the arrow buttons. Your menu order saves automatically.
+            </div>
+          )}
+          {orderedItems.map((n, idx)=>{
+            const showTitle = n.group !== lastGroup;
+            lastGroup = n.group;
             return (
-              <button key={n.id} onClick={()=>{ setTab(n.id); onClose(); }} style={{ display:"flex", alignItems:"center", gap:11, padding:"10px 20px", margin:"1px 8px", borderRadius:7, background:active?T.accentLt:"transparent", border:"none", color:active?T.accent:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:14, fontWeight:active?600:400, textAlign:"left", width:"calc(100% - 16px)", transition:"background .12s" }}>
-                <span style={{ fontSize:16 }}>{n.icon}</span> {n.label}
-              </button>
-            );
-          })}
-
-          <p style={{ margin:"14px 0 4px", padding:"0 16px", fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.8 }}>Reports</p>
-          {NAV_REPORTS.map(n=>{
-            const active = tab===n.id;
-            return (
-              <button key={n.id} onClick={()=>{ setTab(n.id); onClose(); }} style={{ display:"flex", alignItems:"center", gap:11, padding:"10px 20px", margin:"1px 8px", borderRadius:7, background:active?T.accentLt:"transparent", border:"none", color:active?T.accent:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:14, fontWeight:active?600:400, textAlign:"left", width:"calc(100% - 16px)", transition:"background .12s" }}>
-                <span style={{ fontSize:16 }}>{n.icon}</span> {n.label}
-              </button>
+              <React.Fragment key={`${n.group}:${n.id}:wrap`}>
+                {showTitle && <p style={{ margin:idx===0?"0 0 4px":"14px 0 4px", padding:"0 16px", fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.8 }}>{n.groupTitle}</p>}
+                {renderMenuButton(n, idx)}
+              </React.Fragment>
             );
           })}
         </div>
 
-        {/* Footer — user info */}
+        {/* Footer — user info / menu editor */}
         <div style={{ padding:"12px 20px", borderTop:`1px solid ${T.border}` }}>
+          <button onClick={()=>setEditMenu(v=>!v)} style={{ width:"100%", marginBottom:10, display:"flex", alignItems:"center", justifyContent:"center", gap:8, border:`1px solid ${editMenu?T.accent:T.border}`, background:editMenu?T.accentLt:"#fff", color:editMenu?T.accent:T.subtext, borderRadius:8, padding:"8px 10px", fontFamily:T.sans, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+            ✏️ {editMenu?"Done organizing menu":"Organize menu"}
+          </button>
+          {editMenu && <button onClick={resetMenuOrder} style={{ width:"100%", marginBottom:10, border:`1px solid ${T.border}`, background:"#fff", color:T.muted, borderRadius:8, padding:"7px 10px", fontFamily:T.sans, fontSize:12, fontWeight:600, cursor:"pointer" }}>Reset default order</button>}
           <div style={{ display:"flex", alignItems:"center", gap:10 }}>
             <div style={{ width:32, height:32, borderRadius:"50%", background:T.accent, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:T.mono, fontSize:12, color:"#fff", fontWeight:700, overflow:"hidden" }}>
               {profile?.photo ? <img src={profile.photo} alt="me" style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : (profile?.firstName?`${profile.firstName[0]}${profile.lastName?.[0]||""}`.toUpperCase():"JM")}
@@ -562,9 +653,6 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
     </>
   );
 }
-
-
-/* DASHBOARD */
 
 function Dashboard({ state, dispatch, setTab, onSettings }) {
   const { workOrders:wos=[], equipment:eqs=[], preventiveMaintenance:pms=[], parts=[] } = state;
@@ -827,6 +915,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const WO_TYPES = [
     { id:"Repair",     label:"Repair Work Order",     icon:"🛠", desc:"Fault repairs and breakdown response",     color:"#7f1d1d", bg:"#fef2f2" },
     { id:"Service",    label:"Service Work Order",    icon:"🧰", desc:"Preventive maintenance service generated from PM tasks", color:"#1e40af", bg:"#eff6ff" },
+    { id:"Inspection", label:"Inspection Work Order", icon:"🔍", desc:"Equipment inspection generated from inspection tasks", color:"#065f46", bg:"#ecfdf5" },
   ];
 
   /* Intervals shown for Service and Inspection types */
@@ -1033,7 +1122,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const typeSpecificPrint = (() => {
       if(!printOpt("showTypeSpecific")) return "";
       if(wo.woType==="Repair") return "";
-      if(wo.woType==="Service") return `<div class="sec"><div class="sh">Service Work Order Details</div><div class="twocol"><div><b>Meter / Hours:</b><br>${wo.meterReading||"&nbsp;"}</div><div><b>Next Service Due:</b><br>${wo.nextServiceDue||"&nbsp;"}</div><div style="grid-column:1/3"><b>Service Checklist:</b><br>${wo.serviceChecklist||"&nbsp;"}</div></div></div>`;
+      if(wo.woType==="Service") return ``;
       if(wo.woType==="Inspection") return `<div class="sec"><div class="sh">Inspection Work Order Details</div><div class="twocol"><div><b>Result:</b><br>${wo.inspectionResult||"&nbsp;"}</div><div><b>Follow-Up:</b><br>${wo.followUpRequired||"&nbsp;"}</div><div style="grid-column:1/3"><b>Findings:</b><br>${wo.inspectionFindings||"&nbsp;"}</div></div></div>`;
       return "";
     })();
@@ -1119,7 +1208,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         </div>
       </div>` : ""}
       ${printOpt("showFaultDescription") ? `<div class="sec"><div class="sh">Description</div><div class="sb" style="min-height:18px;padding:3px 8px;line-height:1.25">${wo.faultDescription||"&nbsp;"}</div></div>` : ""}
-      ${printOpt("showDescription") ? `<div class="sec"><div class="sh">Work Description &amp; Work Performed</div><div class="sb">${wo.description||"&nbsp;"}</div></div>` : ""}
+      ${printOpt("showDescription") ? `<div class="sec"><div class="sh">${wo.woType==="Service" ? "Service Description &amp; Work Performed" : "Work Description &amp; Work Performed"}</div><div class="sb">${wo.description||"&nbsp;"}</div></div>` : ""}
       ${typeSpecificPrint}
       <div class="bg">
         ${printOpt("showMechanicNotes") ? `<div class="sec"><div class="sh">Mechanic Notes (Write-In)</div><div class="sb" style="min-height:80px">${wo.mechanicNotes||"&nbsp;"}</div></div>` : ""}
@@ -1219,7 +1308,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:6 }}>Select N/A only when the equipment does not track hours or mileage.</div>
         </div>
 
-        <Field label="Work Description / Problem Reported">
+        <Field label={form.woType==="Service" ? "Service Description / Work Performed" : "Work Description / Problem Reported"}>
           <textarea style={{ ...inp, minHeight:110, resize:"vertical" }} value={form.description||""} onChange={e=>setForm(f=>({...f,description:e.target.value}))} />
         </Field>
 
@@ -1411,7 +1500,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
         {/* Description */}
         <div style={{ background:T.grayLt, borderRadius:6, padding:"10px 12px", border:`1px solid ${T.border}` }}>
-          <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Work Description</div>
+          <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>{wo.woType==="Service" ? "Service Description & Work Performed" : "Work Description"}</div>
           <div style={{ minHeight:90, fontFamily:T.sans, fontSize:13, color:wo.description?T.text:T.muted, lineHeight:1.6, fontStyle:wo.description?"normal":"italic" }}>{wo.description||"No work description recorded."}</div>
         </div>
 
@@ -1496,7 +1585,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           {/* Type */}
           <select style={{ ...sel, width:140 }} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
             <option value="All">All Types</option>
-            {["Repair","Service"].map(t=><option key={t}>{t}</option>)}
+            {["Repair","Service","Inspection"].map(t=><option key={t}>{t}</option>)}
           </select>
           {/* Priority */}
           <select style={{ ...sel, width:130 }} value={priorityFilter} onChange={e=>setPriorityFilter(e.target.value)}>
@@ -3657,7 +3746,7 @@ function WOSettings({ state, dispatch, onClose }) {
       <Toggle label="Usage Reading / Mileage / Hours" k="showUsageReading" />
       <Toggle label="Dates (Created / Due / Completed)" k="showDates" />
       <Toggle label="Description" k="showFaultDescription" />
-      <Toggle label="Work Description / Work Performed" k="showDescription" />
+      <Toggle label="Work/Service Description & Work Performed" k="showDescription" />
       <Toggle label="Service / Inspection Details" k="showTypeSpecific" />
       <Toggle label="Mechanic Notes" k="showMechanicNotes" />
       <Toggle label="Parts Table" k="showParts" />
@@ -5172,6 +5261,7 @@ export default function App() {
   const pages = {
     dashboard:        <Dashboard        state={state} dispatch={dispatch} setTab={setTab} onSettings={()=>setShowSettings(true)} />,
     workorders:       <WorkOrders       state={state} dispatch={dispatch} woSettings={state.woSettings} onWOSettings={()=>setShowWOSettings(true)} />,
+    inspections:      <Inspections      state={state} dispatch={dispatch} />,
     equipment:        <Equipment        state={state} dispatch={dispatch} />,
     parts:            <Parts            state={state} dispatch={dispatch} />,
     pm:               <PM               state={state} dispatch={dispatch} />,
