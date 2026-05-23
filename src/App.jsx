@@ -4209,25 +4209,48 @@ function ReportDeadline({ state }) {
   const exportRows = [...oos.map(eq=>({Status:"Out of Service / Deadline", "Equip #":eq.id, Nomenclature:eq.name, "Fault Date":eq.faultDate||"", "Description":eq.faultDescription||"", "Open Work Orders":openWO(eq.id).map(w=>`${w.id} (${w.status})`).join(", ")})), ...def.map(eq=>({Status:"Operational with Deficiencies", "Equip #":eq.id, Nomenclature:eq.name, "Fault Date":eq.faultDate||"", "Description":eq.faultDescription||"", "Open Work Orders":openWO(eq.id).map(w=>`${w.id} (${w.status})`).join(", ")}))];
 
   const printReport = () => {
-    const win = window.open("","_blank","width=900,height=700");
+    const win = window.open("","_blank","width=1100,height=760");
     if(!win) return;
-    const rows = (list,color,title) => list.map(eq=>{
+    const rows = (list,color) => list.map(eq=>{
       const wos = openWO(eq.id);
       return `<tr style="background:${color}">
-        <td>${eq.id}</td><td><b>${eq.name}</b></td>
-        <td>${eq.faultDate||"—"}</td>
-        <td>${eq.faultDescription||"—"}</td>
-        <td>${wos.length>0?wos.map(w=>`${w.id} (${w.status})`).join(", "):"No open WOs"}</td>
+        <td class="equip">${eq.id}</td>
+        <td class="nomenclature"><b>${eq.name}</b></td>
+        <td class="faultDate">${eq.faultDate||"—"}</td>
+        <td class="description">${eq.faultDescription||"—"}</td>
+        <td class="workOrders">${wos.length>0?wos.map(w=>`${w.id} (${w.status})`).join(", "):"No open WOs"}</td>
       </tr>`;
     }).join("");
+    const table = (list, color, heading, headingColor) => list.length ? `
+      <h2 style="color:${headingColor}">${heading} (${list.length})</h2>
+      <table class="deadline-table">
+        <colgroup>
+          <col style="width:14%" />
+          <col style="width:24%" />
+          <col style="width:13%" />
+          <col style="width:32%" />
+          <col style="width:17%" />
+        </colgroup>
+        <thead><tr><th>Equip #</th><th>Nomenclature</th><th>Fault Date</th><th>Description</th><th>Work Orders</th></tr></thead>
+        <tbody>${rows(list,color)}</tbody>
+      </table>` : "";
     win.document.write(`<!DOCTYPE html><html><head><title>Deadline Report</title>
-      <style>body{font-family:Arial,sans-serif;padding:24px}h1{font-size:18px;margin-bottom:4px}h2{font-size:13px;margin:16px 0 6px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px;text-transform:uppercase}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}@media print{button{display:none}}</style>
+      <style>
+        @page{size:landscape;margin:0.45in}
+        body{font-family:Arial,sans-serif;padding:24px;color:#111827}h1{font-size:18px;margin-bottom:4px}h2{font-size:13px;margin:18px 0 7px}
+        .deadline-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px;margin-bottom:16px}
+        .deadline-table th{background:#1a1a2e;color:#fff;padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;vertical-align:middle}
+        .deadline-table td{padding:8px;border-bottom:1px solid #d1d5db;vertical-align:top;line-height:1.25}
+        .deadline-table .equip{font-weight:700;white-space:nowrap;font-family:monospace}
+        .deadline-table .nomenclature{overflow-wrap:break-word}
+        .deadline-table .faultDate{white-space:nowrap;font-family:monospace}
+        .deadline-table .description,.deadline-table .workOrders{overflow-wrap:anywhere}
+        @media print{button{display:none}body{padding:0}.deadline-table{page-break-inside:auto}tr{page-break-inside:avoid;page-break-after:auto}}
+      </style>
       </head><body>
       ${reportHeaderHTML(state, "Deadline & Deficiency Report")}
-      ${oos.length?`<h2 style="color:#dc2626">Out of Service / Deadline (${oos.length})</h2>
-      <table><tr><th>Equip #</th><th>Nomenclature</th><th>Fault Date</th><th>Description</th><th>Work Orders</th></tr>${rows(oos,"#fff5f5","")}</table>`:""}
-      ${def.length?`<h2 style="color:#d97706">Operational w/ Deficiencies (${def.length})</h2>
-      <table><tr><th>Equip #</th><th>Nomenclature</th><th>Fault Date</th><th>Description</th><th>Work Orders</th></tr>${rows(def,"#fffdf0","")}</table>`:""}
+      ${table(oos,"#fff5f5","Out of Service / Deadline","#dc2626")}
+      ${table(def,"#fffdf0","Operational w/ Deficiencies","#d97706")}
       ${!oos.length&&!def.length?`<p>No equipment in deadline or deficiency status.</p>`:""}
       ${reportButtonsHtml(exportRows)}
       </body></html>`);
@@ -4249,7 +4272,7 @@ function ReportDeadline({ state }) {
             const wos = openWO(eq.id);
             return (
               <div key={eq.id} style={{ background:bg, border:`1px solid ${T.border}`, borderLeft:leftBorder, borderRadius:8, padding:"12px 18px", marginBottom:8, boxShadow:T.shadow }}>
-                <div style={{ display:"grid", gridTemplateColumns:"90px 1fr 130px 1fr", gap:16, flexWrap:"wrap" }}>
+                <div style={{ display:"grid", gridTemplateColumns:"120px 1.3fr 130px 1.7fr 170px", gap:16, flexWrap:"wrap" }}>
                   <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Equip #</div><div style={{ fontFamily:T.mono, fontSize:12, fontWeight:700, color:T.text, marginTop:2 }}>{eq.id}</div></div>
                   <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Nomenclature</div><div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginTop:2 }}>{eq.name}</div></div>
                   <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Fault Date</div><div style={{ fontFamily:T.mono, fontSize:12, color, fontWeight:700, marginTop:2 }}>{eq.faultDate||"—"}</div></div>
