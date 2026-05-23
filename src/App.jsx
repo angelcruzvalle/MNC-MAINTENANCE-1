@@ -826,6 +826,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const WO_TYPES = [
     { id:"Repair",     label:"Repair Work Order",     icon:"🛠", desc:"Fault repairs and breakdown response",     color:"#7f1d1d", bg:"#fef2f2" },
+    { id:"Service",    label:"Service Work Order",    icon:"🧰", desc:"Preventive maintenance service generated from PM tasks", color:"#1e40af", bg:"#eff6ff" },
   ];
 
   /* Intervals shown for Service and Inspection types */
@@ -898,7 +899,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const openAdd = () => {
     setEqSearch("");
-    setForm({ woType:"Repair", status:"Open", equipmentStatus:"Fully Operational", priority:"Medium", created:today(), due:today(), tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], mechanicNotes:"", faultEnabled:true, faultDescription:"", usageHours:"", usageMileage:"", repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"" });
+    setForm({ woType:"Repair", status:"Open", equipmentStatus:"Fully Operational", priority:"Medium", created:today(), due:today(), tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], mechanicNotes:"", faultEnabled:true, faultDescription:"", usageHours:"", usageMileage:"", usageNA:false, repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"" });
     setModal("pick");
   };
 
@@ -908,7 +909,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const logs = (state.usageLogs||[]).filter(l=>l.equipmentId===item.id);
     const latestHours = Math.max(...logs.map(l=>+(l.hours||0)), 0) || "";
     const latestMileage = Math.max(...logs.map(l=>+(l.mileage||0)), 0) || "";
-    setForm(f=>({...f, woType:"Repair", equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||null, parentId:item.parentId||null, equipmentStatus:eq?.status||"Fully Operational", usageType:eq?.usageType||"hours", usageHours:f.usageHours||latestHours, usageMileage:f.usageMileage||latestMileage}));
+    setForm(f=>({...f, woType:f.woType||"Repair", equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||null, parentId:item.parentId||null, equipmentStatus:eq?.status||"Fully Operational", usageType:eq?.usageType||"hours", usageNA: eq?.trackUsage ? false : (f.usageNA||false), usageHours:f.usageHours||latestHours, usageMileage:f.usageMileage||latestMileage}));
     setModal("form");
   };
 
@@ -962,6 +963,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const save = (isEdit) => {
     if(!form.equipment) return alert("Equipment required.");
     if(!(form.faultDescription||"").trim()) return alert("Description required.");
+    const usageModeReq = String(form.usageType||"hours").toLowerCase();
+    const hasUsageReading = form.usageNA || (usageModeReq==="mileage" ? !!String(form.usageMileage||"").trim() : usageModeReq==="both" ? (!!String(form.usageHours||"").trim() || !!String(form.usageMileage||"").trim()) : !!String(form.usageHours||"").trim());
+    if(!hasUsageReading) return alert("Enter the current usage reading or select N/A.");
     const prevWO = isEdit ? state.workOrders.find(w=>w.id===form.id) : null;
 
     /* Figure out inventory consumption delta */
@@ -1015,12 +1019,12 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const usageLabel = [wo.usageHours ? `Hours: ${wo.usageHours}` : "", wo.usageMileage ? `Mileage: ${Number(wo.usageMileage).toLocaleString()}` : ""].filter(Boolean).join(" / ");
     const usageMode = (eq?.usageType || wo.usageType || "hours").toLowerCase();
     const usageDisplayLabel = usageMode === "mileage" ? "Mileage" : usageMode === "both" ? "Mileage / Hours" : "Hours";
-    const usageDisplayValue = usageMode === "mileage"
+    const usageDisplayValue = wo.usageNA ? "N/A" : (usageMode === "mileage"
       ? (wo.usageMileage ? Number(wo.usageMileage).toLocaleString() : "&nbsp;")
       : usageMode === "both"
         ? [wo.usageMileage ? Number(wo.usageMileage).toLocaleString() : "", wo.usageHours ? `${wo.usageHours} hrs` : ""].filter(Boolean).join(" / ") || "&nbsp;"
-        : (wo.usageHours || "&nbsp;");
-    const woTypeLabel = ws.headerText || "MAINTENANCE WORK ORDER";
+        : (wo.usageHours || "&nbsp;"));
+    const woTypeLabel = `${String(wo.woType||"Repair").toUpperCase()} WORK ORDER`;
     const partsUsed  = wo.partsUsed || [];
     const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
     const laborTotal = +(wo.laborCost||0);
@@ -1176,7 +1180,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     return (
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
 
-        <div style={{ gridColumn:"span 2", marginBottom:10, padding:"10px 12px", border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt, fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text }}>Work Order Type: Repair</div>
+        <div style={{ gridColumn:"span 2", marginBottom:10, padding:"10px 12px", border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt, fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text }}>Work Order Type: {typeInfo?.label || `${form.woType||"Repair"} Work Order`}</div>
 
         <Field label="Equipment Status" half>
           <select style={{...sel, minWidth:260, width:"100%"}} value={form.equipmentStatus||"Fully Operational"} onChange={e=>setForm(f=>({...f,equipmentStatus:e.target.value}))}>
@@ -1196,17 +1200,23 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         </div>
 
         <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.grayLt }}>
-          <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:8 }}>Current Usage at Work Order</div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, marginBottom:8 }}>
+            <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text }}>Current Usage at Work Order <span style={{ color:T.red }}>*</span></div>
+            <label style={{ display:"flex", alignItems:"center", gap:6, fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, cursor:"pointer" }}>
+              <input type="checkbox" checked={!!form.usageNA} onChange={e=>setForm(f=>({...f,usageNA:e.target.checked,usageHours:e.target.checked?"":f.usageHours,usageMileage:e.target.checked?"":f.usageMileage}))} /> N/A
+            </label>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, opacity:form.usageNA ? .65 : 1 }}>
             <div>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, marginBottom:4 }}>Current Hours</label>
-              <input style={inp} type="number" step="0.1" value={form.usageHours||""} onChange={e=>setForm(f=>({...f,usageHours:e.target.value}))} placeholder="Enter current hours" />
+              <input style={inp} disabled={!!form.usageNA} type="number" step="0.1" value={form.usageHours||""} onChange={e=>setForm(f=>({...f,usageHours:e.target.value}))} placeholder="Enter current hours" />
             </div>
             <div>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, marginBottom:4 }}>Current Mileage</label>
-              <input style={inp} type="number" step="1" value={form.usageMileage||""} onChange={e=>setForm(f=>({...f,usageMileage:e.target.value}))} placeholder="Enter current mileage" />
+              <input style={inp} disabled={!!form.usageNA} type="number" step="1" value={form.usageMileage||""} onChange={e=>setForm(f=>({...f,usageMileage:e.target.value}))} placeholder="Enter current mileage" />
             </div>
           </div>
+          <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:6 }}>Select N/A only when the equipment does not track hours or mileage.</div>
         </div>
 
         <Field label="Work Description / Problem Reported">
@@ -1486,7 +1496,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           {/* Type */}
           <select style={{ ...sel, width:140 }} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
             <option value="All">All Types</option>
-            {["Repair"].map(t=><option key={t}>{t}</option>)}
+            {["Repair","Service"].map(t=><option key={t}>{t}</option>)}
           </select>
           {/* Priority */}
           <select style={{ ...sel, width:130 }} value={priorityFilter} onChange={e=>setPriorityFilter(e.target.value)}>
@@ -2815,18 +2825,20 @@ function PM({ state, dispatch }) {
       const nums = existing.map(w=>parseInt(w.id.split("-").pop(),10)||0);
       const next = nums.length>0 ? Math.max(...nums)+1 : 1;
       const woId = `${sch.equipmentId}-${String(next).padStart(2,"0")}`;
+      const logs    = (state.usageLogs||[]).filter(l=>l.equipmentId===sch.equipmentId);
+      const curUsage = sch.usageType==="mileage"
+        ? logs.reduce((s,l)=>s+(+(l.mileage||0)),0)
+        : logs.reduce((s,l)=>s+(+(l.hours||0)),0);
+      const eq = state.equipment.find(e=>e.id===sch.equipmentId);
       dispatch({type:"ADD_WO", payload:{
         id:woId, title:sch.task, equipment:sch.equipmentId,
         status:"Open", priority:"Medium", woType:"Service",
         created:today(), due:sch.nextDueDate||today(),
         tech:"", laborHours:0, laborCost:0, partsCost:0,
         description:`Auto-generated: ${sch.task}`,
-        mechanicNotes:"", faultEnabled:true, faultDescription:"", partsUsed:[], scheduleId:sch.id,
+        mechanicNotes:"", faultEnabled:true, faultDescription:sch.task||"Service", partsUsed:[], scheduleId:sch.id,
+        usageType:sch.usageType||"hours", usageHours:(sch.usageType==="hours"?curUsage:""), usageMileage:(sch.usageType==="mileage"?curUsage:""), usageNA:!(eq?.trackUsage),
       }});
-      const logs    = (state.usageLogs||[]).filter(l=>l.equipmentId===sch.equipmentId);
-      const curUsage = sch.usageType==="mileage"
-        ? logs.reduce((s,l)=>s+(+(l.mileage||0)),0)
-        : logs.reduce((s,l)=>s+(+(l.hours||0)),0);
       dispatch({type:"UPDATE_PM_SCHEDULE", payload:{
         ...sch,
         lastDoneDate:today(), lastDoneUsage:curUsage,
@@ -2922,6 +2934,11 @@ function PM({ state, dispatch }) {
       task.description ? `Description: ${task.description}` : "",
       stepsText ? `Service Steps:\n${stepsText}` : ""
     ].filter(Boolean).join("\n\n");
+    const eq = state.equipment.find(e=>e.id===equipmentId);
+    const logs = (state.usageLogs||[]).filter(l=>l.equipmentId===equipmentId);
+    const usageMode = (eq?.usageType || sch?.usageType || "hours").toLowerCase();
+    const currentHours = Math.max(...logs.map(l=>+(l.hours||0)), 0) || "";
+    const currentMileage = Math.max(...logs.map(l=>+(l.mileage||0)), 0) || "";
     dispatch({type:"ADD_WO", payload:{
       id:woId,
       title:task.name||sch?.task||"PM Service",
@@ -2941,6 +2958,10 @@ function PM({ state, dispatch }) {
       mechanicNotes:"",
       faultEnabled:true,
       faultDescription:task.description||task.name||"PM Service",
+      usageType:usageMode,
+      usageHours:usageMode==="mileage" ? "" : currentHours,
+      usageMileage:usageMode==="hours" ? "" : currentMileage,
+      usageNA:!(eq?.trackUsage),
       partsUsed:taskParts,
       scheduleId:sch?.id||null,
       pmTaskId:task.id||sch?.taskId||null,
