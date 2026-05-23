@@ -42,8 +42,6 @@ const INIT = {
   parts: [],
   pmSchedules: [],
   pmTasks: [],
-  inspectionTasks: [],
-  inspectionSchedules: [],
   inventoryItems: [],
   profile: null,
   settings: null,
@@ -106,12 +104,6 @@ function reducer(state, { type, payload }) {
     case "ADD_PM_TASK":       return { ...state, pmTasks: [...(state.pmTasks||[]), payload] };
     case "UPDATE_PM_TASK":    return { ...state, pmTasks: (state.pmTasks||[]).map(t=>t.id===payload.id?payload:t) };
     case "DELETE_PM_TASK":    return { ...state, pmTasks: (state.pmTasks||[]).filter(t=>t.id!==payload) };
-    case "ADD_INSPECTION_TASK":       return { ...state, inspectionTasks: [...(state.inspectionTasks||[]), payload] };
-    case "UPDATE_INSPECTION_TASK":    return { ...state, inspectionTasks: (state.inspectionTasks||[]).map(t=>t.id===payload.id?payload:t) };
-    case "DELETE_INSPECTION_TASK":    return { ...state, inspectionTasks: (state.inspectionTasks||[]).filter(t=>t.id!==payload) };
-    case "ADD_INSPECTION_SCHEDULE":   return { ...state, inspectionSchedules: [...(state.inspectionSchedules||[]), payload] };
-    case "UPDATE_INSPECTION_SCHEDULE":return { ...state, inspectionSchedules: (state.inspectionSchedules||[]).map(s=>s.id===payload.id?payload:s) };
-    case "DELETE_INSPECTION_SCHEDULE":return { ...state, inspectionSchedules: (state.inspectionSchedules||[]).filter(s=>s.id!==payload) };
     case "ADD_INV":       return { ...state, inventoryItems: [...(state.inventoryItems||[]), payload] };
     case "DELETE_INV":    return { ...state, inventoryItems: (state.inventoryItems||[]).filter(i => i.id!==payload) };
     case "UPDATE_PROFILE":return { ...state, profile: payload };
@@ -486,7 +478,6 @@ function Header({ notifications, dispatch, currentPage, onMenuToggle }) {
 const NAV = [
   { id:"dashboard",  icon:"▦",  label:"Dashboard" },
   { id:"workorders", icon:"📋", label:"Work Orders" },
-  { id:"inspections", icon:"🔍", label:"Inspections" },
   { id:"equipment",  icon:"🚜", label:"Equipment" },
   { id:"inventory",  icon:"📋", label:"Equipment Inventory" },
   { id:"parts",      icon:"📦", label:"Parts Inventory" },
@@ -836,7 +827,6 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const WO_TYPES = [
     { id:"Repair",     label:"Repair Work Order",     icon:"🛠", desc:"Fault repairs and breakdown response",     color:"#7f1d1d", bg:"#fef2f2" },
     { id:"Service",    label:"Service Work Order",    icon:"🧰", desc:"Preventive maintenance service generated from PM tasks", color:"#1e40af", bg:"#eff6ff" },
-    { id:"Inspection", label:"Inspection Work Order", icon:"🔍", desc:"Equipment inspection generated from inspection tasks", color:"#065f46", bg:"#ecfdf5" },
   ];
 
   /* Intervals shown for Service and Inspection types */
@@ -1506,7 +1496,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           {/* Type */}
           <select style={{ ...sel, width:140 }} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
             <option value="All">All Types</option>
-            {["Repair","Service","Inspection"].map(t=><option key={t}>{t}</option>)}
+            {["Repair","Service"].map(t=><option key={t}>{t}</option>)}
           </select>
           {/* Priority */}
           <select style={{ ...sel, width:130 }} value={priorityFilter} onChange={e=>setPriorityFilter(e.target.value)}>
@@ -5182,7 +5172,6 @@ export default function App() {
   const pages = {
     dashboard:        <Dashboard        state={state} dispatch={dispatch} setTab={setTab} onSettings={()=>setShowSettings(true)} />,
     workorders:       <WorkOrders       state={state} dispatch={dispatch} woSettings={state.woSettings} onWOSettings={()=>setShowWOSettings(true)} />,
-    inspections:      <Inspections      state={state} dispatch={dispatch} />,
     equipment:        <Equipment        state={state} dispatch={dispatch} />,
     parts:            <Parts            state={state} dispatch={dispatch} />,
     pm:               <PM               state={state} dispatch={dispatch} />,
