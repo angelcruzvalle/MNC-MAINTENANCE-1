@@ -952,6 +952,13 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const companyEmail = ws.email || gs.email || "";
     const companyAddr  = `${gs.address||""} ${gs.cityState||""}`.trim();
     const usageLabel = [wo.usageHours ? `Hours: ${wo.usageHours}` : "", wo.usageMileage ? `Mileage: ${Number(wo.usageMileage).toLocaleString()}` : ""].filter(Boolean).join(" / ");
+    const usageMode = (eq?.usageType || wo.usageType || "hours").toLowerCase();
+    const usageDisplayLabel = usageMode === "mileage" ? "Mileage" : usageMode === "both" ? "Mileage / Hours" : "Hours";
+    const usageDisplayValue = usageMode === "mileage"
+      ? (wo.usageMileage ? Number(wo.usageMileage).toLocaleString() : "&nbsp;")
+      : usageMode === "both"
+        ? [wo.usageMileage ? Number(wo.usageMileage).toLocaleString() : "", wo.usageHours ? `${wo.usageHours} hrs` : ""].filter(Boolean).join(" / ") || "&nbsp;"
+        : (wo.usageHours || "&nbsp;");
     const woTypeLabel = ws.headerText || "MAINTENANCE WORK ORDER";
     const partsUsed  = wo.partsUsed || [];
     const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
@@ -991,6 +998,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .st-completed{background:#dcfce7;color:#14532d}.st-on{background:#fee2e2;color:#7f1d1d}
       .row{display:grid;border:1.5px solid #1a1a2e;border-radius:3px;overflow:hidden}
       .row.c3{grid-template-columns:1fr 1fr 1fr}.row.c2{grid-template-columns:2fr 1fr}.row.c22{grid-template-columns:1fr 1fr}
+      .eq-info-grid{display:grid;grid-template-columns:1fr 1fr 1fr;border:none}
+      .eq-info-grid .cell:nth-child(3n){border-right:none}
+      .eq-info-grid .cell:nth-child(n+4){border-top:1px solid #c8d0e0}
       .cell{padding:4px 8px;border-right:1px solid #c8d0e0}.cell:last-child{border-right:none}.cell.s2{grid-column:span 2}
       .lbl{font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#666;margin-bottom:1px}
       .val{font-size:11px;font-weight:600;color:#111;min-height:14px}.val.mn{font-family:monospace}
@@ -1034,12 +1044,13 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       ${""}
       ${printOpt("showEquipment") ? `<div class="sec">
         <div class="sh">Equipment Information</div>
-        <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr;border:none">
+        <div class="eq-info-grid">
           <div class="cell"><div class="lbl">Equipment #</div><div class="val mn" style="font-weight:700">${wo.equipment||"&nbsp;"}</div></div>
-          <div class="cell s2"><div class="lbl">Nomenclature</div><div class="val">${eq?.name||wo.equipmentLabel||"&nbsp;"}</div></div>
+          <div class="cell"><div class="lbl">Nomenclature</div><div class="val">${eq?.name||wo.equipmentLabel||"&nbsp;"}</div></div>
           <div class="cell"><div class="lbl">Make / Model</div><div class="val">${eq?`${eq.make||""} ${eq.model||""}`.trim():"&nbsp;"}</div></div>
-          <div class="cell"><div class="lbl">Serial # / EIL #</div><div class="val mn">${eq?.serial||"&nbsp;"} / ${eq?.eilNumber||"&nbsp;"}</div></div>
-          ${usageLabel ? `<div class="cell" style="grid-column:1 / -1"><div class="lbl">Current Usage at Work Order</div><div class="val mn">${usageLabel}</div></div>` : ""}
+          <div class="cell"><div class="lbl">Serial #</div><div class="val mn">${eq?.serial||"&nbsp;"}</div></div>
+          <div class="cell"><div class="lbl">EIL Number</div><div class="val mn">${eq?.eilNumber||"&nbsp;"}</div></div>
+          <div class="cell"><div class="lbl">${usageDisplayLabel}</div><div class="val mn">${usageDisplayValue}</div></div>
         </div>
       </div>` : ""}
       ${printOpt("showFaultDescription") ? `<div class="sec"><div class="sh">Description</div><div class="sb" style="min-height:18px;padding:3px 8px;line-height:1.25">${wo.faultDescription||"&nbsp;"}</div></div>` : ""}
@@ -1462,7 +1473,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-              {["WO #","Type","Fault","Equipment","Mechanic","Priority","Status","Due","Cost",""].map(h=>(
+              {["Equipment #","Equipment Name","Description","Type of Work Order","Priority","Status","Due","Cost","Actions"].map(h=>(
                 <th key={h} style={{ padding:"10px 14px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4, whiteSpace:"nowrap" }}>{h}</th>
               ))}
             </tr>
@@ -1482,19 +1493,18 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                 <tr key={wo.id} onClick={()=>openEdit(wo)} style={{ borderBottom:`1px solid ${T.border}`, borderLeft:rowBorder, background:rowBg, cursor:"pointer", transition:"background .12s" }}
                   onMouseEnter={e=>e.currentTarget.style.background=rowHover}
                   onMouseLeave={e=>e.currentTarget.style.background=rowBg}>
-                  <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:11, color:T.muted, whiteSpace:"nowrap" }}>{wo.id}</td>
-                  <td style={{ padding:"11px 14px" }}>
-                    {typeInfo ? <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"2px 8px", borderRadius:4, background:typeInfo.bg, color:typeInfo.color, fontSize:11, fontWeight:600 }}>{typeInfo.icon} {typeInfo.id}</span> : <span style={{ color:T.muted }}>—</span>}
-                  </td>
-                  <td style={{ padding:"11px 14px" }}>
-                    <div style={{ fontWeight:500, color:T.text }}>{wo.faultDescription || wo.title || "—"}</div>
-                    {wo.serviceInterval && <div style={{ fontSize:11, color:T.accent, marginTop:1 }}>{wo.serviceInterval}</div>}
-                  </td>
+                  <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:T.subtext, whiteSpace:"nowrap" }}>{wo.equipment || "—"}</td>
                   <td style={{ padding:"11px 14px", color:T.subtext, whiteSpace:"nowrap" }}>
-                    <div>{eqLabel}</div>
+                    <div style={{ fontWeight:600, color:T.text }}>{eqLabel}</div>
                     {wo.parentName && <div style={{ fontSize:11, color:T.muted }}>on: {wo.parentName}</div>}
                   </td>
-                  <td style={{ padding:"11px 14px", color:T.subtext, whiteSpace:"nowrap" }}>{wo.tech||"—"}</td>
+                  <td style={{ padding:"11px 14px", minWidth:220 }}>
+                    <div style={{ fontWeight:500, color:T.text }}>{wo.faultDescription || wo.description || wo.title || "—"}</div>
+                    {wo.serviceInterval && <div style={{ fontSize:11, color:T.accent, marginTop:1 }}>{wo.serviceInterval}</div>}
+                  </td>
+                  <td style={{ padding:"11px 14px" }}>
+                    {typeInfo ? <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"2px 8px", borderRadius:4, background:typeInfo.bg, color:typeInfo.color, fontSize:11, fontWeight:600 }}>{typeInfo.icon} {typeInfo.label || typeInfo.id}</span> : <span style={{ color:T.muted }}>Repair Work Order</span>}
+                  </td>
                   <td style={{ padding:"11px 14px" }}><Badge label={wo.priority} type="priority" /></td>
                   <td style={{ padding:"11px 14px" }}><Badge label={wo.status} /></td>
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:wo.due&&wo.due<today()&&wo.status!=="Completed"?T.red:T.subtext, whiteSpace:"nowrap" }}>{wo.due}</td>
