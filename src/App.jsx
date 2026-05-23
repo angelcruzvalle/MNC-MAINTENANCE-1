@@ -2719,6 +2719,7 @@ function PM({ state, dispatch }) {
   const blankTaskForm = () => ({ name:"", description:"", steps:[""], parts:[{name:"",qty:"",unit:"ea"}], triggers:[{type:"time",timeInterval:"",timeUnit:"months",usageInterval:"",usageType:"hours",usageMode:"every"}] });
   const [taskForm, setTaskForm]   = useState(blankTaskForm());
   const [showTaskLib, setShowTaskLib] = useState(false);
+  const [selectedTaskId, setSelectedTaskId] = useState(null);
   const [autoFired, setAutoFired]     = useState(false);
 
   const F  = k => e => setForm(f=>({...f,[k]:e.target.value}));
@@ -2726,6 +2727,7 @@ function PM({ state, dispatch }) {
 
   const pmTasks  = state.pmTasks    || [];
   const schedules = state.pmSchedules || [];
+  const selectedLibraryTask = pmTasks.find(t=>t.id===selectedTaskId) || pmTasks[0] || null;
 
   /* Compute next due date */
   const nextDueDate = (lastDate, intervalVal, unit) => {
@@ -2977,79 +2979,127 @@ function PM({ state, dispatch }) {
       )}
 
       <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginBottom:16 }}>
-        <Btn variant="secondary" onClick={()=>setShowTaskLib(true)}>
-          Named Tasks Library ({pmTasks.length})
+        <Btn variant="secondary" onClick={()=>{ setSelectedTaskId(pmTasks[0]?.id||null); setShowTaskLib(true); }}>
+          Tasks Library ({pmTasks.length})
         </Btn>
         <Btn variant="secondary" onClick={openNewTask}>+ Create New Task</Btn>
         <Btn onClick={()=>setModal("schedule")}>Task-to-Equipment</Btn>
         <Btn variant="secondary" onClick={()=>setModal("manualTrigger")}>Manual Trigger</Btn>
       </div>
 
-      {/* Named Tasks Library Modal */}
+      {/* Tasks Library Modal */}
       {showTaskLib && (
-        <Modal title={`Named Tasks Library (${pmTasks.length})`} onClose={()=>setShowTaskLib(false)}>
+        <Modal title={`Tasks Library (${pmTasks.length})`} onClose={()=>setShowTaskLib(false)}>
           {pmTasks.length===0 ? (
             <div style={{ textAlign:"center", padding:"24px 0", color:T.muted, fontFamily:T.sans, fontSize:13 }}>
               No tasks yet. Click "+ Create New Task" to add one.
             </div>
-          ) : pmTasks.map((t,i)=>{
-            /* Find schedules using this task */
-            const activeScheds = schedules.filter(s=>s.taskId===t.id);
-            return (
-              <div key={t.id} style={{ borderBottom:`1px solid ${T.border}`, padding:"14px 0", marginBottom:0 }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
-                  <div>
-                    <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text }}>{t.name}</div>
-                    {t.description&&<div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:2 }}>{t.description}</div>}
-                  </div>
-                  <div style={{ display:"flex", gap:6 }}>
-                    <Btn small variant="secondary" onClick={()=>{ setShowTaskLib(false); openEditTask(t); }}>Edit</Btn>
-                    <Btn small variant="danger" onClick={()=>{ if(confirm(`Delete task "${t.name}"? This will not delete active schedules.`)) dispatch({type:"DELETE_PM_TASK",payload:t.id}); }}>Del</Btn>
-                  </div>
+          ) : (
+            <div style={{ display:"grid", gridTemplateColumns:"minmax(240px, .9fr) minmax(360px, 1.4fr)", gap:14, alignItems:"start" }}>
+              <div style={{ border:`1px solid ${T.border}`, borderRadius:12, overflow:"hidden", background:"#fff" }}>
+                <div style={{ padding:"10px 12px", background:T.grayLt, borderBottom:`1px solid ${T.border}`, fontFamily:T.sans, fontSize:11, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>
+                  Task List
                 </div>
-                {/* Steps */}
-                {(t.steps||[]).filter(Boolean).length>0 && (
-                  <div style={{ marginBottom:8 }}>
-                    <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Steps</div>
-                    {t.steps.filter(Boolean).map((s,j)=>(
-                      <div key={j} style={{ fontFamily:T.sans, fontSize:12, color:T.subtext, marginBottom:2 }}>{j+1}. {s}</div>
-                    ))}
-                  </div>
-                )}
-                {/* Parts */}
-                {(t.parts||[]).filter(p=>p.name).length>0 && (
-                  <div style={{ marginBottom:8 }}>
-                    <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Parts & Fluids</div>
-                    <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                      {t.parts.filter(p=>p.name).map((p,j)=>(
-                        <span key={j} style={{ fontFamily:T.mono, fontSize:11, padding:"2px 8px", borderRadius:4, background:T.grayLt, border:`1px solid ${T.border}`, color:T.subtext }}>{p.qty} {p.unit} {p.name}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {/* Active schedules using this task */}
-                <div>
-                  <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Active On</div>
-                  {activeScheds.length===0 ? (
-                    <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, fontStyle:"italic" }}>Not assigned to any equipment</div>
-                  ) : (
-                    <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-                      {activeScheds.map(sch=>{
-                        const eq = state.equipment.find(e=>e.id===sch.equipmentId);
-                        return (
-                          <div key={sch.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", background:T.accentLt, border:`1px solid ${T.accent}44`, borderRadius:6, padding:"6px 10px" }}>
-                            <span style={{ fontFamily:T.sans, fontSize:12, color:T.text }}>{eq?.name||sch.equipmentId} — Next: {sch.nextDueDate||sch.nextDueUsage||"—"}</span>
-                            <Btn small variant="danger" onClick={()=>{ if(confirm(`Remove schedule for ${eq?.name}?`)) delSchedule(sch.id); }}>Remove</Btn>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                <div style={{ maxHeight:440, overflow:"auto" }}>
+                  {pmTasks.map(t=>{
+                    const activeScheds = schedules.filter(s=>s.taskId===t.id);
+                    const active = selectedLibraryTask?.id===t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={()=>setSelectedTaskId(t.id)}
+                        style={{
+                          width:"100%", textAlign:"left", border:0, borderBottom:`1px solid ${T.border}`,
+                          background:active?T.accentLt:"#fff", padding:"12px 14px", cursor:"pointer",
+                          display:"flex", justifyContent:"space-between", gap:10, alignItems:"center"
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:800, color:T.text }}>{t.name||"Unnamed Task"}</div>
+                          <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{describeTaskTriggers(t)}</div>
+                        </div>
+                        <span style={{ fontFamily:T.mono, fontSize:11, color:active?T.accent:T.muted, whiteSpace:"nowrap" }}>{activeScheds.length} assigned</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-            );
-          })}
-          <div style={{ display:"flex", justifyContent:"flex-end", marginTop:14 }}>
+
+              <div style={{ border:`1px solid ${T.border}`, borderRadius:12, padding:16, background:"#fff", minHeight:260 }}>
+                {selectedLibraryTask ? (()=>{
+                  const t = selectedLibraryTask;
+                  const activeScheds = schedules.filter(s=>s.taskId===t.id);
+                  return (
+                    <div>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10, marginBottom:12 }}>
+                        <div>
+                          <h3 style={{ margin:"0 0 4px", fontFamily:T.sans, fontSize:18, color:T.text }}>{t.name||"Unnamed Task"}</h3>
+                          <div style={{ fontFamily:T.sans, fontSize:13, color:T.muted }}>{t.description||"No description saved."}</div>
+                        </div>
+                        <div style={{ display:"flex", gap:6 }}>
+                          <Btn small variant="secondary" onClick={()=>{ setShowTaskLib(false); openEditTask(t); }}>Edit</Btn>
+                          <Btn small variant="danger" onClick={()=>{ if(confirm(`Delete task "${t.name}"? This will not delete active schedules.`)) { dispatch({type:"DELETE_PM_TASK",payload:t.id}); setSelectedTaskId(pmTasks.find(x=>x.id!==t.id)?.id||null); } }}>Del</Btn>
+                        </div>
+                      </div>
+
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                        <div style={{ background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:10, padding:12 }}>
+                          <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:8 }}>Triggers</div>
+                          <div style={{ fontFamily:T.sans, fontSize:13, color:T.text }}>{describeTaskTriggers(t)}</div>
+                        </div>
+                        <div style={{ background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:10, padding:12 }}>
+                          <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:8 }}>Assigned Equipment</div>
+                          <div style={{ fontFamily:T.sans, fontSize:13, color:T.text }}>{activeScheds.length} active assignment{activeScheds.length===1?"":"s"}</div>
+                        </div>
+                      </div>
+
+                      {(t.steps||[]).filter(Boolean).length>0 && (
+                        <div style={{ marginTop:14 }}>
+                          <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:6 }}>Steps</div>
+                          <ol style={{ margin:"0 0 0 20px", padding:0, fontFamily:T.sans, fontSize:13, color:T.subtext, lineHeight:1.65 }}>
+                            {t.steps.filter(Boolean).map((s,j)=><li key={j}>{s}</li>)}
+                          </ol>
+                        </div>
+                      )}
+
+                      {(t.parts||[]).filter(p=>p.name).length>0 && (
+                        <div style={{ marginTop:14 }}>
+                          <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:6 }}>Parts & Fluids</div>
+                          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                            {t.parts.filter(p=>p.name).map((p,j)=>(
+                              <span key={j} style={{ fontFamily:T.mono, fontSize:11, padding:"4px 9px", borderRadius:6, background:T.grayLt, border:`1px solid ${T.border}`, color:T.subtext }}>{p.qty} {p.unit} {p.name}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div style={{ marginTop:14 }}>
+                        <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:6 }}>Active On</div>
+                        {activeScheds.length===0 ? (
+                          <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, fontStyle:"italic" }}>Not assigned to any equipment</div>
+                        ) : (
+                          <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                            {activeScheds.map(sch=>{
+                              const eq = state.equipment.find(e=>e.id===sch.equipmentId);
+                              return (
+                                <div key={sch.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", background:T.accentLt, border:`1px solid ${T.accent}44`, borderRadius:8, padding:"8px 10px" }}>
+                                  <span style={{ fontFamily:T.sans, fontSize:12, color:T.text }}>{eq?.name||sch.equipmentId} — Next: {sch.nextDueDate||sch.nextDueUsage||"—"}</span>
+                                  <Btn small variant="danger" onClick={()=>{ if(confirm(`Remove schedule for ${eq?.name||sch.equipmentId}?`)) delSchedule(sch.id); }}>Remove</Btn>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })() : null}
+              </div>
+            </div>
+          )}
+          <div style={{ display:"flex", justifyContent:"space-between", marginTop:14 }}>
+            <Btn variant="secondary" onClick={openNewTask}>+ Create New Task</Btn>
             <Btn variant="secondary" onClick={()=>setShowTaskLib(false)}>Close</Btn>
           </div>
         </Modal>
@@ -3189,7 +3239,7 @@ function PM({ state, dispatch }) {
                   if(t) setSchForm(f=>({...f, taskId:t.id, task:t.name, ...getTaskTriggerSettings(t)}));
                   else  setSchForm(f=>({...f,taskId:"",task:""}));
                 }}>
-                  <option value="">-- Pick from Named Tasks Library --</option>
+                  <option value="">-- Pick from Tasks Library --</option>
                   {pmTasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
               </div>
