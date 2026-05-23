@@ -145,6 +145,67 @@ const rowsToDataUri = rows => {
   const csv = [headers.map(csvEscape).join(","), ...rows.map(r=>headers.map(h=>csvEscape(r[h])).join(","))].join("\n");
   return `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`;
 };
+
+function printCustomizePanelHtml() {
+  return `<details class="print-customize" open style="margin:14px auto;max-width:900px;border:1px solid #cbd5e1;border-radius:10px;padding:10px 12px;background:#f8fafc;font-family:Arial,sans-serif">
+    <summary style="cursor:pointer;font-weight:800;color:#111827">Customize what prints</summary>
+    <div style="font-size:12px;color:#475569;margin:6px 0 10px">Turn sections or table columns on/off before printing or saving as PDF.</div>
+    <div id="printSectionToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px;margin-bottom:10px"></div>
+    <div id="printColumnToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px"></div>
+    <button onclick="window.print()" style="margin-top:10px;padding:8px 18px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer">Print Selected Layout</button>
+  </details>
+  <style>@media print{.print-customize,.pbtn{display:none!important}}</style>
+  <script>
+  (function(){
+    function clean(txt){ return (txt||'').replace(/\s+/g,' ').trim(); }
+    function addToggle(container, label, checked, onChange){
+      if(!container || !label) return;
+      var wrap=document.createElement('label');
+      wrap.style.cssText='display:flex;align-items:center;gap:7px;font-size:12px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:7px 9px;cursor:pointer';
+      var cb=document.createElement('input'); cb.type='checkbox'; cb.checked=checked!==false;
+      cb.onchange=function(){ onChange(cb.checked); };
+      var span=document.createElement('span'); span.textContent=label; span.style.fontWeight='700';
+      wrap.appendChild(cb); wrap.appendChild(span); container.appendChild(wrap);
+    }
+    function sectionLabel(el, i){
+      if(el.classList.contains('hdr')) return 'Header';
+      if(el.classList.contains('sigs')) return 'Mechanic Signature Block';
+      if(el.classList.contains('ftr')) return 'Footer Bar';
+      if(el.classList.contains('row')) return 'Dates / Status Row';
+      var h=el.querySelector('.sh,h1,h2,h3');
+      return clean(h && h.textContent) || ('Section '+(i+1));
+    }
+    function setup(){
+      var secBox=document.getElementById('printSectionToggles');
+      var colBox=document.getElementById('printColumnToggles');
+      var sections=Array.from(document.querySelectorAll('.page .hdr,.page .row,.page .sec,.page .sigs,.page .ftr, body > h1, body > h2')).filter(function(el){ return !el.closest('.print-customize,.pbtn'); });
+      var seen={};
+      sections.forEach(function(el,i){
+        var label=sectionLabel(el,i);
+        var key=label+'-'+i;
+        if(seen[key]) return; seen[key]=true;
+        addToggle(secBox,label,true,function(show){ el.style.display=show?'':'none'; });
+      });
+      var tables=Array.from(document.querySelectorAll('table')).filter(function(t){ return !t.closest('.print-customize'); });
+      tables.forEach(function(table,tIndex){
+        var headers=Array.from(table.querySelectorAll('thead th'));
+        if(!headers.length){ headers=Array.from(table.querySelectorAll('tr:first-child th, tr:first-child td')); }
+        headers.forEach(function(th,idx){
+          var label=clean(th.textContent) || ('Column '+(idx+1));
+          var prefix=tables.length>1 ? 'Table '+(tIndex+1)+': ' : 'Column: ';
+          addToggle(colBox,prefix+label,true,function(show){
+            Array.from(table.rows).forEach(function(row){ if(row.cells[idx]) row.cells[idx].style.display=show?'':'none'; });
+          });
+        });
+      });
+      if(secBox && !secBox.children.length) secBox.innerHTML='<div style="font-size:12px;color:#64748b">No separate sections detected.</div>';
+      if(colBox && !colBox.children.length) colBox.innerHTML='<div style="font-size:12px;color:#64748b">No table columns detected.</div>';
+    }
+    if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', setup); else setup();
+  })();
+  <\/script>`;
+}
+
 const reportButtonsHtml = (rows=[], title="report") => {
   const dataUri = rowsToDataUri(rows);
   const safeTitle = String(title || "report").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"") || "report";
@@ -154,7 +215,7 @@ const reportButtonsHtml = (rows=[], title="report") => {
     <button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
     ${dataUri ? `<a href="${dataUri}" download="${safeTitle}.csv" style="padding:8px 20px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;text-decoration:none;font-family:Arial,sans-serif;font-size:13px">Download Excel CSV</a>` : ""}
     <a href="${wordUri}" download="${safeTitle}.doc" style="padding:8px 20px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;text-decoration:none;font-family:Arial,sans-serif;font-size:13px">Download Word</a>
-  </div>`;
+  </div>${printCustomizePanelHtml()}`;
 };
 
 
@@ -1050,7 +1111,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div class="cell"><div class="lbl">Make / Model</div><div class="val">${eq?`${eq.make||""} ${eq.model||""}`.trim():"&nbsp;"}</div></div>
           <div class="cell"><div class="lbl">Serial #</div><div class="val mn">${eq?.serial||"&nbsp;"}</div></div>
           <div class="cell"><div class="lbl">EIL Number</div><div class="val mn">${eq?.eilNumber||"&nbsp;"}</div></div>
-          <div class="cell"><div class="lbl">${usageDisplayLabel}</div><div class="val mn">${usageDisplayValue}</div></div>
+          ${printOpt("showUsageReading") ? `<div class="cell"><div class="lbl">${usageDisplayLabel}</div><div class="val mn">${usageDisplayValue}</div></div>` : `<div class="cell"><div class="lbl">Usage Reading</div><div class="val mn">&nbsp;</div></div>`}
         </div>
       </div>` : ""}
       ${printOpt("showFaultDescription") ? `<div class="sec"><div class="sh">Description</div><div class="sb" style="min-height:18px;padding:3px 8px;line-height:1.25">${wo.faultDescription||"&nbsp;"}</div></div>` : ""}
@@ -1087,7 +1148,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     <div class="pbtn">
       <button class="bpr" onclick="window.print()">Print / Save PDF</button>
       <a href="${woCsv}" download="work-order-${wo.id}.csv" style="padding:9px 24px;font-size:13px;font-weight:700;border-radius:6px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;text-decoration:none;font-family:Arial,sans-serif">Download Excel CSV</a>
+      <button onclick="var blob=new Blob([document.documentElement.outerHTML],{type:'application/msword'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='work-order-${wo.id}.doc';a.click();URL.revokeObjectURL(a.href);" style="padding:9px 24px;font-size:13px;font-weight:700;border-radius:6px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;cursor:pointer">Download Word</button>
     </div>
+    ${printCustomizePanelHtml()}
     </body></html>`);
     win.document.close();
   };
@@ -1310,6 +1373,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           </div>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
             <Btn small variant="secondary" onClick={()=>printWO(wo)}>Print</Btn>
+            <Btn small variant="danger" onClick={()=>del(wo.id)}>Delete</Btn>
             {!isCompleted && !editMode && <Btn small onClick={()=>setEditMode(true)} style={{ background:"#1e40af", borderColor:"#1e40af" }}>Update Work Order</Btn>}
             {!isCompleted && editMode && <Btn small onClick={()=>{ dispatch({ type:"UPDATE_WO", payload:{ ...wo, ...form } }); setEditMode(false); setDetailWO({ ...wo, ...form }); }} style={{ background:T.green, borderColor:T.green }}>Save Changes</Btn>}
             {!isCompleted && editMode && <Btn small variant="secondary" onClick={()=>{ setEditMode(false); setForm({...wo, partsUsed:wo.partsUsed||[]}); }}>Cancel Edit</Btn>}
@@ -1527,6 +1591,12 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                       onClick={e=>{ e.stopPropagation(); printWO(wo); }}
                       style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:14, color:T.subtext, display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
                       🖨
+                    </button>
+                    <button
+                      title="Delete Work Order"
+                      onClick={e=>{ e.stopPropagation(); del(wo.id); }}
+                      style={{ background:"#fff5f5", border:"1px solid #fca5a5", borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:14, color:T.red, display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
+                      🗑
                     </button>
                   </td>
                 </tr>
@@ -2640,9 +2710,10 @@ function Parts({ state, dispatch }) {
 /* PM */
 
 function PM({ state, dispatch }) {
-  const [modal, setModal]         = useState(null); /* null | "edit" | "schedule" */
+  const [modal, setModal]         = useState(null); /* null | "edit" | "schedule" | "manualTrigger" */
   const [form, setForm]           = useState({});
   const [schForm, setSchForm]     = useState({ equipmentId:"", taskId:"", task:"", triggerType:"time", timeInterval:"", timeUnit:"months", usageInterval:"", usageType:"hours", lastDoneDate:today(), lastDoneUsage:"" });
+  const [manualForm, setManualForm] = useState({ scheduleId:"" });
   const [taskModal, setTaskModal] = useState(false);
   const [editTaskId, setEditTaskId] = useState(null);
   const blankTaskForm = () => ({ name:"", description:"", steps:[""], parts:[{name:"",qty:"",unit:"ea"}], triggers:[{type:"time",timeInterval:"",timeUnit:"months",usageInterval:"",usageType:"hours",usageMode:"every"}] });
@@ -2753,18 +2824,70 @@ function PM({ state, dispatch }) {
   const openEdit = pm => { setForm({...pm}); setModal("edit"); };
   const save = () => { dispatch({type:"UPDATE_PM", payload:form}); setModal(null); };
 
+  const getTaskTriggerSettings = (task) => {
+    const triggers = (task?.triggers||[]).filter(Boolean);
+    const timeTrig  = triggers.find(t=>t.type==="time") || null;
+    const usageTrig = triggers.find(t=>t.type==="hours" || t.type==="mileage") || null;
+    const triggerType = timeTrig && usageTrig ? "both" : usageTrig ? "usage" : "time";
+    return {
+      triggerType,
+      timeInterval: timeTrig?.timeInterval || "",
+      timeUnit: timeTrig?.timeUnit || "months",
+      usageInterval: usageTrig?.usageInterval || "",
+      usageType: usageTrig?.type==="mileage" ? "mileage" : "hours",
+    };
+  };
+
+  const describeTaskTriggers = (task) => {
+    const triggers = (task?.triggers||[]).filter(Boolean);
+    if(triggers.length===0) return "No trigger saved on this task yet.";
+    return triggers.map(t=>{
+      if(t.type==="time") return `Every ${t.timeInterval||"—"} ${t.timeUnit||"months"}`;
+      if(t.type==="hours") return `${t.usageMode==="at"?"At":"Every"} ${t.usageInterval||"—"} engine hours`;
+      if(t.type==="mileage") return `${t.usageMode==="at"?"At":"Every"} ${t.usageInterval||"—"} miles`;
+      return "Trigger saved";
+    }).join(" • ");
+  };
+
   const saveSchedule = () => {
     if(!schForm.equipmentId) return alert("Select equipment.");
-    if(!schForm.task)        return alert("Enter task name.");
-    const nextDate  = schForm.triggerType!=="usage" ? nextDueDate(schForm.lastDoneDate, schForm.timeInterval, schForm.timeUnit) : "";
-    const nextUsage = schForm.triggerType!=="time"  ? (+(schForm.lastDoneUsage||0))+(+(schForm.usageInterval||0)) : "";
+    const selectedTask = pmTasks.find(t=>t.id===schForm.taskId);
+    if(!selectedTask) return alert("Pick a named PM task first. The trigger is controlled by the task.");
+    const trig = getTaskTriggerSettings(selectedTask);
+    const schedulePayload = { ...schForm, task:selectedTask.name, ...trig };
+    const nextDate  = schedulePayload.triggerType!=="usage" ? nextDueDate(schedulePayload.lastDoneDate, schedulePayload.timeInterval, schedulePayload.timeUnit) : "";
+    const nextUsage = schedulePayload.triggerType!=="time"  ? (+(schedulePayload.lastDoneUsage||0))+(+(schedulePayload.usageInterval||0)) : "";
     dispatch({type:"ADD_PM_SCHEDULE", payload:{
-      ...schForm, id:genId("SCH"),
+      ...schedulePayload, id:genId("SCH"),
       nextDueDate:nextDate, nextDueUsage:nextUsage,
       created:today(),
     }});
     setModal(null);
     setSchForm({equipmentId:"",taskId:"",task:"",triggerType:"time",timeInterval:"",timeUnit:"months",usageInterval:"",usageType:"hours",lastDoneDate:today(),lastDoneUsage:""});
+  };
+
+  const createPMWorkOrderFromSchedule = (sch, manual=false) => {
+    if(!sch) return;
+    const existing = state.workOrders.filter(w=>w.id.startsWith(sch.equipmentId+"-"));
+    const nums = existing.map(w=>parseInt(w.id.split("-").pop(),10)||0);
+    const next = nums.length>0 ? Math.max(...nums)+1 : 1;
+    const woId = `${sch.equipmentId}-${String(next).padStart(2,"0")}`;
+    dispatch({type:"ADD_WO", payload:{
+      id:woId, title:sch.task, equipment:sch.equipmentId,
+      status:"Open", priority:"Medium", woType:"Service",
+      created:today(), due:sch.nextDueDate||today(),
+      tech:"", laborHours:0, laborCost:0, partsCost:0,
+      description:`${manual?"Manually triggered":"Auto-generated"}: ${sch.task}`,
+      mechanicNotes:"", faultEnabled:true, faultDescription:"", partsUsed:[], scheduleId:sch.id,
+    }});
+  };
+
+  const manualTriggerService = () => {
+    const sch = schedules.find(s=>s.id===manualForm.scheduleId);
+    if(!sch) return alert("Select a task-to-equipment schedule to trigger.");
+    createPMWorkOrderFromSchedule(sch, true);
+    setModal(null);
+    setManualForm({scheduleId:""});
   };
 
   const delSchedule = id => { if(confirm("Delete this maintenance schedule?")) dispatch({type:"DELETE_PM_SCHEDULE",payload:id}); };
@@ -2859,6 +2982,7 @@ function PM({ state, dispatch }) {
         </Btn>
         <Btn variant="secondary" onClick={openNewTask}>+ Create New Task</Btn>
         <Btn onClick={()=>setModal("schedule")}>Task-to-Equipment</Btn>
+        <Btn variant="secondary" onClick={()=>setModal("manualTrigger")}>Manual Trigger</Btn>
       </div>
 
       {/* Named Tasks Library Modal */}
@@ -3017,11 +3141,37 @@ function PM({ state, dispatch }) {
         </Modal>
       )}
 
+      {modal==="manualTrigger"&&(
+        <Modal title="Manual PM Service Trigger" onClose={()=>setModal(null)}>
+          <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.subtext }}>
+            Manually create a PM/service work order from an existing Task-to-Equipment schedule. This does not change the task trigger settings.
+          </p>
+          <Field label="Task-to-Equipment Schedule">
+            <select style={{ ...sel, minWidth:420 }} value={manualForm.scheduleId||""} onChange={e=>setManualForm({scheduleId:e.target.value})}>
+              <option value="">-- Select schedule to trigger --</option>
+              {schedules.map(sch=>{
+                const eq = state.equipment.find(e=>e.id===sch.equipmentId);
+                return <option key={sch.id} value={sch.id}>{eq?.name||sch.equipmentId} — {sch.task}</option>;
+              })}
+            </select>
+          </Field>
+          {manualForm.scheduleId && (()=>{ const sch=schedules.find(s=>s.id===manualForm.scheduleId); return (
+            <div style={{ background:T.accentLt, border:`1px solid ${T.accent}44`, borderRadius:8, padding:"10px 12px", marginTop:8, fontFamily:T.sans, fontSize:12, color:T.subtext }}>
+              This will create an open service work order for <b>{sch?.task}</b>.
+            </div>
+          ); })()}
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+            <Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn>
+            <Btn onClick={manualTriggerService}>Create Service WO</Btn>
+          </div>
+        </Modal>
+      )}
+
       {/* Create Maintenance Schedule */}
       {modal==="schedule"&&(
         <Modal title="Task-to-Equipment" onClose={()=>setModal(null)}>
           <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.subtext }}>
-            Define a recurring service. Work orders auto-generate when the threshold is reached.
+            Assign a PM task to equipment. The trigger comes from the task itself; this screen only links the task to the equipment.
           </p>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
             <div style={{ gridColumn:"span 2", marginBottom:14 }}>
@@ -3036,32 +3186,20 @@ function PM({ state, dispatch }) {
               <div style={{ display:"flex", gap:8, alignItems:"center" }}>
                 <select style={{ ...sel, flex:1 }} value={schForm.taskId||""} onChange={e=>{
                   const t = pmTasks.find(t=>t.id===e.target.value);
-                  if(t) setSchForm(f=>({...f,taskId:t.id,task:t.name,timeInterval:t.timeInterval||f.timeInterval,timeUnit:t.timeUnit||f.timeUnit,triggerType:t.triggerType||f.triggerType}));
-                  else  setSchForm(f=>({...f,taskId:""}));
+                  if(t) setSchForm(f=>({...f, taskId:t.id, task:t.name, ...getTaskTriggerSettings(t)}));
+                  else  setSchForm(f=>({...f,taskId:"",task:""}));
                 }}>
                   <option value="">-- Pick from Named Tasks Library --</option>
                   {pmTasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
-                <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>or</span>
-                <input style={{ ...inp, flex:1 }} placeholder="Custom task name..." value={schForm.task} onChange={SF("task")} />
               </div>
             </div>
-            <div style={{ gridColumn:"span 2", marginBottom:14 }}>
-              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:6 }}>Trigger Type</label>
-              <div style={{ display:"flex", gap:6 }}>
-                {[["time","By Time"],["usage","By Usage"],["both","Both"]].map(([v,l])=>(
-                  <button key={v} type="button" onClick={()=>setSchForm(f=>({...f,triggerType:v}))} style={{ flex:1, padding:"7px 0", borderRadius:6, border:`1px solid ${schForm.triggerType===v?T.accent:T.border}`, background:schForm.triggerType===v?T.accentLt:"#fff", color:schForm.triggerType===v?T.accent:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:schForm.triggerType===v?700:400 }}>{l}</button>
-                ))}
+            {schForm.taskId && (()=>{ const selectedTask = pmTasks.find(t=>t.id===schForm.taskId); return (
+              <div style={{ gridColumn:"span 2", marginBottom:14, background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 12px" }}>
+                <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:4 }}>Trigger controlled by the selected task</div>
+                <div style={{ fontFamily:T.sans, fontSize:12, color:T.subtext }}>{describeTaskTriggers(selectedTask)}</div>
               </div>
-            </div>
-            {(schForm.triggerType==="time"||schForm.triggerType==="both")&&(<>
-              <Field label="Time Interval" half><input style={inp} type="number" min="1" value={schForm.timeInterval} onChange={SF("timeInterval")} placeholder="e.g. 6" /></Field>
-              <Field label="Unit" half><select style={sel} value={schForm.timeUnit} onChange={SF("timeUnit")}>{["days","weeks","months","years"].map(u=><option key={u}>{u}</option>)}</select></Field>
-            </>)}
-            {(schForm.triggerType==="usage"||schForm.triggerType==="both")&&(<>
-              <Field label="Usage Interval" half><input style={inp} type="number" min="1" value={schForm.usageInterval} onChange={SF("usageInterval")} placeholder="e.g. 100" /></Field>
-              <Field label="Usage Type" half><select style={sel} value={schForm.usageType} onChange={SF("usageType")}><option value="hours">Engine Hours</option><option value="mileage">Mileage</option></select></Field>
-            </>)}
+            ); })()}
             <Field label="Last Service Date" half><input style={inp} type="date" value={schForm.lastDoneDate} onChange={SF("lastDoneDate")} /></Field>
             {(schForm.triggerType==="usage"||schForm.triggerType==="both")&&(
               <Field label={`Usage at Last Service (${schForm.usageType})`} half><input style={inp} type="number" value={schForm.lastDoneUsage} onChange={SF("lastDoneUsage")} placeholder="e.g. 100" /></Field>
@@ -3366,6 +3504,7 @@ function WOSettings({ state, dispatch, onClose }) {
       <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:8 }}>Fields to show on printed Work Order</div>
       <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginBottom:8 }}>Assigned mechanic and priority are kept inside the system but are no longer printed on the work order.</div>
       <Toggle label="Equipment Information" k="showEquipment" />
+      <Toggle label="Usage Reading / Mileage / Hours" k="showUsageReading" />
       <Toggle label="Dates (Created / Due / Completed)" k="showDates" />
       <Toggle label="Description" k="showFaultDescription" />
       <Toggle label="Work Description / Work Performed" k="showDescription" />
