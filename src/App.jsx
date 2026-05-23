@@ -42,6 +42,8 @@ const INIT = {
   parts: [],
   pmSchedules: [],
   pmTasks: [],
+  inspectionTasks: [],
+  inspectionSchedules: [],
   inventoryItems: [],
   profile: null,
   settings: null,
@@ -104,6 +106,12 @@ function reducer(state, { type, payload }) {
     case "ADD_PM_TASK":       return { ...state, pmTasks: [...(state.pmTasks||[]), payload] };
     case "UPDATE_PM_TASK":    return { ...state, pmTasks: (state.pmTasks||[]).map(t=>t.id===payload.id?payload:t) };
     case "DELETE_PM_TASK":    return { ...state, pmTasks: (state.pmTasks||[]).filter(t=>t.id!==payload) };
+    case "ADD_INSPECTION_TASK":       return { ...state, inspectionTasks: [...(state.inspectionTasks||[]), payload] };
+    case "UPDATE_INSPECTION_TASK":    return { ...state, inspectionTasks: (state.inspectionTasks||[]).map(t=>t.id===payload.id?payload:t) };
+    case "DELETE_INSPECTION_TASK":    return { ...state, inspectionTasks: (state.inspectionTasks||[]).filter(t=>t.id!==payload) };
+    case "ADD_INSPECTION_SCHEDULE":   return { ...state, inspectionSchedules: [...(state.inspectionSchedules||[]), payload] };
+    case "UPDATE_INSPECTION_SCHEDULE":return { ...state, inspectionSchedules: (state.inspectionSchedules||[]).map(s=>s.id===payload.id?payload:s) };
+    case "DELETE_INSPECTION_SCHEDULE":return { ...state, inspectionSchedules: (state.inspectionSchedules||[]).filter(s=>s.id!==payload) };
     case "ADD_INV":       return { ...state, inventoryItems: [...(state.inventoryItems||[]), payload] };
     case "DELETE_INV":    return { ...state, inventoryItems: (state.inventoryItems||[]).filter(i => i.id!==payload) };
     case "UPDATE_PROFILE":return { ...state, profile: payload };
@@ -478,6 +486,7 @@ function Header({ notifications, dispatch, currentPage, onMenuToggle }) {
 const NAV = [
   { id:"dashboard",  icon:"▦",  label:"Dashboard" },
   { id:"workorders", icon:"📋", label:"Work Orders" },
+  { id:"inspections", icon:"🔍", label:"Inspections" },
   { id:"equipment",  icon:"🚜", label:"Equipment" },
   { id:"inventory",  icon:"📋", label:"Equipment Inventory" },
   { id:"parts",      icon:"📦", label:"Parts Inventory" },
@@ -496,6 +505,88 @@ const NAV_REPORTS = [
 ];
 
 function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profile }) {
+  const defaultMenuGroups = [
+    { key:"main", title:"Main Menu", items:NAV },
+    { key:"reports", title:"Reports", items:NAV_REPORTS },
+  ];
+  const defaultOrder = defaultMenuGroups.flatMap(g=>g.items.map(n=>`${g.key}:${n.id}`));
+  const [editMenu, setEditMenu] = useState(false);
+  const [dragKey, setDragKey] = useState(null);
+  const [menuOrder, setMenuOrder] = useState(()=>{
+    try {
+      const saved = JSON.parse(localStorage.getItem("winmaint_menu_order") || "null");
+      if (Array.isArray(saved) && saved.length) return saved;
+    } catch {}
+    return defaultOrder;
+  });
+
+  useEffect(()=>{
+    const valid = new Set(defaultOrder);
+    setMenuOrder(prev=>{
+      const kept = (Array.isArray(prev)?prev:[]).filter(k=>valid.has(k));
+      const missing = defaultOrder.filter(k=>!kept.includes(k));
+      const next = [...kept, ...missing];
+      try { localStorage.setItem("winmaint_menu_order", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  const itemByKey = Object.fromEntries(defaultMenuGroups.flatMap(g=>g.items.map(item=>[`${g.key}:${item.id}`, { ...item, group:g.key, groupTitle:g.title }])));
+  const orderedItems = menuOrder.map(k=>itemByKey[k]).filter(Boolean);
+
+  const saveOrder = (next) => {
+    setMenuOrder(next);
+    try { localStorage.setItem("winmaint_menu_order", JSON.stringify(next)); } catch {}
+  };
+  const moveMenuItem = (key, direction) => {
+    const idx = menuOrder.indexOf(key);
+    const nextIdx = idx + direction;
+    if (idx < 0 || nextIdx < 0 || nextIdx >= menuOrder.length) return;
+    const next = [...menuOrder];
+    [next[idx], next[nextIdx]] = [next[nextIdx], next[idx]];
+    saveOrder(next);
+  };
+  const resetMenuOrder = () => saveOrder(defaultOrder);
+  const handleDrop = (targetKey) => {
+    if (!dragKey || dragKey === targetKey) return;
+    const next = [...menuOrder];
+    const from = next.indexOf(dragKey);
+    const to = next.indexOf(targetKey);
+    if (from < 0 || to < 0) return;
+    next.splice(from, 1);
+    next.splice(to, 0, dragKey);
+    saveOrder(next);
+    setDragKey(null);
+  };
+
+  const renderMenuButton = (n, idx) => {
+    const active = tab===n.id;
+    const key = `${n.group}:${n.id}`;
+    return (
+      <div key={key}
+        draggable={editMenu}
+        onDragStart={()=>editMenu && setDragKey(key)}
+        onDragOver={(e)=>{ if(editMenu) e.preventDefault(); }}
+        onDrop={()=>editMenu && handleDrop(key)}
+        style={{ margin:"1px 8px", borderRadius:8, outline:editMenu && dragKey===key?`2px dashed ${T.accent}`:"none" }}>
+        <button
+          onClick={()=> editMenu ? null : (setTab(n.id), onClose())}
+          style={{ display:"flex", alignItems:"center", gap:11, padding:"10px 12px", borderRadius:7, background:active?T.accentLt:(editMenu?"#f8fafc":"transparent"), border:editMenu?`1px dashed ${T.borderHi}`:"none", color:active?T.accent:T.subtext, cursor:editMenu?"grab":"pointer", fontFamily:T.sans, fontSize:14, fontWeight:active?600:400, textAlign:"left", width:"100%", transition:"background .12s" }}>
+          {editMenu && <span style={{ fontSize:15, color:T.muted, cursor:"grab" }}>☰</span>}
+          <span style={{ fontSize:16 }}>{n.icon}</span>
+          <span style={{ flex:1 }}>{n.label}</span>
+          {editMenu && (
+            <span style={{ display:"flex", gap:4 }} onClick={(e)=>e.stopPropagation()}>
+              <span title="Move up" onClick={()=>moveMenuItem(key, -1)} style={{ border:`1px solid ${T.border}`, borderRadius:6, padding:"1px 6px", background:"#fff", cursor:"pointer" }}>↑</span>
+              <span title="Move down" onClick={()=>moveMenuItem(key, 1)} style={{ border:`1px solid ${T.border}`, borderRadius:6, padding:"1px 6px", background:"#fff", cursor:"pointer" }}>↓</span>
+            </span>
+          )}
+        </button>
+      </div>
+    );
+  };
+
+  let lastGroup = null;
   return (
     <>
       {/* Backdrop */}
@@ -504,20 +595,20 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
       )}
       {/* Drawer */}
       <div style={{
-        position:"fixed", top:0, left:0, bottom:0, width:260,
+        position:"fixed", top:0, left:0, bottom:0, width:editMenu?300:260,
         background:"#fff", boxShadow:"4px 0 24px rgba(0,0,0,.12)",
         zIndex:1200, display:"flex", flexDirection:"column",
         transform: open?"translateX(0)":"translateX(-100%)",
-        transition:"transform .25s cubic-bezier(.4,0,.2,1)",
+        transition:"transform .25s cubic-bezier(.4,0,.2,1), width .18s",
       }}>
         {/* Drawer header — click to open Settings */}
         <div style={{ padding:"18px 20px 14px", borderBottom:`1px solid ${T.border}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-          <button onClick={()=>{ onSettings(); onClose(); }} style={{ display:"flex", alignItems:"center", gap:10, background:"none", border:"none", cursor:"pointer", padding:0, textAlign:"left", flex:1 }}
-            title="Click to open System Settings">
+          <button onClick={()=>{ if(!editMenu){ onSettings(); onClose(); } }} style={{ display:"flex", alignItems:"center", gap:10, background:"none", border:"none", cursor:editMenu?"default":"pointer", padding:0, textAlign:"left", flex:1 }}
+            title={editMenu?"Finish menu editing first":"Click to open System Settings"}>
             <div style={{ width:34, height:34, background:T.accent, borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, flexShrink:0 }}>⚙</div>
             <div>
               <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text, lineHeight:1.2 }}>{companyName||"NCA Maintenance"}</div>
-              <div style={{ fontFamily:T.sans, fontSize:10, color:T.accent }}>Tap to open Settings</div>
+              <div style={{ fontFamily:T.sans, fontSize:10, color:T.accent }}>{editMenu?"Menu reorder mode":"Tap to open Settings"}</div>
             </div>
           </button>
           <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, color:T.muted, cursor:"pointer", lineHeight:1, padding:0 }}>×</button>
@@ -525,29 +616,29 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
 
         {/* Nav items */}
         <div style={{ flex:1, overflowY:"auto", padding:"10px 0" }}>
-          <p style={{ margin:"0 0 4px", padding:"0 16px", fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.8 }}>Main Menu</p>
-          {NAV.map(n=>{
-            const active = tab===n.id;
+          {editMenu && (
+            <div style={{ margin:"0 12px 10px", padding:"10px", border:`1px solid ${T.border}`, borderRadius:9, background:"#f8fafc", fontFamily:T.sans, fontSize:12, color:T.subtext, lineHeight:1.35 }}>
+              Drag a section up or down, or use the arrow buttons. Your menu order saves automatically.
+            </div>
+          )}
+          {orderedItems.map((n, idx)=>{
+            const showTitle = n.group !== lastGroup;
+            lastGroup = n.group;
             return (
-              <button key={n.id} onClick={()=>{ setTab(n.id); onClose(); }} style={{ display:"flex", alignItems:"center", gap:11, padding:"10px 20px", margin:"1px 8px", borderRadius:7, background:active?T.accentLt:"transparent", border:"none", color:active?T.accent:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:14, fontWeight:active?600:400, textAlign:"left", width:"calc(100% - 16px)", transition:"background .12s" }}>
-                <span style={{ fontSize:16 }}>{n.icon}</span> {n.label}
-              </button>
-            );
-          })}
-
-          <p style={{ margin:"14px 0 4px", padding:"0 16px", fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.8 }}>Reports</p>
-          {NAV_REPORTS.map(n=>{
-            const active = tab===n.id;
-            return (
-              <button key={n.id} onClick={()=>{ setTab(n.id); onClose(); }} style={{ display:"flex", alignItems:"center", gap:11, padding:"10px 20px", margin:"1px 8px", borderRadius:7, background:active?T.accentLt:"transparent", border:"none", color:active?T.accent:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:14, fontWeight:active?600:400, textAlign:"left", width:"calc(100% - 16px)", transition:"background .12s" }}>
-                <span style={{ fontSize:16 }}>{n.icon}</span> {n.label}
-              </button>
+              <React.Fragment key={`${n.group}:${n.id}:wrap`}>
+                {showTitle && <p style={{ margin:idx===0?"0 0 4px":"14px 0 4px", padding:"0 16px", fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.8 }}>{n.groupTitle}</p>}
+                {renderMenuButton(n, idx)}
+              </React.Fragment>
             );
           })}
         </div>
 
-        {/* Footer — user info */}
+        {/* Footer — user info / menu editor */}
         <div style={{ padding:"12px 20px", borderTop:`1px solid ${T.border}` }}>
+          <button onClick={()=>setEditMenu(v=>!v)} style={{ width:"100%", marginBottom:10, display:"flex", alignItems:"center", justifyContent:"center", gap:8, border:`1px solid ${editMenu?T.accent:T.border}`, background:editMenu?T.accentLt:"#fff", color:editMenu?T.accent:T.subtext, borderRadius:8, padding:"8px 10px", fontFamily:T.sans, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+            ✏️ {editMenu?"Done organizing menu":"Organize menu"}
+          </button>
+          {editMenu && <button onClick={resetMenuOrder} style={{ width:"100%", marginBottom:10, border:`1px solid ${T.border}`, background:"#fff", color:T.muted, borderRadius:8, padding:"7px 10px", fontFamily:T.sans, fontSize:12, fontWeight:600, cursor:"pointer" }}>Reset default order</button>}
           <div style={{ display:"flex", alignItems:"center", gap:10 }}>
             <div style={{ width:32, height:32, borderRadius:"50%", background:T.accent, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:T.mono, fontSize:12, color:"#fff", fontWeight:700, overflow:"hidden" }}>
               {profile?.photo ? <img src={profile.photo} alt="me" style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : (profile?.firstName?`${profile.firstName[0]}${profile.lastName?.[0]||""}`.toUpperCase():"JM")}
@@ -562,9 +653,6 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
     </>
   );
 }
-
-
-/* DASHBOARD */
 
 function Dashboard({ state, dispatch, setTab, onSettings }) {
   const { workOrders:wos=[], equipment:eqs=[], preventiveMaintenance:pms=[], parts=[] } = state;
@@ -827,6 +915,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const WO_TYPES = [
     { id:"Repair",     label:"Repair Work Order",     icon:"🛠", desc:"Fault repairs and breakdown response",     color:"#7f1d1d", bg:"#fef2f2" },
     { id:"Service",    label:"Service Work Order",    icon:"🧰", desc:"Preventive maintenance service generated from PM tasks", color:"#1e40af", bg:"#eff6ff" },
+    { id:"Inspection", label:"Inspection Work Order", icon:"🔍", desc:"Equipment inspection generated from inspection tasks", color:"#065f46", bg:"#ecfdf5" },
   ];
 
   /* Intervals shown for Service and Inspection types */
@@ -1496,7 +1585,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           {/* Type */}
           <select style={{ ...sel, width:140 }} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
             <option value="All">All Types</option>
-            {["Repair","Service"].map(t=><option key={t}>{t}</option>)}
+            {["Repair","Service","Inspection"].map(t=><option key={t}>{t}</option>)}
           </select>
           {/* Priority */}
           <select style={{ ...sel, width:130 }} value={priorityFilter} onChange={e=>setPriorityFilter(e.target.value)}>
@@ -2757,6 +2846,177 @@ function Parts({ state, dispatch }) {
 
 
 /* PM */
+
+
+/* INSPECTIONS */
+function Inspections({ state, dispatch }) {
+  const equipment = state.equipment || [];
+  const tasks = state.inspectionTasks || [];
+  const schedules = state.inspectionSchedules || [];
+  const [modal, setModal] = useState(null);
+  const [taskForm, setTaskForm] = useState({ id:null, name:"", frequency:"Monthly", steps:"", notes:"" });
+  const [scheduleForm, setScheduleForm] = useState({ equipmentId:"", taskId:"", timeInterval:1, timeUnit:"months", nextDueDate:today() });
+  const [selectedTask, setSelectedTask] = useState(null);
+
+  const taskById = id => tasks.find(t=>t.id===id) || null;
+  const eqById = id => equipment.find(e=>e.id===id) || null;
+
+  const openTask = (task=null) => {
+    const base = task || { id:null, name:"", frequency:"Monthly", steps:"", notes:"" };
+    setTaskForm({ ...base });
+    setSelectedTask(task || null);
+    setModal("task");
+  };
+
+  const saveTask = () => {
+    if(!taskForm.name?.trim()) { alert("Add an inspection task name."); return; }
+    const payload = { ...taskForm, id:taskForm.id || genId("IT"), name:taskForm.name.trim() };
+    dispatch({ type: taskForm.id ? "UPDATE_INSPECTION_TASK" : "ADD_INSPECTION_TASK", payload });
+    setSelectedTask(payload);
+    setModal(null);
+  };
+
+  const saveSchedule = () => {
+    if(!scheduleForm.equipmentId || !scheduleForm.taskId) { alert("Choose equipment and an inspection task."); return; }
+    const payload = { ...scheduleForm, id:genId("IS"), created:today(), lastTriggered:"" };
+    dispatch({ type:"ADD_INSPECTION_SCHEDULE", payload });
+    setModal(null);
+  };
+
+  const nextDateFrom = (date, interval, unit) => {
+    const d = new Date(date || today());
+    const n = Number(interval || 1);
+    if(unit === "days") d.setDate(d.getDate() + n);
+    if(unit === "weeks") d.setDate(d.getDate() + (n * 7));
+    if(unit === "months") d.setMonth(d.getMonth() + n);
+    if(unit === "years") d.setFullYear(d.getFullYear() + n);
+    return d.toISOString().split("T")[0];
+  };
+
+  const triggerInspection = (schedule) => {
+    const task = taskById(schedule.taskId);
+    const eq = eqById(schedule.equipmentId);
+    if(!task || !eq) { alert("Missing task or equipment for this inspection."); return; }
+    const wo = {
+      id:genId("WO"),
+      woType:"Inspection",
+      title:`Inspection - ${task.name}`,
+      equipment:eq.id,
+      equipmentStatus:eq.status || "Fully Operational",
+      status:"Open",
+      priority:"Normal",
+      created:today(),
+      due:schedule.nextDueDate || today(),
+      completed:"",
+      tech:"",
+      usageReading:"N/A",
+      usageType:"N/A",
+      faultEnabled:true,
+      faultDescription:`Inspection task: ${task.name}`,
+      problem:`Inspection task: ${task.name}`,
+      description:`Inspection task: ${task.name}`,
+      workPerformed: task.steps || "",
+      mechanicNotes: task.notes || "",
+      inspectionTaskId:task.id,
+      inspectionScheduleId:schedule.id,
+      inspectionSteps:task.steps || "",
+      partsUsed:[], labor:[],
+    };
+    dispatch({ type:"ADD_WO", payload:wo });
+    dispatch({ type:"UPDATE_INSPECTION_SCHEDULE", payload:{ ...schedule, lastTriggered:today(), nextDueDate:nextDateFrom(schedule.nextDueDate || today(), schedule.timeInterval, schedule.timeUnit) } });
+    alert(`Inspection Work Order ${wo.id} created.`);
+  };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap" }}>
+        <div>
+          <h1 style={{ margin:0, fontFamily:T.sans, color:T.text, fontSize:24 }}>Inspections</h1>
+          <p style={{ margin:"4px 0 0", fontFamily:T.sans, color:T.subtext, fontSize:13 }}>Create inspection tasks, assign them to equipment, and generate Inspection Work Orders by time.</p>
+        </div>
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          <Btn variant="secondary" onClick={()=>openTask()}>+ Inspection Task</Btn>
+          <Btn onClick={()=>setModal("schedule")}>Assign Task to Equipment</Btn>
+        </div>
+      </div>
+
+      <Card title="Inspection Tasks Library" right={<span style={{ fontFamily:T.mono, color:T.muted }}>{tasks.length} tasks</span>}>
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:13 }}>
+            <thead><tr style={{ background:T.grayLt }}>
+              {['Task Name','Frequency','Steps / Checklist','Notes'].map(h=><th key={h} style={{ textAlign:"left", padding:"10px", borderBottom:`1px solid ${T.border}`, color:T.subtext }}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {tasks.length===0 && <tr><td colSpan="4" style={{ padding:16, color:T.muted }}>No inspection tasks yet.</td></tr>}
+              {tasks.map(t=>(
+                <tr key={t.id} onClick={()=>openTask(t)} style={{ cursor:"pointer", borderBottom:`1px solid ${T.border}` }}>
+                  <td style={{ padding:"10px", fontWeight:700, color:T.text }}>{t.name}</td>
+                  <td style={{ padding:"10px", color:T.subtext }}>{t.frequency||"—"}</td>
+                  <td style={{ padding:"10px", color:T.subtext, maxWidth:420, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{t.steps||"—"}</td>
+                  <td style={{ padding:"10px", color:T.subtext, maxWidth:260, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{t.notes||"—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card title="Inspection Schedule / Triggers" right={<span style={{ fontFamily:T.mono, color:T.muted }}>{schedules.length} assigned</span>}>
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:13 }}>
+            <thead><tr style={{ background:T.grayLt }}>
+              {['Equipment #','Nomenclature','Inspection Task','Every','Next Due','Last Triggered','Action'].map(h=><th key={h} style={{ textAlign:"left", padding:"10px", borderBottom:`1px solid ${T.border}`, color:T.subtext }}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {schedules.length===0 && <tr><td colSpan="7" style={{ padding:16, color:T.muted }}>No inspection schedules assigned.</td></tr>}
+              {schedules.map(s=>{ const eq=eqById(s.equipmentId); const task=taskById(s.taskId); return (
+                <tr key={s.id} style={{ borderBottom:`1px solid ${T.border}` }}>
+                  <td style={{ padding:"10px", fontFamily:T.mono }}>{eq?.id || s.equipmentId}</td>
+                  <td style={{ padding:"10px" }}>{eq?.name || eq?.nomenclature || "—"}</td>
+                  <td style={{ padding:"10px", fontWeight:700 }}>{task?.name || "Missing task"}</td>
+                  <td style={{ padding:"10px" }}>{s.timeInterval} {s.timeUnit}</td>
+                  <td style={{ padding:"10px", fontFamily:T.mono }}>{s.nextDueDate || "—"}</td>
+                  <td style={{ padding:"10px", fontFamily:T.mono }}>{s.lastTriggered || "—"}</td>
+                  <td style={{ padding:"10px" }}><Btn variant="secondary" onClick={()=>triggerInspection(s)}>Trigger WO</Btn></td>
+                </tr>
+              );})}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {modal==="task" && (
+        <Modal title={taskForm.id?"Edit Inspection Task":"New Inspection Task"} onClose={()=>setModal(null)}>
+          <div style={{ display:"grid", gap:12 }}>
+            <Field label="Task Name"><input style={inp} value={taskForm.name||""} onChange={e=>setTaskForm(f=>({...f,name:e.target.value}))} placeholder="e.g. Monthly safety inspection" /></Field>
+            <Field label="Default Frequency"><select style={inp} value={taskForm.frequency||"Monthly"} onChange={e=>setTaskForm(f=>({...f,frequency:e.target.value}))}>{["Daily","Weekly","Monthly","Quarterly","Semi-Annual","Annual"].map(x=><option key={x}>{x}</option>)}</select></Field>
+            <Field label="Inspection Steps / Checklist"><textarea style={{...inp,minHeight:120}} value={taskForm.steps||""} onChange={e=>setTaskForm(f=>({...f,steps:e.target.value}))} placeholder="Step 1...&#10;Step 2..." /></Field>
+            <Field label="Notes"><textarea style={{...inp,minHeight:70}} value={taskForm.notes||""} onChange={e=>setTaskForm(f=>({...f,notes:e.target.value}))} /></Field>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:8 }}>
+              {taskForm.id ? <Btn variant="danger" onClick={()=>{ if(confirm("Delete this inspection task?")){ dispatch({type:"DELETE_INSPECTION_TASK", payload:taskForm.id}); setModal(null); } }}>Delete</Btn> : <span/>}
+              <div style={{ display:"flex", gap:8 }}><Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn><Btn onClick={saveTask}>Save Task</Btn></div>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {modal==="schedule" && (
+        <Modal title="Assign Inspection Task to Equipment" onClose={()=>setModal(null)}>
+          <div style={{ display:"grid", gap:12 }}>
+            <Field label="Equipment"><select style={inp} value={scheduleForm.equipmentId} onChange={e=>setScheduleForm(f=>({...f,equipmentId:e.target.value}))}><option value="">Choose equipment...</option>{equipment.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name || e.nomenclature}</option>)}</select></Field>
+            <Field label="Inspection Task"><select style={inp} value={scheduleForm.taskId} onChange={e=>setScheduleForm(f=>({...f,taskId:e.target.value}))}><option value="">Choose task...</option>{tasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></Field>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
+              <Field label="Every"><input style={inp} type="number" min="1" value={scheduleForm.timeInterval} onChange={e=>setScheduleForm(f=>({...f,timeInterval:e.target.value}))} /></Field>
+              <Field label="Time Unit"><select style={inp} value={scheduleForm.timeUnit} onChange={e=>setScheduleForm(f=>({...f,timeUnit:e.target.value}))}>{["days","weeks","months","years"].map(x=><option key={x}>{x}</option>)}</select></Field>
+              <Field label="Next Due Date"><input style={inp} type="date" value={scheduleForm.nextDueDate} onChange={e=>setScheduleForm(f=>({...f,nextDueDate:e.target.value}))} /></Field>
+            </div>
+            <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}><Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn><Btn onClick={saveSchedule}>Save Assignment</Btn></div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
 
 function PM({ state, dispatch }) {
   const [modal, setModal]         = useState(null); /* null | "edit" | "schedule" | "manualTrigger" */
@@ -5172,6 +5432,7 @@ export default function App() {
   const pages = {
     dashboard:        <Dashboard        state={state} dispatch={dispatch} setTab={setTab} onSettings={()=>setShowSettings(true)} />,
     workorders:       <WorkOrders       state={state} dispatch={dispatch} woSettings={state.woSettings} onWOSettings={()=>setShowWOSettings(true)} />,
+    inspections:      <Inspections      state={state} dispatch={dispatch} />,
     equipment:        <Equipment        state={state} dispatch={dispatch} />,
     parts:            <Parts            state={state} dispatch={dispatch} />,
     pm:               <PM               state={state} dispatch={dispatch} />,
