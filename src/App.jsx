@@ -505,88 +505,6 @@ const NAV_REPORTS = [
 ];
 
 function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profile }) {
-  const defaultMenuGroups = [
-    { key:"main", title:"Main Menu", items:NAV },
-    { key:"reports", title:"Reports", items:NAV_REPORTS },
-  ];
-  const defaultOrder = defaultMenuGroups.flatMap(g=>g.items.map(n=>`${g.key}:${n.id}`));
-  const [editMenu, setEditMenu] = useState(false);
-  const [dragKey, setDragKey] = useState(null);
-  const [menuOrder, setMenuOrder] = useState(()=>{
-    try {
-      const saved = JSON.parse(localStorage.getItem("winmaint_menu_order") || "null");
-      if (Array.isArray(saved) && saved.length) return saved;
-    } catch {}
-    return defaultOrder;
-  });
-
-  useEffect(()=>{
-    const valid = new Set(defaultOrder);
-    setMenuOrder(prev=>{
-      const kept = (Array.isArray(prev)?prev:[]).filter(k=>valid.has(k));
-      const missing = defaultOrder.filter(k=>!kept.includes(k));
-      const next = [...kept, ...missing];
-      try { localStorage.setItem("winmaint_menu_order", JSON.stringify(next)); } catch {}
-      return next;
-    });
-  }, []);
-
-  const itemByKey = Object.fromEntries(defaultMenuGroups.flatMap(g=>g.items.map(item=>[`${g.key}:${item.id}`, { ...item, group:g.key, groupTitle:g.title }])));
-  const orderedItems = menuOrder.map(k=>itemByKey[k]).filter(Boolean);
-
-  const saveOrder = (next) => {
-    setMenuOrder(next);
-    try { localStorage.setItem("winmaint_menu_order", JSON.stringify(next)); } catch {}
-  };
-  const moveMenuItem = (key, direction) => {
-    const idx = menuOrder.indexOf(key);
-    const nextIdx = idx + direction;
-    if (idx < 0 || nextIdx < 0 || nextIdx >= menuOrder.length) return;
-    const next = [...menuOrder];
-    [next[idx], next[nextIdx]] = [next[nextIdx], next[idx]];
-    saveOrder(next);
-  };
-  const resetMenuOrder = () => saveOrder(defaultOrder);
-  const handleDrop = (targetKey) => {
-    if (!dragKey || dragKey === targetKey) return;
-    const next = [...menuOrder];
-    const from = next.indexOf(dragKey);
-    const to = next.indexOf(targetKey);
-    if (from < 0 || to < 0) return;
-    next.splice(from, 1);
-    next.splice(to, 0, dragKey);
-    saveOrder(next);
-    setDragKey(null);
-  };
-
-  const renderMenuButton = (n, idx) => {
-    const active = tab===n.id;
-    const key = `${n.group}:${n.id}`;
-    return (
-      <div key={key}
-        draggable={editMenu}
-        onDragStart={()=>editMenu && setDragKey(key)}
-        onDragOver={(e)=>{ if(editMenu) e.preventDefault(); }}
-        onDrop={()=>editMenu && handleDrop(key)}
-        style={{ margin:"1px 8px", borderRadius:8, outline:editMenu && dragKey===key?`2px dashed ${T.accent}`:"none" }}>
-        <button
-          onClick={()=> editMenu ? null : (setTab(n.id), onClose())}
-          style={{ display:"flex", alignItems:"center", gap:11, padding:"10px 12px", borderRadius:7, background:active?T.accentLt:(editMenu?"#f8fafc":"transparent"), border:editMenu?`1px dashed ${T.borderHi}`:"none", color:active?T.accent:T.subtext, cursor:editMenu?"grab":"pointer", fontFamily:T.sans, fontSize:14, fontWeight:active?600:400, textAlign:"left", width:"100%", transition:"background .12s" }}>
-          {editMenu && <span style={{ fontSize:15, color:T.muted, cursor:"grab" }}>☰</span>}
-          <span style={{ fontSize:16 }}>{n.icon}</span>
-          <span style={{ flex:1 }}>{n.label}</span>
-          {editMenu && (
-            <span style={{ display:"flex", gap:4 }} onClick={(e)=>e.stopPropagation()}>
-              <span title="Move up" onClick={()=>moveMenuItem(key, -1)} style={{ border:`1px solid ${T.border}`, borderRadius:6, padding:"1px 6px", background:"#fff", cursor:"pointer" }}>↑</span>
-              <span title="Move down" onClick={()=>moveMenuItem(key, 1)} style={{ border:`1px solid ${T.border}`, borderRadius:6, padding:"1px 6px", background:"#fff", cursor:"pointer" }}>↓</span>
-            </span>
-          )}
-        </button>
-      </div>
-    );
-  };
-
-  let lastGroup = null;
   return (
     <>
       {/* Backdrop */}
@@ -595,20 +513,20 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
       )}
       {/* Drawer */}
       <div style={{
-        position:"fixed", top:0, left:0, bottom:0, width:editMenu?300:260,
+        position:"fixed", top:0, left:0, bottom:0, width:260,
         background:"#fff", boxShadow:"4px 0 24px rgba(0,0,0,.12)",
         zIndex:1200, display:"flex", flexDirection:"column",
         transform: open?"translateX(0)":"translateX(-100%)",
-        transition:"transform .25s cubic-bezier(.4,0,.2,1), width .18s",
+        transition:"transform .25s cubic-bezier(.4,0,.2,1)",
       }}>
         {/* Drawer header — click to open Settings */}
         <div style={{ padding:"18px 20px 14px", borderBottom:`1px solid ${T.border}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-          <button onClick={()=>{ if(!editMenu){ onSettings(); onClose(); } }} style={{ display:"flex", alignItems:"center", gap:10, background:"none", border:"none", cursor:editMenu?"default":"pointer", padding:0, textAlign:"left", flex:1 }}
-            title={editMenu?"Finish menu editing first":"Click to open System Settings"}>
+          <button onClick={()=>{ onSettings(); onClose(); }} style={{ display:"flex", alignItems:"center", gap:10, background:"none", border:"none", cursor:"pointer", padding:0, textAlign:"left", flex:1 }}
+            title="Click to open System Settings">
             <div style={{ width:34, height:34, background:T.accent, borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, flexShrink:0 }}>⚙</div>
             <div>
               <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text, lineHeight:1.2 }}>{companyName||"NCA Maintenance"}</div>
-              <div style={{ fontFamily:T.sans, fontSize:10, color:T.accent }}>{editMenu?"Menu reorder mode":"Tap to open Settings"}</div>
+              <div style={{ fontFamily:T.sans, fontSize:10, color:T.accent }}>Tap to open Settings</div>
             </div>
           </button>
           <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, color:T.muted, cursor:"pointer", lineHeight:1, padding:0 }}>×</button>
@@ -616,29 +534,29 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
 
         {/* Nav items */}
         <div style={{ flex:1, overflowY:"auto", padding:"10px 0" }}>
-          {editMenu && (
-            <div style={{ margin:"0 12px 10px", padding:"10px", border:`1px solid ${T.border}`, borderRadius:9, background:"#f8fafc", fontFamily:T.sans, fontSize:12, color:T.subtext, lineHeight:1.35 }}>
-              Drag a section up or down, or use the arrow buttons. Your menu order saves automatically.
-            </div>
-          )}
-          {orderedItems.map((n, idx)=>{
-            const showTitle = n.group !== lastGroup;
-            lastGroup = n.group;
+          <p style={{ margin:"0 0 4px", padding:"0 16px", fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.8 }}>Main Menu</p>
+          {NAV.map(n=>{
+            const active = tab===n.id;
             return (
-              <React.Fragment key={`${n.group}:${n.id}:wrap`}>
-                {showTitle && <p style={{ margin:idx===0?"0 0 4px":"14px 0 4px", padding:"0 16px", fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.8 }}>{n.groupTitle}</p>}
-                {renderMenuButton(n, idx)}
-              </React.Fragment>
+              <button key={n.id} onClick={()=>{ setTab(n.id); onClose(); }} style={{ display:"flex", alignItems:"center", gap:11, padding:"10px 20px", margin:"1px 8px", borderRadius:7, background:active?T.accentLt:"transparent", border:"none", color:active?T.accent:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:14, fontWeight:active?600:400, textAlign:"left", width:"calc(100% - 16px)", transition:"background .12s" }}>
+                <span style={{ fontSize:16 }}>{n.icon}</span> {n.label}
+              </button>
+            );
+          })}
+
+          <p style={{ margin:"14px 0 4px", padding:"0 16px", fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.8 }}>Reports</p>
+          {NAV_REPORTS.map(n=>{
+            const active = tab===n.id;
+            return (
+              <button key={n.id} onClick={()=>{ setTab(n.id); onClose(); }} style={{ display:"flex", alignItems:"center", gap:11, padding:"10px 20px", margin:"1px 8px", borderRadius:7, background:active?T.accentLt:"transparent", border:"none", color:active?T.accent:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:14, fontWeight:active?600:400, textAlign:"left", width:"calc(100% - 16px)", transition:"background .12s" }}>
+                <span style={{ fontSize:16 }}>{n.icon}</span> {n.label}
+              </button>
             );
           })}
         </div>
 
-        {/* Footer — user info / menu editor */}
+        {/* Footer — user info */}
         <div style={{ padding:"12px 20px", borderTop:`1px solid ${T.border}` }}>
-          <button onClick={()=>setEditMenu(v=>!v)} style={{ width:"100%", marginBottom:10, display:"flex", alignItems:"center", justifyContent:"center", gap:8, border:`1px solid ${editMenu?T.accent:T.border}`, background:editMenu?T.accentLt:"#fff", color:editMenu?T.accent:T.subtext, borderRadius:8, padding:"8px 10px", fontFamily:T.sans, fontSize:13, fontWeight:700, cursor:"pointer" }}>
-            ✏️ {editMenu?"Done organizing menu":"Organize menu"}
-          </button>
-          {editMenu && <button onClick={resetMenuOrder} style={{ width:"100%", marginBottom:10, border:`1px solid ${T.border}`, background:"#fff", color:T.muted, borderRadius:8, padding:"7px 10px", fontFamily:T.sans, fontSize:12, fontWeight:600, cursor:"pointer" }}>Reset default order</button>}
           <div style={{ display:"flex", alignItems:"center", gap:10 }}>
             <div style={{ width:32, height:32, borderRadius:"50%", background:T.accent, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:T.mono, fontSize:12, color:"#fff", fontWeight:700, overflow:"hidden" }}>
               {profile?.photo ? <img src={profile.photo} alt="me" style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : (profile?.firstName?`${profile.firstName[0]}${profile.lastName?.[0]||""}`.toUpperCase():"JM")}
@@ -653,6 +571,9 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
     </>
   );
 }
+
+
+/* DASHBOARD */
 
 function Dashboard({ state, dispatch, setTab, onSettings }) {
   const { workOrders:wos=[], equipment:eqs=[], preventiveMaintenance:pms=[], parts=[] } = state;
