@@ -2986,11 +2986,9 @@ function Inspections({ state, dispatch }) {
           </div>
           <div style={{ marginTop:12, display:"grid", gap:8 }}>
             {stepLines(selectedTask.steps).length===0 ? <div style={{ color:T.muted }}>No steps added.</div> : stepLines(selectedTask.steps).map((step,i)=>(
-              <div key={i} style={{ display:"grid", gridTemplateColumns:"minmax(220px,1fr) auto auto minmax(180px,.7fr)", gap:8, alignItems:"center", padding:8, border:`1px solid ${T.border}`, borderRadius:10 }}>
-                <div><b>{i+1}.</b> {step}</div>
-                <button type="button" style={{...inp, padding:"6px 10px", background:"#ecfdf5", borderColor:"#bbf7d0"}}>Pass</button>
-                <button type="button" style={{...inp, padding:"6px 10px", background:"#fef2f2", borderColor:"#fecaca"}}>Fail</button>
-                <input style={inp} placeholder="Failure comment" readOnly />
+              <div key={i} style={{ display:"grid", gridTemplateColumns:"48px minmax(220px,1fr)", gap:8, alignItems:"center", padding:8, border:`1px solid ${T.border}`, borderRadius:10 }}>
+                <div style={{ fontWeight:800, color:T.subtext }}>{i+1}.</div>
+                <div>{step}</div>
               </div>
             ))}
           </div>
@@ -3034,12 +3032,9 @@ function Inspections({ state, dispatch }) {
             <Field label="Upload Existing Inspection Sheet"><input style={inp} type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,image/*" onChange={e=>addTaskFiles(e.target.files)} /></Field>
             {(taskForm.attachments||[]).length>0 && <div style={{ display:"grid", gap:6 }}>{taskForm.attachments.map(a=><div key={a.id||a.name} style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center", padding:8, border:`1px solid ${T.border}`, borderRadius:10 }}><span style={{ fontSize:13 }}>{a.name}</span><Btn variant="danger" onClick={()=>removeTaskFile(a.id)}>Remove</Btn></div>)}</div>}
             <Field label="Inspection Steps / Checklist"><div style={{ display:"grid", gap:8 }}>
-              {stepLines(taskForm.steps).map((step,i)=><div key={i} style={{ display:"grid", gridTemplateColumns:"40px 1fr auto auto auto minmax(160px,.6fr)", gap:8, alignItems:"center" }}>
+              {stepLines(taskForm.steps).map((step,i)=><div key={i} style={{ display:"grid", gridTemplateColumns:"40px 1fr auto", gap:8, alignItems:"center" }}>
                 <b>{i+1}</b><input style={inp} value={step} onChange={e=>updateStep(i,e.target.value)} placeholder="Inspection step" />
-                <span style={{ padding:"7px 10px", border:`1px solid ${T.border}`, borderRadius:10, background:"#ecfdf5", fontSize:12 }}>Pass</span>
-                <span style={{ padding:"7px 10px", border:`1px solid ${T.border}`, borderRadius:10, background:"#fef2f2", fontSize:12 }}>Fail</span>
                 <Btn variant="danger" onClick={()=>removeStep(i)}>X</Btn>
-                <input style={inp} placeholder="Failure comment" disabled />
               </div>)}
               <Btn variant="secondary" onClick={addStep}>+ Add Step Line</Btn>
             </div></Field>
