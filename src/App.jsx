@@ -1117,6 +1117,11 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       const payload = {...form, woType:form.woType||"Repair", title:form.faultDescription||form.woType||"Work Order", faultEnabled:true, partsCost:partsTotal};
       if(prevWO && payload.status !== prevWO.status && !confirmWOStatusChange(prevWO, payload.status)) return;
       dispatch({type:"UPDATE_WO", payload});
+      if(prevWO && prevWO.status !== "Completed" && payload.status === "Completed") {
+        setTimeout(() => {
+          if(confirm(`Work order ${payload.id || payload.woNumber || ""} was completed. Print it now?`)) printWO(payload);
+        }, 0);
+      }
     } else {
       dispatch({type:"ADD_WO", payload:{...form, woType:"Repair", title:form.faultDescription||"Repair", faultEnabled:true, id:genWOId(form.equipment), partsCost:partsTotal}});
     }
@@ -1149,6 +1154,11 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       completed: nextStatus === "Completed" ? (wo.completed || today()) : (changes.status && changes.status !== "Completed" ? "" : wo.completed),
     };
     dispatch({ type:"UPDATE_WO", payload:next });
+    if(changes.status && (wo.status || "Open") !== "Completed" && nextStatus === "Completed") {
+      setTimeout(() => {
+        if(confirm(`Work order ${next.id || next.woNumber || ""} was completed. Print it now?`)) printWO(next);
+      }, 0);
+    }
   };
 
   /* ---- Print Work Order ---- */
