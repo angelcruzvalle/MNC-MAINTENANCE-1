@@ -2792,23 +2792,30 @@ function Inspections({ state, dispatch }) {
   const tasks = state.inspectionTasks || [];
   const schedules = state.inspectionSchedules || [];
   const [modal, setModal] = useState(null);
-  const [taskForm, setTaskForm] = useState({ id:null, name:"", frequency:"Monthly", steps:"", notes:"" });
-  const [scheduleForm, setScheduleForm] = useState({ equipmentId:"", taskId:"", timeInterval:1, timeUnit:"months", nextDueDate:today() });
+  const [taskForm, setTaskForm] = useState({ id:null, name:"", frequency:"Monthly", steps:"", notes:"", attachments:[] });
+  const [scheduleForm, setScheduleForm] = useState({ id:null, equipmentId:"", taskId:"", timeInterval:1, timeUnit:"months", nextDueDate:today(), notes:"" });
   const [selectedTask, setSelectedTask] = useState(null);
 
   const taskById = id => tasks.find(t=>t.id===id) || null;
   const eqById = id => equipment.find(e=>e.id===id) || null;
+  const stepLines = (txt="") => String(txt||"").split(/\n+/).map(x=>x.trim()).filter(Boolean);
 
   const openTask = (task=null) => {
-    const base = task || { id:null, name:"", frequency:"Monthly", steps:"", notes:"" };
-    setTaskForm({ ...base });
+    const base = task || { id:null, name:"", frequency:"Monthly", steps:"", notes:"", attachments:[] };
+    setTaskForm({ ...base, attachments:Array.isArray(base.attachments)?base.attachments:[] });
     setSelectedTask(task || null);
     setModal("task");
   };
 
+  const openSchedule = (schedule=null) => {
+    const base = schedule || { id:null, equipmentId:"", taskId:"", timeInterval:1, timeUnit:"months", nextDueDate:today(), notes:"" };
+    setScheduleForm({ ...base });
+    setModal("schedule");
+  };
+
   const saveTask = () => {
     if(!taskForm.name?.trim()) { alert("Add an inspection task name."); return; }
-    const payload = { ...taskForm, id:taskForm.id || genId("IT"), name:taskForm.name.trim() };
+    const payload = { ...taskForm, id:taskForm.id || genId("IT"), name:taskForm.name.trim(), attachments:Array.isArray(taskForm.attachments)?taskForm.attachments:[] };
     dispatch({ type: taskForm.id ? "UPDATE_INSPECTION_TASK" : "ADD_INSPECTION_TASK", payload });
     setSelectedTask(payload);
     setModal(null);
@@ -2816,10 +2823,24 @@ function Inspections({ state, dispatch }) {
 
   const saveSchedule = () => {
     if(!scheduleForm.equipmentId || !scheduleForm.taskId) { alert("Choose equipment and an inspection task."); return; }
-    const payload = { ...scheduleForm, id:genId("IS"), created:today(), lastTriggered:"" };
-    dispatch({ type:"ADD_INSPECTION_SCHEDULE", payload });
+    const payload = { ...scheduleForm, id:scheduleForm.id || genId("IS"), created:scheduleForm.created || today(), lastTriggered:scheduleForm.lastTriggered || "" };
+    dispatch({ type: scheduleForm.id ? "UPDATE_INSPECTION_SCHEDULE" : "ADD_INSPECTION_SCHEDULE", payload });
     setModal(null);
   };
+
+  const addTaskFiles = async (files) => {
+    const list = Array.from(files || []);
+    if(list.length === 0) return;
+    const loaded = await Promise.all(list.map(file => new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ id:genId("FILE"), name:file.name, type:file.type || "file", size:file.size, dataUrl:reader.result });
+      reader.onerror = () => resolve({ id:genId("FILE"), name:file.name, type:file.type || "file", size:file.size, dataUrl:"" });
+      reader.readAsDataURL(file);
+    })));
+    setTaskForm(f=>({ ...f, attachments:[...(f.attachments||[]), ...loaded] }));
+  };
+
+  const removeTaskFile = (id) => setTaskForm(f=>({ ...f, attachments:(f.attachments||[]).filter(a=>a.id!==id) }));
 
   const nextDateFrom = (date, interval, unit) => {
     const d = new Date(date || today());
@@ -2835,6 +2856,7 @@ function Inspections({ state, dispatch }) {
     const task = taskById(schedule.taskId);
     const eq = eqById(schedule.equipmentId);
     if(!task || !eq) { alert("Missing task or equipment for this inspection."); return; }
+    const steps = stepLines(task.steps);
     const wo = {
       id:genId("WO"),
       woType:"Inspection",
@@ -2858,6 +2880,8 @@ function Inspections({ state, dispatch }) {
       inspectionTaskId:task.id,
       inspectionScheduleId:schedule.id,
       inspectionSteps:task.steps || "",
+      inspectionStepResults:steps.map((step,i)=>({ id:`${genId("STEP")}-${i}`, step, result:"", comment:"" })),
+      inspectionAttachments:Array.isArray(task.attachments)?task.attachments:[],
       partsUsed:[], labor:[],
     };
     dispatch({ type:"ADD_WO", payload:wo });
@@ -2865,16 +2889,24 @@ function Inspections({ state, dispatch }) {
     alert(`Inspection Work Order ${wo.id} created.`);
   };
 
+  const updateStep = (idx, value) => {
+    const lines = stepLines(taskForm.steps);
+    lines[idx] = value;
+    setTaskForm(f=>({ ...f, steps:lines.join("\n") }));
+  };
+  const addStep = () => setTaskForm(f=>({ ...f, steps:[...stepLines(f.steps), ""].join("\n") }));
+  const removeStep = (idx) => setTaskForm(f=>({ ...f, steps:stepLines(f.steps).filter((_,i)=>i!==idx).join("\n") }));
+
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap" }}>
         <div>
           <h1 style={{ margin:0, fontFamily:T.sans, color:T.text, fontSize:24 }}>Inspections</h1>
-          <p style={{ margin:"4px 0 0", fontFamily:T.sans, color:T.subtext, fontSize:13 }}>Create inspection tasks, assign them to equipment, and generate Inspection Work Orders by time.</p>
+          <p style={{ margin:"4px 0 0", fontFamily:T.sans, color:T.subtext, fontSize:13 }}>Create inspection tasks, attach existing inspection sheets, assign them to equipment, and generate Inspection Work Orders by time.</p>
         </div>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
           <Btn variant="secondary" onClick={()=>openTask()}>+ Inspection Task</Btn>
-          <Btn onClick={()=>setModal("schedule")}>Assign Task to Equipment</Btn>
+          <Btn onClick={()=>openSchedule()}>Assign Task to Equipment</Btn>
         </div>
       </div>
 
@@ -2882,31 +2914,57 @@ function Inspections({ state, dispatch }) {
         <div style={{ overflowX:"auto" }}>
           <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:13 }}>
             <thead><tr style={{ background:T.grayLt }}>
-              {['Task Name','Frequency','Steps / Checklist','Notes'].map(h=><th key={h} style={{ textAlign:"left", padding:"10px", borderBottom:`1px solid ${T.border}`, color:T.subtext }}>{h}</th>)}
+              {['Task Name','Frequency','Steps','Attachments','Notes','Edit'].map(h=><th key={h} style={{ textAlign:"left", padding:"10px", borderBottom:`1px solid ${T.border}`, color:T.subtext }}>{h}</th>)}
             </tr></thead>
             <tbody>
-              {tasks.length===0 && <tr><td colSpan="4" style={{ padding:16, color:T.muted }}>No inspection tasks yet.</td></tr>}
-              {tasks.map(t=>(
-                <tr key={t.id} onClick={()=>openTask(t)} style={{ cursor:"pointer", borderBottom:`1px solid ${T.border}` }}>
+              {tasks.length===0 && <tr><td colSpan="6" style={{ padding:16, color:T.muted }}>No inspection tasks yet.</td></tr>}
+              {tasks.map(t=>{
+                const steps=stepLines(t.steps);
+                return <tr key={t.id} onClick={()=>setSelectedTask(t)} style={{ cursor:"pointer", borderBottom:`1px solid ${T.border}`, background:selectedTask?.id===t.id?T.grayLt:"transparent" }}>
                   <td style={{ padding:"10px", fontWeight:700, color:T.text }}>{t.name}</td>
                   <td style={{ padding:"10px", color:T.subtext }}>{t.frequency||"—"}</td>
-                  <td style={{ padding:"10px", color:T.subtext, maxWidth:420, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{t.steps||"—"}</td>
+                  <td style={{ padding:"10px", color:T.subtext }}>{steps.length}</td>
+                  <td style={{ padding:"10px", color:T.subtext }}>{(t.attachments||[]).length}</td>
                   <td style={{ padding:"10px", color:T.subtext, maxWidth:260, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{t.notes||"—"}</td>
-                </tr>
-              ))}
+                  <td style={{ padding:"10px" }}><Btn variant="secondary" onClick={(e)=>{e.stopPropagation(); openTask(t);}}>Edit</Btn></td>
+                </tr>;
+              })}
             </tbody>
           </table>
         </div>
+        {selectedTask && <div style={{ marginTop:14, border:`1px solid ${T.border}`, borderRadius:14, padding:14, background:"#fff" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", gap:10, flexWrap:"wrap", alignItems:"center" }}>
+            <div>
+              <div style={{ fontWeight:800, color:T.text }}>{selectedTask.name}</div>
+              <div style={{ color:T.subtext, fontSize:12 }}>{selectedTask.frequency||"No frequency"} • {(selectedTask.attachments||[]).length} attachment(s)</div>
+            </div>
+            <Btn variant="secondary" onClick={()=>openTask(selectedTask)}>Edit Task</Btn>
+          </div>
+          <div style={{ marginTop:12, display:"grid", gap:8 }}>
+            {stepLines(selectedTask.steps).length===0 ? <div style={{ color:T.muted }}>No steps added.</div> : stepLines(selectedTask.steps).map((step,i)=>(
+              <div key={i} style={{ display:"grid", gridTemplateColumns:"minmax(220px,1fr) auto auto minmax(180px,.7fr)", gap:8, alignItems:"center", padding:8, border:`1px solid ${T.border}`, borderRadius:10 }}>
+                <div><b>{i+1}.</b> {step}</div>
+                <button type="button" style={{...inp, padding:"6px 10px", background:"#ecfdf5", borderColor:"#bbf7d0"}}>Pass</button>
+                <button type="button" style={{...inp, padding:"6px 10px", background:"#fef2f2", borderColor:"#fecaca"}}>Fail</button>
+                <input style={inp} placeholder="Failure comment" readOnly />
+              </div>
+            ))}
+          </div>
+          {(selectedTask.attachments||[]).length>0 && <div style={{ marginTop:12 }}>
+            <div style={{ fontWeight:700, marginBottom:6 }}>Attached Inspection Sheets</div>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>{selectedTask.attachments.map(a=><a key={a.id||a.name} href={a.dataUrl||"#"} download={a.name} style={{ color:T.blue, fontSize:13 }}>{a.name}</a>)}</div>
+          </div>}
+        </div>}
       </Card>
 
       <Card title="Inspection Schedule / Triggers" right={<span style={{ fontFamily:T.mono, color:T.muted }}>{schedules.length} assigned</span>}>
         <div style={{ overflowX:"auto" }}>
           <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:13 }}>
             <thead><tr style={{ background:T.grayLt }}>
-              {['Equipment #','Nomenclature','Inspection Task','Every','Next Due','Last Triggered','Action'].map(h=><th key={h} style={{ textAlign:"left", padding:"10px", borderBottom:`1px solid ${T.border}`, color:T.subtext }}>{h}</th>)}
+              {['Equipment #','Nomenclature','Inspection Task','Every','Next Due','Last Triggered','Notes','Actions'].map(h=><th key={h} style={{ textAlign:"left", padding:"10px", borderBottom:`1px solid ${T.border}`, color:T.subtext }}>{h}</th>)}
             </tr></thead>
             <tbody>
-              {schedules.length===0 && <tr><td colSpan="7" style={{ padding:16, color:T.muted }}>No inspection schedules assigned.</td></tr>}
+              {schedules.length===0 && <tr><td colSpan="8" style={{ padding:16, color:T.muted }}>No inspection schedules assigned.</td></tr>}
               {schedules.map(s=>{ const eq=eqById(s.equipmentId); const task=taskById(s.taskId); return (
                 <tr key={s.id} style={{ borderBottom:`1px solid ${T.border}` }}>
                   <td style={{ padding:"10px", fontFamily:T.mono }}>{eq?.id || s.equipmentId}</td>
@@ -2915,7 +2973,8 @@ function Inspections({ state, dispatch }) {
                   <td style={{ padding:"10px" }}>{s.timeInterval} {s.timeUnit}</td>
                   <td style={{ padding:"10px", fontFamily:T.mono }}>{s.nextDueDate || "—"}</td>
                   <td style={{ padding:"10px", fontFamily:T.mono }}>{s.lastTriggered || "—"}</td>
-                  <td style={{ padding:"10px" }}><Btn variant="secondary" onClick={()=>triggerInspection(s)}>Trigger WO</Btn></td>
+                  <td style={{ padding:"10px", maxWidth:180, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{s.notes || "—"}</td>
+                  <td style={{ padding:"10px" }}><div style={{ display:"flex", gap:6, flexWrap:"wrap" }}><Btn variant="secondary" onClick={()=>triggerInspection(s)}>Trigger WO</Btn><Btn variant="secondary" onClick={()=>openSchedule(s)}>Edit</Btn><Btn variant="danger" onClick={()=>{if(confirm("Delete this inspection assignment?")) dispatch({type:"DELETE_INSPECTION_SCHEDULE", payload:s.id});}}>Delete</Btn></div></td>
                 </tr>
               );})}
             </tbody>
@@ -2928,7 +2987,18 @@ function Inspections({ state, dispatch }) {
           <div style={{ display:"grid", gap:12 }}>
             <Field label="Task Name"><input style={inp} value={taskForm.name||""} onChange={e=>setTaskForm(f=>({...f,name:e.target.value}))} placeholder="e.g. Monthly safety inspection" /></Field>
             <Field label="Default Frequency"><select style={inp} value={taskForm.frequency||"Monthly"} onChange={e=>setTaskForm(f=>({...f,frequency:e.target.value}))}>{["Daily","Weekly","Monthly","Quarterly","Semi-Annual","Annual"].map(x=><option key={x}>{x}</option>)}</select></Field>
-            <Field label="Inspection Steps / Checklist"><textarea style={{...inp,minHeight:120}} value={taskForm.steps||""} onChange={e=>setTaskForm(f=>({...f,steps:e.target.value}))} placeholder="Step 1...&#10;Step 2..." /></Field>
+            <Field label="Upload Existing Inspection Sheet"><input style={inp} type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,image/*" onChange={e=>addTaskFiles(e.target.files)} /></Field>
+            {(taskForm.attachments||[]).length>0 && <div style={{ display:"grid", gap:6 }}>{taskForm.attachments.map(a=><div key={a.id||a.name} style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center", padding:8, border:`1px solid ${T.border}`, borderRadius:10 }}><span style={{ fontSize:13 }}>{a.name}</span><Btn variant="danger" onClick={()=>removeTaskFile(a.id)}>Remove</Btn></div>)}</div>}
+            <Field label="Inspection Steps / Checklist"><div style={{ display:"grid", gap:8 }}>
+              {stepLines(taskForm.steps).map((step,i)=><div key={i} style={{ display:"grid", gridTemplateColumns:"40px 1fr auto auto auto minmax(160px,.6fr)", gap:8, alignItems:"center" }}>
+                <b>{i+1}</b><input style={inp} value={step} onChange={e=>updateStep(i,e.target.value)} placeholder="Inspection step" />
+                <span style={{ padding:"7px 10px", border:`1px solid ${T.border}`, borderRadius:10, background:"#ecfdf5", fontSize:12 }}>Pass</span>
+                <span style={{ padding:"7px 10px", border:`1px solid ${T.border}`, borderRadius:10, background:"#fef2f2", fontSize:12 }}>Fail</span>
+                <Btn variant="danger" onClick={()=>removeStep(i)}>X</Btn>
+                <input style={inp} placeholder="Failure comment" disabled />
+              </div>)}
+              <Btn variant="secondary" onClick={addStep}>+ Add Step Line</Btn>
+            </div></Field>
             <Field label="Notes"><textarea style={{...inp,minHeight:70}} value={taskForm.notes||""} onChange={e=>setTaskForm(f=>({...f,notes:e.target.value}))} /></Field>
             <div style={{ display:"flex", justifyContent:"space-between", gap:8 }}>
               {taskForm.id ? <Btn variant="danger" onClick={()=>{ if(confirm("Delete this inspection task?")){ dispatch({type:"DELETE_INSPECTION_TASK", payload:taskForm.id}); setModal(null); } }}>Delete</Btn> : <span/>}
@@ -2939,7 +3009,7 @@ function Inspections({ state, dispatch }) {
       )}
 
       {modal==="schedule" && (
-        <Modal title="Assign Inspection Task to Equipment" onClose={()=>setModal(null)}>
+        <Modal title={scheduleForm.id?"Edit Inspection Assignment":"Assign Inspection Task to Equipment"} onClose={()=>setModal(null)}>
           <div style={{ display:"grid", gap:12 }}>
             <Field label="Equipment"><select style={inp} value={scheduleForm.equipmentId} onChange={e=>setScheduleForm(f=>({...f,equipmentId:e.target.value}))}><option value="">Choose equipment...</option>{equipment.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name || e.nomenclature}</option>)}</select></Field>
             <Field label="Inspection Task"><select style={inp} value={scheduleForm.taskId} onChange={e=>setScheduleForm(f=>({...f,taskId:e.target.value}))}><option value="">Choose task...</option>{tasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></Field>
@@ -2948,7 +3018,11 @@ function Inspections({ state, dispatch }) {
               <Field label="Time Unit"><select style={inp} value={scheduleForm.timeUnit} onChange={e=>setScheduleForm(f=>({...f,timeUnit:e.target.value}))}>{["days","weeks","months","years"].map(x=><option key={x}>{x}</option>)}</select></Field>
               <Field label="Next Due Date"><input style={inp} type="date" value={scheduleForm.nextDueDate} onChange={e=>setScheduleForm(f=>({...f,nextDueDate:e.target.value}))} /></Field>
             </div>
-            <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}><Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn><Btn onClick={saveSchedule}>Save Assignment</Btn></div>
+            <Field label="Assignment Notes"><textarea style={{...inp,minHeight:70}} value={scheduleForm.notes||""} onChange={e=>setScheduleForm(f=>({...f,notes:e.target.value}))} placeholder="Optional notes for this equipment assignment" /></Field>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:8 }}>
+              {scheduleForm.id ? <Btn variant="danger" onClick={()=>{ if(confirm("Delete this inspection assignment?")){ dispatch({type:"DELETE_INSPECTION_SCHEDULE", payload:scheduleForm.id}); setModal(null); } }}>Delete</Btn> : <span/>}
+              <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}><Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn><Btn onClick={saveSchedule}>Save Assignment</Btn></div>
+            </div>
           </div>
         </Modal>
       )}
