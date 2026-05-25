@@ -1209,9 +1209,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       body{font-family:Arial,sans-serif;background:#fff;color:#111;font-size:13.5px;line-height:1.45}
       .page{width:8.5in;min-height:11in;margin:0 auto;padding:.35in .45in;display:flex;flex-direction:column;gap:6px}
       .hdr{display:flex;align-items:stretch;border:2px solid #1a1a2e;border-radius:3px;overflow:hidden}
-      .hdr-logo{width:130px;min-width:130px;background:#fff;display:flex;align-items:center;justify-content:center;padding:6px 10px;border-right:2px solid #1a1a2e}
-      .hdr-logo img{max-width:110px;max-height:55px;object-fit:contain}
-      .hdr-logo-text{font-size:13px;font-weight:700;color:#1a1a2e;text-align:center;line-height:1.35}
+      .hdr-logo{width:165px;min-width:165px;height:92px;background:#fff;display:flex;align-items:center;justify-content:center;padding:4px;border-right:2px solid #1a1a2e;overflow:hidden}
+      .hdr-logo img{width:100%;height:100%;max-width:155px;max-height:84px;object-fit:contain;object-position:center;display:block}
+      .hdr-logo-text{font-size:14px;font-weight:700;color:#1a1a2e;text-align:center;line-height:1.35;padding:4px}
       .hdr-center{flex:1;background:#1a1a2e;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px}
       .hdr-company{font-size:18px;font-weight:700;color:#fff;letter-spacing:1px;text-transform:uppercase}
       .hdr-type{font-size:12px;color:#cbd5e1;letter-spacing:1.5px;text-transform:uppercase;margin-top:3px}
