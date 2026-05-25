@@ -1045,7 +1045,16 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const openEdit = (wo) => {
     setDetailWO(null);
     setEditMode(false);
-    setForm({...wo, partsUsed:wo.partsUsed||[]});
+    const eq = state.equipment.find(e=>e.id===wo.equipment);
+    const hasAnyUsageReading = !!String(wo.usageHours||"").trim() || !!String(wo.usageMileage||"").trim();
+    const needsManualUsagePrompt = (wo.woType === "Inspection") && eq && !eq.trackUsage && !hasAnyUsageReading && !wo.usageNA;
+    setForm({
+      ...wo,
+      partsUsed:wo.partsUsed||[],
+      usageType: wo.usageType || eq?.usageType || "hours",
+      // Inspection WOs for equipment without usage tracking still need the user to confirm a reading or choose N/A.
+      usageNA: needsManualUsagePrompt ? false : !!wo.usageNA,
+    });
     setModal("edit");
   };
   const openDetail = openEdit;
@@ -1092,8 +1101,14 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     if(!form.equipment) return alert("Equipment required.");
     if(!(form.faultDescription||"").trim()) return alert("Description required.");
     const usageModeReq = String(form.usageType||"hours").toLowerCase();
-    const hasUsageReading = form.usageNA || (usageModeReq==="mileage" ? !!String(form.usageMileage||"").trim() : usageModeReq==="both" ? (!!String(form.usageHours||"").trim() || !!String(form.usageMileage||"").trim()) : !!String(form.usageHours||"").trim());
+    const selectedEquipment = state.equipment.find(e=>e.id===form.equipment);
+    const hoursEntered = !!String(form.usageHours||"").trim();
+    const mileageEntered = !!String(form.usageMileage||"").trim();
+    const hasUsageReading = form.usageNA || (usageModeReq==="mileage" ? mileageEntered : usageModeReq==="both" ? (hoursEntered || mileageEntered) : hoursEntered);
     if(!hasUsageReading) return alert("Enter the current usage reading or select N/A.");
+    if(form.woType === "Inspection" && selectedEquipment && !selectedEquipment.trackUsage && !form.usageNA && !hoursEntered && !mileageEntered) {
+      return alert("This equipment has no usage tracking selected. Enter the current usage for this inspection work order, or select N/A.");
+    }
     const prevWO = isEdit ? state.workOrders.find(w=>w.id===form.id) : null;
 
     const newParts  = (form.partsUsed||[]);
@@ -1346,7 +1361,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               <input style={inp} disabled={!!form.usageNA} type="number" step="1" value={form.usageMileage||""} onChange={e=>setForm(f=>({...f,usageMileage:e.target.value}))} placeholder="Enter current mileage" />
             </div>
           </div>
-          <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:6 }}>Select N/A only when the equipment does not track hours or mileage.</div>
+          <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:6 }}>If this equipment has no usage tracking selected, enter the reading here for the WO record, or select N/A when there is truly no hour/mileage value.</div>
         </div>
 
         <Field label={form.woType==="Service" ? "Service Description / Work Performed" : "Work Description / Problem Reported"}>
