@@ -1636,7 +1636,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-              {["Equipment #","Equipment Name","Description","Type of Work Order","Priority","Status","Due","Cost","Actions"].map(h=>(
+              {["Equipment #","Equipment Name","Description","Type of Work Order","Priority","Status","Created","Due","Cost","Actions"].map(h=>(
                 <th key={h} style={{ padding:"10px 14px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4, whiteSpace:"nowrap" }}>{h}</th>
               ))}
             </tr>
@@ -1670,6 +1670,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                   </td>
                   <td style={{ padding:"11px 14px" }}><Badge label={wo.priority} type="priority" /></td>
                   <td style={{ padding:"11px 14px" }}><Badge label={wo.status} /></td>
+                  <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:T.subtext, whiteSpace:"nowrap" }}>{wo.created||"—"}</td>
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:wo.due&&wo.due<today()&&wo.status!=="Completed"?T.red:T.subtext, whiteSpace:"nowrap" }}>{wo.due}</td>
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:T.subtext, whiteSpace:"nowrap" }}>{total>0?`$${total.toFixed(0)}`:"—"}</td>
                   <td style={{ padding:"4px 10px", whiteSpace:"nowrap", display:"flex", gap:6, alignItems:"center" }} onClick={e=>e.stopPropagation()}>
@@ -1930,7 +1931,7 @@ function Equipment({ state, dispatch }) {
   const [statusF, setStatusF]   = useState("All");
   const [typeF, setTypeF]       = useState("All");
   const [locationF, setLocationF] = useState("All");
-  const [equipSort, setEquipSort] = useState("status");
+  const [equipSort, setEquipSort] = useState("equipAsc");
   const [showNewCat, setShowNewCat] = useState(false);
   const [newCat, setNewCat]     = useState("");
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
@@ -1950,18 +1951,17 @@ function Equipment({ state, dispatch }) {
     /* Hide equipment that's been turned in or disposed - they live in Equipment Inventory only */
     if(["Turned-in","Disposed"].includes(e.turnInStatus)) return false;
     const ms  = `${e.name} ${e.type} ${e.make} ${e.model} ${e.serial} ${e.eilNumber||""} ${e.location}`.toLowerCase().includes(search.toLowerCase());
-    const mst = statusF==="All" || e.status===statusF;
     const mt  = typeF==="All"   || e.type===typeF;
     const ml  = locationF==="All" || e.location===locationF;
-    return ms&&mst&&mt&&ml;
+    return ms&&mt&&ml;
   }).sort((a,b)=>{
     if(equipSort==="equipAsc") return String(a.id||"").localeCompare(String(b.id||""), undefined, { numeric:true, sensitivity:"base" });
     if(equipSort==="equipDesc") return String(b.id||"").localeCompare(String(a.id||""), undefined, { numeric:true, sensitivity:"base" });
-    return (STATUS_SORT[a.status]??99)-(STATUS_SORT[b.status]??99);
+    return String(a.id||"").localeCompare(String(b.id||""), undefined, { numeric:true, sensitivity:"base" });
   });
 
   const woForEq  = eq => state.workOrders.filter(w=>w.equipment===eq.id);
-  const openAdd  = () => { setForm({ status:"Fully Operational", faultDescription:"", faultDate:"" }); setModal("add"); };
+  const openAdd  = () => { setForm({ status:"Fully Operational" }); setModal("add"); };
   const openEdit = eq => { setForm({...eq}); setModal("editing"); };
   const save = () => {
     if(!form.name) return alert("Nomenclature required.");
@@ -1975,13 +1975,8 @@ function Equipment({ state, dispatch }) {
   };
   const del = id => { if(confirm("Delete this equipment record?")){ dispatch({type:"DELETE_EQ",payload:id}); setDetail(null); }};
 
-  /* Fixed rowStyle - correct colors per status */
-  const rowStyle = (status) => {
-    if(status==="Out of Service / Deadline")     return { bg:"#fff5f5", borderColor:"#ef4444", leftBorder:"4px solid #ef4444" };
-    if(status==="Operational with Deficiencies") return { bg:"#fffdf0", borderColor:"#f59e0b", leftBorder:"4px solid #f59e0b" };
-    if(status==="No Status")                     return { bg:"#f9fafb", borderColor:"#d1d5db", leftBorder:"4px solid #d1d5db" };
-    return { bg:"#f0fdf4", borderColor:"#86efac", leftBorder:"4px solid #22c55e" };
-  };
+  /* Equipment tab is inventory-focused: no operational status colors shown here */
+  const rowStyle = () => ({ bg:"#fff", borderColor:T.border, leftBorder:`4px solid ${T.border}` });
 
   /* EqForm as a render function (NOT a component) to fix the typing/remount bug */
   const addCategory = () => {
@@ -2023,11 +2018,6 @@ function Equipment({ state, dispatch }) {
         )}
       </div>
 
-      <Field label="Status" half>
-        <select style={sel} value={form.status||"Fully Operational"} onChange={e=>setForm(f=>({...f,status:e.target.value}))}>
-          {EQ_STATUSES.map(s=><option key={s}>{s}</option>)}
-        </select>
-      </Field>
       <Field label="Make" half>
         <SmartInput historyKey="equipment.make" style={inp} value={form.make||""} onChange={e=>setForm(f=>({...f,make:e.target.value}))} />
       </Field>
@@ -2079,14 +2069,6 @@ function Equipment({ state, dispatch }) {
         )}
       </div>
 
-      {(form.status==="Operational with Deficiencies"||form.status==="Out of Service / Deadline") && (<>
-        <Field label="Fault Date" half>
-          <input style={inp} type="date" value={form.faultDate||""} onChange={e=>setForm(f=>({...f,faultDate:e.target.value}))} />
-        </Field>
-        <Field label="Description">
-          <textarea style={{ ...inp, minHeight:70, resize:"vertical" }} value={form.faultDescription||""} onChange={e=>setForm(f=>({...f,faultDescription:e.target.value}))} placeholder="Describe the fault or deficiency..." />
-        </Field>
-      </>)}
       <Field label="Notes">
         <textarea style={{ ...inp, minHeight:60, resize:"vertical" }} value={form.notes||""} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} />
       </Field>
@@ -2146,7 +2128,6 @@ function Equipment({ state, dispatch }) {
                 <div style={{ display:"flex", gap:8, alignItems:"center", marginBottom:6, flexWrap:"wrap" }}>
                   <span style={{ fontFamily:T.mono, fontSize:11, color:T.muted }}>{eq.id}</span>
                   {eq.eilNumber && <span style={{ fontFamily:T.mono, fontSize:11, color:T.muted }}>· EIL: {eq.eilNumber}</span>}
-                  <Badge label={eq.status} />
                 </div>
                 <h2 style={{ margin:0, fontFamily:T.sans, fontSize:22, fontWeight:700, color:T.text }}>{eq.name}</h2>
                 <p style={{ margin:"4px 0 0", fontFamily:T.sans, fontSize:14, color:T.subtext }}>{eq.year} {eq.make} {eq.model} · Serial: {eq.serial}</p>
@@ -2157,21 +2138,6 @@ function Equipment({ state, dispatch }) {
               </div>
             </div>
 
-            {/* Fault banner */}
-            {(isOOS||isDef) && (
-              <div style={{ marginTop:14, padding:"12px 14px", background:isOOS?"#fef2f2":"#fffbeb", border:`1px solid ${isOOS?"#fca5a5":"#fcd34d"}`, borderRadius:7 }}>
-                <div style={{ display:"flex", gap:24, flexWrap:"wrap", alignItems:"flex-start" }}>
-                  <div>
-                    <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:3 }}>Fault Date</div>
-                    <div style={{ fontFamily:T.mono, fontSize:14, fontWeight:700, color:isOOS?T.red:T.amber }}>{eq.faultDate||"—"}</div>
-                  </div>
-                  <div style={{ flex:1 }}>
-                    <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:3 }}>Description</div>
-                    <div style={{ fontFamily:T.sans, fontSize:13, color:T.text }}>{eq.faultDescription||"No description provided."}</div>
-                  </div>
-                </div>
-              </div>
-            )}
           </Card>
 
           {/* Details */}
@@ -2331,7 +2297,6 @@ function Equipment({ state, dispatch }) {
         <div style={{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"flex-end" }}>
           <span style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.muted, paddingBottom:6 }}>Filter by:</span>
           {[
-            ["Status",  EQ_STATUSES, statusF,   setStatusF,   230],
             ["Type",    types,        typeF,     setTypeF,     160],
             ["Location",locations,    locationF, setLocationF, 160],
           ].map(([label, opts, val, set, width])=>(
@@ -2346,13 +2311,12 @@ function Equipment({ state, dispatch }) {
           <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
             <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Sort</label>
             <select style={{ ...sel, width:210 }} value={equipSort} onChange={e=>setEquipSort(e.target.value)}>
-              <option value="status">Status priority</option>
               <option value="equipAsc">Equip # ascending</option>
               <option value="equipDesc">Equip # descending</option>
             </select>
           </div>
-          {(statusF!=="All"||typeF!=="All"||locationF!=="All") && (
-            <button onClick={()=>{setStatusF("All");setTypeF("All");setLocationF("All");}} style={{ background:"none", border:"none", color:T.accent, fontFamily:T.sans, fontSize:12, fontWeight:600, cursor:"pointer", padding:"0 0 6px", alignSelf:"flex-end" }}>
+          {(typeF!=="All"||locationF!=="All") && (
+            <button onClick={()=>{setTypeF("All");setLocationF("All");}} style={{ background:"none", border:"none", color:T.accent, fontFamily:T.sans, fontSize:12, fontWeight:600, cursor:"pointer", padding:"0 0 6px", alignSelf:"flex-end" }}>
               ✕ Clear filters
             </button>
           )}
@@ -2363,14 +2327,7 @@ function Equipment({ state, dispatch }) {
         <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>
           Showing <strong style={{ color:T.text }}>{filtered.length}</strong> of <strong style={{ color:T.text }}>{state.equipment.length}</strong> equipment
         </div>
-        <div style={{ display:"flex", gap:16, flexWrap:"wrap" }}>
-          {[["#22c55e","Fully Operational"],["#f59e0b","Operational w/ Deficiencies"],["#ef4444","Out of Service / Deadline"],["#d1d5db","No Status"]].map(([c,l])=>(
-            <div key={l} style={{ display:"flex", alignItems:"center", gap:5 }}>
-              <span style={{ width:10, height:10, borderRadius:2, background:c, flexShrink:0, display:"inline-block" }}/>
-              <span style={{ fontFamily:T.sans, fontSize:11, color:T.subtext }}>{l}</span>
-            </div>
-          ))}
-        </div>
+
       </div>
 
       <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
@@ -2423,8 +2380,7 @@ function Equipment({ state, dispatch }) {
                     </div>
 
                     <div style={{ flexShrink:0, display:"flex", alignItems:"center", gap:8, marginLeft:"auto" }}>
-                      <Badge label={eq.status} />
-                      {/* Attachment toggle button */}
+                          {/* Attachment toggle button */}
                       {hasAttach && (
                         <button onClick={e=>toggleAttachments(eq.id,e)} style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", borderRadius:6, border:`1px solid ${T.border}`, background:isExpanded?T.accentLt:"#fff", color:isExpanded?T.accent:T.subtext, fontFamily:T.sans, fontSize:11, fontWeight:600, cursor:"pointer" }}>
                           {isExpanded?"▲":"▼"} {attachments.length} Attach.
@@ -2435,24 +2391,6 @@ function Equipment({ state, dispatch }) {
                   </div>
                 </div>
 
-                {/* Fault bar */}
-                {hasFault && (
-                  <div style={{ borderTop:`1px solid ${isOOS?"#fca5a5":"#fcd34d"}`, background:isOOS?"#fef2f2":"#fffbeb", padding:"10px 18px", display:"flex", gap:24, flexWrap:"wrap", alignItems:"center" }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
-                      <span style={{ fontSize:16 }}>{isOOS?"🚨":"⚠️"}</span>
-                      <div>
-                        <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:isOOS?T.red:T.amber, textTransform:"uppercase", letterSpacing:.4 }}>Fault Date</div>
-                        <div style={{ fontFamily:T.mono, fontSize:13, fontWeight:700, color:isOOS?T.red:T.amber, marginTop:2 }}>{eq.faultDate||"Not recorded"}</div>
-                      </div>
-                    </div>
-                    {eq.faultDescription && (
-                      <div style={{ flex:1, minWidth:180 }}>
-                        <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Description</div>
-                        <div style={{ fontFamily:T.sans, fontSize:12, color:T.text, marginTop:2, lineHeight:1.5 }}>{eq.faultDescription}</div>
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
 
               {/* ── Attachment Sub-Rows (dropdown) ── */}
