@@ -55,6 +55,7 @@ function reducer(state, { type, payload }) {
   switch(type) {
     case "READ_NOTIF":    return { ...state, notifications: state.notifications.map(n => n.id===payload ? {...n,read:true} : n) };
     case "READ_ALL":      return { ...state, notifications: state.notifications.map(n => ({...n,read:true})) };
+    case "ADD_NOTIFICATION": return { ...state, notifications:[payload, ...(state.notifications||[])] };
     case "ADD_WO": {
       const equipmentStatus = payload.status==="Completed" ? "Fully Operational" : (payload.equipmentStatus || null);
       const equipment = equipmentStatus
@@ -1942,7 +1943,7 @@ function Equipment({ state, dispatch }) {
   };
 
   const EQ_STATUSES = ["Fully Operational","Operational with Deficiencies","Out of Service / Deadline","No Status"];
-  const types     = [...new Set(state.equipment.map(e=>e.type).filter(Boolean))];
+  const categories = [...new Set([...(state.categories||[]), ...state.equipment.map(e=>e.category).filter(Boolean)])].sort((a,b)=>String(a).localeCompare(String(b)));
   const locations = [...new Set(state.equipment.map(e=>e.location).filter(Boolean))];
 
   const STATUS_SORT = { "Out of Service / Deadline":0, "Operational with Deficiencies":1, "Fully Operational":2, "No Status":3 };
@@ -1950,8 +1951,8 @@ function Equipment({ state, dispatch }) {
   const filtered = state.equipment.filter(e=>{
     /* Hide equipment that's been turned in or disposed - they live in Equipment Inventory only */
     if(["Turned-in","Disposed"].includes(e.turnInStatus)) return false;
-    const ms  = `${e.name} ${e.type} ${e.make} ${e.model} ${e.serial} ${e.eilNumber||""} ${e.location}`.toLowerCase().includes(search.toLowerCase());
-    const mt  = typeF==="All"   || e.type===typeF;
+    const ms  = `${e.name} ${e.category||""} ${e.type||""} ${e.make} ${e.model} ${e.serial} ${e.eilNumber||""} ${e.location}`.toLowerCase().includes(search.toLowerCase());
+    const mt  = typeF==="All"   || e.category===typeF;
     const ml  = locationF==="All" || e.location===locationF;
     return ms&&mt&&ml;
   }).sort((a,b)=>{
@@ -2297,7 +2298,7 @@ function Equipment({ state, dispatch }) {
         <div style={{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"flex-end" }}>
           <span style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.muted, paddingBottom:6 }}>Filter by:</span>
           {[
-            ["Type",    types,        typeF,     setTypeF,     160],
+            ["Category", categories,   typeF,     setTypeF,     180],
             ["Location",locations,    locationF, setLocationF, 160],
           ].map(([label, opts, val, set, width])=>(
             <div key={label} style={{ display:"flex", flexDirection:"column", gap:4 }}>
@@ -2356,7 +2357,12 @@ function Equipment({ state, dispatch }) {
                     <div style={{ flex:1, minWidth:180, marginRight:20 }}>
                       <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Nomenclature</div>
                       <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginTop:3 }}>{eq.name}</div>
-                      <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:1 }}>{eq.type||""}</div>
+                      
+                    </div>
+
+                    <div style={{ width:140, flexShrink:0, marginRight:20 }}>
+                      <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Category</div>
+                      <div style={{ fontFamily:T.sans, fontSize:13, color:T.subtext, marginTop:3 }}>{eq.category||"—"}</div>
                     </div>
 
                     <div style={{ width:120, flexShrink:0, marginRight:20 }}>
@@ -5428,6 +5434,67 @@ export default function App() {
       console.warn("Failed to save state:", e);
     }
   }, [state]);
+
+  /* Auto-create Inspection Work Orders when inspection schedules are due */
+  useEffect(() => {
+    const inspections = state.inspectionSchedules || [];
+    if(!inspections.length) return;
+    const todayStr = today();
+    const nextDateFrom = (date, interval, unit) => {
+      const d = new Date(date || todayStr);
+      const n = Number(interval || 1);
+      if(unit === "days") d.setDate(d.getDate() + n);
+      if(unit === "weeks") d.setDate(d.getDate() + (n * 7));
+      if(unit === "months") d.setMonth(d.getMonth() + n);
+      if(unit === "years") d.setFullYear(d.getFullYear() + n);
+      return d.toISOString().split("T")[0];
+    };
+    inspections.forEach(schedule => {
+      if(!schedule?.nextDueDate || schedule.nextDueDate > todayStr) return;
+      const alreadyOpen = (state.workOrders||[]).some(w =>
+        w.inspectionScheduleId === schedule.id &&
+        w.woType === "Inspection" &&
+        ["Open","In Progress","On Hold"].includes(w.status)
+      );
+      if(alreadyOpen) return;
+      const task = (state.inspectionTasks||[]).find(t => t.id === schedule.taskId);
+      const eq = (state.equipment||[]).find(e => e.id === schedule.equipmentId);
+      if(!task || !eq) return;
+      const steps = String(task.steps||"").split(/\n+/).map(x=>x.trim()).filter(Boolean);
+      const woId = genId("WO");
+      dispatch({ type:"ADD_WO", payload:{
+        id:woId,
+        woType:"Inspection",
+        title:`Inspection - ${task.name}`,
+        equipment:eq.id,
+        equipmentStatus:eq.status || "Fully Operational",
+        status:"Open",
+        priority:"Normal",
+        created:todayStr,
+        due:schedule.nextDueDate || todayStr,
+        completed:"",
+        tech:"",
+        usageReading:"N/A",
+        usageType:"N/A",
+        usageNA:true,
+        faultEnabled:true,
+        faultDescription:`Inspection task: ${task.name}`,
+        problem:`Inspection task: ${task.name}`,
+        description:`Inspection task: ${task.name}`,
+        workPerformed: task.steps || "",
+        mechanicNotes: task.notes || "",
+        inspectionTaskId:task.id,
+        inspectionScheduleId:schedule.id,
+        inspectionSteps:task.steps || "",
+        inspectionStepResults:steps.map((step,i)=>({ id:`${genId("STEP")}-${i}`, step, result:"", comment:"" })),
+        inspectionAttachments:Array.isArray(task.attachments)?task.attachments:[],
+        partsUsed:[], labor:[],
+      }});
+      dispatch({ type:"ADD_NOTIFICATION", payload:{ id:`N${Date.now()}-${schedule.id}`, type:"inspection", msg:`Inspection due for ${eq.id} — ${eq.name || eq.nomenclature || "equipment"}. Inspection Work Order ${woId} created.`, time:"Just now", read:false } });
+      dispatch({ type:"UPDATE_INSPECTION_SCHEDULE", payload:{ ...schedule, lastTriggered:todayStr, nextDueDate:nextDateFrom(schedule.nextDueDate || todayStr, schedule.timeInterval, schedule.timeUnit) } });
+    });
+  }, [state.inspectionSchedules, state.inspectionTasks, state.equipment, state.workOrders]);
+
   const [tab, setTab]       = useState("dashboard");
   const [menuOpen, setMenuOpen]           = useState(false);
   const [showProfile, setShowProfile]     = useState(false);
