@@ -63,11 +63,41 @@ function adjustInventoryForWO(parts=[], partsUsed=[], direction=-1) {
   return next;
 }
 
+
+function makeNotification(payload={}) {
+  const now = new Date().toISOString();
+  return {
+    ...payload,
+    id: payload.id || `N${Date.now()}`,
+    createdAt: payload.createdAt || payload.timestamp || now,
+    time: payload.time && payload.time !== "Just now" ? payload.time : now,
+    read: !!payload.read,
+  };
+}
+
+function formatNotificationTime(notification) {
+  const raw = notification?.createdAt || notification?.timestamp || notification?.time;
+  const date = raw ? new Date(raw) : null;
+  if(!date || Number.isNaN(date.getTime())) return notification?.time || "";
+  const diffMs = Date.now() - date.getTime();
+  if(diffMs < 0) return date.toLocaleString();
+  const sec = Math.floor(diffMs / 1000);
+  if(sec < 10) return "Just now";
+  if(sec < 60) return `${sec} sec ago`;
+  const min = Math.floor(sec / 60);
+  if(min < 60) return `${min} min ago`;
+  const hr = Math.floor(min / 60);
+  if(hr < 24) return `${hr} hr${hr===1?"":"s"} ago`;
+  const day = Math.floor(hr / 24);
+  if(day < 7) return `${day} day${day===1?"":"s"} ago`;
+  return date.toLocaleString(undefined, { month:"short", day:"numeric", year:"numeric", hour:"numeric", minute:"2-digit" });
+}
+
 function reducer(state, { type, payload }) {
   switch(type) {
     case "READ_NOTIF":    return { ...state, notifications: state.notifications.map(n => n.id===payload ? {...n,read:true} : n) };
     case "READ_ALL":      return { ...state, notifications: state.notifications.map(n => ({...n,read:true})) };
-    case "ADD_NOTIFICATION": return { ...state, notifications:[payload, ...(state.notifications||[])] };
+    case "ADD_NOTIFICATION": return { ...state, notifications:[makeNotification(payload), ...(state.notifications||[])] };
     case "ADD_WO": {
       const shouldConsume = payload.status === "Completed" && !payload.inventoryConsumed;
       const savedWO = shouldConsume ? { ...payload, inventoryConsumed:true } : payload;
@@ -76,7 +106,7 @@ function reducer(state, { type, payload }) {
         ? state.equipment.map(e => e.id===savedWO.equipment ? { ...e, status:equipmentStatus } : e)
         : state.equipment;
       const parts = shouldConsume ? adjustInventoryForWO(state.parts, savedWO.partsUsed, -1) : state.parts;
-      return { ...state, parts, equipment, workOrders: [savedWO,...state.workOrders], notifications:[{id:`N${Date.now()}`,type:"wo",msg:`Work Order ${savedWO.id} created`,time:"Just now",read:false},...state.notifications] };
+      return { ...state, parts, equipment, workOrders: [savedWO,...state.workOrders], notifications:[makeNotification({id:`N${Date.now()}`,type:"wo",msg:`Work Order ${savedWO.id} created`,read:false}),...state.notifications] };
     }
     case "UPDATE_WO": {
       const prevWO = (state.workOrders||[]).find(w => w.id === payload.id);
@@ -453,6 +483,12 @@ function DocUploader({ documents=[], onChange, label="Documents", category }) {
 /* -- NOTIFICATION PANEL -- */
 function NotifPanel({ notifications, dispatch, onClose }) {
   const unread = notifications.filter(n=>!n.read).length;
+  const [nowTick, setNowTick] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 30000);
+    return () => clearInterval(id);
+  }, []);
+  void nowTick;
   return (
     <div style={{ position:"fixed", top:56, right:16, width:360, background:"#fff", border:`1px solid ${T.border}`, borderRadius:10, zIndex:1500, boxShadow:T.shadowMd, overflow:"hidden" }}>
       <div style={{ padding:"12px 16px", borderBottom:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
@@ -469,7 +505,7 @@ function NotifPanel({ notifications, dispatch, onClose }) {
             <span style={{ fontSize:18, marginTop:1 }}>{notifIcon[n.type]}</span>
             <div style={{ flex:1 }}>
               <p style={{ margin:0, fontFamily:T.sans, fontSize:13, color:n.read?T.subtext:T.text, fontWeight:n.read?400:600, lineHeight:1.4 }}>{n.msg}</p>
-              <p style={{ margin:"3px 0 0", fontFamily:T.mono, fontSize:11, color:T.muted }}>{n.time}</p>
+              <p style={{ margin:"3px 0 0", fontFamily:T.mono, fontSize:11, color:T.muted }}>{formatNotificationTime(n)}</p>
             </div>
             {!n.read && <span style={{ width:7, height:7, borderRadius:"50%", background:T.accent, display:"block", marginTop:5, flexShrink:0 }}/>}
           </div>
@@ -2228,7 +2264,47 @@ function Equipment({ state, dispatch }) {
     const eq  = state.equipment.find(e=>e.id===detail);
     if(!eq){ setDetail(null); return null; }
     const wos    = woForEq(eq);
-    const serviceHistory = wos.filter(w => w.woType==="Service" && w.status==="Completed").sort((a,b)=>String(b.completed||b.created||"").localeCompare(String(a.completed||a.created||"")));
+    const completedHistory = wos.filter(w => (w.status||"").toLowerCase()==="completed").sort((a,b)=>String(b.completed||b.closedDate||b.created||"").localeCompare(String(a.completed||a.closedDate||a.created||"")));
+    const isServiceHistoryWO = (w) => {
+      const type = String(w.woType||w.type||"").toLowerCase();
+      const title = String(w.title||w.faultDescription||w.description||"").toLowerCase();
+      return type==="service" || type==="preventive" || type==="preventative" || title.includes("preventive") || title.includes("preventative") || title.includes("pm");
+    };
+    const serviceHistory = completedHistory.filter(isServiceHistoryWO);
+    const repairHistory = completedHistory.filter(w => String(w.woType||w.type||"").toLowerCase()==="repair" || (!isServiceHistoryWO(w) && String(w.woType||w.type||"").toLowerCase()!=="inspection"));
+    const inspectionHistory = completedHistory.filter(w => String(w.woType||w.type||"").toLowerCase()==="inspection");
+    const historyCost = (wo) => (+wo.laborCost||0)+(+wo.partsCost||0);
+    const historyUsage = (wo) => {
+      if (wo.usageNA) return "N/A";
+      if (wo.usageType==="mileage") return wo.usageMileage ? `${wo.usageMileage} mi` : "—";
+      if (wo.usageType==="both") return `${wo.usageHours||"—"} hrs / ${wo.usageMileage||"—"} mi`;
+      return wo.usageHours ? `${wo.usageHours} hrs` : (wo.usageMileage ? `${wo.usageMileage} mi` : "—");
+    };
+    const historyLabel = (wo, fallback) => wo.title || wo.faultDescription || wo.description || wo.problem || fallback;
+    const renderHistoryTable = (rows, emptyText, fallbackTitle) => (
+      rows.length===0
+        ? <p style={{ margin:"0 0 12px", fontFamily:T.sans, fontSize:13, color:T.muted }}>{emptyText}</p>
+        : <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans, marginBottom:18 }}>
+            <thead>
+              <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
+                {["WO #","Description","Completed","Usage","Cost"].map(h=>(
+                  <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((wo,i)=>(
+                <tr key={wo.id} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
+                  <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:T.muted }}>{wo.id}</td>
+                  <td style={{ padding:"9px 12px", fontWeight:500, color:T.text }}>{historyLabel(wo, fallbackTitle)}</td>
+                  <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{wo.completed||wo.closedDate||"—"}</td>
+                  <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{historyUsage(wo)}</td>
+                  <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>${historyCost(wo)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+    );
     const rs     = rowStyle(eq.status);
     const isOOS  = eq.status==="Out of Service / Deadline";
     const isDef  = eq.status==="Operational with Deficiencies";
@@ -2324,68 +2400,24 @@ function Equipment({ state, dispatch }) {
           {/* Work Order History */}
           <Card style={{ gridColumn:"span 2" }}>
             <h4 style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Work Order History</h4>
-            {wos.length===0
-              ? <p style={{ margin:0, fontFamily:T.sans, fontSize:13, color:T.muted }}>No work orders for this equipment.</p>
-              : <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
-                  <thead>
-                    <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-                      {["WO #","Title","Status","Priority","Date","Cost"].map(h=>(
-                        <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {wos.map((wo,i)=>(
-                      <tr key={wo.id} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
-                        <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:T.muted }}>{wo.id}</td>
-                        <td style={{ padding:"9px 12px", fontWeight:500, color:T.text }}>{wo.title}</td>
-                        <td style={{ padding:"9px 12px" }}><Badge label={wo.status} /></td>
-                        <td style={{ padding:"9px 12px" }}><Badge label={wo.priority} type="priority" /></td>
-                        <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{wo.created}</td>
-                        <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>${(+wo.laborCost||0)+(+wo.partsCost||0)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-            }
-          </Card>
+            <p style={{ margin:"-6px 0 16px", fontFamily:T.sans, fontSize:13, color:T.subtext }}>
+              Closed work orders are archived below by type for this equipment.
+            </p>
 
-          {/* Service History */}
-          <Card style={{ gridColumn:"span 2" }}>
-            <h4 style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Service History</h4>
-            {serviceHistory.length===0
-              ? <p style={{ margin:0, fontFamily:T.sans, fontSize:13, color:T.muted }}>No closed service work orders for this equipment yet.</p>
-              : <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
-                  <thead>
-                    <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-                      {["WO #","Service","Completed","Usage","Steps","Cost"].map(h=>(
-                        <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {serviceHistory.map((wo,i)=>{
-                      const usageValue = wo.usageType==="mileage"
-                        ? (wo.usageMileage ? `${wo.usageMileage} mi` : "—")
-                        : wo.usageType==="both"
-                          ? `${wo.usageHours||"—"} hrs / ${wo.usageMileage||"—"} mi`
-                          : (wo.usageHours ? `${wo.usageHours} hrs` : "—");
-                      const stepCount = (wo.serviceSteps||wo.taskSteps||wo.steps||[]).filter(Boolean).length || (wo.serviceChecklist ? String(wo.serviceChecklist).split("\n").filter(Boolean).length : 0);
-                      const cost = (+wo.laborCost||0)+(+wo.partsCost||0);
-                      return (
-                        <tr key={wo.id} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
-                          <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:T.muted }}>{wo.id}</td>
-                          <td style={{ padding:"9px 12px", fontWeight:500, color:T.text }}>{wo.title||wo.faultDescription||"Service Work Order"}</td>
-                          <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{wo.completed||"—"}</td>
-                          <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{usageValue}</td>
-                          <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{stepCount}</td>
-                          <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>${cost}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-            }
+            <div style={{ marginBottom:18 }}>
+              <h5 style={{ margin:"0 0 10px", fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, textTransform:"uppercase", letterSpacing:.4 }}>Service History / Preventive Maintenance</h5>
+              {renderHistoryTable(serviceHistory, "No closed service or preventive maintenance work orders for this equipment yet.", "Service Work Order")}
+            </div>
+
+            <div style={{ marginBottom:18 }}>
+              <h5 style={{ margin:"0 0 10px", fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, textTransform:"uppercase", letterSpacing:.4 }}>Repair History</h5>
+              {renderHistoryTable(repairHistory, "No closed repair work orders for this equipment yet.", "Repair Work Order")}
+            </div>
+
+            <div>
+              <h5 style={{ margin:"0 0 10px", fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, textTransform:"uppercase", letterSpacing:.4 }}>Inspection History</h5>
+              {renderHistoryTable(inspectionHistory, "No closed inspection work orders for this equipment yet.", "Inspection Work Order")}
+            </div>
           </Card>
 
           {/* Attachments / Implements */}
