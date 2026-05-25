@@ -2105,6 +2105,8 @@ function Equipment({ state, dispatch }) {
   const [modal, setModal]       = useState(null);
   const [detail, setDetail]     = useState(null);
   const [attachDetail, setAttachDetail] = useState(null);
+  const [historyWO, setHistoryWO] = useState(null);
+  const [historyEdit, setHistoryEdit] = useState(false);
   const [expandedAt, setExpandedAt]     = useState({});
   const [form, setForm]         = useState({});
   const [search, setSearch]     = useState("");
@@ -2154,6 +2156,12 @@ function Equipment({ state, dispatch }) {
     setModal(null);
   };
   const del = id => { if(confirm("Delete this equipment record?")){ dispatch({type:"DELETE_EQ",payload:id}); setDetail(null); }};
+  const closeHistoryWO = () => { setHistoryWO(null); setHistoryEdit(false); };
+  const saveHistoryWO = () => {
+    if(!historyWO) return;
+    dispatch({ type:"UPDATE_WO", payload:historyWO });
+    setHistoryEdit(false);
+  };
 
   /* Equipment tab is inventory-focused: no operational status colors shown here */
   const rowStyle = () => ({ bg:"#fff", borderColor:T.border, leftBorder:`4px solid ${T.border}` });
@@ -2287,19 +2295,20 @@ function Equipment({ state, dispatch }) {
         : <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans, marginBottom:18 }}>
             <thead>
               <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-                {["WO #","Description","Completed","Usage","Cost"].map(h=>(
+                {["WO #","Description","Completed","Usage","Cost","View"].map(h=>(
                   <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rows.map((wo,i)=>(
-                <tr key={wo.id} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
-                  <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:T.muted }}>{wo.id}</td>
+                <tr key={wo.id} onClick={()=>{ setHistoryWO(wo); setHistoryEdit(false); }} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer" }} title="Click to view this archived work order">
+                  <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:T.accent, fontWeight:700 }}>{wo.id}</td>
                   <td style={{ padding:"9px 12px", fontWeight:500, color:T.text }}>{historyLabel(wo, fallbackTitle)}</td>
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{wo.completed||wo.closedDate||"—"}</td>
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{historyUsage(wo)}</td>
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>${historyCost(wo)}</td>
+                  <td style={{ padding:"9px 12px", color:T.accent, fontSize:12, fontWeight:700 }}>Open</td>
                 </tr>
               ))}
             </tbody>
@@ -2312,6 +2321,74 @@ function Equipment({ state, dispatch }) {
 
     return (
       <div>
+        {historyWO && (
+          <Modal title={`${historyEdit ? "Edit" : "View"} Work Order ${historyWO.id || ""}`} onClose={closeHistoryWO}>
+            {!historyEdit ? (
+              <div style={{ fontFamily:T.sans, color:T.text }}>
+                <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginBottom:14 }}>
+                  <div>
+                    <div style={{ fontFamily:T.mono, fontSize:12, color:T.muted }}>{historyWO.woType || historyWO.type || "Work Order"}</div>
+                    <div style={{ fontSize:18, fontWeight:800 }}>{historyLabel(historyWO, "Work Order")}</div>
+                  </div>
+                  <Btn small onClick={()=>setHistoryEdit(true)}>✏ Edit</Btn>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
+                  {[
+                    ["Status", historyWO.status],
+                    ["Created", historyWO.created],
+                    ["Due", historyWO.due],
+                    ["Completed", historyWO.completed || historyWO.closedDate],
+                    ["Usage", historyUsage(historyWO)],
+                    ["Cost", `$${historyCost(historyWO)}`],
+                  ].map(([k,v])=>(
+                    <div key={k} style={{ background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 12px" }}>
+                      <div style={{ fontSize:10, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div>
+                      <div style={{ marginTop:3, fontSize:13, color:T.text }}>{v || "—"}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginBottom:12 }}>
+                  <div style={{ fontSize:11, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Description</div>
+                  <div style={{ whiteSpace:"pre-wrap", border:`1px solid ${T.border}`, borderRadius:8, padding:10, minHeight:44 }}>{historyWO.description || historyWO.faultDescription || historyWO.problem || "—"}</div>
+                </div>
+                <div style={{ marginBottom:12 }}>
+                  <div style={{ fontSize:11, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Work Performed / Mechanic Notes</div>
+                  <div style={{ whiteSpace:"pre-wrap", border:`1px solid ${T.border}`, borderRadius:8, padding:10, minHeight:44 }}>{historyWO.mechanicNotes || historyWO.workPerformed || historyWO.correctiveAction || "—"}</div>
+                </div>
+                {(historyWO.partsUsed||[]).length>0 && (
+                  <div style={{ marginBottom:12 }}>
+                    <div style={{ fontSize:11, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Parts</div>
+                    {(historyWO.partsUsed||[]).map((p,i)=><div key={i} style={{ fontSize:13, padding:"4px 0" }}>{p.name || p.partName || "Part"} · Qty {p.qty || 1} · ${p.unitCost || 0}</div>)}
+                  </div>
+                )}
+                {(historyWO.inspectionSteps||historyWO.steps||[]).length>0 && (
+                  <div>
+                    <div style={{ fontSize:11, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Inspection Steps</div>
+                    {(historyWO.inspectionSteps||historyWO.steps||[]).map((s,i)=><div key={i} style={{ fontSize:13, padding:"6px 0", borderBottom:`1px solid ${T.border}` }}>{i+1}. {s.text || s.step || s.name || s} {s.result?`— ${s.result}`:""} {s.comment?`— ${s.comment}`:""}</div>)}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ fontFamily:T.sans }}>
+                <Field label="Status">
+                  <select style={inp} value={historyWO.status||""} onChange={e=>setHistoryWO(w=>({...w,status:e.target.value}))}>
+                    {["Open","In Progress","Awaiting Parts","On Hold","Completed"].map(s=><option key={s} value={s}>{s}</option>)}
+                  </select>
+                </Field>
+                <Field label="Description">
+                  <textarea style={{...inp,minHeight:80}} value={historyWO.description || historyWO.faultDescription || ""} onChange={e=>setHistoryWO(w=>({...w,description:e.target.value,faultDescription:e.target.value}))} />
+                </Field>
+                <Field label="Mechanic Notes / Work Performed">
+                  <textarea style={{...inp,minHeight:90}} value={historyWO.mechanicNotes || ""} onChange={e=>setHistoryWO(w=>({...w,mechanicNotes:e.target.value}))} />
+                </Field>
+                <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
+                  <Btn variant="secondary" onClick={()=>setHistoryEdit(false)}>Cancel</Btn>
+                  <Btn onClick={saveHistoryWO}>Save Work Order</Btn>
+                </div>
+              </div>
+            )}
+          </Modal>
+        )}
         {/* Back button */}
         <button onClick={()=>{ setDetail(null); setModal(null); }} style={{ background:"none", border:"none", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:13, fontWeight:500, marginBottom:16, padding:0, display:"flex", alignItems:"center", gap:4 }}>
           ← Back to Equipment List
