@@ -1115,6 +1115,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         ? [wo.usageMileage ? Number(wo.usageMileage).toLocaleString() : "", wo.usageHours ? `${wo.usageHours} hrs` : ""].filter(Boolean).join(" / ") || "&nbsp;"
         : (wo.usageHours || "&nbsp;"));
     const woTypeLabel = `${String(wo.woType||"Repair").toUpperCase()} WORK ORDER`;
+    const cleanInspectionTaskName = (value) => String(value || "").replace(/^\s*inspection\s*task\s*:\s*/i, "").trim();
+    const printableDescription = wo.woType === "Inspection"
+      ? (cleanInspectionTaskName(wo.inspectionTaskName || wo.faultDescription || wo.description || wo.title) || "&nbsp;")
+      : (wo.faultDescription || "&nbsp;");
     const partsUsed  = wo.partsUsed || [];
     const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
     const laborTotal = +(wo.laborCost||0);
@@ -1216,7 +1220,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           ${printOpt("showUsageReading") ? `<div class="cell"><div class="lbl">${usageDisplayLabel}</div><div class="val mn">${usageDisplayValue}</div></div>` : `<div class="cell"><div class="lbl">Usage Reading</div><div class="val mn">&nbsp;</div></div>`}
         </div>
       </div>` : ""}
-      ${printOpt("showFaultDescription") ? `<div class="sec"><div class="sh">Description</div><div class="sb" style="min-height:18px;padding:3px 8px;line-height:1.25">${wo.faultDescription||"&nbsp;"}</div></div>` : ""}
+      ${printOpt("showFaultDescription") ? `<div class="sec"><div class="sh">Description</div><div class="sb" style="min-height:18px;padding:3px 8px;line-height:1.25">${printableDescription}</div></div>` : ""}
       ${printOpt("showDescription") ? `<div class="sec"><div class="sh">${wo.woType==="Service" ? "Service Description &amp; Work Performed" : "Work Description &amp; Work Performed"}</div><div class="sb">${wo.description||"&nbsp;"}</div></div>` : ""}
       ${inspectionChecklistPrint}
       ${typeSpecificPrint}
@@ -1325,6 +1329,37 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         <Field label="Mechanic Notes">
           <textarea style={{ ...inp, minHeight:110, resize:"vertical" }} value={form.mechanicNotes||""} onChange={e=>setForm(f=>({...f,mechanicNotes:e.target.value}))} placeholder="Mechanic observations, steps taken, findings..." />
         </Field>
+
+        {form.woType === "Inspection" && (
+          <div
+            onClick={(e)=>e.stopPropagation()}
+            onKeyDown={(e)=>e.stopPropagation()}
+            style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:"#fff" }}
+          >
+            <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, textTransform:"uppercase", letterSpacing:.5, marginBottom:8 }}>Inspection Checklist Results</div>
+            <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginBottom:10 }}>Mark Pass or Fail for each inspection step. Comments are useful when a step fails.</div>
+            {(() => {
+              const rows = Array.isArray(form.inspectionStepResults) && form.inspectionStepResults.length
+                ? form.inspectionStepResults
+                : String(form.inspectionSteps || form.workPerformed || "").split(/\n+/).map((step,i)=>({ id:`step-${i}`, step:step.trim(), result:"", comment:"" })).filter(x=>x.step);
+              const setInspectionRow = (idx, changes) => {
+                const next = rows.map((r,i)=>i===idx?{...r,...changes}:r);
+                setForm(f=>({...f, inspectionStepResults:next}));
+              };
+              if(!rows.length) return <div style={{ color:T.muted, fontFamily:T.sans, fontSize:13 }}>No inspection steps recorded.</div>;
+              return <div style={{ display:"grid", gap:8 }}>
+                {rows.map((r,i)=>(
+                  <div key={r.id||i} style={{ display:"grid", gridTemplateColumns:"minmax(220px,1fr) 90px 90px minmax(180px,.8fr)", gap:8, alignItems:"center", padding:8, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
+                    <div style={{ fontFamily:T.sans, fontSize:13 }}><b>{i+1}.</b> {r.step}</div>
+                    <button type="button" onClick={(e)=>{ e.stopPropagation(); setInspectionRow(i,{result:"Pass"}); }} style={{...inp, padding:"7px 10px", background:r.result==="Pass"?"#dcfce7":"#fff", borderColor:r.result==="Pass"?"#16a34a":T.border, fontWeight:700}}>Pass</button>
+                    <button type="button" onClick={(e)=>{ e.stopPropagation(); setInspectionRow(i,{result:"Fail"}); }} style={{...inp, padding:"7px 10px", background:r.result==="Fail"?"#fee2e2":"#fff", borderColor:r.result==="Fail"?"#dc2626":T.border, fontWeight:700}}>Fail</button>
+                    <input style={inp} value={r.comment||""} onClick={e=>e.stopPropagation()} onKeyDown={e=>e.stopPropagation()} onChange={e=>setInspectionRow(i,{comment:e.target.value})} placeholder="Comment if failed" />
+                  </div>
+                ))}
+              </div>;
+            })()}
+          </div>
+        )}
 
         {/* Parts */}
         <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.grayLt }}>
@@ -1516,7 +1551,11 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
 
         {wo.woType==="Inspection" && (Array.isArray((editMode?form:wo).inspectionStepResults) || (wo.inspectionSteps||wo.workPerformed)) && (
-          <div style={{ border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden", background:"#fff" }}>
+          <div
+            onClick={(e)=>e.stopPropagation()}
+            onKeyDown={(e)=>e.stopPropagation()}
+            style={{ border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden", background:"#fff" }}
+          >
             <div style={{ background:T.text, color:"#fff", padding:"7px 12px", fontFamily:T.sans, fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:.6 }}>Inspection Checklist</div>
             <div style={{ display:"grid", gap:8, padding:10 }}>
               {(() => {
@@ -1533,7 +1572,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                     <div style={{ fontFamily:T.sans, fontSize:13 }}><b>{i+1}.</b> {r.step}</div>
                     {editMode ? <button type="button" onClick={()=>setRow(i,{result:"Pass"})} style={{...inp, padding:"7px 10px", background:r.result==="Pass"?"#dcfce7":"#fff", borderColor:r.result==="Pass"?"#16a34a":T.border, fontWeight:700}}>Pass</button> : <span style={{ fontWeight:700, color:r.result==="Pass"?T.green:r.result==="Fail"?T.red:T.muted }}>{r.result||"—"}</span>}
                     {editMode ? <button type="button" onClick={()=>setRow(i,{result:"Fail"})} style={{...inp, padding:"7px 10px", background:r.result==="Fail"?"#fee2e2":"#fff", borderColor:r.result==="Fail"?"#dc2626":T.border, fontWeight:700}}>Fail</button> : <span/>}
-                    {editMode ? <input style={inp} value={r.comment||""} onChange={e=>setRow(i,{comment:e.target.value})} placeholder="Comment if failed" /> : <span style={{ color:T.subtext }}>{r.comment||"—"}</span>}
+                    {editMode ? <input style={inp} value={r.comment||""} onClick={e=>e.stopPropagation()} onKeyDown={e=>e.stopPropagation()} onChange={e=>setRow(i,{comment:e.target.value})} placeholder="Comment if failed" /> : <span style={{ color:T.subtext }}>{r.comment||"—"}</span>}
                   </div>
                 ));
               })()}
@@ -2904,6 +2943,7 @@ function Inspections({ state, dispatch }) {
       id:genId("WO"),
       woType:"Inspection",
       title:`Inspection - ${task.name}`,
+      inspectionTaskName:task.name,
       equipment:eq.id,
       equipmentStatus:eq.status || "Fully Operational",
       status:"Open",
@@ -3033,7 +3073,7 @@ function Inspections({ state, dispatch }) {
             {(taskForm.attachments||[]).length>0 && <div style={{ display:"grid", gap:6 }}>{taskForm.attachments.map(a=><div key={a.id||a.name} style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center", padding:8, border:`1px solid ${T.border}`, borderRadius:10 }}><span style={{ fontSize:13 }}>{a.name}</span><Btn variant="danger" onClick={()=>removeTaskFile(a.id)}>Remove</Btn></div>)}</div>}
             <Field label="Inspection Steps / Checklist"><div style={{ display:"grid", gap:8 }}>
               {stepLines(taskForm.steps).map((step,i)=><div key={i} style={{ display:"grid", gridTemplateColumns:"40px 1fr auto", gap:8, alignItems:"center" }}>
-                <b>{i+1}</b><input style={inp} value={step} onChange={e=>updateStep(i,e.target.value)} placeholder="Inspection step" />
+                <b>{i+1}</b><input style={inp} value={step} onClick={e=>e.stopPropagation()} onKeyDown={e=>e.stopPropagation()} onChange={e=>updateStep(i,e.target.value)} placeholder="Inspection step" />
                 <Btn variant="danger" onClick={()=>removeStep(i)}>X</Btn>
               </div>)}
               <Btn variant="secondary" onClick={addStep}>+ Add Step Line</Btn>
@@ -5499,6 +5539,7 @@ export default function App() {
         id:woId,
         woType:"Inspection",
         title:`Inspection - ${task.name}`,
+        inspectionTaskName:task.name,
         equipment:eq.id,
         equipmentStatus:eq.status || "Fully Operational",
         status:"Open",
