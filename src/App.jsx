@@ -51,20 +51,58 @@ const INIT = {
   setupComplete: false,
 };
 
+function adjustInventoryForWO(parts=[], partsUsed=[], direction=-1) {
+  // direction -1 consumes inventory, +1 restores inventory
+  let next = [...(parts||[])];
+  (partsUsed||[]).forEach(item => {
+    if(!item?.partId) return;
+    const qty = +(item.qty||0);
+    if(!qty) return;
+    next = next.map(p => p.id===item.partId ? { ...p, qty:Math.max(0, +(p.qty||0) + (direction * qty)) } : p);
+  });
+  return next;
+}
+
 function reducer(state, { type, payload }) {
   switch(type) {
     case "READ_NOTIF":    return { ...state, notifications: state.notifications.map(n => n.id===payload ? {...n,read:true} : n) };
     case "READ_ALL":      return { ...state, notifications: state.notifications.map(n => ({...n,read:true})) };
     case "ADD_NOTIFICATION": return { ...state, notifications:[payload, ...(state.notifications||[])] };
     case "ADD_WO": {
-      const equipmentStatus = payload.status==="Completed" ? "Fully Operational" : (payload.equipmentStatus || null);
+      const shouldConsume = payload.status === "Completed" && !payload.inventoryConsumed;
+      const savedWO = shouldConsume ? { ...payload, inventoryConsumed:true } : payload;
+      const equipmentStatus = savedWO.status==="Completed" ? "Fully Operational" : (savedWO.equipmentStatus || null);
       const equipment = equipmentStatus
-        ? state.equipment.map(e => e.id===payload.equipment ? { ...e, status:equipmentStatus } : e)
+        ? state.equipment.map(e => e.id===savedWO.equipment ? { ...e, status:equipmentStatus } : e)
         : state.equipment;
-      return { ...state, equipment, workOrders: [payload,...state.workOrders], notifications:[{id:`N${Date.now()}`,type:"wo",msg:`Work Order ${payload.id} created`,time:"Just now",read:false},...state.notifications] };
+      const parts = shouldConsume ? adjustInventoryForWO(state.parts, savedWO.partsUsed, -1) : state.parts;
+      return { ...state, parts, equipment, workOrders: [savedWO,...state.workOrders], notifications:[{id:`N${Date.now()}`,type:"wo",msg:`Work Order ${savedWO.id} created`,time:"Just now",read:false},...state.notifications] };
     }
     case "UPDATE_WO": {
-      const payloadWithStatus = payload.status==="Completed" ? { ...payload, equipmentStatus:"Fully Operational" } : payload;
+      const prevWO = (state.workOrders||[]).find(w => w.id === payload.id);
+      const wasConsumed = !!prevWO?.inventoryConsumed;
+      const willBeCompleted = payload.status === "Completed";
+      let parts = state.parts;
+      let payloadWithStatus = payload;
+
+      // Inventory is consumed only when the WO closes/completes.
+      // If a completed WO is reopened, restore those parts. If closed again, consume again.
+      if(prevWO) {
+        if(!wasConsumed && willBeCompleted) {
+          parts = adjustInventoryForWO(parts, payload.partsUsed, -1);
+          payloadWithStatus = { ...payloadWithStatus, inventoryConsumed:true };
+        } else if(wasConsumed && !willBeCompleted) {
+          parts = adjustInventoryForWO(parts, prevWO.partsUsed, +1);
+          payloadWithStatus = { ...payloadWithStatus, inventoryConsumed:false };
+        } else if(wasConsumed && willBeCompleted) {
+          // If a closed WO is edited while still completed, restore old parts then consume the updated list.
+          parts = adjustInventoryForWO(parts, prevWO.partsUsed, +1);
+          parts = adjustInventoryForWO(parts, payload.partsUsed, -1);
+          payloadWithStatus = { ...payloadWithStatus, inventoryConsumed:true };
+        }
+      }
+
+      payloadWithStatus = payloadWithStatus.status==="Completed" ? { ...payloadWithStatus, equipmentStatus:"Fully Operational" } : payloadWithStatus;
       const updated = state.workOrders.map(w => w.id===payload.id ? payloadWithStatus : w);
       const equipmentStatus = payloadWithStatus.equipmentStatus || null;
       const equipment = equipmentStatus
@@ -82,10 +120,10 @@ function reducer(state, { type, payload }) {
             nextDueDate: sch.timeInterval ? (() => { const d=new Date(payload.completed||new Date()); if(sch.timeUnit==="days")d.setDate(d.getDate()+(+sch.timeInterval)); if(sch.timeUnit==="weeks")d.setDate(d.getDate()+(+sch.timeInterval)*7); if(sch.timeUnit==="months")d.setMonth(d.getMonth()+(+sch.timeInterval)); if(sch.timeUnit==="years")d.setFullYear(d.getFullYear()+(+sch.timeInterval)); return d.toISOString().split("T")[0]; })() : sch.nextDueDate,
             nextDueUsage: sch.usageInterval ? curU+(+sch.usageInterval) : sch.nextDueUsage,
           };
-          return { ...state, equipment, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
+          return { ...state, parts, equipment, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
         }
       }
-      return { ...state, equipment, workOrders: updated };
+      return { ...state, parts, equipment, workOrders: updated };
     }
     case "DELETE_WO":     return { ...state, workOrders: state.workOrders.filter(w => w.id!==payload) };
     case "ADD_EQ":        return { ...state, equipment: [payload,...state.equipment] };
@@ -1058,18 +1096,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     if(!hasUsageReading) return alert("Enter the current usage reading or select N/A.");
     const prevWO = isEdit ? state.workOrders.find(w=>w.id===form.id) : null;
 
-    /* Figure out inventory consumption delta */
-    const prevParts = (prevWO?.partsUsed||[]);
     const newParts  = (form.partsUsed||[]);
-    const consumeDeltas = [];
-    newParts.forEach(np=>{
-      if(!np.partId) return;
-      const prev = prevParts.find(p=>p.partId===np.partId);
-      const delta = (+(np.qty||0)) - (+(prev?.qty||0));
-      if(delta>0) consumeDeltas.push({partId:np.partId, qty:delta});
-    });
-    if(consumeDeltas.length>0) dispatch({type:"CONSUME_PARTS", payload:consumeDeltas});
-
     const partsTotal = newParts.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
     if(isEdit) {
       dispatch({type:"UPDATE_WO", payload:{...form, woType:form.woType||"Repair", title:form.faultDescription||form.woType||"Work Order", faultEnabled:true, partsCost:partsTotal}});
@@ -2936,13 +2963,21 @@ function Inspections({ state, dispatch }) {
     return d.toISOString().split("T")[0];
   };
 
-  const genInspectionWOId = (eqId) => {
-    const base = eqId || "EQ";
-    const existing = (state.workOrders || []).filter(w => String(w.id || "").startsWith(`${base}-IWO`));
-    const nums = existing.map(w => parseInt(String(w.id || "").replace(`${base}-IWO`, ""), 10) || 0);
-    const next = nums.length ? Math.max(...nums) + 1 : 1;
-    return `${base}-IWO${String(next).padStart(2,"0")}`;
+  const genInspectionWOInfo = (eqId) => {
+    const base = String(eqId || "EQ").trim() || "EQ";
+    const related = (state.workOrders || []).filter(w =>
+      w.woType === "Inspection" &&
+      String(w.equipment || w.equipmentId || "") === base
+    );
+    const usedNums = related.map(w => {
+      const match = String(w.id || "").match(/-IWO(\d+)$/i);
+      return match ? parseInt(match[1], 10) : (+w.inspectionSequence || 0);
+    }).filter(n => Number.isFinite(n) && n > 0);
+    const next = usedNums.length ? Math.max(...usedNums) + 1 : related.length + 1;
+    return { id:`${base}-IWO${String(next).padStart(2,"0")}`, sequence:next };
   };
+
+  const genInspectionWOId = (eqId) => genInspectionWOInfo(eqId).id;
 
   const matchesInspectionEvery = (schedule) => {
     if(inspectionEveryFilter === "All") return true;
@@ -2966,8 +3001,10 @@ function Inspections({ state, dispatch }) {
     const eq = eqById(schedule.equipmentId);
     if(!task || !eq) { alert("Missing task or equipment for this inspection."); return; }
     const steps = stepLines(task.steps);
+    const iwo = genInspectionWOInfo(eq.id);
     const wo = {
-      id:genInspectionWOId(eq.id),
+      id:iwo.id,
+      inspectionSequence:iwo.sequence,
       woType:"Inspection",
       title:`Inspection - ${task.name}`,
       inspectionTaskName:task.name,
@@ -5553,12 +5590,18 @@ export default function App() {
       if(unit === "years") d.setFullYear(d.getFullYear() + n);
       return d.toISOString().split("T")[0];
     };
-    const genInspectionWOId = (eqId) => {
-      const base = eqId || "EQ";
-      const existing = (state.workOrders || []).filter(w => String(w.id || "").startsWith(`${base}-IWO`));
-      const nums = existing.map(w => parseInt(String(w.id || "").replace(`${base}-IWO`, ""), 10) || 0);
-      const next = nums.length ? Math.max(...nums) + 1 : 1;
-      return `${base}-IWO${String(next).padStart(2,"0")}`;
+    const genInspectionWOInfo = (eqId) => {
+      const base = String(eqId || "EQ").trim() || "EQ";
+      const related = (state.workOrders || []).filter(w =>
+        w.woType === "Inspection" &&
+        String(w.equipment || w.equipmentId || "") === base
+      );
+      const usedNums = related.map(w => {
+        const match = String(w.id || "").match(/-IWO(\d+)$/i);
+        return match ? parseInt(match[1], 10) : (+w.inspectionSequence || 0);
+      }).filter(n => Number.isFinite(n) && n > 0);
+      const next = usedNums.length ? Math.max(...usedNums) + 1 : related.length + 1;
+      return { id:`${base}-IWO${String(next).padStart(2,"0")}`, sequence:next };
     };
     inspections.forEach(schedule => {
       if(!schedule?.nextDueDate || schedule.nextDueDate > todayStr) return;
@@ -5572,9 +5615,11 @@ export default function App() {
       const eq = (state.equipment||[]).find(e => e.id === schedule.equipmentId);
       if(!task || !eq) return;
       const steps = String(task.steps||"").split(/\n+/).map(x=>x.trim()).filter(Boolean);
-      const woId = genInspectionWOId(eq.id);
+      const iwo = genInspectionWOInfo(eq.id);
+      const woId = iwo.id;
       dispatch({ type:"ADD_WO", payload:{
         id:woId,
+        inspectionSequence:iwo.sequence,
         woType:"Inspection",
         title:`Inspection - ${task.name}`,
         inspectionTaskName:task.name,
