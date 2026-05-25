@@ -1190,19 +1190,19 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
     win.document.write(`<!DOCTYPE html><html><head><title>Work Order ${wo.id}</title><style>
       *{box-sizing:border-box;margin:0;padding:0}
-      body{font-family:Arial,sans-serif;background:#fff;color:#111;font-size:11px;line-height:1.3}
+      body{font-family:Arial,sans-serif;background:#fff;color:#111;font-size:13.5px;line-height:1.45}
       .page{width:8.5in;min-height:11in;margin:0 auto;padding:.35in .45in;display:flex;flex-direction:column;gap:6px}
       .hdr{display:flex;align-items:stretch;border:2px solid #1a1a2e;border-radius:3px;overflow:hidden}
       .hdr-logo{width:130px;min-width:130px;background:#fff;display:flex;align-items:center;justify-content:center;padding:6px 10px;border-right:2px solid #1a1a2e}
       .hdr-logo img{max-width:110px;max-height:55px;object-fit:contain}
-      .hdr-logo-text{font-size:11px;font-weight:700;color:#1a1a2e;text-align:center;line-height:1.3}
+      .hdr-logo-text{font-size:13px;font-weight:700;color:#1a1a2e;text-align:center;line-height:1.35}
       .hdr-center{flex:1;background:#1a1a2e;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px}
-      .hdr-company{font-size:14px;font-weight:700;color:#fff;letter-spacing:1px;text-transform:uppercase}
-      .hdr-type{font-size:9px;color:#94a3b8;letter-spacing:2px;text-transform:uppercase;margin-top:2px}
+      .hdr-company{font-size:18px;font-weight:700;color:#fff;letter-spacing:1px;text-transform:uppercase}
+      .hdr-type{font-size:12px;color:#cbd5e1;letter-spacing:1.5px;text-transform:uppercase;margin-top:3px}
       .hdr-right{width:155px;min-width:155px;background:#f0f4ff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px;border-left:2px solid #1a1a2e;text-align:center}
-      .hdr-wol{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#666}
-      .hdr-won{font-size:18px;font-weight:700;color:#1a1a2e;font-family:monospace;letter-spacing:1px}
-      .hdr-status{margin-top:3px;display:inline-block;padding:2px 8px;border-radius:3px;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
+      .hdr-wol{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#666}
+      .hdr-won{font-size:24px;font-weight:700;color:#1a1a2e;font-family:monospace;letter-spacing:1px}
+      .hdr-status{margin-top:5px;display:inline-block;padding:4px 10px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
       .st-open{background:#dbeafe;color:#1e3a8a}.st-in{background:#fef9c3;color:#713f12}
       .st-completed{background:#dcfce7;color:#14532d}.st-on{background:#fee2e2;color:#7f1d1d}
       .row{display:grid;border:1.5px solid #1a1a2e;border-radius:3px;overflow:hidden}
@@ -1211,31 +1211,31 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .eq-info-grid .cell:nth-child(3n){border-right:none}
       .eq-info-grid .cell:nth-child(n+4){border-top:1px solid #c8d0e0}
       .cell{padding:4px 8px;border-right:1px solid #c8d0e0}.cell:last-child{border-right:none}.cell.s2{grid-column:span 2}
-      .lbl{font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#666;margin-bottom:1px}
-      .val{font-size:11px;font-weight:600;color:#111;min-height:14px}.val.mn{font-family:monospace}
+      .lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#555;margin-bottom:3px}
+      .val{font-size:14px;font-weight:600;color:#111;min-height:20px}.val.mn{font-family:monospace}
       .sec{border:1.5px solid #1a1a2e;border-radius:3px;overflow:hidden}
-      .sh{background:#1a1a2e;color:#fff;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;padding:3px 8px}
-      .sb{padding:7px 8px;font-size:11px;color:#111;line-height:1.5;white-space:pre-wrap;min-height:80px}
+      .sh{background:#1a1a2e;color:#fff;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:6px 10px}
+      .sb{padding:10px 12px;font-size:13.5px;color:#111;line-height:1.5;white-space:pre-wrap;min-height:70px}
       .bg{display:grid;grid-template-columns:1fr;gap:6px}
-      .pt{width:100%;border-collapse:collapse;font-size:10px}
-      .pt th{background:#f3f4f6;padding:3px 6px;text-align:left;font-size:8px;text-transform:uppercase;color:#555;font-weight:700}
+      .pt{width:100%;border-collapse:collapse;font-size:13px}
+      .pt th{background:#f3f4f6;padding:7px 8px;text-align:left;font-size:10.5px;text-transform:uppercase;color:#555;font-weight:700}
       .pt td{padding:3px 6px;border-bottom:1px solid #e5e7eb}
       .pt .sub{font-weight:700;background:#f8faff}
       .cs{border-top:2px solid #1a1a2e}
-      .cr{display:flex;justify-content:space-between;padding:3px 8px;border-bottom:1px solid #e5e7eb;font-size:10px}
-      .ct{display:flex;justify-content:space-between;padding:4px 8px;background:#1a1a2e;color:#fff;font-size:11px;font-weight:700}
-      .phi{color:#991b1b;background:#fee2e2;border:1px solid #fca5a5;padding:1px 6px;border-radius:3px;font-size:8px;font-weight:700;text-transform:uppercase}
-      .pmd{color:#92400e;background:#fef3c7;border:1px solid #fcd34d;padding:1px 6px;border-radius:3px;font-size:8px;font-weight:700;text-transform:uppercase}
-      .plo{color:#374151;background:#f3f4f6;border:1px solid #d1d5db;padding:1px 6px;border-radius:3px;font-size:8px;font-weight:700;text-transform:uppercase}
+      .cr{display:flex;justify-content:space-between;padding:6px 10px;border-bottom:1px solid #e5e7eb;font-size:13px}
+      .ct{display:flex;justify-content:space-between;padding:7px 10px;background:#1a1a2e;color:#fff;font-size:14px;font-weight:700}
+      .phi{color:#991b1b;background:#fee2e2;border:1px solid #fca5a5;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
+      .pmd{color:#92400e;background:#fef3c7;border:1px solid #fcd34d;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
+      .plo{color:#374151;background:#f3f4f6;border:1px solid #d1d5db;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
       .sigs{display:grid;grid-template-columns:2fr 1fr;gap:20px;border:1.5px solid #1a1a2e;border-radius:3px;padding:8px 14px;margin-top:4px}
       .sc{display:flex;flex-direction:column;gap:10px}.sw{display:flex;flex-direction:column;gap:3px}
       .sl{border-bottom:1.5px solid #333;height:24px}
-      .slb{font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#555}
-      .ftr{background:#1a1a2e;color:#fff;padding:4px 12px;border-radius:3px;display:flex;justify-content:space-between;font-size:8px}
+      .slb{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#555}
+      .ftr{background:#1a1a2e;color:#fff;padding:7px 12px;border-radius:4px;display:flex;justify-content:space-between;font-size:10.5px}
       .pbtn{margin-top:14px;display:flex;gap:10px;justify-content:center}
       .pbtn button{padding:9px 24px;font-size:13px;font-weight:700;border:none;border-radius:6px;cursor:pointer}
       .bpr{background:#1a1a2e;color:#fff}.bpdf{background:#0052cc;color:#fff}
-      @media print{.pbtn{display:none}.page{padding:.3in .4in;gap:5px}body{font-size:10.5px}}
+      @media print{.pbtn{display:none}.page{padding:.35in .45in;gap:8px}body{font-size:13px}}
     </style></head><body>
     <div class="page">
       <div class="hdr">
@@ -1287,10 +1287,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           </div>` : ""}
         </div>` : ""}
       </div>
-      ${printOpt("showFooterText") && ws.footerText?`<div class="sec"><div class="sh">Remarks</div><div class="sb" style="min-height:28px;font-size:10px">${ws.footerText}</div></div>`:""}
+      ${printOpt("showFooterText") && ws.footerText?`<div class="sec"><div class="sh">Remarks</div><div class="sb" style="min-height:36px;font-size:13px">${ws.footerText}</div></div>`:""}
       ${printOpt("showSignature") ? `<div class="sigs">
-        <div class="sc"><div class="sw"><div class="sl"></div><div class="slb">Mechanic Signature</div></div><div class="sw"><div class="sl" style="height:auto;min-height:24px;padding:5px 0;font-size:12px;font-weight:700">${assignedMechanicName||"&nbsp;"}</div><div class="slb">Printed Name</div></div></div>
-        <div class="sc"><div class="sw"><div class="sl" style="height:auto;min-height:24px;padding:5px 0;font-size:12px;font-weight:700">${printedDate}</div><div class="slb">Date</div></div></div>
+        <div class="sc"><div class="sw"><div class="sl"></div><div class="slb">Mechanic Signature</div></div><div class="sw"><div class="sl" style="height:auto;min-height:32px;padding:8px 0;font-size:14px;font-weight:700">${assignedMechanicName||"&nbsp;"}</div><div class="slb">Printed Name</div></div></div>
+        <div class="sc"><div class="sw"><div class="sl" style="height:auto;min-height:32px;padding:8px 0;font-size:14px;font-weight:700">${printedDate}</div><div class="slb">Date</div></div></div>
       </div>` : ""}
       ${printOpt("showFooterBar") ? `<div class="ftr"><span>${companyName} - Maintenance Dept.</span><span>WO# ${wo.id} | ${printedDate}</span></div>` : ""}
     </div>
