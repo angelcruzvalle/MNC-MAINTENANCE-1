@@ -2949,7 +2949,16 @@ function Inspections({ state, dispatch }) {
 
   const saveSchedule = () => {
     if(!scheduleForm.equipmentId || !scheduleForm.taskId) { alert("Choose equipment and an inspection task."); return; }
-    const payload = { ...scheduleForm, id:scheduleForm.id || genId("IS"), created:scheduleForm.created || today(), lastTriggered:scheduleForm.lastTriggered || "" };
+    const selected = taskById(scheduleForm.taskId);
+    const inherited = intervalFromInspectionTask(selected);
+    const payload = {
+      ...scheduleForm,
+      ...inherited,
+      frequency:selected?.frequency || scheduleForm.frequency || "Monthly",
+      id:scheduleForm.id || genId("IS"),
+      created:scheduleForm.created || today(),
+      lastTriggered:scheduleForm.lastTriggered || ""
+    };
     dispatch({ type: scheduleForm.id ? "UPDATE_INSPECTION_SCHEDULE" : "ADD_INSPECTION_SCHEDULE", payload });
     setModal(null);
   };
@@ -2978,6 +2987,16 @@ function Inspections({ state, dispatch }) {
     return d.toISOString().split("T")[0];
   };
 
+  const intervalFromInspectionTask = (task) => {
+    const f = normalizeInspectionFrequency(task?.frequency || "Monthly");
+    if(f === "Daily") return { timeInterval:1, timeUnit:"days" };
+    if(f === "Weekly") return { timeInterval:1, timeUnit:"weeks" };
+    if(f === "Quarterly") return { timeInterval:3, timeUnit:"months" };
+    if(f === "Semi-Annual") return { timeInterval:6, timeUnit:"months" };
+    if(f === "Annual") return { timeInterval:1, timeUnit:"years" };
+    return { timeInterval:1, timeUnit:"months" };
+  };
+
   const genInspectionWOInfo = (eqId) => {
     const base = String(eqId || "EQ").trim() || "EQ";
     const related = (state.workOrders || []).filter(w =>
@@ -2994,14 +3013,35 @@ function Inspections({ state, dispatch }) {
 
   const genInspectionWOId = (eqId) => genInspectionWOInfo(eqId).id;
 
-  const matchesInspectionEvery = (schedule) => {
-    if(inspectionEveryFilter === "All") return true;
+  const normalizeInspectionFrequency = (value) => {
+    const v = String(value || "").toLowerCase().replace(/[^a-z]/g, "");
+    if(v === "daily") return "Daily";
+    if(v === "weekly") return "Weekly";
+    if(v === "monthly") return "Monthly";
+    if(v === "quarterly") return "Quarterly";
+    if(v === "semiannual" || v === "semianual" || v === "biannual" || v === "bianual") return "Semi-Annual";
+    if(v === "annual" || v === "yearly") return "Annual";
+    return "";
+  };
+
+  const scheduleFrequencyLabel = (schedule) => {
+    const task = taskById(schedule.taskId);
+    const fromTask = normalizeInspectionFrequency(task?.frequency || schedule.frequency);
+    if(fromTask) return fromTask;
     const n = Number(schedule.timeInterval || 0);
     const unit = String(schedule.timeUnit || "").toLowerCase();
-    if(inspectionEveryFilter === "1 month") return n === 1 && unit === "months";
-    if(inspectionEveryFilter === "6 months") return n === 6 && unit === "months";
-    if(inspectionEveryFilter === "yearly") return (n === 1 && unit === "years") || (n === 12 && unit === "months");
-    return true;
+    if(n === 1 && unit === "days") return "Daily";
+    if(n === 1 && unit === "weeks") return "Weekly";
+    if(n === 1 && unit === "months") return "Monthly";
+    if(n === 3 && unit === "months") return "Quarterly";
+    if(n === 6 && unit === "months") return "Semi-Annual";
+    if((n === 1 && unit === "years") || (n === 12 && unit === "months")) return "Annual";
+    return `${schedule.timeInterval || "—"} ${schedule.timeUnit || ""}`.trim();
+  };
+
+  const matchesInspectionEvery = (schedule) => {
+    if(inspectionEveryFilter === "All") return true;
+    return scheduleFrequencyLabel(schedule) === inspectionEveryFilter;
   };
 
   const filteredSchedules = [...schedules]
@@ -3047,7 +3087,8 @@ function Inspections({ state, dispatch }) {
       partsUsed:[], labor:[],
     };
     dispatch({ type:"ADD_WO", payload:wo });
-    dispatch({ type:"UPDATE_INSPECTION_SCHEDULE", payload:{ ...schedule, lastTriggered:today(), nextDueDate:nextDateFrom(schedule.nextDueDate || today(), schedule.timeInterval, schedule.timeUnit) } });
+    const inherited = intervalFromInspectionTask(task);
+    dispatch({ type:"UPDATE_INSPECTION_SCHEDULE", payload:{ ...schedule, ...inherited, frequency:task.frequency || schedule.frequency || "Monthly", lastTriggered:today(), nextDueDate:nextDateFrom(schedule.nextDueDate || today(), inherited.timeInterval, inherited.timeUnit) } });
     alert(`Inspection Work Order ${wo.id} created.`);
   };
 
@@ -3120,7 +3161,7 @@ function Inspections({ state, dispatch }) {
 
       <Card title="Inspection Schedule / Triggers" right={<span style={{ fontFamily:T.mono, color:T.muted }}>{filteredSchedules.length} shown / {schedules.length} assigned</span>}>
         <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"end", marginBottom:12 }}>
-          <Field label="Every"><select style={{...inp, minWidth:160}} value={inspectionEveryFilter} onChange={e=>setInspectionEveryFilter(e.target.value)}>{["All","1 month","6 months","yearly"].map(x=><option key={x} value={x}>{x}</option>)}</select></Field>
+          <Field label="Every"><select style={{...inp, minWidth:190}} value={inspectionEveryFilter} onChange={e=>setInspectionEveryFilter(e.target.value)}>{["All","Daily","Weekly","Monthly","Quarterly","Semi-Annual","Annual"].map(x=><option key={x} value={x}>{x}</option>)}</select></Field>
           <Field label="Next Due"><select style={{...inp, minWidth:210}} value={inspectionDueSort} onChange={e=>setInspectionDueSort(e.target.value)}><option value="asc">Next Due Ascending</option><option value="desc">Next Due Descending</option></select></Field>
         </div>
         <div style={{ overflowX:"auto" }}>
@@ -3135,7 +3176,7 @@ function Inspections({ state, dispatch }) {
                   <td style={{ padding:"10px", fontFamily:T.mono }}>{eq?.id || s.equipmentId}</td>
                   <td style={{ padding:"10px" }}>{eq?.name || eq?.nomenclature || "—"}</td>
                   <td style={{ padding:"10px", fontWeight:700 }}>{task?.name || "Missing task"}</td>
-                  <td style={{ padding:"10px" }}>{s.timeInterval} {s.timeUnit}</td>
+                  <td style={{ padding:"10px" }}>{scheduleFrequencyLabel(s)}</td>
                   <td style={{ padding:"10px", fontFamily:T.mono }}>{s.nextDueDate || "—"}</td>
                   <td style={{ padding:"10px", fontFamily:T.mono }}>{s.lastTriggered || "—"}</td>
                   <td style={{ padding:"10px", maxWidth:180, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{s.notes || "—"}</td>
@@ -3175,9 +3216,8 @@ function Inspections({ state, dispatch }) {
           <div style={{ display:"grid", gap:12 }}>
             <Field label="Equipment"><select style={inp} value={scheduleForm.equipmentId} onChange={e=>setScheduleForm(f=>({...f,equipmentId:e.target.value}))}><option value="">Choose equipment...</option>{equipment.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name || e.nomenclature}</option>)}</select></Field>
             <Field label="Inspection Task"><select style={inp} value={scheduleForm.taskId} onChange={e=>setScheduleForm(f=>({...f,taskId:e.target.value}))}><option value="">Choose task...</option>{tasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></Field>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10 }}>
-              <Field label="Every"><input style={inp} type="number" min="1" value={scheduleForm.timeInterval} onChange={e=>setScheduleForm(f=>({...f,timeInterval:e.target.value}))} /></Field>
-              <Field label="Time Unit"><select style={inp} value={scheduleForm.timeUnit} onChange={e=>setScheduleForm(f=>({...f,timeUnit:e.target.value}))}>{["days","weeks","months","years"].map(x=><option key={x}>{x}</option>)}</select></Field>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <Field label="Frequency From Task"><input style={{...inp, background:T.grayLt}} readOnly value={taskById(scheduleForm.taskId)?.frequency || "Choose task first"} /></Field>
               <Field label="Next Due Date"><input style={inp} type="date" value={scheduleForm.nextDueDate} onChange={e=>setScheduleForm(f=>({...f,nextDueDate:e.target.value}))} /></Field>
             </div>
             <Field label="Assignment Notes"><textarea style={{...inp,minHeight:70}} value={scheduleForm.notes||""} onChange={e=>setScheduleForm(f=>({...f,notes:e.target.value}))} placeholder="Optional notes for this equipment assignment" /></Field>
