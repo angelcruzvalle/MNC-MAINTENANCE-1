@@ -1124,8 +1124,16 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       if(!printOpt("showTypeSpecific")) return "";
       if(wo.woType==="Repair") return "";
       if(wo.woType==="Service") return ``;
-      if(wo.woType==="Inspection") return `<div class="sec"><div class="sh">Inspection Work Order Details</div><div class="twocol"><div><b>Result:</b><br>${wo.inspectionResult||"&nbsp;"}</div><div><b>Follow-Up:</b><br>${wo.followUpRequired||"&nbsp;"}</div><div style="grid-column:1/3"><b>Findings:</b><br>${wo.inspectionFindings||"&nbsp;"}</div></div></div>`;
+      if(wo.woType==="Inspection") return ``;
       return "";
+    })();
+    const inspectionChecklistPrint = (() => {
+      if(wo.woType!=="Inspection") return "";
+      const results = Array.isArray(wo.inspectionStepResults) && wo.inspectionStepResults.length
+        ? wo.inspectionStepResults
+        : String(wo.inspectionSteps||wo.workPerformed||"").split(/\n+/).map((step,i)=>({ id:`step-${i}`, step:step.trim(), result:"", comment:"" })).filter(x=>x.step);
+      if(!results.length) return "";
+      return `<div class="sec"><div class="sh">Inspection Checklist</div><table class="pt"><thead><tr><th style="width:55%">Step</th><th style="width:15%">Pass / Fail</th><th style="width:30%">Comment</th></tr></thead><tbody>${results.map((r,i)=>`<tr><td>${i+1}. ${r.step||"&nbsp;"}</td><td style="font-weight:700">${r.result||"&nbsp;"}</td><td>${r.comment||"&nbsp;"}</td></tr>`).join("")}</tbody></table></div>`;
     })();
     const woCsv = rowsToDataUri(woRows);
     const printedDate = wo.completed || "";
@@ -1210,6 +1218,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       </div>` : ""}
       ${printOpt("showFaultDescription") ? `<div class="sec"><div class="sh">Description</div><div class="sb" style="min-height:18px;padding:3px 8px;line-height:1.25">${wo.faultDescription||"&nbsp;"}</div></div>` : ""}
       ${printOpt("showDescription") ? `<div class="sec"><div class="sh">${wo.woType==="Service" ? "Service Description &amp; Work Performed" : "Work Description &amp; Work Performed"}</div><div class="sb">${wo.description||"&nbsp;"}</div></div>` : ""}
+      ${inspectionChecklistPrint}
       ${typeSpecificPrint}
       <div class="bg">
         ${printOpt("showMechanicNotes") ? `<div class="sec"><div class="sh">Mechanic Notes (Write-In)</div><div class="sb" style="min-height:80px">${wo.mechanicNotes||"&nbsp;"}</div></div>` : ""}
@@ -1505,6 +1514,32 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div style={{ minHeight:90, fontFamily:T.sans, fontSize:13, color:wo.description?T.text:T.muted, lineHeight:1.6, fontStyle:wo.description?"normal":"italic" }}>{wo.description||"No work description recorded."}</div>
         </div>
 
+
+        {wo.woType==="Inspection" && (Array.isArray((editMode?form:wo).inspectionStepResults) || (wo.inspectionSteps||wo.workPerformed)) && (
+          <div style={{ border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden", background:"#fff" }}>
+            <div style={{ background:T.text, color:"#fff", padding:"7px 12px", fontFamily:T.sans, fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:.6 }}>Inspection Checklist</div>
+            <div style={{ display:"grid", gap:8, padding:10 }}>
+              {(() => {
+                const source = editMode ? form : wo;
+                const rows = Array.isArray(source.inspectionStepResults) && source.inspectionStepResults.length
+                  ? source.inspectionStepResults
+                  : String(source.inspectionSteps||source.workPerformed||"").split(/\n+/).map((step,i)=>({ id:`step-${i}`, step:step.trim(), result:"", comment:"" })).filter(x=>x.step);
+                const setRow = (idx, changes) => {
+                  const next = rows.map((r,i)=>i===idx?{...r,...changes}:r);
+                  setForm(f=>({...f, inspectionStepResults:next}));
+                };
+                return rows.length===0 ? <div style={{ color:T.muted, fontFamily:T.sans, fontSize:13 }}>No inspection steps recorded.</div> : rows.map((r,i)=>(
+                  <div key={r.id||i} style={{ display:"grid", gridTemplateColumns:"minmax(220px,1fr) 90px 90px minmax(180px,.8fr)", gap:8, alignItems:"center", padding:8, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
+                    <div style={{ fontFamily:T.sans, fontSize:13 }}><b>{i+1}.</b> {r.step}</div>
+                    {editMode ? <button type="button" onClick={()=>setRow(i,{result:"Pass"})} style={{...inp, padding:"7px 10px", background:r.result==="Pass"?"#dcfce7":"#fff", borderColor:r.result==="Pass"?"#16a34a":T.border, fontWeight:700}}>Pass</button> : <span style={{ fontWeight:700, color:r.result==="Pass"?T.green:r.result==="Fail"?T.red:T.muted }}>{r.result||"—"}</span>}
+                    {editMode ? <button type="button" onClick={()=>setRow(i,{result:"Fail"})} style={{...inp, padding:"7px 10px", background:r.result==="Fail"?"#fee2e2":"#fff", borderColor:r.result==="Fail"?"#dc2626":T.border, fontWeight:700}}>Fail</button> : <span/>}
+                    {editMode ? <input style={inp} value={r.comment||""} onChange={e=>setRow(i,{comment:e.target.value})} placeholder="Comment if failed" /> : <span style={{ color:T.subtext }}>{r.comment||"—"}</span>}
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
+        )}
 
 
         {wo.woType==="Service" && (wo.meterReading||wo.nextServiceDue||wo.serviceChecklist) && (
@@ -2801,6 +2836,7 @@ function Inspections({ state, dispatch }) {
   const [taskForm, setTaskForm] = useState({ id:null, name:"", frequency:"Monthly", steps:"", notes:"", attachments:[] });
   const [scheduleForm, setScheduleForm] = useState({ id:null, equipmentId:"", taskId:"", timeInterval:1, timeUnit:"months", nextDueDate:today(), notes:"" });
   const [selectedTask, setSelectedTask] = useState(null);
+  const [showInspectionLibrary, setShowInspectionLibrary] = useState(false);
 
   const taskById = id => tasks.find(t=>t.id===id) || null;
   const eqById = id => equipment.find(e=>e.id===id) || null;
@@ -2824,6 +2860,7 @@ function Inspections({ state, dispatch }) {
     const payload = { ...taskForm, id:taskForm.id || genId("IT"), name:taskForm.name.trim(), attachments:Array.isArray(taskForm.attachments)?taskForm.attachments:[] };
     dispatch({ type: taskForm.id ? "UPDATE_INSPECTION_TASK" : "ADD_INSPECTION_TASK", payload });
     setSelectedTask(payload);
+    setShowInspectionLibrary(true);
     setModal(null);
   };
 
@@ -2878,9 +2915,9 @@ function Inspections({ state, dispatch }) {
       usageReading:"N/A",
       usageType:"N/A",
       faultEnabled:true,
-      faultDescription:`Inspection task: ${task.name}`,
-      problem:`Inspection task: ${task.name}`,
-      description:`Inspection task: ${task.name}`,
+      faultDescription:task.name,
+      problem:task.name,
+      description:task.name,
       workPerformed: task.steps || "",
       mechanicNotes: task.notes || "",
       inspectionTaskId:task.id,
@@ -2900,7 +2937,7 @@ function Inspections({ state, dispatch }) {
     lines[idx] = value;
     setTaskForm(f=>({ ...f, steps:lines.join("\n") }));
   };
-  const addStep = () => setTaskForm(f=>({ ...f, steps:[...stepLines(f.steps), ""].join("\n") }));
+  const addStep = () => setTaskForm(f=>({ ...f, steps:[...stepLines(f.steps), "New inspection step"].join("\n") }));
   const removeStep = (idx) => setTaskForm(f=>({ ...f, steps:stepLines(f.steps).filter((_,i)=>i!==idx).join("\n") }));
 
   return (
@@ -2912,11 +2949,12 @@ function Inspections({ state, dispatch }) {
         </div>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
           <Btn variant="secondary" onClick={()=>openTask()}>+ Inspection Task</Btn>
+          <Btn variant="secondary" onClick={()=>setShowInspectionLibrary(v=>!v)}>Inspection Tasks Library</Btn>
           <Btn onClick={()=>openSchedule()}>Assign Task to Equipment</Btn>
         </div>
       </div>
 
-      <Card title="Inspection Tasks Library" right={<span style={{ fontFamily:T.mono, color:T.muted }}>{tasks.length} tasks</span>}>
+      {showInspectionLibrary && <Card title="Inspection Tasks Library" right={<span style={{ fontFamily:T.mono, color:T.muted }}>{tasks.length} tasks</span>}>
         <div style={{ overflowX:"auto" }}>
           <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:13 }}>
             <thead><tr style={{ background:T.grayLt }}>
@@ -2961,7 +2999,7 @@ function Inspections({ state, dispatch }) {
             <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>{selectedTask.attachments.map(a=><a key={a.id||a.name} href={a.dataUrl||"#"} download={a.name} style={{ color:T.blue, fontSize:13 }}>{a.name}</a>)}</div>
           </div>}
         </div>}
-      </Card>
+      </Card>}
 
       <Card title="Inspection Schedule / Triggers" right={<span style={{ fontFamily:T.mono, color:T.muted }}>{schedules.length} assigned</span>}>
         <div style={{ overflowX:"auto" }}>
@@ -5478,9 +5516,9 @@ export default function App() {
         usageType:"N/A",
         usageNA:true,
         faultEnabled:true,
-        faultDescription:`Inspection task: ${task.name}`,
-        problem:`Inspection task: ${task.name}`,
-        description:`Inspection task: ${task.name}`,
+        faultDescription:task.name,
+        problem:task.name,
+        description:task.name,
         workPerformed: task.steps || "",
         mechanicNotes: task.notes || "",
         inspectionTaskId:task.id,
