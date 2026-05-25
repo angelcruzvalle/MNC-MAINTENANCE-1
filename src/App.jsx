@@ -2876,6 +2876,8 @@ function Inspections({ state, dispatch }) {
   const [scheduleForm, setScheduleForm] = useState({ id:null, equipmentId:"", taskId:"", timeInterval:1, timeUnit:"months", nextDueDate:today(), notes:"" });
   const [selectedTask, setSelectedTask] = useState(null);
   const [showInspectionLibrary, setShowInspectionLibrary] = useState(false);
+  const [inspectionEveryFilter, setInspectionEveryFilter] = useState("All");
+  const [inspectionDueSort, setInspectionDueSort] = useState("asc");
 
   const taskById = id => tasks.find(t=>t.id===id) || null;
   const eqById = id => equipment.find(e=>e.id===id) || null;
@@ -2934,13 +2936,38 @@ function Inspections({ state, dispatch }) {
     return d.toISOString().split("T")[0];
   };
 
+  const genInspectionWOId = (eqId) => {
+    const base = eqId || "EQ";
+    const existing = (state.workOrders || []).filter(w => String(w.id || "").startsWith(`${base}-IWO`));
+    const nums = existing.map(w => parseInt(String(w.id || "").replace(`${base}-IWO`, ""), 10) || 0);
+    const next = nums.length ? Math.max(...nums) + 1 : 1;
+    return `${base}-IWO${String(next).padStart(2,"0")}`;
+  };
+
+  const matchesInspectionEvery = (schedule) => {
+    if(inspectionEveryFilter === "All") return true;
+    const n = Number(schedule.timeInterval || 0);
+    const unit = String(schedule.timeUnit || "").toLowerCase();
+    if(inspectionEveryFilter === "1 month") return n === 1 && unit === "months";
+    if(inspectionEveryFilter === "6 months") return n === 6 && unit === "months";
+    if(inspectionEveryFilter === "yearly") return (n === 1 && unit === "years") || (n === 12 && unit === "months");
+    return true;
+  };
+
+  const filteredSchedules = [...schedules]
+    .filter(matchesInspectionEvery)
+    .sort((a,b)=> inspectionDueSort === "asc"
+      ? String(a.nextDueDate || "9999-12-31").localeCompare(String(b.nextDueDate || "9999-12-31"))
+      : String(b.nextDueDate || "").localeCompare(String(a.nextDueDate || ""))
+    );
+
   const triggerInspection = (schedule) => {
     const task = taskById(schedule.taskId);
     const eq = eqById(schedule.equipmentId);
     if(!task || !eq) { alert("Missing task or equipment for this inspection."); return; }
     const steps = stepLines(task.steps);
     const wo = {
-      id:genId("WO"),
+      id:genInspectionWOId(eq.id),
       woType:"Inspection",
       title:`Inspection - ${task.name}`,
       inspectionTaskName:task.name,
@@ -3039,15 +3066,19 @@ function Inspections({ state, dispatch }) {
         </div>}
       </Card>}
 
-      <Card title="Inspection Schedule / Triggers" right={<span style={{ fontFamily:T.mono, color:T.muted }}>{schedules.length} assigned</span>}>
+      <Card title="Inspection Schedule / Triggers" right={<span style={{ fontFamily:T.mono, color:T.muted }}>{filteredSchedules.length} shown / {schedules.length} assigned</span>}>
+        <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"end", marginBottom:12 }}>
+          <Field label="Every"><select style={{...inp, minWidth:160}} value={inspectionEveryFilter} onChange={e=>setInspectionEveryFilter(e.target.value)}>{["All","1 month","6 months","yearly"].map(x=><option key={x} value={x}>{x}</option>)}</select></Field>
+          <Field label="Next Due"><select style={{...inp, minWidth:210}} value={inspectionDueSort} onChange={e=>setInspectionDueSort(e.target.value)}><option value="asc">Next Due Ascending</option><option value="desc">Next Due Descending</option></select></Field>
+        </div>
         <div style={{ overflowX:"auto" }}>
           <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:13 }}>
             <thead><tr style={{ background:T.grayLt }}>
               {['Equipment #','Nomenclature','Inspection Task','Every','Next Due','Last Triggered','Notes','Actions'].map(h=><th key={h} style={{ textAlign:"left", padding:"10px", borderBottom:`1px solid ${T.border}`, color:T.subtext }}>{h}</th>)}
             </tr></thead>
             <tbody>
-              {schedules.length===0 && <tr><td colSpan="8" style={{ padding:16, color:T.muted }}>No inspection schedules assigned.</td></tr>}
-              {schedules.map(s=>{ const eq=eqById(s.equipmentId); const task=taskById(s.taskId); return (
+              {filteredSchedules.length===0 && <tr><td colSpan="8" style={{ padding:16, color:T.muted }}>No inspection schedules match this filter.</td></tr>}
+              {filteredSchedules.map(s=>{ const eq=eqById(s.equipmentId); const task=taskById(s.taskId); return (
                 <tr key={s.id} style={{ borderBottom:`1px solid ${T.border}` }}>
                   <td style={{ padding:"10px", fontFamily:T.mono }}>{eq?.id || s.equipmentId}</td>
                   <td style={{ padding:"10px" }}>{eq?.name || eq?.nomenclature || "—"}</td>
@@ -5522,6 +5553,13 @@ export default function App() {
       if(unit === "years") d.setFullYear(d.getFullYear() + n);
       return d.toISOString().split("T")[0];
     };
+    const genInspectionWOId = (eqId) => {
+      const base = eqId || "EQ";
+      const existing = (state.workOrders || []).filter(w => String(w.id || "").startsWith(`${base}-IWO`));
+      const nums = existing.map(w => parseInt(String(w.id || "").replace(`${base}-IWO`, ""), 10) || 0);
+      const next = nums.length ? Math.max(...nums) + 1 : 1;
+      return `${base}-IWO${String(next).padStart(2,"0")}`;
+    };
     inspections.forEach(schedule => {
       if(!schedule?.nextDueDate || schedule.nextDueDate > todayStr) return;
       const alreadyOpen = (state.workOrders||[]).some(w =>
@@ -5534,7 +5572,7 @@ export default function App() {
       const eq = (state.equipment||[]).find(e => e.id === schedule.equipmentId);
       if(!task || !eq) return;
       const steps = String(task.steps||"").split(/\n+/).map(x=>x.trim()).filter(Boolean);
-      const woId = genId("WO");
+      const woId = genInspectionWOId(eq.id);
       dispatch({ type:"ADD_WO", payload:{
         id:woId,
         woType:"Inspection",
