@@ -1114,7 +1114,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const newParts  = (form.partsUsed||[]);
     const partsTotal = newParts.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
     if(isEdit) {
-      dispatch({type:"UPDATE_WO", payload:{...form, woType:form.woType||"Repair", title:form.faultDescription||form.woType||"Work Order", faultEnabled:true, partsCost:partsTotal}});
+      const payload = {...form, woType:form.woType||"Repair", title:form.faultDescription||form.woType||"Work Order", faultEnabled:true, partsCost:partsTotal};
+      if(prevWO && payload.status !== prevWO.status && !confirmWOStatusChange(prevWO, payload.status)) return;
+      dispatch({type:"UPDATE_WO", payload});
     } else {
       dispatch({type:"ADD_WO", payload:{...form, woType:"Repair", title:form.faultDescription||"Repair", faultEnabled:true, id:genWOId(form.equipment), partsCost:partsTotal}});
     }
@@ -1124,8 +1126,22 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const del = id => { if(confirm("Delete this work order?")){ dispatch({type:"DELETE_WO",payload:id}); setModal(null); setDetailWO(null); }};
 
+  const confirmWOStatusChange = (wo, nextStatus) => {
+    const currentStatus = wo?.status || "Open";
+    if(currentStatus === nextStatus) return true;
+    const woLabel = wo?.id || wo?.woNumber || "this work order";
+    if(nextStatus === "Completed") {
+      return confirm(`Close ${woLabel}?\n\nThis will mark the work order completed, set the equipment back to Fully Operational, and consume any parts listed on the work order from inventory.`);
+    }
+    if(currentStatus === "Completed" && nextStatus !== "Completed") {
+      return confirm(`Re-open ${woLabel}?\n\nAny parts previously consumed by this work order will be restocked until the work order is closed again.`);
+    }
+    return true;
+  };
+
   const quickUpdateWO = (wo, changes) => {
     const nextStatus = changes.status || wo.status || "Open";
+    if(changes.status && !confirmWOStatusChange(wo, nextStatus)) return;
     const next = {
       ...wo,
       ...changes,
@@ -1530,6 +1546,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const isCompleted = wo.status==="Completed";
 
     const completeWO = () => {
+      if(!confirmWOStatusChange(wo, "Completed")) return;
       const completedDate = today();
       const updated = { ...wo, status:"Completed", equipmentStatus:"Fully Operational", completed:completedDate };
       dispatch({ type:"UPDATE_WO", payload:updated });
@@ -1561,7 +1578,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             <Btn small variant="secondary" onClick={()=>printWO(wo)}>Print</Btn>
             <Btn small variant="danger" onClick={()=>del(wo.id)}>Delete</Btn>
             {!isCompleted && !editMode && <Btn small onClick={()=>setEditMode(true)} style={{ background:"#1e40af", borderColor:"#1e40af" }}>Update Work Order</Btn>}
-            {!isCompleted && editMode && <Btn small onClick={()=>{ dispatch({ type:"UPDATE_WO", payload:{ ...wo, ...form } }); setEditMode(false); setDetailWO({ ...wo, ...form }); }} style={{ background:T.green, borderColor:T.green }}>Save Changes</Btn>}
+            {!isCompleted && editMode && <Btn small onClick={()=>{ const payload={ ...wo, ...form }; if(payload.status!==wo.status && !confirmWOStatusChange(wo, payload.status)) return; dispatch({ type:"UPDATE_WO", payload }); setEditMode(false); setDetailWO(payload); }} style={{ background:T.green, borderColor:T.green }}>Save Changes</Btn>}
             {!isCompleted && editMode && <Btn small variant="secondary" onClick={()=>{ setEditMode(false); setForm({...wo, partsUsed:wo.partsUsed||[]}); }}>Cancel Edit</Btn>}
             {!isCompleted && !editMode && <Btn small onClick={completeWO} style={{ background:T.green, borderColor:T.green }}>Complete Work Order</Btn>}
             <Btn small variant="danger" onClick={()=>del(wo.id)}>Delete</Btn>
