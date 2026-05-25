@@ -2289,6 +2289,24 @@ function Equipment({ state, dispatch }) {
       return wo.usageHours ? `${wo.usageHours} hrs` : (wo.usageMileage ? `${wo.usageMileage} mi` : "—");
     };
     const historyLabel = (wo, fallback) => wo.title || wo.faultDescription || wo.description || wo.problem || fallback;
+    const getInspectionRowsForWO = (wo) => {
+      const raw = Array.isArray(wo.inspectionStepResults) && wo.inspectionStepResults.length
+        ? wo.inspectionStepResults
+        : Array.isArray(wo.inspectionSteps)
+          ? wo.inspectionSteps
+          : Array.isArray(wo.steps)
+            ? wo.steps
+            : String(wo.inspectionSteps || wo.steps || wo.workPerformed || "")
+                .split(/\n+/)
+                .map((step,i)=>({ id:`step-${i}`, step:step.trim(), result:"", comment:"" }))
+                .filter(x=>x.step);
+      return raw.map((r,i)=>({
+        id: r.id || `step-${i}`,
+        step: r.step || r.text || r.name || String(r || ""),
+        result: r.result || r.status || "",
+        comment: r.comment || r.notes || ""
+      })).filter(r=>String(r.step||"").trim());
+    };
     const renderHistoryTable = (rows, emptyText, fallbackTitle) => (
       rows.length===0
         ? <p style={{ margin:"0 0 12px", fontFamily:T.sans, fontSize:13, color:T.muted }}>{emptyText}</p>
@@ -2325,48 +2343,65 @@ function Equipment({ state, dispatch }) {
           <Modal title={`${historyEdit ? "Edit" : "View"} Work Order ${historyWO.id || ""}`} onClose={closeHistoryWO}>
             {!historyEdit ? (
               <div style={{ fontFamily:T.sans, color:T.text }}>
-                <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginBottom:14 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginBottom:14, alignItems:"flex-start" }}>
                   <div>
                     <div style={{ fontFamily:T.mono, fontSize:12, color:T.muted }}>{historyWO.woType || historyWO.type || "Work Order"}</div>
-                    <div style={{ fontSize:18, fontWeight:800 }}>{historyLabel(historyWO, "Work Order")}</div>
+                    <div style={{ fontSize:18, fontWeight:800 }}>{historyWO.id || "Work Order"}</div>
                   </div>
                   <Btn small onClick={()=>setHistoryEdit(true)}>✏ Edit</Btn>
                 </div>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
-                  {[
-                    ["Status", historyWO.status],
-                    ["Created", historyWO.created],
-                    ["Due", historyWO.due],
-                    ["Completed", historyWO.completed || historyWO.closedDate],
-                    ["Usage", historyUsage(historyWO)],
-                    ["Cost", `$${historyCost(historyWO)}`],
-                  ].map(([k,v])=>(
-                    <div key={k} style={{ background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 12px" }}>
-                      <div style={{ fontSize:10, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div>
-                      <div style={{ marginTop:3, fontSize:13, color:T.text }}>{v || "—"}</div>
+                <div style={{ border:`2px solid ${T.text}`, borderRadius:8, overflow:"hidden", background:"#fff" }}>
+                  <div style={{ background:T.text, color:"#fff", padding:"10px 14px", display:"flex", justifyContent:"space-between", gap:12, alignItems:"center" }}>
+                    <div>
+                      <div style={{ fontSize:17, fontWeight:900, textTransform:"uppercase", letterSpacing:.4 }}>{historyWO.woType || historyWO.type || "Work Order"}</div>
+                      <div style={{ fontFamily:T.mono, fontSize:12, opacity:.9 }}>{historyWO.id}</div>
                     </div>
-                  ))}
-                </div>
-                <div style={{ marginBottom:12 }}>
-                  <div style={{ fontSize:11, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Description</div>
-                  <div style={{ whiteSpace:"pre-wrap", border:`1px solid ${T.border}`, borderRadius:8, padding:10, minHeight:44 }}>{historyWO.description || historyWO.faultDescription || historyWO.problem || "—"}</div>
-                </div>
-                <div style={{ marginBottom:12 }}>
-                  <div style={{ fontSize:11, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Work Performed / Mechanic Notes</div>
-                  <div style={{ whiteSpace:"pre-wrap", border:`1px solid ${T.border}`, borderRadius:8, padding:10, minHeight:44 }}>{historyWO.mechanicNotes || historyWO.workPerformed || historyWO.correctiveAction || "—"}</div>
-                </div>
-                {(historyWO.partsUsed||[]).length>0 && (
-                  <div style={{ marginBottom:12 }}>
-                    <div style={{ fontSize:11, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Parts</div>
-                    {(historyWO.partsUsed||[]).map((p,i)=><div key={i} style={{ fontSize:13, padding:"4px 0" }}>{p.name || p.partName || "Part"} · Qty {p.qty || 1} · ${p.unitCost || 0}</div>)}
+                    <div style={{ textAlign:"right", fontSize:12 }}>
+                      <div><b>Status:</b> {historyWO.status || "—"}</div>
+                      <div><b>Completed:</b> {historyWO.completed || historyWO.closedDate || "—"}</div>
+                    </div>
                   </div>
-                )}
-                {(historyWO.inspectionSteps||historyWO.steps||[]).length>0 && (
-                  <div>
-                    <div style={{ fontSize:11, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Inspection Steps</div>
-                    {(historyWO.inspectionSteps||historyWO.steps||[]).map((s,i)=><div key={i} style={{ fontSize:13, padding:"6px 0", borderBottom:`1px solid ${T.border}` }}>{i+1}. {s.text || s.step || s.name || s} {s.result?`— ${s.result}`:""} {s.comment?`— ${s.comment}`:""}</div>)}
+                  <div style={{ padding:14 }}>
+                    <div style={{ display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:10, marginBottom:14 }}>
+                      {[
+                        ["Created", historyWO.created],
+                        ["Due", historyWO.due],
+                        ["Usage", historyUsage(historyWO)],
+                        ["Cost", `$${historyCost(historyWO)}`],
+                        ["Equipment", eq?.name || historyWO.equipment],
+                        ["Type", historyWO.woType || historyWO.type],
+                      ].map(([k,v])=>(
+                        <div key={k} style={{ border:`1px solid ${T.border}`, borderRadius:6, padding:"8px 10px" }}>
+                          <div style={{ fontSize:10, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div>
+                          <div style={{ marginTop:3, fontSize:13, color:T.text }}>{v || "—"}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{ marginBottom:12 }}>
+                      <div style={{ fontSize:11, fontWeight:900, color:T.text, textTransform:"uppercase", letterSpacing:.5, marginBottom:5 }}>Description</div>
+                      <div style={{ whiteSpace:"pre-wrap", border:`1px solid ${T.border}`, borderRadius:6, padding:10, minHeight:42 }}>{historyWO.description || historyWO.faultDescription || historyWO.problem || historyLabel(historyWO, "—")}</div>
+                    </div>
+                    <div style={{ marginBottom:12 }}>
+                      <div style={{ fontSize:11, fontWeight:900, color:T.text, textTransform:"uppercase", letterSpacing:.5, marginBottom:5 }}>Work Performed / Mechanic Notes</div>
+                      <div style={{ whiteSpace:"pre-wrap", border:`1px solid ${T.border}`, borderRadius:6, padding:10, minHeight:42 }}>{historyWO.mechanicNotes || historyWO.workPerformed || historyWO.correctiveAction || "—"}</div>
+                    </div>
+                    {(historyWO.partsUsed||[]).length>0 && (
+                      <div style={{ marginBottom:12 }}>
+                        <div style={{ fontSize:11, fontWeight:900, color:T.text, textTransform:"uppercase", letterSpacing:.5, marginBottom:5 }}>Parts</div>
+                        {(historyWO.partsUsed||[]).map((p,i)=><div key={i} style={{ fontSize:13, padding:"4px 0", borderBottom:`1px solid ${T.border}` }}>{p.name || p.partName || "Part"} · Qty {p.qty || 1} · ${p.unitCost || 0}</div>)}
+                      </div>
+                    )}
+                    {getInspectionRowsForWO(historyWO).length>0 && (
+                      <div>
+                        <div style={{ fontSize:11, fontWeight:900, color:T.text, textTransform:"uppercase", letterSpacing:.5, marginBottom:5 }}>Inspection Checklist</div>
+                        <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
+                          <thead><tr style={{ background:T.grayLt }}><th style={{ textAlign:"left", padding:8, border:`1px solid ${T.border}` }}>Step</th><th style={{ textAlign:"left", padding:8, border:`1px solid ${T.border}`, width:110 }}>Result</th><th style={{ textAlign:"left", padding:8, border:`1px solid ${T.border}` }}>Comment</th></tr></thead>
+                          <tbody>{getInspectionRowsForWO(historyWO).map((s,i)=><tr key={s.id||i}><td style={{ padding:8, border:`1px solid ${T.border}` }}>{i+1}. {s.step}</td><td style={{ padding:8, border:`1px solid ${T.border}`, fontWeight:800, color:s.result==="Pass"?T.green:s.result==="Fail"?T.red:T.muted }}>{s.result || "—"}</td><td style={{ padding:8, border:`1px solid ${T.border}` }}>{s.comment || "—"}</td></tr>)}</tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
             ) : (
               <div style={{ fontFamily:T.sans }}>
@@ -4966,18 +5001,32 @@ function ReportDeadline({ state }) {
   const oos  = state.equipment.filter(e=>e.status==="Out of Service / Deadline");
   const def  = state.equipment.filter(e=>e.status==="Operational with Deficiencies");
   const openWO = (eqId) => state.workOrders.filter(w=>w.equipment===eqId && w.status!=="Completed");
-  const exportRows = [...oos.map(eq=>({Status:"Out of Service / Deadline", "Equip #":eq.id, Nomenclature:eq.name, "Fault Date":eq.faultDate||"", "Description":eq.faultDescription||"", "Open Work Orders":openWO(eq.id).map(w=>`${w.id} (${w.status})`).join(", ")})), ...def.map(eq=>({Status:"Operational with Deficiencies", "Equip #":eq.id, Nomenclature:eq.name, "Fault Date":eq.faultDate||"", "Description":eq.faultDescription||"", "Open Work Orders":openWO(eq.id).map(w=>`${w.id} (${w.status})`).join(", ")}))];
+  const woText = (w) => w.faultDescription || w.description || w.problem || w.title || "";
+  const eqReportData = (eq) => {
+    const wos = openWO(eq.id);
+    const primary = wos.find(w=>woText(w)) || wos[0] || {};
+    return {
+      faultDate: eq.faultDate || primary.faultDate || primary.created || primary.due || "",
+      description: eq.faultDescription || woText(primary) || "",
+      workOrders: wos.map(w=>`${w.id} (${w.status})`).join(", ")
+    };
+  };
+  const exportRows = [
+    ...oos.map(eq=>{ const d=eqReportData(eq); return {Status:"Out of Service / Deadline", "Equip #":eq.id, Nomenclature:eq.name, "Fault Date":d.faultDate, Description:d.description, "Open Work Orders":d.workOrders}; }),
+    ...def.map(eq=>{ const d=eqReportData(eq); return {Status:"Operational with Deficiencies", "Equip #":eq.id, Nomenclature:eq.name, "Fault Date":d.faultDate, Description:d.description, "Open Work Orders":d.workOrders}; })
+  ];
 
   const printReport = () => {
     const win = window.open("","_blank","width=1100,height=760");
     if(!win) return;
     const rows = (list,color) => list.map(eq=>{
       const wos = openWO(eq.id);
+      const d = eqReportData(eq);
       return `<tr style="background:${color}">
         <td class="equip">${eq.id}</td>
         <td class="nomenclature"><b>${eq.name}</b></td>
-        <td class="faultDate">${eq.faultDate||"—"}</td>
-        <td class="description">${eq.faultDescription||"—"}</td>
+        <td class="faultDate">${d.faultDate||"—"}</td>
+        <td class="description">${d.description||"—"}</td>
         <td class="workOrders">${wos.length>0?wos.map(w=>`${w.id} (${w.status})`).join(", "):"No open WOs"}</td>
       </tr>`;
     }).join("");
@@ -5030,13 +5079,14 @@ function ReportDeadline({ state }) {
           {list.length===0 ? <Card><div style={{ padding:"16px 0", textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13 }}>None</div></Card> :
           list.map(eq=>{
             const wos = openWO(eq.id);
+            const d = eqReportData(eq);
             return (
               <div key={eq.id} style={{ background:bg, border:`1px solid ${T.border}`, borderLeft:leftBorder, borderRadius:8, padding:"12px 18px", marginBottom:8, boxShadow:T.shadow }}>
                 <div style={{ display:"grid", gridTemplateColumns:"120px 1.3fr 130px 1.7fr 170px", gap:16, flexWrap:"wrap" }}>
                   <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Equip #</div><div style={{ fontFamily:T.mono, fontSize:12, fontWeight:700, color:T.text, marginTop:2 }}>{eq.id}</div></div>
                   <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Nomenclature</div><div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginTop:2 }}>{eq.name}</div></div>
-                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Fault Date</div><div style={{ fontFamily:T.mono, fontSize:12, color, fontWeight:700, marginTop:2 }}>{eq.faultDate||"—"}</div></div>
-                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Description</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.text, marginTop:2 }}>{eq.faultDescription||"—"}</div></div>
+                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Fault Date</div><div style={{ fontFamily:T.mono, fontSize:12, color, fontWeight:700, marginTop:2 }}>{d.faultDate||"—"}</div></div>
+                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Description</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.text, marginTop:2 }}>{d.description||"—"}</div></div>
                 </div>
                 {wos.length>0 && (
                   <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${T.border}` }}>
