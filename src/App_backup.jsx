@@ -54,20 +54,9 @@ function reducer(state, { type, payload }) {
   switch(type) {
     case "READ_NOTIF":    return { ...state, notifications: state.notifications.map(n => n.id===payload ? {...n,read:true} : n) };
     case "READ_ALL":      return { ...state, notifications: state.notifications.map(n => ({...n,read:true})) };
-    case "ADD_WO": {
-      const equipmentStatus = payload.status==="Completed" ? "Fully Operational" : (payload.equipmentStatus || null);
-      const equipment = equipmentStatus
-        ? state.equipment.map(e => e.id===payload.equipment ? { ...e, status:equipmentStatus } : e)
-        : state.equipment;
-      return { ...state, equipment, workOrders: [payload,...state.workOrders], notifications:[{id:`N${Date.now()}`,type:"wo",msg:`Work Order ${payload.id} created`,time:"Just now",read:false},...state.notifications] };
-    }
+    case "ADD_WO":        return { ...state, workOrders: [payload,...state.workOrders], notifications:[{id:`N${Date.now()}`,type:"wo",msg:`Work Order ${payload.id} created`,time:"Just now",read:false},...state.notifications] };
     case "UPDATE_WO": {
-      const payloadWithStatus = payload.status==="Completed" ? { ...payload, equipmentStatus:"Fully Operational" } : payload;
-      const updated = state.workOrders.map(w => w.id===payload.id ? payloadWithStatus : w);
-      const equipmentStatus = payloadWithStatus.equipmentStatus || null;
-      const equipment = equipmentStatus
-        ? state.equipment.map(e => e.id===payloadWithStatus.equipment ? { ...e, status:equipmentStatus } : e)
-        : state.equipment;
+      const updated = state.workOrders.map(w => w.id===payload.id ? payload : w);
       /* If WO is being completed and is linked to a PM schedule, advance the schedule */
       if(payload.status==="Completed" && payload.scheduleId) {
         const sch = (state.pmSchedules||[]).find(s=>s.id===payload.scheduleId);
@@ -80,10 +69,10 @@ function reducer(state, { type, payload }) {
             nextDueDate: sch.timeInterval ? (() => { const d=new Date(payload.completed||new Date()); if(sch.timeUnit==="days")d.setDate(d.getDate()+(+sch.timeInterval)); if(sch.timeUnit==="weeks")d.setDate(d.getDate()+(+sch.timeInterval)*7); if(sch.timeUnit==="months")d.setMonth(d.getMonth()+(+sch.timeInterval)); if(sch.timeUnit==="years")d.setFullYear(d.getFullYear()+(+sch.timeInterval)); return d.toISOString().split("T")[0]; })() : sch.nextDueDate,
             nextDueUsage: sch.usageInterval ? curU+(+sch.usageInterval) : sch.nextDueUsage,
           };
-          return { ...state, equipment, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
+          return { ...state, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
         }
       }
-      return { ...state, equipment, workOrders: updated };
+      return { ...state, workOrders: updated };
     }
     case "DELETE_WO":     return { ...state, workOrders: state.workOrders.filter(w => w.id!==payload) };
     case "ADD_EQ":        return { ...state, equipment: [payload,...state.equipment] };
@@ -124,137 +113,6 @@ function reducer(state, { type, payload }) {
 
 const genId = p => `${p}-${String(Date.now()).slice(-5)}`;
 const today = () => new Date().toISOString().split("T")[0];
-
-
-const csvEscape = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
-const downloadCSV = (filename, rows=[]) => {
-  if(!rows.length){ alert("No data available to export."); return; }
-  const headers = Object.keys(rows[0]);
-  const csv = [headers.map(csvEscape).join(","), ...rows.map(r=>headers.map(h=>csvEscape(r[h])).join(","))].join("\n");
-  const blob = new Blob([csv], { type:"text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename.endsWith(".csv") ? filename : `${filename}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-};
-const rowsToDataUri = rows => {
-  if(!rows?.length) return "";
-  const headers = Object.keys(rows[0]);
-  const csv = [headers.map(csvEscape).join(","), ...rows.map(r=>headers.map(h=>csvEscape(r[h])).join(","))].join("\n");
-  return `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`;
-};
-
-function printCustomizePanelHtml() {
-  return `<details class="print-customize" open style="margin:14px auto;max-width:900px;border:1px solid #cbd5e1;border-radius:10px;padding:10px 12px;background:#f8fafc;font-family:Arial,sans-serif">
-    <summary style="cursor:pointer;font-weight:800;color:#111827">Customize what prints</summary>
-    <div style="font-size:12px;color:#475569;margin:6px 0 10px">Turn sections or table columns on/off before printing or saving as PDF.</div>
-    <div id="printSectionToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px;margin-bottom:10px"></div>
-    <div id="printColumnToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px"></div>
-    <button onclick="window.print()" style="margin-top:10px;padding:8px 18px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer">Print Selected Layout</button>
-  </details>
-  <style>@media print{.print-customize,.pbtn{display:none!important}}</style>
-  <script>
-  (function(){
-    function clean(txt){ return (txt||'').replace(/\s+/g,' ').trim(); }
-    function addToggle(container, label, checked, onChange){
-      if(!container || !label) return;
-      var wrap=document.createElement('label');
-      wrap.style.cssText='display:flex;align-items:center;gap:7px;font-size:12px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:7px 9px;cursor:pointer';
-      var cb=document.createElement('input'); cb.type='checkbox'; cb.checked=checked!==false;
-      cb.onchange=function(){ onChange(cb.checked); };
-      var span=document.createElement('span'); span.textContent=label; span.style.fontWeight='700';
-      wrap.appendChild(cb); wrap.appendChild(span); container.appendChild(wrap);
-    }
-    function sectionLabel(el, i){
-      if(el.classList.contains('hdr')) return 'Header';
-      if(el.classList.contains('sigs')) return 'Mechanic Signature Block';
-      if(el.classList.contains('ftr')) return 'Footer Bar';
-      if(el.classList.contains('row')) return 'Dates / Status Row';
-      var h=el.querySelector('.sh,h1,h2,h3');
-      return clean(h && h.textContent) || ('Section '+(i+1));
-    }
-    function setup(){
-      var secBox=document.getElementById('printSectionToggles');
-      var colBox=document.getElementById('printColumnToggles');
-      var sections=Array.from(document.querySelectorAll('.page .hdr,.page .row,.page .sec,.page .sigs,.page .ftr, body > h1, body > h2')).filter(function(el){ return !el.closest('.print-customize,.pbtn'); });
-      var seen={};
-      sections.forEach(function(el,i){
-        var label=sectionLabel(el,i);
-        var key=label+'-'+i;
-        if(seen[key]) return; seen[key]=true;
-        addToggle(secBox,label,true,function(show){ el.style.display=show?'':'none'; });
-      });
-      var tables=Array.from(document.querySelectorAll('table')).filter(function(t){ return !t.closest('.print-customize'); });
-      tables.forEach(function(table,tIndex){
-        var headers=Array.from(table.querySelectorAll('thead th'));
-        if(!headers.length){ headers=Array.from(table.querySelectorAll('tr:first-child th, tr:first-child td')); }
-        headers.forEach(function(th,idx){
-          var label=clean(th.textContent) || ('Column '+(idx+1));
-          var prefix=tables.length>1 ? 'Table '+(tIndex+1)+': ' : 'Column: ';
-          addToggle(colBox,prefix+label,true,function(show){
-            Array.from(table.rows).forEach(function(row){ if(row.cells[idx]) row.cells[idx].style.display=show?'':'none'; });
-          });
-        });
-      });
-      if(secBox && !secBox.children.length) secBox.innerHTML='<div style="font-size:12px;color:#64748b">No separate sections detected.</div>';
-      if(colBox && !colBox.children.length) colBox.innerHTML='<div style="font-size:12px;color:#64748b">No table columns detected.</div>';
-    }
-    if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', setup); else setup();
-  })();
-  <\/script>`;
-}
-
-const reportButtonsHtml = (rows=[], title="report") => {
-  const dataUri = rowsToDataUri(rows);
-  const safeTitle = String(title || "report").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"") || "report";
-  const wordHtml = `<!doctype html><html><head><meta charset="utf-8"><title>${safeTitle}</title></head><body>${document?.body?.innerHTML || ""}</body></html>`;
-  const wordUri = `data:application/msword;charset=utf-8,${encodeURIComponent(wordHtml)}`;
-  return `<br><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-    <button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
-    ${dataUri ? `<a href="${dataUri}" download="${safeTitle}.csv" style="padding:8px 20px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;text-decoration:none;font-family:Arial,sans-serif;font-size:13px">Download Excel CSV</a>` : ""}
-    <a href="${wordUri}" download="${safeTitle}.doc" style="padding:8px 20px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;text-decoration:none;font-family:Arial,sans-serif;font-size:13px">Download Word</a>
-  </div>${printCustomizePanelHtml()}`;
-};
-
-
-const getInputHistory = (fieldKey) => {
-  try { return JSON.parse(localStorage.getItem(`winMaintInputHistory:${fieldKey}`) || "[]"); }
-  catch { return []; }
-};
-const saveInputHistory = (fieldKey, value) => {
-  const v = String(value || "").trim();
-  if(!v) return;
-  try {
-    const existing = getInputHistory(fieldKey).filter(x => x.toLowerCase() !== v.toLowerCase());
-    localStorage.setItem(`winMaintInputHistory:${fieldKey}`, JSON.stringify([v, ...existing].slice(0, 30)));
-  } catch {}
-};
-function SmartInput({ historyKey, value, onChange, onBlur, listId, extraOptions=[], ...props }) {
-  const key = historyKey || props.name || props.placeholder || "general";
-  const dlId = listId || `history-${key.replace(/[^a-z0-9_-]/gi, "-")}`;
-  const [history, setHistory] = useState(()=>getInputHistory(key));
-  const remember = (val) => {
-    saveInputHistory(key, val);
-    setHistory(getInputHistory(key));
-  };
-  return (
-    <>
-      <input
-        {...props}
-        list={dlId}
-        value={value || ""}
-        onChange={onChange}
-        onBlur={(e)=>{ remember(e.target.value); onBlur?.(e); }}
-        onKeyDown={(e)=>{ if(e.key === "Enter") remember(e.currentTarget.value); props.onKeyDown?.(e); }}
-      />
-      <datalist id={dlId}>{[...new Set([...(extraOptions||[]), ...history])].map(v=><option key={v} value={v} />)}</datalist>
-    </>
-  );
-}
 
 /* -- STATUS STYLES -- */
 const statusStyle = {
@@ -568,245 +426,259 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
 
 /* DASHBOARD */
 
-function Dashboard({ state, dispatch, setTab, onSettings }) {
-  const { workOrders:wos=[], equipment:eqs=[], preventiveMaintenance:pms=[], parts=[] } = state;
-  const settings = state.settings || {};
+function Dashboard({ state, setTab }) {
+  const { workOrders:wos, equipment:eqs, preventiveMaintenance:pms, parts } = state;
   const today_s = today();
-  const monthKey = today_s.slice(0,7);
-  const openWOs = wos.filter(w=>w.status==="Open").length;
-  const inProgWOs = wos.filter(w=>w.status==="In Progress").length;
-  const awaitParts = wos.filter(w=>w.status==="Awaiting Parts").length;
-  const onHoldWOs = wos.filter(w=>w.status==="On Hold").length;
-  const activeWOs = wos.filter(w=>w.status!=="Completed").length;
-  const highPriority = wos.filter(w=>w.status!=="Completed" && w.priority==="High").length;
-  const completedMo = wos.filter(w=>w.status==="Completed" && (w.completed||"").slice(0,7)===monthKey).length;
-  const outOfSvc = eqs.filter(e=>e.status==="Out of Service / Deadline").length;
-  const withDefic = eqs.filter(e=>e.status==="Operational with Deficiencies").length;
-  const readyAssets = Math.max(0, eqs.length - outOfSvc - withDefic);
-  const readiness = eqs.length ? Math.round((readyAssets / eqs.length) * 100) : 100;
-  const pmOverdue = pms.filter(p=>p.status==="Overdue").length;
-  const pmDueSoon = pms.filter(p=>p.status==="Due Soon").length;
-  const lowStock = parts.filter(p=>p.lowStockAlert!==false && (+p.qty||0)<=(+p.minQty||0)).length;
-  const totalCost = w => (+w.laborCost||0)+(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0))+(+w.partsCost||0);
-  const spendMo = wos.filter(w=>w.status==="Completed" && (w.completed||"").slice(0,7)===monthKey).reduce((s,w)=>s+totalCost(w),0);
-  const urgentWOs = wos.filter(w=>w.status!=="Completed").sort((a,b)=>({High:0,Medium:1,Low:2}[a.priority]??3)-({High:0,Medium:1,Low:2}[b.priority]??3)).slice(0,5);
-  const servicesDue = pms.filter(p=>p.status==="Overdue"||p.status==="Due Soon").map(pm=>({...pm, eqName:eqs.find(e=>e.id===pm.equipment)?.name||pm.equipment})).sort((a,b)=>(a.nextDue||"").localeCompare(b.nextDue||"")).slice(0,5);
-  const deadlineEqs = eqs.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies").slice(0,5);
-  const criticalParts = parts.filter(p=>p.lowStockAlert!==false && (+p.qty||0)<=(+p.minQty||0)).slice(0,5);
-  const recentWOs = [...wos].sort((a,b)=>(b.created||"").localeCompare(a.created||"")).slice(0,5);
 
-  const [customize, setCustomize] = useState(false);
-  const defaultLayout = ["focus","today","workorders","pm","equipment","inventory","activity","costs"];
-  const presetMap = {
-    calm:{ label:"Calm Operations", layout:["focus","today","workorders","pm","equipment","inventory","activity","costs"], hidden:[], sizes:{ focus:"hero", today:"wide", workorders:"large", pm:"large", equipment:"large", inventory:"medium", activity:"wide", costs:"medium" } },
-    mechanic:{ label:"Mechanic Daily Board", layout:["today","focus","workorders","pm","inventory","equipment","activity","costs"], hidden:["costs"], sizes:{ today:"hero", focus:"wide", workorders:"large", pm:"large", inventory:"medium", equipment:"medium", activity:"wide" } },
-    manager:{ label:"Manager Console", layout:["focus","costs","equipment","workorders","pm","inventory","activity","today"], hidden:[], sizes:{ focus:"wide", costs:"large", equipment:"large", workorders:"medium", pm:"medium", inventory:"medium", activity:"wide", today:"medium" } },
-    simple:{ label:"Simple Clean", layout:["today","workorders","pm","equipment","inventory","activity","focus","costs"], hidden:[], sizes:{ today:"wide", workorders:"wide", pm:"wide", equipment:"wide", inventory:"wide", activity:"wide", focus:"wide", costs:"wide" } }
-  };
-  const activePreset = settings.dashboardPreset || "calm";
-  const savedLayout = settings.dashboardLayout?.length ? settings.dashboardLayout : presetMap.calm.layout;
-  const layout = savedLayout.filter(id=>defaultLayout.includes(id));
-  const fullLayout = [...layout, ...defaultLayout.filter(id=>!layout.includes(id))];
-  const hidden = settings.dashboardHidden || [];
-  const sizes = settings.dashboardWidgetSizes || presetMap.calm.sizes;
-  const saveDash = (patch, mode="custom") => {
-    const next = { ...settings, ...patch };
-    if(mode === "custom") {
-      next.dashboardPreset = "custom";
-      next.dashboardCustomPreset = {
-        dashboardLayout: next.dashboardLayout?.length ? next.dashboardLayout : fullLayout,
-        dashboardHidden: next.dashboardHidden || [],
-        dashboardWidgetSizes: next.dashboardWidgetSizes || sizes
-      };
-    }
-    dispatch({ type:"UPDATE_SETTINGS", payload:next });
-  };
-  const applyPreset = preset => {
-    if(preset === "custom") {
-      if(settings.dashboardCustomPreset) saveDash({ ...settings.dashboardCustomPreset, dashboardPreset:"custom" }, "preset");
-      else saveDash({ dashboardPreset:"custom" }, "preset");
-      return;
-    }
-    const p = presetMap[preset] || presetMap.calm;
-    saveDash({ dashboardPreset:preset, dashboardLayout:p.layout, dashboardHidden:p.hidden, dashboardWidgetSizes:p.sizes }, "preset");
-  };
-  const moveWidget = (id, dir) => {
-    const arr = [...fullLayout];
-    const i = arr.indexOf(id), j = i + dir;
-    if(i<0 || j<0 || j>=arr.length) return;
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-    saveDash({ dashboardLayout:arr });
-  };
-  const setWidgetSize = (id, size) => saveDash({ dashboardWidgetSizes:{ ...sizes, [id]:size } });
-  const toggleWidget = id => saveDash({ dashboardHidden:hidden.includes(id) ? hidden.filter(x=>x!==id) : [...hidden, id] });
-  const lockIfEditing = e => {
-    if(!customize) return;
-    if(e.target.closest?.("[data-dash-control]")) return;
-    e.preventDefault();
-    e.stopPropagation();
-  };
-  const go = tab => { if(!customize && tab) setTab(tab); };
-  const sizeStyle = id => {
-    const size = sizes[id] || "large";
-    if(size==="small") return { gridColumn:"span 1", minHeight:130 };
-    if(size==="medium") return { gridColumn:"span 2", minHeight:175 };
-    if(size==="large") return { gridColumn:"span 3", minHeight:220 };
-    if(size==="wide") return { gridColumn:"span 6", minHeight:190 };
-    return { gridColumn:"1 / -1", minHeight:245 };
-  };
+  /* KPI counts */
+  const openWOs      = wos.filter(w=>w.status==="Open").length;
+  const inProgWOs    = wos.filter(w=>w.status==="In Progress").length;
+  const awaitParts   = wos.filter(w=>w.status==="Awaiting Parts").length;
+  const onHoldWOs    = wos.filter(w=>w.status==="On Hold").length;
+  const completedMo  = wos.filter(w=>w.status==="Completed"&&(w.completed||"").slice(0,7)===today_s.slice(0,7)).length;
+  const outOfSvc     = eqs.filter(e=>e.status==="Out of Service / Deadline").length;
+  const withDefic    = eqs.filter(e=>e.status==="Operational with Deficiencies").length;
+  const pmOverdue    = pms.filter(p=>p.status==="Overdue").length;
+  const pmDueSoon    = pms.filter(p=>p.status==="Due Soon").length;
+  const lowStock     = parts.filter(p=>p.lowStockAlert!==false&&p.qty<=(p.minQty||0)).length;
+  const totalCost    = w => (+w.laborCost||0)+(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0))+(+w.partsCost||0);
+  const spendMo      = wos.filter(w=>w.status==="Completed"&&(w.completed||"").slice(0,7)===today_s.slice(0,7)).reduce((s,w)=>s+totalCost(w),0);
+  const activeWOCost = wos.filter(w=>w.status!=="Completed").reduce((s,w)=>s+totalCost(w),0);
 
-  const ActionBtn = ({ icon, label, tab, accent=T.accent, onClick }) => (
-    <button onClick={()=>{ if(customize) return; if(onClick) onClick(); else go(tab); }} disabled={customize} style={{ display:"flex", alignItems:"center", gap:10, border:`1px solid ${T.border}`, background:"#fff", borderRadius:16, padding:"13px 14px", cursor:customize?"default":"pointer", opacity:customize ? .85 : 1, textAlign:"left", boxShadow:"0 8px 20px rgba(15,23,42,.06)" }}>
-      <span style={{ width:34, height:34, borderRadius:12, background:accent+"18", color:accent, display:"grid", placeItems:"center", fontSize:17 }}>{icon}</span>
-      <span style={{ display:"flex", flexDirection:"column", lineHeight:1.15 }}><b style={{ fontSize:13 }}>{label}</b><small style={{ color:T.muted, marginTop:3 }}>Open</small></span>
-    </button>
-  );
-  const Metric = ({ label, value, sub, color=T.accent }) => (
-    <div style={{ border:`1px solid ${T.border}`, borderRadius:18, padding:14, background:"linear-gradient(180deg,#fff,#fbfcff)", minWidth:0 }}>
-      <div style={{ color:T.muted, fontSize:11, fontWeight:800, textTransform:"uppercase", letterSpacing:.45 }}>{label}</div>
-      <div style={{ color, fontSize:28, fontWeight:950, letterSpacing:-.8, marginTop:3 }}>{value}</div>
-      {sub && <div style={{ color:T.muted, fontSize:12, marginTop:2 }}>{sub}</div>}
-    </div>
-  );
-  const MiniRow = ({ title, sub, badge, color=T.accent, tab }) => (
-    <button onClick={()=>go(tab)} disabled={customize} style={{ width:"100%", border:"none", background:"transparent", borderBottom:`1px solid ${T.border}`, padding:"10px 0", display:"flex", justifyContent:"space-between", gap:10, textAlign:"left", cursor:customize?"default":"pointer" }}>
-      <span style={{ minWidth:0 }}><b style={{ display:"block", fontSize:13, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{title}</b><small style={{ color:T.muted, display:"block", marginTop:2, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{sub}</small></span>
-      {badge && <span style={{ alignSelf:"center", border:`1px solid ${color}`, color, borderRadius:999, padding:"3px 8px", fontSize:11, fontWeight:900, whiteSpace:"nowrap" }}>{badge}</span>}
-    </button>
-  );
+  const deadlineEqs  = eqs.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies");
+  const servicesDue  = pms.filter(p=>p.status==="Overdue"||p.status==="Due Soon")
+    .map(pm=>({...pm, eqName:eqs.find(e=>e.id===pm.equipment)?.name||pm.equipment}))
+    .sort((a,b)=>(a.nextDue||"").localeCompare(b.nextDue||""));
+  const urgentWOs    = wos.filter(w=>w.status!=="Completed")
+    .sort((a,b)=>({High:0,Medium:1,Low:2}[a.priority]??3)-({High:0,Medium:1,Low:2}[b.priority]??3)).slice(0,6);
 
-  const cardHidden = settings.dashboardCardHidden || {};
-  const itemCatalog = {
-    focus:{ quick:"Quick actions", metrics:"Status summary" },
-    today:{ plan:"Daily game plan" },
-    workorders:{ metrics:"Work order counts", list:"Work order list" },
-    pm:{ metrics:"PM counts", list:"PM due list" },
-    equipment:{ metrics:"Equipment counts", list:"Equipment alert list" },
-    inventory:{ metrics:"Inventory counts", list:"Low stock list" },
-    activity:{ list:"Recent activity list" },
-    costs:{ metrics:"Cost metrics", note:"Export reminder" }
-  };
-  const isItemHidden = (card,item) => (cardHidden[card] || []).includes(item);
-  const setItemHidden = (card,item,hide=true) => {
-    const current = cardHidden[card] || [];
-    const nextList = hide ? [...new Set([...current,item])] : current.filter(x=>x!==item);
-    saveDash({ dashboardCardHidden:{ ...cardHidden, [card]:nextList } });
-  };
-  const DashItem = ({ card, item, children }) => {
-    if(isItemHidden(card,item)) return null;
-    return <div style={{ position:"relative", paddingTop:customize?6:0 }}>
-      {customize && <button data-dash-control="true" title="Remove this item from this card" onClick={()=>setItemHidden(card,item,true)} style={{ position:"absolute", top:-6, right:-6, width:22, height:22, borderRadius:999, border:`1px solid ${T.border}`, background:"#fff", color:T.red, fontWeight:950, cursor:"pointer", lineHeight:"18px", boxShadow:"0 4px 12px rgba(15,23,42,.12)" }}>×</button>}
-      {children}
-    </div>;
-  };
-  const Widget = ({ id, title, subtitle, children, accent=T.accent }) => {
-    const hiddenItems = cardHidden[id] || [];
-    const addable = Object.entries(itemCatalog[id] || {}).filter(([key])=>hiddenItems.includes(key));
-    return <Card style={{ ...sizeStyle(id), padding:0, overflow:"hidden", borderRadius:22, border:`1px solid ${T.border}`, background:"#fff", boxShadow:"0 12px 30px rgba(15,23,42,.08)", position:"relative" }}>
-      <div style={{ height:5, background:accent }} />
-      <div style={{ padding:18 }}>
-        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:10, marginBottom:14 }}>
-          <div><h3 style={{ margin:0, fontSize:17, letterSpacing:-.35 }}>{title}</h3>{subtitle && <div style={{ color:T.muted, fontSize:12, marginTop:3 }}>{subtitle}</div>}</div>
-          {customize && <div data-dash-control="true" style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap", justifyContent:"flex-end" }}>
-            <button onClick={()=>moveWidget(id,-1)} style={{ ...smallControl }}>↑</button>
-            <button onClick={()=>moveWidget(id,1)} style={{ ...smallControl }}>↓</button>
-            <select value={sizes[id] || "large"} onChange={e=>setWidgetSize(id,e.target.value)} style={{ ...smallControl, width:86 }}>
-              <option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option><option value="wide">Wide</option><option value="hero">Hero</option>
-            </select>
-            <select value="" onChange={e=>{ if(e.target.value) setItemHidden(id,e.target.value,false); e.target.value=""; }} title="Add hidden item back to this card" style={{ ...smallControl, width:96 }}>
-              <option value="">+ Add</option>
-              {addable.map(([key,label])=><option key={key} value={key}>{label}</option>)}
-            </select>
-            <button onClick={()=>toggleWidget(id)} style={{ ...smallControl }}>Hide</button>
-          </div>}
+  /* Status dot */
+  const dot = (color) => <span style={{ display:"inline-block", width:8, height:8, borderRadius:"50%", background:color, marginRight:6, flexShrink:0 }}/>;
+
+  /* Shop health score */
+  const issues = outOfSvc*3 + withDefic*2 + pmOverdue*2 + pmDueSoon + lowStock + (openWOs>5?2:0);
+  const health = issues===0?"All Systems Operational":issues<=3?"Minor Issues":issues<=8?"Attention Needed":"Critical — Action Required";
+  const healthColor = issues===0?T.green:issues<=3?T.amber:T.red;
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+
+      {/* This Month summary */}
+      <div style={{ background:"#fff", border:`1px solid ${T.border}`, borderRadius:10, padding:"14px 20px", display:"flex", alignItems:"center", justifyContent:"space-between", gap:14, boxShadow:T.shadow }}>
+        <div>
+          <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.5, fontWeight:700 }}>Welcome</div>
+          <div style={{ fontFamily:T.sans, fontSize:18, fontWeight:700, color:T.text, marginTop:2 }}>Maintenance Shop Overview</div>
         </div>
-        {children}
+        <div style={{ textAlign:"right" }}>
+          <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>This Month Spending</div>
+          <div style={{ fontFamily:T.sans, fontSize:24, fontWeight:800, color:T.accent }}>${spendMo.toFixed(0)}</div>
+          <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted }}>{completedMo} WOs closed</div>
+        </div>
       </div>
-    </Card>;
-  };
-  const smallControl = { height:28, border:`1px solid ${T.border}`, background:"#fff", borderRadius:9, padding:"0 8px", fontSize:11, fontWeight:900, cursor:"pointer" };
 
-  const quickActions = <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))", gap:10 }}>
-    <ActionBtn icon="➕" label="New Work Order" tab="workorders" accent="#2563eb" />
-    <ActionBtn icon="🚜" label="Add Equipment" tab="equipment" accent="#16a34a" />
-    <ActionBtn icon="🛠️" label="PM Schedule" tab="pm" accent="#d97706" />
-    <ActionBtn icon="📦" label="Parts" tab="parts" accent="#7c3aed" />
-    <ActionBtn icon="📊" label="Reports" tab="reports_combined" accent="#0f766e" />
-    <ActionBtn icon="⚙️" label="Settings" onClick={onSettings} accent="#475569" />
-  </div>;
-
-  const widgets = {
-    focus:<Widget id="focus" title="Shop Pulse" subtitle="A calm snapshot of what needs attention" accent={highPriority||pmOverdue||outOfSvc?T.red:T.green}>
-      <DashItem card="focus" item="quick">{quickActions}</DashItem>
-      <DashItem card="focus" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginTop:14 }}>
-        <Metric label="Readiness" value={`${readiness}%`} sub={`${readyAssets}/${eqs.length || 0} ready`} color={readiness>=85?T.green:readiness>=70?T.amber:T.red}/>
-        <Metric label="Active WOs" value={activeWOs} sub={`${highPriority} high priority`} color={highPriority?T.red:T.accent}/>
-        <Metric label="PM Attention" value={pmOverdue+pmDueSoon} sub={`${pmOverdue} overdue`} color={pmOverdue?T.red:T.amber}/>
-        <Metric label="Low Stock" value={lowStock} sub="parts to review" color={lowStock?T.amber:T.green}/>
-      </div></DashItem>
-    </Widget>,
-    today:<Widget id="today" title="Today’s Game Plan" subtitle="Simple order of work for the day" accent="#0f766e">
-      <DashItem card="today" item="plan"><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:10 }}>
-        {[{n:"1",t:"Protect uptime",d:`Check ${outOfSvc} deadline assets and ${withDefic} deficiencies.`},{n:"2",t:"Clear PM risk",d:`Handle ${pmOverdue} overdue and ${pmDueSoon} due soon services.`},{n:"3",t:"Unblock repairs",d:`Review ${awaitParts} awaiting-parts work orders.`},{n:"4",t:"Close the loop",d:`Update notes, parts used, labor, and completed jobs.`}].map(x=><div key={x.n} style={{ border:`1px solid ${T.border}`, borderRadius:18, padding:14, background:"#fff" }}><div style={{ display:"flex", gap:10 }}><b style={{ width:28, height:28, borderRadius:10, background:T.accentLt, color:T.accent, display:"grid", placeItems:"center" }}>{x.n}</b><div><b>{x.t}</b><div style={{ color:T.muted, fontSize:12, marginTop:4 }}>{x.d}</div></div></div></div>)}
-      </div></DashItem>
-    </Widget>,
-    workorders:<Widget id="workorders" title="Work Orders" subtitle="Current workload without digging" accent={highPriority?T.red:T.accent}>
-      <DashItem card="workorders" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(90px,1fr))", gap:8, marginBottom:12 }}><Metric label="Open" value={openWOs}/><Metric label="In Prog" value={inProgWOs}/><Metric label="Parts" value={awaitParts}/><Metric label="On Hold" value={onHoldWOs} color={onHoldWOs?T.red:T.green}/></div></DashItem>
-      <DashItem card="workorders" item="list">{(urgentWOs.length ? urgentWOs : recentWOs).map(w=><MiniRow key={w.id} title={`${w.woNumber||w.id} — ${w.title||w.type||"Work Order"}`} sub={`${w.equipmentName||w.equipment||"No equipment"} • ${w.status||"Open"}`} badge={w.priority||w.status} color={w.priority==="High"?T.red:T.accent} tab="workorders" />)}</DashItem>
-    </Widget>,
-    pm:<Widget id="pm" title="Preventive Maintenance" subtitle="Due services and inspections" accent={pmOverdue?T.red:T.amber}>
-      <DashItem card="pm" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:12 }}><Metric label="Overdue" value={pmOverdue} color={pmOverdue?T.red:T.green}/><Metric label="Due Soon" value={pmDueSoon} color={pmDueSoon?T.amber:T.green}/></div></DashItem>
-      <DashItem card="pm" item="list">{servicesDue.length ? servicesDue.map(p=><MiniRow key={p.id} title={p.title||p.service||"PM Item"} sub={`${p.eqName||"Equipment"} • Due ${p.nextDue||"N/A"}`} badge={p.status} color={p.status==="Overdue"?T.red:T.amber} tab="pm" />) : <div style={{ color:T.muted, fontSize:13 }}>No PM due right now.</div>}</DashItem>
-    </Widget>,
-    equipment:<Widget id="equipment" title="Equipment Health" subtitle="Readiness and problem assets" accent={outOfSvc?T.red:T.green}>
-      <DashItem card="equipment" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom:12 }}><Metric label="Total" value={eqs.length}/><Metric label="Deadline" value={outOfSvc} color={outOfSvc?T.red:T.green}/><Metric label="Deficient" value={withDefic} color={withDefic?T.amber:T.green}/></div></DashItem>
-      <DashItem card="equipment" item="list">{deadlineEqs.length ? deadlineEqs.map(e=><MiniRow key={e.id} title={`${e.id} — ${e.name}`} sub={`${e.make||""} ${e.model||""} • ${e.location||"No location"}`} badge={e.status?.replace("Out of Service / ","")} color={e.status==="Out of Service / Deadline"?T.red:T.amber} tab="equipment" />) : <div style={{ color:T.muted, fontSize:13 }}>No deadline or deficient equipment.</div>}</DashItem>
-    </Widget>,
-    inventory:<Widget id="inventory" title="Parts & Inventory" subtitle="Stock issues before they delay work" accent={lowStock?T.amber:T.green}>
-      <DashItem card="inventory" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:12 }}><Metric label="Tracked" value={parts.length}/><Metric label="Low Stock" value={lowStock} color={lowStock?T.amber:T.green}/></div></DashItem>
-      <DashItem card="inventory" item="list">{criticalParts.length ? criticalParts.map(p=><MiniRow key={p.id} title={p.name||p.partNumber||"Part"} sub={`${p.partNumber||"No part #"} • Qty ${p.qty??0} / Min ${p.minQty??0}`} badge="Reorder" color={T.amber} tab="parts" />) : <div style={{ color:T.muted, fontSize:13 }}>Inventory looks good.</div>}</DashItem>
-    </Widget>,
-    activity:<Widget id="activity" title="Recent Activity" subtitle="Latest movement in the shop" accent="#64748b">
-      <DashItem card="activity" item="list">{recentWOs.length ? recentWOs.map(w=><MiniRow key={w.id} title={w.title||w.type||"Work Order"} sub={`${w.woNumber||w.id} • ${w.status||"Open"} • ${w.created||"No date"}`} badge={w.priority||w.status} color={w.priority==="High"?T.red:T.accent} tab="workorders" />) : <div style={{ color:T.muted, fontSize:13 }}>No recent work order activity.</div>}</DashItem>
-    </Widget>,
-    costs:<Widget id="costs" title="Cost Snapshot" subtitle="Basic monthly maintenance awareness" accent="#2563eb">
-      <DashItem card="costs" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10 }}><Metric label="Month Spend" value={`$${spendMo.toFixed(2)}`} color="#2563eb"/><Metric label="Completed" value={completedMo} sub="this month" color={T.green}/></div></DashItem>
-      <DashItem card="costs" item="note"><div style={{ marginTop:12, color:T.muted, fontSize:12 }}>Use Reports to export PDF, Excel, or Word documents.</div></DashItem>
-    </Widget>
-  };
-
-  return <div style={{ display:"flex", flexDirection:"column", gap:16, background:"linear-gradient(135deg,#f8fafc 0%,#eef6ff 46%,#fff7ed 100%)", margin:-4, padding:customize?16:6, borderRadius:24 }}>
-    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap" }}>
-      <div><h2 style={{ margin:"0 0 4px", fontSize:30, letterSpacing:-.8 }}>Dashboard</h2><div style={{ color:T.muted, fontSize:13 }}>A clean home base for maintenance work, decisions, and quick actions.</div></div>
-      <div data-dash-control="true" style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-        <select value={activePreset} onChange={e=>applyPreset(e.target.value)} style={{ height:38, border:`1px solid ${T.border}`, borderRadius:12, padding:"0 12px", background:"#fff", fontWeight:900 }}>
-          <option value="calm">Calm Operations</option>
-          <option value="mechanic">Mechanic Daily Board</option>
-          <option value="manager">Manager Console</option>
-          <option value="simple">Simple Clean</option>
-          <option value="custom">My Custom Dashboard</option>
-        </select>
-        <Btn onClick={()=>setCustomize(v=>!v)}>{customize?"Done Customizing":"Customize Dashboard"}</Btn>
+      {/* Quick Access cards */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))", gap:10 }}>
+        {[
+          {id:"workorders", icon:"📋", label:"Work Orders",       count:openWOs+inProgWOs+awaitParts+onHoldWOs, sub:"active"},
+          {id:"equipment",  icon:"🚜", label:"Equipment",          count:eqs.length, sub:"units"},
+          {id:"inventory",  icon:"📋", label:"Equipment Inventory",count:eqs.length, sub:"items"},
+          {id:"parts",      icon:"📦", label:"Parts Inventory",    count:parts.length, sub:"SKUs"},
+          {id:"pm",         icon:"🔧", label:"Preventive Maint.",  count:pmOverdue+pmDueSoon, sub:"due"},
+          {id:"usage",      icon:"📊", label:"Usage Tracking",     count:eqs.filter(e=>e.trackUsage).length, sub:"tracked"},
+          {id:"spending",   icon:"💰", label:"Spending & Costs",   count:`$${spendMo.toFixed(0)}`, sub:"this month"},
+        ].map(c=>(
+          <button key={c.id} onClick={()=>setTab(c.id)} style={{ background:"#fff", border:`1px solid ${T.border}`, borderRadius:8, padding:"14px 12px", cursor:"pointer", boxShadow:T.shadow, textAlign:"center", display:"flex", flexDirection:"column", alignItems:"center", gap:4, transition:"transform .1s, border-color .1s" }}
+            onMouseEnter={e=>{ e.currentTarget.style.borderColor=T.accent; e.currentTarget.style.transform="translateY(-2px)"; }}
+            onMouseLeave={e=>{ e.currentTarget.style.borderColor=T.border; e.currentTarget.style.transform="translateY(0)"; }}>
+            <span style={{ fontSize:24, lineHeight:1 }}>{c.icon}</span>
+            <span style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text }}>{c.label}</span>
+            <span style={{ fontFamily:T.mono, fontSize:14, fontWeight:700, color:T.accent }}>{c.count}</span>
+            <span style={{ fontFamily:T.sans, fontSize:10, color:T.muted, textTransform:"uppercase", letterSpacing:.3 }}>{c.sub}</span>
+          </button>
+        ))}
       </div>
+
+      {/* KPI Grid */}
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:10 }}>
+        {/* Work Orders block */}
+        <div onClick={()=>setTab("workorders")} style={{ background:"#fff", border:`1px solid ${T.border}`, borderRadius:8, padding:"14px 16px", cursor:"pointer", boxShadow:T.shadow, gridColumn:"span 2", display:"flex", gap:0, overflow:"hidden" }}>
+          <div style={{ flex:1, borderRight:`1px solid ${T.border}`, paddingRight:14 }}>
+            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5, marginBottom:8 }}>Work Orders</div>
+            <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+              {[["Open", openWOs, T.accent],["In Progress", inProgWOs, T.amber],["Awaiting Parts", awaitParts, "#7c3aed"],["On Hold", onHoldWOs, T.muted]].map(([l,v,c])=>(
+                <div key={l} style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <div style={{ display:"flex", alignItems:"center" }}>{dot(c)}<span style={{ fontFamily:T.sans, fontSize:12, color:T.subtext }}>{l}</span></div>
+                  <span style={{ fontFamily:T.mono, fontSize:14, fontWeight:700, color:c }}>{v}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{ flex:1, paddingLeft:14 }}>
+            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5, marginBottom:8 }}>This Month</div>
+            <div style={{ fontFamily:T.sans, fontSize:36, fontWeight:800, color:T.green, lineHeight:1 }}>{completedMo}</div>
+            <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted }}>WOs completed</div>
+            <div style={{ marginTop:10, fontFamily:T.sans, fontSize:11, color:T.muted }}>Active WO cost</div>
+            <div style={{ fontFamily:T.sans, fontSize:18, fontWeight:700, color:T.accent }}>${activeWOCost.toFixed(0)}</div>
+          </div>
+        </div>
+
+        {/* Equipment status */}
+        <div onClick={()=>setTab("equipment")} style={{ background:"#fff", border:`1px solid ${outOfSvc>0?"#ef4444":T.border}`, borderRadius:8, padding:"14px 16px", cursor:"pointer", boxShadow:T.shadow }}>
+          <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5, marginBottom:8 }}>Equipment</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+            {[["Fully Operational", eqs.filter(e=>e.status==="Fully Operational").length, T.green],
+              ["w/ Deficiencies",    withDefic, T.amber],
+              ["Out of Service",     outOfSvc,  T.red]].map(([l,v,c])=>(
+              <div key={l} style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <div style={{ display:"flex", alignItems:"center" }}>{dot(c)}<span style={{ fontFamily:T.sans, fontSize:11, color:T.subtext }}>{l}</span></div>
+                <span style={{ fontFamily:T.mono, fontSize:14, fontWeight:700, color:c }}>{v}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop:8, paddingTop:8, borderTop:`1px solid ${T.border}`, fontFamily:T.sans, fontSize:10, color:T.muted }}>{eqs.length} total units</div>
+        </div>
+
+        {/* PM status */}
+        <div onClick={()=>setTab("pm")} style={{ background:"#fff", border:`1px solid ${pmOverdue>0?"#ef4444":T.border}`, borderRadius:8, padding:"14px 16px", cursor:"pointer", boxShadow:T.shadow }}>
+          <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5, marginBottom:8 }}>PM Services</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+            {[["Overdue",  pmOverdue,                                             T.red],
+              ["Due Soon", pmDueSoon,                                             T.amber],
+              ["OK",       pms.length-pmOverdue-pmDueSoon,                       T.green]].map(([l,v,c])=>(
+              <div key={l} style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <div style={{ display:"flex", alignItems:"center" }}>{dot(c)}<span style={{ fontFamily:T.sans, fontSize:11, color:T.subtext }}>{l}</span></div>
+                <span style={{ fontFamily:T.mono, fontSize:14, fontWeight:700, color:c }}>{v}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop:8, paddingTop:8, borderTop:`1px solid ${T.border}`, fontFamily:T.sans, fontSize:10, color:T.muted }}>{pms.length} scheduled services</div>
+        </div>
+      </div>
+
+      {/* Main detail row */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+
+        {/* Deadline / Deficiency Equipment */}
+        <Card style={{ padding:0, overflow:"hidden" }}>
+          <div style={{ padding:"12px 16px", background:outOfSvc>0?"#fef2f2":T.grayLt, borderBottom:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <span style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:outOfSvc>0?T.red:T.text }}>🚨 Deadline & Deficiency</span>
+            <Btn small variant="secondary" onClick={()=>setTab("equipment")}>View All</Btn>
+          </div>
+          {deadlineEqs.length===0
+            ? <div style={{ padding:"20px 16px", fontFamily:T.sans, fontSize:13, color:T.green }}>✓ All equipment operational</div>
+            : <div>
+                {deadlineEqs.slice(0,5).map(eq=>{
+                  const openWO = wos.filter(w=>w.equipment===eq.id&&w.status!=="Completed");
+                  return (
+                    <div key={eq.id} style={{ padding:"10px 16px", borderBottom:`1px solid ${T.border}`, borderLeft:`3px solid ${eq.status==="Out of Service / Deadline"?T.red:T.amber}` }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+                        <div>
+                          <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:600, color:T.text }}>{eq.name}</div>
+                          <div style={{ fontFamily:T.mono, fontSize:10, color:T.muted }}>{eq.id} · {eq.location||"—"}</div>
+                          {eq.faultDescription&&<div style={{ fontFamily:T.sans, fontSize:11, color:T.subtext, marginTop:2, maxWidth:240, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{eq.faultDescription}</div>}
+                        </div>
+                        <div style={{ textAlign:"right", flexShrink:0 }}>
+                          <Badge label={eq.status==="Out of Service / Deadline"?"OOS":"Deficiency"} />
+                          {openWO.length>0&&<div style={{ fontFamily:T.mono, fontSize:10, color:T.accent, marginTop:4 }}>{openWO.length} open WO{openWO.length>1?"s":""}</div>}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {deadlineEqs.length>5&&<div style={{ padding:"8px 16px", fontFamily:T.sans, fontSize:12, color:T.muted }}>+{deadlineEqs.length-5} more</div>}
+              </div>
+          }
+        </Card>
+
+        {/* Services Due */}
+        <Card style={{ padding:0, overflow:"hidden" }}>
+          <div style={{ padding:"12px 16px", background:pmOverdue>0?"#fffbeb":T.grayLt, borderBottom:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <span style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:pmOverdue>0?T.amber:T.text }}>🔧 Services Due</span>
+            <Btn small variant="secondary" onClick={()=>setTab("pm")}>View All</Btn>
+          </div>
+          {servicesDue.length===0
+            ? <div style={{ padding:"20px 16px", fontFamily:T.sans, fontSize:13, color:T.green }}>✓ All PM services up to date</div>
+            : <div>
+                {servicesDue.slice(0,6).map(pm=>(
+                  <div key={pm.id} style={{ padding:"9px 16px", borderBottom:`1px solid ${T.border}`, borderLeft:`3px solid ${pm.status==="Overdue"?T.red:T.amber}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <div>
+                      <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.text }}>{pm.task}</div>
+                      <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted }}>{pm.eqName}</div>
+                    </div>
+                    <div style={{ textAlign:"right", flexShrink:0 }}>
+                      <Badge label={pm.status} />
+                      <div style={{ fontFamily:T.mono, fontSize:11, color:pm.status==="Overdue"?T.red:T.amber, marginTop:3 }}>{pm.nextDue||"—"}</div>
+                    </div>
+                  </div>
+                ))}
+                {servicesDue.length>6&&<div style={{ padding:"8px 16px", fontFamily:T.sans, fontSize:12, color:T.muted }}>+{servicesDue.length-6} more</div>}
+              </div>
+          }
+        </Card>
+      </div>
+
+      {/* Active Work Orders */}
+      <Card style={{ padding:0, overflow:"hidden" }}>
+        <div style={{ padding:"12px 16px", background:T.grayLt, borderBottom:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <span style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text }}>📋 Active Work Orders</span>
+          <Btn small variant="secondary" onClick={()=>setTab("workorders")}>View All</Btn>
+        </div>
+        {urgentWOs.length===0
+          ? <div style={{ padding:"20px 16px", fontFamily:T.sans, fontSize:13, color:T.green }}>✓ No open work orders</div>
+          : <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, fontFamily:T.sans }}>
+              <thead><tr style={{ background:T.grayLt }}>
+                {["WO#","Type","Title","Equipment","Mechanic","Priority","Status","Due"].map(h=>(
+                  <th key={h} style={{ padding:"6px 12px", textAlign:"left", fontWeight:600, fontSize:10, color:T.muted, textTransform:"uppercase", letterSpacing:.4, whiteSpace:"nowrap" }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {urgentWOs.map((wo,i)=>{
+                  const eq = eqs.find(e=>e.id===wo.equipment);
+                  return (
+                    <tr key={wo.id} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
+                      <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:T.muted }}>{wo.id}</td>
+                      <td style={{ padding:"9px 12px" }}><Badge label={wo.woType||"—"} /></td>
+                      <td style={{ padding:"9px 12px", fontWeight:500, color:T.text, maxWidth:200 }}>{wo.title}</td>
+                      <td style={{ padding:"9px 12px", color:T.subtext }}>{eq?.name||wo.equipment}</td>
+                      <td style={{ padding:"9px 12px", color:T.subtext }}>{wo.tech||"—"}</td>
+                      <td style={{ padding:"9px 12px" }}><Badge label={wo.priority} type="priority" /></td>
+                      <td style={{ padding:"9px 12px" }}><Badge label={wo.status} /></td>
+                      <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:wo.due&&wo.due<today_s?T.red:T.subtext, whiteSpace:"nowrap" }}>{wo.due||"—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+        }
+      </Card>
+
+      {/* Low Stock + Parts row */}
+      {lowStock>0 && (
+        <Card style={{ padding:0, overflow:"hidden" }}>
+          <div style={{ padding:"12px 16px", background:"#faf5ff", borderBottom:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <span style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:"#7c3aed" }}>📦 Low Stock Alert ({lowStock})</span>
+            <Btn small variant="secondary" onClick={()=>setTab("parts")}>View All</Btn>
+          </div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:0 }}>
+            {parts.filter(p=>p.lowStockAlert!==false&&p.qty<=(p.minQty||0)).slice(0,8).map((p,i)=>(
+              <div key={p.id} style={{ padding:"8px 16px", borderBottom:`1px solid ${T.border}`, borderRight:i%2===0?`1px solid ${T.border}`:"none", flex:"0 0 50%", boxSizing:"border-box", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <div>
+                  <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:500, color:T.text }}>{p.name}</div>
+                  <div style={{ fontFamily:T.mono, fontSize:10, color:T.muted }}>{p.partNumber}</div>
+                </div>
+                <div style={{ textAlign:"right" }}>
+                  <div style={{ fontFamily:T.mono, fontSize:16, fontWeight:700, color:T.red }}>{p.qty}</div>
+                  <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted }}>min: {p.minQty}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
     </div>
-
-    {customize && <Card style={{ padding:16, border:`2px dashed ${T.accent}`, borderRadius:20, background:"#fff" }}>
-      <div style={{ fontSize:16, fontWeight:950, marginBottom:4 }}>Dashboard edit mode</div>
-      <div style={{ fontSize:12, color:T.muted, marginBottom:12 }}>Cards are locked while editing. Pick a preset, move cards, resize them, or hide what you do not use. Your changes save as “My Custom Dashboard.”</div>
-      <div data-dash-control="true" style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:12 }}>
-        <Btn small onClick={()=>applyPreset("calm")}>Calm Operations</Btn>
-        <Btn small variant="secondary" onClick={()=>applyPreset("mechanic")}>Mechanic Daily Board</Btn>
-        <Btn small variant="secondary" onClick={()=>applyPreset("manager")}>Manager Console</Btn>
-        <Btn small variant="secondary" onClick={()=>applyPreset("simple")}>Simple Clean</Btn>
-      </div>
-      <div data-dash-control="true" style={{ display:"flex", flexWrap:"wrap", gap:8 }}>{fullLayout.map(id=><Btn key={id} small variant={hidden.includes(id)?"secondary":"primary"} onClick={()=>toggleWidget(id)}>{hidden.includes(id)?"Show":"Hide"} {id}</Btn>)}</div>
-    </Card>}
-
-    <div onClickCapture={lockIfEditing} onMouseDownCapture={lockIfEditing} style={{ display:"grid", gridTemplateColumns:"repeat(6,minmax(130px,1fr))", gap:14, alignItems:"stretch" }}>
-      {fullLayout.filter(id=>!hidden.includes(id)).map(id=>widgets[id])}
-    </div>
-  </div>;
+  );
 }
+
 
 function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const [modal, setModal]     = useState(null); // null|"type"|"pick"|"form"|"detail"|"edit"
@@ -827,6 +699,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const [editMode, setEditMode] = useState(false);
 
   const WO_TYPES = [
+    { id:"Service",    label:"Service Work Order",    icon:"🔧", desc:"Scheduled maintenance and service tasks", color:"#1e40af", bg:"#eff6ff" },
+    { id:"Inspection", label:"Inspection Work Order", icon:"🔍", desc:"Safety checks and equipment inspections",  color:"#065f46", bg:"#ecfdf5" },
     { id:"Repair",     label:"Repair Work Order",     icon:"🛠", desc:"Fault repairs and breakdown response",     color:"#7f1d1d", bg:"#fef2f2" },
   ];
 
@@ -834,7 +708,6 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const SERVICE_INTERVALS   = ["New Equipment Service","Weekly","Bi-Weekly","Monthly","Bi-Monthly","Quarterly","Bi-Annual","Annual"];
   const INSPECT_INTERVALS   = ["New Equipment Inspection","Weekly","Bi-Weekly","Monthly","Bi-Monthly","Quarterly","Bi-Annual","Annual"];
   const getIntervals = (woType) => woType==="Inspection" ? INSPECT_INTERVALS : SERVICE_INTERVALS;
-  const partCategories = [...new Set([...(state.categories||[]), ...(state.parts||[]).map(p=>p.category).filter(Boolean)])].sort((a,b)=>a.localeCompare(b));
 
   const STATUS_TABS = ["Active","Open","In Progress","Awaiting Parts","On Hold","Completed","All"];
   const PRIO_ORDER  = {"High":0,"Medium":1,"Low":2};
@@ -894,34 +767,22 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   /* Equipment picker list */
   const allPickable = [
     ...state.equipment.map(eq=>({ id:eq.id, label:eq.name, sub:`${eq.id} | ${eq.make||""} ${eq.model||""} | Serial: ${eq.serial||"—"} | EIL: ${eq.eilNumber||"—"}`, type:"Equipment", typeColor:"#1e40af", typeBg:"#eff6ff", parentName:null, parentId:null })),
-    ...state.equipment.flatMap(eq=>(eq.attachments||[]).map(at=>({ id:at.id, label:at.name, sub:`${at.id} | ${at.make||""} ${at.model||""} | Serial: ${at.serial||"—"} | EIL: ${at.eilNumber||"—"} | on: ${eq.name} (${eq.id})`, type:"Attachment", typeColor:"#065f46", typeBg:"#ecfdf5", parentNomenclature:eq.name, parentId:eq.id }))),
+    ...state.equipment.flatMap(eq=>(eq.attachments||[]).map(at=>({ id:at.id, label:at.name, sub:`${at.id} | ${at.make||""} ${at.model||""} | Serial: ${at.serial||"—"} | EIL: ${at.eilNumber||"—"} | on: ${eq.name} (${eq.id})`, type:"Attachment", typeColor:"#065f46", typeBg:"#ecfdf5", parentName:eq.name, parentId:eq.id }))),
   ];
   const filteredPickable = allPickable.filter(i=>`${i.label} ${i.sub}`.toLowerCase().includes(eqSearch.toLowerCase()));
 
   const openAdd = () => {
     setEqSearch("");
-    setForm({ woType:"Repair", status:"Open", equipmentStatus:"Fully Operational", priority:"Medium", created:today(), due:today(), tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], mechanicNotes:"", faultEnabled:true, faultDescription:"", usageHours:"", usageMileage:"", repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"" });
-    setModal("pick");
+    setForm({ status:"Open", priority:"Medium", created:today(), due:today(), tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], mechanicNotes:"" });
+    setModal("pick"); /* Go straight to equipment — type chosen in the form */
   };
 
   const pickType = (typeId) => { setForm(f=>({...f, woType:typeId, title:buildTitle(typeId,"")})); setModal("pick"); };
-  const pickEquipment = (item) => {
-    const eq = state.equipment.find(e=>e.id===item.id);
-    const logs = (state.usageLogs||[]).filter(l=>l.equipmentId===item.id);
-    const latestHours = Math.max(...logs.map(l=>+(l.hours||0)), 0) || "";
-    const latestMileage = Math.max(...logs.map(l=>+(l.mileage||0)), 0) || "";
-    setForm(f=>({...f, woType:"Repair", equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||null, parentId:item.parentId||null, equipmentStatus:eq?.status||"Fully Operational", usageType:eq?.usageType||"hours", usageHours:f.usageHours||latestHours, usageMileage:f.usageMileage||latestMileage}));
-    setModal("form");
-  };
+  const pickEquipment = (item) => { setForm(f=>({...f, equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||null, parentId:item.parentId||null})); setModal("form"); };
 
-  /* Click row to open the editable Work Order form */
-  const openEdit = (wo) => {
-    setDetailWO(null);
-    setEditMode(false);
-    setForm({...wo, partsUsed:wo.partsUsed||[]});
-    setModal("edit");
-  };
-  const openDetail = openEdit;
+  /* Click row to open detail */
+  const openDetail = (wo) => { setDetailWO(wo); setForm({...wo, partsUsed:wo.partsUsed||[]}); setEditMode(false); setModal("detail"); };
+  const openEdit   = (wo) => { setForm({...wo, partsUsed:wo.partsUsed||[]}); setModal("edit"); };
 
   /* Mechanic selection - auto-calc labor cost */
   const selectTech = (techId) => {
@@ -935,7 +796,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   };
 
   const addNewTech = () => {
-    if(!newTech.name) return alert("Nomenclature required.");
+    if(!newTech.name) return alert("Name required.");
     const payload = { ...newTech, id:`TECH-${Date.now()}`, laborRate:+newTech.laborRate||0 };
     dispatch({ type:"ADD_TECH", payload });
     setForm(f=>({ ...f, techId:payload.id, tech:payload.name, laborCost: f.laborHours?(+f.laborHours)*(+(payload.laborRate||0)):f.laborCost }));
@@ -962,8 +823,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   };
 
   const save = (isEdit) => {
+    if(!form.title)     return alert("Title required.");
     if(!form.equipment) return alert("Equipment required.");
-    if(!(form.faultDescription||"").trim()) return alert("Description required.");
     const prevWO = isEdit ? state.workOrders.find(w=>w.id===form.id) : null;
 
     /* Figure out inventory consumption delta */
@@ -980,9 +841,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
     const partsTotal = newParts.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
     if(isEdit) {
-      dispatch({type:"UPDATE_WO", payload:{...form, woType:form.woType||"Repair", title:form.faultDescription||form.woType||"Work Order", faultEnabled:true, partsCost:partsTotal}});
+      dispatch({type:"UPDATE_WO", payload:{...form, partsCost:partsTotal}});
     } else {
-      dispatch({type:"ADD_WO", payload:{...form, woType:"Repair", title:form.faultDescription||"Repair", faultEnabled:true, id:genWOId(form.equipment), partsCost:partsTotal}});
+      dispatch({type:"ADD_WO", payload:{...form, id:genWOId(form.equipment), partsCost:partsTotal}});
     }
     setModal(null);
     setDetailWO(null);
@@ -990,54 +851,23 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const del = id => { if(confirm("Delete this work order?")){ dispatch({type:"DELETE_WO",payload:id}); setModal(null); setDetailWO(null); }};
 
-  const quickUpdateWO = (wo, changes) => {
-    const nextStatus = changes.status || wo.status || "Open";
-    const next = {
-      ...wo,
-      ...changes,
-      equipmentStatus: nextStatus === "Completed" ? "Fully Operational" : (changes.equipmentStatus || wo.equipmentStatus || "Fully Operational"),
-      completed: nextStatus === "Completed" ? (wo.completed || today()) : (changes.status && changes.status !== "Completed" ? "" : wo.completed),
-    };
-    dispatch({ type:"UPDATE_WO", payload:next });
-  };
-
   /* ---- Print Work Order ---- */
   const printWO = (wo) => {
     const ws = woSettings || {};
-    const printOpt = (key) => ws[key] !== false;
     const gs = state.settings || {};
     const eq = state.equipment.find(e=>e.id===wo.equipment);
     /* Pull company info from WO settings first, then global settings */
-    const companyName = gs.companyName || "Maintenance Department";
-    const companyLogo = gs.logo || "";
+    const companyName = ws.companyName || gs.companyName || "Maintenance Department";
+    const companyLogo = ws.logo || gs.logo || "";
     const companyDept = ws.department || gs.department || "";
     const companyPhone = ws.phone || gs.phone || "";
     const companyEmail = ws.email || gs.email || "";
     const companyAddr  = `${gs.address||""} ${gs.cityState||""}`.trim();
-    const usageLabel = [wo.usageHours ? `Hours: ${wo.usageHours}` : "", wo.usageMileage ? `Mileage: ${Number(wo.usageMileage).toLocaleString()}` : ""].filter(Boolean).join(" / ");
-    const usageMode = (eq?.usageType || wo.usageType || "hours").toLowerCase();
-    const usageDisplayLabel = usageMode === "mileage" ? "Mileage" : usageMode === "both" ? "Mileage / Hours" : "Hours";
-    const usageDisplayValue = usageMode === "mileage"
-      ? (wo.usageMileage ? Number(wo.usageMileage).toLocaleString() : "&nbsp;")
-      : usageMode === "both"
-        ? [wo.usageMileage ? Number(wo.usageMileage).toLocaleString() : "", wo.usageHours ? `${wo.usageHours} hrs` : ""].filter(Boolean).join(" / ") || "&nbsp;"
-        : (wo.usageHours || "&nbsp;");
-    const woTypeLabel = ws.headerText || "MAINTENANCE WORK ORDER";
+    const woTypeLabel = wo.woType ? `${wo.woType} Work Order` : (ws.headerText || "MAINTENANCE WORK ORDER");
     const partsUsed  = wo.partsUsed || [];
     const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
     const laborTotal = +(wo.laborCost||0);
     const grandTotal = laborTotal + partsTotal + (+(wo.partsCost||0));
-    const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", Labor:laborTotal.toFixed(2), Parts:partsTotal.toFixed(2), Total:grandTotal.toFixed(2), Problem:wo.problem||wo.description||"", Description:wo.faultEnabled?(wo.faultDescription||""):"", "Repair Complaint":wo.repairComplaint||"", "Repair Cause":wo.repairCause||"", "Corrective Action":wo.correctiveAction||"", "Service Checklist":wo.serviceChecklist||"", "Inspection Findings":wo.inspectionFindings||"", Notes:wo.mechanicNotes||""}];
-    const typeSpecificPrint = (() => {
-      if(!printOpt("showTypeSpecific")) return "";
-      if(wo.woType==="Repair") return "";
-      if(wo.woType==="Service") return `<div class="sec"><div class="sh">Service Work Order Details</div><div class="twocol"><div><b>Meter / Hours:</b><br>${wo.meterReading||"&nbsp;"}</div><div><b>Next Service Due:</b><br>${wo.nextServiceDue||"&nbsp;"}</div><div style="grid-column:1/3"><b>Service Checklist:</b><br>${wo.serviceChecklist||"&nbsp;"}</div></div></div>`;
-      if(wo.woType==="Inspection") return `<div class="sec"><div class="sh">Inspection Work Order Details</div><div class="twocol"><div><b>Result:</b><br>${wo.inspectionResult||"&nbsp;"}</div><div><b>Follow-Up:</b><br>${wo.followUpRequired||"&nbsp;"}</div><div style="grid-column:1/3"><b>Findings:</b><br>${wo.inspectionFindings||"&nbsp;"}</div></div></div>`;
-      return "";
-    })();
-    const woCsv = rowsToDataUri(woRows);
-    const printedDate = wo.completed || "";
-    const assignedMechanicName = wo.tech || "";
 
     const win = window.open("","_blank","width=900,height=700");
     if(!win){ alert("Please allow pop-ups to print work orders."); return; }
@@ -1061,16 +891,13 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .st-completed{background:#dcfce7;color:#14532d}.st-on{background:#fee2e2;color:#7f1d1d}
       .row{display:grid;border:1.5px solid #1a1a2e;border-radius:3px;overflow:hidden}
       .row.c3{grid-template-columns:1fr 1fr 1fr}.row.c2{grid-template-columns:2fr 1fr}.row.c22{grid-template-columns:1fr 1fr}
-      .eq-info-grid{display:grid;grid-template-columns:1fr 1fr 1fr;border:none}
-      .eq-info-grid .cell:nth-child(3n){border-right:none}
-      .eq-info-grid .cell:nth-child(n+4){border-top:1px solid #c8d0e0}
       .cell{padding:4px 8px;border-right:1px solid #c8d0e0}.cell:last-child{border-right:none}.cell.s2{grid-column:span 2}
       .lbl{font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#666;margin-bottom:1px}
       .val{font-size:11px;font-weight:600;color:#111;min-height:14px}.val.mn{font-family:monospace}
       .sec{border:1.5px solid #1a1a2e;border-radius:3px;overflow:hidden}
       .sh{background:#1a1a2e;color:#fff;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;padding:3px 8px}
-      .sb{padding:7px 8px;font-size:11px;color:#111;line-height:1.5;white-space:pre-wrap;min-height:80px}
-      .bg{display:grid;grid-template-columns:1fr;gap:6px}
+      .sb{padding:7px 8px;font-size:11px;color:#111;line-height:1.5;white-space:pre-wrap;min-height:55px}
+      .bg{display:grid;grid-template-columns:1fr 1fr;gap:6px}
       .pt{width:100%;border-collapse:collapse;font-size:10px}
       .pt th{background:#f3f4f6;padding:3px 6px;text-align:left;font-size:8px;text-transform:uppercase;color:#555;font-weight:700}
       .pt td{padding:3px 6px;border-bottom:1px solid #e5e7eb}
@@ -1081,7 +908,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .phi{color:#991b1b;background:#fee2e2;border:1px solid #fca5a5;padding:1px 6px;border-radius:3px;font-size:8px;font-weight:700;text-transform:uppercase}
       .pmd{color:#92400e;background:#fef3c7;border:1px solid #fcd34d;padding:1px 6px;border-radius:3px;font-size:8px;font-weight:700;text-transform:uppercase}
       .plo{color:#374151;background:#f3f4f6;border:1px solid #d1d5db;padding:1px 6px;border-radius:3px;font-size:8px;font-weight:700;text-transform:uppercase}
-      .sigs{display:grid;grid-template-columns:2fr 1fr;gap:20px;border:1.5px solid #1a1a2e;border-radius:3px;padding:8px 14px;margin-top:4px}
+      .sigs{display:grid;grid-template-columns:2fr 1fr;gap:20px;border:1.5px solid #1a1a2e;border-radius:3px;padding:10px 14px;margin-top:auto}
       .sc{display:flex;flex-direction:column;gap:10px}.sw{display:flex;flex-direction:column;gap:3px}
       .sl{border-bottom:1.5px solid #333;height:24px}
       .slb{font-size:7.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#555}
@@ -1099,31 +926,33 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div class="hdr-status st-${(wo.status||"open").toLowerCase().slice(0,2)}">${wo.status||"Open"}</div>
         </div>
       </div>
-      ${printOpt("showDates") ? `<div class="row c3">
+      <div class="row c3">
         <div class="cell"><div class="lbl">Date Created</div><div class="val">${wo.created||"&nbsp;"}</div></div>
         <div class="cell"><div class="lbl">Due Date</div><div class="val">${wo.due||"&nbsp;"}</div></div>
         <div class="cell"><div class="lbl">Date Completed</div><div class="val">${wo.completed||"&nbsp;"}</div></div>
-      </div>` : ""}
-      ${""}
-      ${printOpt("showEquipment") ? `<div class="sec">
+      </div>
+      <div class="row c3">
+        <div class="cell s2"><div class="lbl">Assigned Mechanic</div><div class="val">${wo.tech||"&nbsp;"}</div></div>
+        <div class="cell"><div class="lbl">Priority</div><div class="val"><span class="${wo.priority==="High"?"phi":wo.priority==="Medium"?"pmd":"plo"}">${wo.priority||"Low"}</span></div></div>
+      </div>
+      ${wo.woType||wo.serviceInterval?`<div class="row c22"><div class="cell"><div class="lbl">Work Order Type</div><div class="val">${wo.woType||"Service"} Work Order</div></div><div class="cell"><div class="lbl">Service Interval</div><div class="val">${wo.serviceInterval||"N/A"}</div></div></div>`:""}
+      <div class="sec">
         <div class="sh">Equipment Information</div>
-        <div class="eq-info-grid">
+        <div style="display:grid;grid-template-columns:auto 1fr 1fr 1fr;border:none">
           <div class="cell"><div class="lbl">Equipment #</div><div class="val mn" style="font-weight:700">${wo.equipment||"&nbsp;"}</div></div>
-          <div class="cell"><div class="lbl">Nomenclature</div><div class="val">${eq?.name||wo.equipmentLabel||"&nbsp;"}</div></div>
+          <div class="cell s2"><div class="lbl">Equipment Name</div><div class="val">${eq?.name||wo.equipmentLabel||"&nbsp;"}</div></div>
           <div class="cell"><div class="lbl">Make / Model</div><div class="val">${eq?`${eq.make||""} ${eq.model||""}`.trim():"&nbsp;"}</div></div>
-          <div class="cell"><div class="lbl">Serial #</div><div class="val mn">${eq?.serial||"&nbsp;"}</div></div>
-          <div class="cell"><div class="lbl">EIL Number</div><div class="val mn">${eq?.eilNumber||"&nbsp;"}</div></div>
-          ${printOpt("showUsageReading") ? `<div class="cell"><div class="lbl">${usageDisplayLabel}</div><div class="val mn">${usageDisplayValue}</div></div>` : `<div class="cell"><div class="lbl">Usage Reading</div><div class="val mn">&nbsp;</div></div>`}
+          <div class="cell"><div class="lbl">Serial # / EIL #</div><div class="val mn">${eq?.serial||"&nbsp;"} / ${eq?.eilNumber||"&nbsp;"}</div></div>
         </div>
-      </div>` : ""}
-      ${printOpt("showFaultDescription") ? `<div class="sec"><div class="sh">Description</div><div class="sb" style="min-height:18px;padding:3px 8px;line-height:1.25">${wo.faultDescription||"&nbsp;"}</div></div>` : ""}
-      ${printOpt("showDescription") ? `<div class="sec"><div class="sh">Work Description &amp; Work Performed</div><div class="sb">${wo.description||"&nbsp;"}</div></div>` : ""}
-      ${typeSpecificPrint}
+      </div>
+      <div class="sec"><div class="sh">Work Description &amp; Work Performed</div><div class="sb">${wo.description||"&nbsp;"}</div></div>
+      ${wo.woType==="Inspection"||wo.inspectionItems?`<div class="sec"><div class="sh">Inspection Section</div><div class="sb" style="min-height:70px">${wo.inspectionItems||"Check safety items, fluids, leaks, tires/tracks, blades/attachments, PTO/guards, lights, controls, and overall equipment condition."}</div></div>`:""}
+      ${wo.adjustmentsMade?`<div class="sec"><div class="sh">Adjustments Made</div><div class="sb" style="min-height:55px">${wo.adjustmentsMade}</div></div>`:""}
       <div class="bg">
-        ${printOpt("showMechanicNotes") ? `<div class="sec"><div class="sh">Mechanic Notes (Write-In)</div><div class="sb" style="min-height:80px">${wo.mechanicNotes||"&nbsp;"}</div></div>` : ""}
-        ${(printOpt("showParts") || printOpt("showLaborHours") || printOpt("showCosts")) ? `<div class="sec">
+        <div class="sec"><div class="sh">Mechanic Notes (Write-In)</div><div class="sb" style="min-height:80px">${wo.mechanicNotes||"&nbsp;"}</div></div>
+        <div class="sec">
           <div class="sh">Parts &amp; Labor Summary</div>
-          ${printOpt("showParts") ? `<table class="pt">
+          <table class="pt">
             <thead><tr><th style="width:40%">Part / Material</th><th style="width:12%;text-align:center">Qty</th><th style="width:22%;text-align:right">Unit $</th><th style="width:26%;text-align:right">Total</th></tr></thead>
             <tbody>
               ${partsUsed.length>0
@@ -1132,27 +961,25 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                 : `<tr><td colspan="4" style="color:#999;font-style:italic;padding:4px 6px">No parts listed</td></tr>`
               }
             </tbody>
-          </table>` : ""}
-          ${(printOpt("showLaborHours") || printOpt("showCosts")) ? `<div class="cs">
-            ${printOpt("showLaborHours") ? `<div class="cr"><span>Labor (${wo.laborHours||0} hrs)</span><span>$${laborTotal.toFixed(2)}</span></div>` : ""}
-            ${printOpt("showParts")&&!partsUsed.length&&wo.partsCost?`<div class="cr"><span>Parts Cost</span><span>$${(+wo.partsCost).toFixed(2)}</span></div>`:""}
-            ${printOpt("showCosts") ? `<div class="ct"><span>GRAND TOTAL</span><span>$${grandTotal.toFixed(2)}</span></div>` : ""}
-          </div>` : ""}
-        </div>` : ""}
+          </table>
+          <div class="cs">
+            <div class="cr"><span>Labor (${wo.laborHours||0} hrs)</span><span>$${laborTotal.toFixed(2)}</span></div>
+            ${!partsUsed.length&&wo.partsCost?`<div class="cr"><span>Parts Cost</span><span>$${(+wo.partsCost).toFixed(2)}</span></div>`:""}
+            <div class="ct"><span>GRAND TOTAL</span><span>$${grandTotal.toFixed(2)}</span></div>
+          </div>
+        </div>
       </div>
-      ${printOpt("showFooterText") && ws.footerText?`<div class="sec"><div class="sh">Remarks</div><div class="sb" style="min-height:28px;font-size:10px">${ws.footerText}</div></div>`:""}
-      ${printOpt("showSignature") ? `<div class="sigs">
-        <div class="sc"><div class="sw"><div class="sl"></div><div class="slb">Mechanic Signature</div></div><div class="sw"><div class="sl" style="height:auto;min-height:24px;padding:5px 0;font-size:12px;font-weight:700">${assignedMechanicName||"&nbsp;"}</div><div class="slb">Printed Name</div></div></div>
-        <div class="sc"><div class="sw"><div class="sl" style="height:auto;min-height:24px;padding:5px 0;font-size:12px;font-weight:700">${printedDate}</div><div class="slb">Date</div></div></div>
-      </div>` : ""}
-      ${printOpt("showFooterBar") ? `<div class="ftr"><span>${companyName} - Maintenance Dept.</span><span>WO# ${wo.id} | ${printedDate}</span></div>` : ""}
+      ${ws.footerText?`<div class="sec"><div class="sh">Remarks</div><div class="sb" style="min-height:28px;font-size:10px">${ws.footerText}</div></div>`:""}
+      <div class="sigs">
+        <div class="sc"><div class="sw"><div class="sl"></div><div class="slb">Mechanic / Supervisor Signature</div></div><div class="sw"><div class="sl"></div><div class="slb">Print Name</div></div></div>
+        <div class="sc"><div class="sw"><div class="sl"></div><div class="slb">Date</div></div></div>
+      </div>
+      <div class="ftr"><span>${companyName} - Maintenance Dept.</span><span>WO# ${wo.id} | ${new Date().toLocaleDateString()}</span></div>
     </div>
     <div class="pbtn">
-      <button class="bpr" onclick="window.print()">Print / Save PDF</button>
-      <a href="${woCsv}" download="work-order-${wo.id}.csv" style="padding:9px 24px;font-size:13px;font-weight:700;border-radius:6px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;text-decoration:none;font-family:Arial,sans-serif">Download Excel CSV</a>
-      <button onclick="var blob=new Blob([document.documentElement.outerHTML],{type:'application/msword'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='work-order-${wo.id}.doc';a.click();URL.revokeObjectURL(a.href);" style="padding:9px 24px;font-size:13px;font-weight:700;border-radius:6px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;cursor:pointer">Download Word</button>
+      <button class="bpr" onclick="window.print()">Print</button>
+      <button class="bpdf" onclick="window.print()">Save as PDF</button>
     </div>
-    ${printCustomizePanelHtml()}
     </body></html>`);
     win.document.close();
   };
@@ -1161,67 +988,144 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   /* ---- WO form fields ---- */
   const renderWOForm = () => {
     const needsInterval = form.woType==="Service" || form.woType==="Inspection";
-    const typeInfo = WO_TYPES.find(t=>t.id===form.woType);
     const techObj = technicians.find(t=>t.id===form.techId);
-    const TypeSection = ({ title, subtitle, accent, children }) => (
-      <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${accent||T.border}`, borderRadius:10, padding:14, background:"#fff" }}>
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, marginBottom:10 }}>
-          <div>
-            <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:accent||T.text, textTransform:"uppercase", letterSpacing:.5 }}>{title}</div>
-            {subtitle && <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{subtitle}</div>}
-          </div>
-          {typeInfo && <span style={{ padding:"3px 9px", borderRadius:999, background:typeInfo.bg, color:typeInfo.color, fontFamily:T.sans, fontSize:11, fontWeight:800 }}>{typeInfo.icon} {typeInfo.id}</span>}
-        </div>
-        {children}
-      </div>
-    );
     return (
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
 
-        <div style={{ gridColumn:"span 2", marginBottom:10, padding:"10px 12px", border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt, fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text }}>Work Order Type: Repair</div>
+        {/* Work Order Type — select right in the form */}
+        <div style={{ gridColumn:"span 2", marginBottom:12 }}>
+          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:8 }}>Work Order Type <span style={{ color:T.red }}>*</span></label>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
+            {WO_TYPES.map(t=>{
+              const active = form.woType===t.id;
+              return (
+                <button key={t.id} type="button"
+                  onClick={()=>setForm(f=>({ ...f, woType:t.id, serviceInterval:"", title:buildTitle(t.id,"") }))}
+                  style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:6, padding:"12px 8px", borderRadius:8, border:`2px solid ${active?t.color:T.border}`, background:active?t.bg:"#fff", cursor:"pointer", transition:"all .15s" }}>
+                  <span style={{ fontSize:22 }}>{t.icon}</span>
+                  <span style={{ fontFamily:T.sans, fontSize:12, fontWeight:active?700:500, color:active?t.color:T.subtext, textAlign:"center", lineHeight:1.3 }}>{t.id}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-        <Field label="Equipment Status" half>
-          <select style={{...sel, minWidth:260, width:"100%"}} value={form.equipmentStatus||"Fully Operational"} onChange={e=>setForm(f=>({...f,equipmentStatus:e.target.value}))}>
-            {["Fully Operational","Operational with Deficiencies","Out of Service / Deadline"].map(s=><option key={s}>{s}</option>)}
-          </select>
+        {needsInterval && (
+          <div style={{ gridColumn:"span 2", marginBottom:10 }}>
+            <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:6 }}>
+              {form.woType==="Inspection" ? "Inspection Interval" : "Service Interval"} <span style={{ color:T.red }}>*</span>
+            </label>
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+              {getIntervals(form.woType).map(interval => {
+                const active = form.serviceInterval===interval;
+                const isSpecial = interval.startsWith("New Equipment");
+                return (
+                  <button key={interval} type="button"
+                    onClick={()=>setForm(f=>({...f, serviceInterval:interval, title:buildTitle(f.woType,interval)}))}
+                    style={{ padding:"6px 13px", borderRadius:6, border:`1px solid ${active?(isSpecial?"#7c3aed":T.accent):T.border}`, background:active?(isSpecial?"#f5f3ff":T.accentLt):"#fff", color:active?(isSpecial?"#7c3aed":T.accent):T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:active?700:400 }}>
+                    {isSpecial ? "★ " : ""}{interval}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <Field label="Work Order Title">
+          <input style={inp} value={form.title||""} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder={needsInterval?"Select interval above to auto-fill...":"e.g. Repair hydraulic leak..."} />
         </Field>
 
+        {/* Mechanic inline */}
+        <div style={{ gridColumn:"span 2", marginBottom:0 }}>
+          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Mechanic</label>
+          <div style={{ display:"flex", gap:8, alignItems:"flex-start", flexWrap:"wrap" }}>
+            <select style={{ ...sel, flex:1, minWidth:180 }} value={form.techId||""} onChange={e=>{ if(e.target.value==="__new__"){ setShowNewTech(true); } else { selectTech(e.target.value); setShowNewTech(false); } }}>
+              <option value="">-- Select Mechanic --</option>
+              {technicians.map(t=><option key={t.id} value={t.id}>{t.name}{t.laborRate?` ($${t.laborRate}/hr)`:""}</option>)}
+              <option value="__new__">+ Add New Mechanic...</option>
+            </select>
+            {form.techId && <div style={{ fontFamily:T.mono, fontSize:11, color:T.muted, paddingTop:8 }}>Rate: ${technicians.find(t=>t.id===form.techId)?.laborRate||0}/hr</div>}
+          </div>
+          {showNewTech && (
+            <div style={{ marginTop:10, background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:8, padding:"12px 14px", display:"grid", gridTemplateColumns:"1fr 1fr 1fr auto", gap:8, alignItems:"flex-end" }}>
+              <div>
+                <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, display:"block", marginBottom:4 }}>Full Name</label>
+                <input style={inp} value={newTech.name} onChange={e=>setNewTech(n=>({...n,name:e.target.value}))} placeholder="First Last" />
+              </div>
+              <div>
+                <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, display:"block", marginBottom:4 }}>Position</label>
+                <input style={inp} value={newTech.position} onChange={e=>setNewTech(n=>({...n,position:e.target.value}))} placeholder="Mechanic" />
+              </div>
+              <div>
+                <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, display:"block", marginBottom:4 }}>Labor Rate ($/hr)</label>
+                <input style={inp} type="number" value={newTech.laborRate} onChange={e=>setNewTech(n=>({...n,laborRate:e.target.value}))} placeholder="45" />
+              </div>
+              <div style={{ display:"flex", gap:6 }}>
+                <Btn small onClick={addNewTech}>Save</Btn>
+                <Btn small variant="secondary" onClick={()=>setShowNewTech(false)}>X</Btn>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <Field label="Labor Hours" half>
+          <input style={inp} type="number" value={form.laborHours||0} onChange={e=>{ const hrs=+e.target.value; const rate=techObj?.laborRate||0; setForm(f=>({...f,laborHours:hrs,laborCost:rate?hrs*rate:f.laborCost})); }} />
+        </Field>
+        <Field label="Labor Cost ($)" half>
+          <input style={inp} type="number" value={form.laborCost||0} onChange={e=>setForm(f=>({...f,laborCost:e.target.value}))} />
+        </Field>
+
+        <Field label="Status" half>
+          <select style={sel} value={form.status||"Open"} onChange={e=>setForm(f=>({...f,status:e.target.value}))}>
+            {["Open","In Progress","Awaiting Parts","On Hold","Completed"].map(s=><option key={s}>{s}</option>)}
+          </select>
+        </Field>
         <Field label="Priority" half>
           <select style={sel} value={form.priority||"Medium"} onChange={e=>setForm(f=>({...f,priority:e.target.value}))}>
             {["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}
           </select>
         </Field>
-
-        <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:"#fff" }}>
-          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:6 }}>Description <span style={{ color:T.red }}>*</span></label>
-          <textarea style={{ ...inp, minHeight:90, resize:"vertical", background:"#fff" }} value={form.faultDescription||""} onChange={e=>setForm(f=>({...f,faultEnabled:true,faultDescription:e.target.value}))} placeholder="Describe the problem, complaint, symptom, or failure..." />
-        </div>
-
-        <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.grayLt }}>
-          <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:8 }}>Current Usage at Work Order</div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-            <div>
-              <label style={{ display:"block", fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, marginBottom:4 }}>Current Hours</label>
-              <input style={inp} type="number" step="0.1" value={form.usageHours||""} onChange={e=>setForm(f=>({...f,usageHours:e.target.value}))} placeholder="Enter current hours" />
-            </div>
-            <div>
-              <label style={{ display:"block", fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, marginBottom:4 }}>Current Mileage</label>
-              <input style={inp} type="number" step="1" value={form.usageMileage||""} onChange={e=>setForm(f=>({...f,usageMileage:e.target.value}))} placeholder="Enter current mileage" />
-            </div>
-          </div>
-        </div>
+        <Field label="Date Created" half>
+          <input style={inp} type="date" value={form.created||""} onChange={e=>setForm(f=>({...f,created:e.target.value}))} />
+        </Field>
+        <Field label="Due Date" half>
+          <input style={inp} type="date" value={form.due||""} onChange={e=>setForm(f=>({...f,due:e.target.value}))} />
+        </Field>
+        <Field label="Date Completed" half>
+          <input style={inp} type="date" value={form.completed||""} onChange={e=>setForm(f=>({...f,completed:e.target.value}))} />
+        </Field>
 
         <Field label="Work Description / Problem Reported">
-          <textarea style={{ ...inp, minHeight:110, resize:"vertical" }} value={form.description||""} onChange={e=>setForm(f=>({...f,description:e.target.value}))} />
+          <textarea style={{ ...inp, minHeight:60, resize:"vertical" }} value={form.description||""} onChange={e=>setForm(f=>({...f,description:e.target.value}))} />
+        </Field>
+
+        {form.woType==="Inspection" && (
+          <Field label="Inspection Section / Checklist">
+            <textarea
+              style={{ ...inp, minHeight:80, resize:"vertical" }}
+              value={form.inspectionItems||""}
+              onChange={e=>setForm(f=>({...f,inspectionItems:e.target.value}))}
+              placeholder="Inspection items checked: safety guards, fluids, leaks, tires/tracks, PTO, attachments, lights, controls, belts, blades, pins, hydraulic hoses..."
+            />
+          </Field>
+        )}
+
+        <Field label="Adjustments Made">
+          <textarea
+            style={{ ...inp, minHeight:60, resize:"vertical" }}
+            value={form.adjustmentsMade||""}
+            onChange={e=>setForm(f=>({...f,adjustmentsMade:e.target.value}))}
+            placeholder="Record any adjustments made: belt tension, tire pressure, linkage, brakes, PTO, hydraulic settings, blade height, alignment, etc."
+          />
         </Field>
 
         <Field label="Mechanic Notes">
-          <textarea style={{ ...inp, minHeight:110, resize:"vertical" }} value={form.mechanicNotes||""} onChange={e=>setForm(f=>({...f,mechanicNotes:e.target.value}))} placeholder="Mechanic observations, steps taken, findings..." />
+          <textarea style={{ ...inp, minHeight:60, resize:"vertical" }} value={form.mechanicNotes||""} onChange={e=>setForm(f=>({...f,mechanicNotes:e.target.value}))} placeholder="Mechanic observations, steps taken, findings..." />
         </Field>
 
-        {/* Parts */}
-        <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.grayLt }}>
-          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:8 }}>Parts</label>
+        {/* Parts inline */}
+        <div style={{ gridColumn:"span 2", marginBottom:14 }}>
+          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:8 }}>Parts Used</label>
           {(form.partsUsed||[]).map((p,idx)=>(
             <div key={idx}>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 64px 90px auto auto", gap:8, marginBottom:4, alignItems:"center" }}>
@@ -1270,8 +1174,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                     <input style={inp} placeholder="$/unit" type="number" step="0.01" value={newPartForm.unitCost||""} onChange={e=>setNewPartForm(f=>({...f,unitCost:e.target.value}))} />
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr auto", gap:6 }}>
-                    <input style={inp} list="wo-part-category-options" placeholder="Category" value={newPartForm.category||""} onChange={e=>setNewPartForm(f=>({...f,category:e.target.value}))} />
-                    <datalist id="wo-part-category-options">{partCategories.map(c=><option key={c} value={c} />)}</datalist>
+                    <input style={inp} placeholder="Category" value={newPartForm.category||""} onChange={e=>setNewPartForm(f=>({...f,category:e.target.value}))} />
                     <input style={inp} placeholder="Vendor" value={newPartForm.vendor||""} onChange={e=>setNewPartForm(f=>({...f,vendor:e.target.value}))} />
                     <select style={sel} value={newPartForm.equipmentId||""} onChange={e=>{ const eq=state.equipment.find(q=>q.id===e.target.value); setNewPartForm(f=>({...f,equipmentId:e.target.value,modelFit:eq?`${eq.make||""} ${eq.model||""}`.trim():f.modelFit})); }}>
                       <option value="">Link to equipment (optional)</option>
@@ -1287,49 +1190,6 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             + Add Part
           </button>
         </div>
-
-        {/* Mechanic inline */}
-        <div style={{ gridColumn:"span 2", marginBottom:0 }}>
-          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Mechanic</label>
-          <div style={{ display:"flex", gap:8, alignItems:"flex-start", flexWrap:"wrap" }}>
-            <select style={{ ...sel, flex:1, minWidth:180 }} value={form.techId||""} onChange={e=>{ if(e.target.value==="__new__"){ setShowNewTech(true); } else { selectTech(e.target.value); setShowNewTech(false); } }}>
-              <option value="">-- Select Mechanic --</option>
-              {technicians.map(t=><option key={t.id} value={t.id}>{t.name}{t.laborRate?` ($${t.laborRate}/hr)`:""}</option>)}
-              <option value="__new__">+ Add New Mechanic...</option>
-            </select>
-            {form.techId && <div style={{ fontFamily:T.mono, fontSize:11, color:T.muted, paddingTop:8 }}>Rate: ${technicians.find(t=>t.id===form.techId)?.laborRate||0}/hr</div>}
-          </div>
-          {showNewTech && (
-            <div style={{ marginTop:10, background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:8, padding:"12px 14px", display:"grid", gridTemplateColumns:"1fr 1fr 1fr auto", gap:8, alignItems:"flex-end" }}>
-              <div>
-                <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, display:"block", marginBottom:4 }}>Full Name</label>
-                <input style={inp} value={newTech.name} onChange={e=>setNewTech(n=>({...n,name:e.target.value}))} placeholder="First Last" />
-              </div>
-              <div>
-                <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, display:"block", marginBottom:4 }}>Position</label>
-                <input style={inp} value={newTech.position} onChange={e=>setNewTech(n=>({...n,position:e.target.value}))} placeholder="Mechanic" />
-              </div>
-              <div>
-                <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, display:"block", marginBottom:4 }}>Labor Rate ($/hr)</label>
-                <input style={inp} type="number" value={newTech.laborRate} onChange={e=>setNewTech(n=>({...n,laborRate:e.target.value}))} placeholder="45" />
-              </div>
-              <div style={{ display:"flex", gap:6 }}>
-                <Btn small onClick={addNewTech}>Save</Btn>
-                <Btn small variant="secondary" onClick={()=>setShowNewTech(false)}>X</Btn>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <Field label="Labor Hours" half>
-          <input style={inp} type="number" value={form.laborHours||0} onChange={e=>{ const hrs=+e.target.value; const rate=techObj?.laborRate||0; setForm(f=>({...f,laborHours:hrs,laborCost:rate?hrs*rate:f.laborCost})); }} />
-        </Field>
-        <Field label="Labor Cost ($)" half>
-          <input style={inp} type="number" value={form.laborCost||0} onChange={e=>setForm(f=>({...f,laborCost:e.target.value}))} />
-        </Field>
-
-
-
 
       </div>
     );
@@ -1347,7 +1207,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
     const completeWO = () => {
       const completedDate = today();
-      const updated = { ...wo, status:"Completed", equipmentStatus:"Fully Operational", completed:completedDate };
+      const updated = { ...wo, status:"Completed", completed:completedDate };
       dispatch({ type:"UPDATE_WO", payload:updated });
       setModal(null); setDetailWO(null);
       if(confirm("Work order completed. Would you like to print it?")) printWO(updated);
@@ -1371,11 +1231,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               {wo.autoGenerated && <span style={{ padding:"2px 8px", borderRadius:4, background:"#f5f3ff", color:"#7c3aed", fontSize:11, fontWeight:600 }}>AUTO</span>}
             </div>
             <h3 style={{ margin:0, fontFamily:T.sans, fontSize:18, fontWeight:700, color:T.text }}>{wo.title}</h3>
-            {wo.serviceInterval && wo.woType!=="Repair" && <div style={{ fontFamily:T.mono, fontSize:11, color:T.accent, marginTop:2 }}>{wo.serviceInterval}</div>}
+            {wo.serviceInterval && <div style={{ fontFamily:T.mono, fontSize:11, color:T.accent, marginTop:2 }}>{wo.serviceInterval}</div>}
           </div>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
             <Btn small variant="secondary" onClick={()=>printWO(wo)}>Print</Btn>
-            <Btn small variant="danger" onClick={()=>del(wo.id)}>Delete</Btn>
             {!isCompleted && !editMode && <Btn small onClick={()=>setEditMode(true)} style={{ background:"#1e40af", borderColor:"#1e40af" }}>Update Work Order</Btn>}
             {!isCompleted && editMode && <Btn small onClick={()=>{ dispatch({ type:"UPDATE_WO", payload:{ ...wo, ...form } }); setEditMode(false); setDetailWO({ ...wo, ...form }); }} style={{ background:T.green, borderColor:T.green }}>Save Changes</Btn>}
             {!isCompleted && editMode && <Btn small variant="secondary" onClick={()=>{ setEditMode(false); setForm({...wo, partsUsed:wo.partsUsed||[]}); }}>Cancel Edit</Btn>}
@@ -1394,47 +1253,32 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           ))}
         </div>
 
-        {wo.faultEnabled && (
-          <div style={{ background:T.grayLt, borderRadius:6, padding:"10px 12px", border:`1px solid ${T.border}` }}>
-            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Description</div>
-            <div style={{ minHeight:70, fontFamily:T.sans, fontSize:13, color:wo.faultDescription?T.text:T.muted, lineHeight:1.6, fontStyle:wo.faultDescription?"normal":"italic" }}>{wo.faultDescription||"No description recorded."}</div>
-          </div>
-        )}
-
         {/* Description */}
+        {wo.description && (
+          <div style={{ background:T.grayLt, borderRadius:6, padding:"10px 12px", border:`1px solid ${T.border}` }}>
+            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Work Description</div>
+            <div style={{ fontFamily:T.sans, fontSize:13, color:T.text, lineHeight:1.6 }}>{wo.description}</div>
+          </div>
+        )}
+
+        {/* Inspection Section */}
+        {(wo.woType==="Inspection" || wo.inspectionItems) && (
+          <div style={{ background:T.grayLt, borderRadius:6, padding:"10px 12px", border:`1px solid ${T.border}` }}>
+            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Inspection Section</div>
+            <div style={{ fontFamily:T.sans, fontSize:13, color:wo.inspectionItems?T.text:T.muted, lineHeight:1.6, fontStyle:wo.inspectionItems?"normal":"italic" }}>{wo.inspectionItems||"No inspection checklist recorded."}</div>
+          </div>
+        )}
+
+        {/* Adjustments Made */}
         <div style={{ background:T.grayLt, borderRadius:6, padding:"10px 12px", border:`1px solid ${T.border}` }}>
-          <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Work Description</div>
-          <div style={{ minHeight:90, fontFamily:T.sans, fontSize:13, color:wo.description?T.text:T.muted, lineHeight:1.6, fontStyle:wo.description?"normal":"italic" }}>{wo.description||"No work description recorded."}</div>
+          <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Adjustments Made</div>
+          <div style={{ fontFamily:T.sans, fontSize:13, color:wo.adjustmentsMade?T.text:T.muted, lineHeight:1.6, fontStyle:wo.adjustmentsMade?"normal":"italic" }}>{wo.adjustmentsMade||"No adjustments recorded."}</div>
         </div>
-
-
-
-        {wo.woType==="Service" && (wo.meterReading||wo.nextServiceDue||wo.serviceChecklist) && (
-          <div style={{ background:"#eff6ff", borderRadius:6, padding:"10px 12px", border:"1px solid #bfdbfe" }}>
-            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:"#1e40af", textTransform:"uppercase", letterSpacing:.4, marginBottom:6 }}>Service Block</div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, fontFamily:T.sans, fontSize:13, color:T.text }}>
-              <div><b>Meter / Hours:</b><br />{wo.meterReading||"—"}</div>
-              <div><b>Next Service Due:</b><br />{wo.nextServiceDue||"—"}</div>
-              <div style={{ gridColumn:"span 2" }}><b>Service Checklist:</b><br />{wo.serviceChecklist||"—"}</div>
-            </div>
-          </div>
-        )}
-
-        {wo.woType==="Inspection" && (wo.inspectionResult||wo.followUpRequired||wo.inspectionFindings) && (
-          <div style={{ background:"#ecfdf5", borderRadius:6, padding:"10px 12px", border:"1px solid #bbf7d0" }}>
-            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:"#065f46", textTransform:"uppercase", letterSpacing:.4, marginBottom:6 }}>Inspection Block</div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, fontFamily:T.sans, fontSize:13, color:T.text }}>
-              <div><b>Result:</b><br />{wo.inspectionResult||"—"}</div>
-              <div><b>Follow-Up:</b><br />{wo.followUpRequired||"—"}</div>
-              <div style={{ gridColumn:"span 2" }}><b>Findings:</b><br />{wo.inspectionFindings||"—"}</div>
-            </div>
-          </div>
-        )}
 
         {/* Mechanic Notes */}
         <div style={{ background:T.grayLt, borderRadius:6, padding:"10px 12px", border:`1px solid ${T.border}` }}>
           <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Mechanic Notes</div>
-          <div style={{ minHeight:90, fontFamily:T.sans, fontSize:13, color:wo.mechanicNotes?T.text:T.muted, lineHeight:1.6, fontStyle:wo.mechanicNotes?"normal":"italic" }}>{wo.mechanicNotes||"No notes recorded."}</div>
+          <div style={{ fontFamily:T.sans, fontSize:13, color:wo.mechanicNotes?T.text:T.muted, lineHeight:1.6, fontStyle:wo.mechanicNotes?"normal":"italic" }}>{wo.mechanicNotes||"No notes recorded."}</div>
         </div>
 
         {/* Parts & Labor Summary — below mechanic notes */}
@@ -1488,7 +1332,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           {/* Type */}
           <select style={{ ...sel, width:140 }} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
             <option value="All">All Types</option>
-            {["Repair"].map(t=><option key={t}>{t}</option>)}
+            {["Service","Inspection","Repair"].map(t=><option key={t}>{t}</option>)}
           </select>
           {/* Priority */}
           <select style={{ ...sel, width:130 }} value={priorityFilter} onChange={e=>setPriorityFilter(e.target.value)}>
@@ -1534,12 +1378,12 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         </div>
       </div>
 
-      {/* WO Table — click anywhere on row to edit */}
+      {/* WO Table — click anywhere on row to open detail */}
       <Card style={{ padding:0, overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-              {["Equipment #","Equipment Name","Description","Type of Work Order","Priority","Status","Due","Cost","Actions"].map(h=>(
+              {["WO #","Type","Title","Equipment","Mechanic","Priority","Status","Due","Cost",""].map(h=>(
                 <th key={h} style={{ padding:"10px 14px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4, whiteSpace:"nowrap" }}>{h}</th>
               ))}
             </tr>
@@ -1551,54 +1395,33 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               const partsTotal = (wo.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
               const total = (+wo.laborCost||0)+partsTotal+(+wo.partsCost||0);
               const typeInfo = WO_TYPES.find(t=>t.id===wo.woType);
-              const rowStatus = wo.status==="Completed" ? "Fully Operational" : (wo.equipmentStatus || eq?.status || "Fully Operational");
-              const rowBg = rowStatus==="Out of Service / Deadline" ? "#fff5f5" : rowStatus==="Operational with Deficiencies" ? "#fffbeb" : (i%2===0?"#fff":T.grayLt);
-              const rowHover = rowStatus==="Out of Service / Deadline" ? "#fee2e2" : rowStatus==="Operational with Deficiencies" ? "#fef3c7" : T.accentLt;
-              const rowBorder = rowStatus==="Out of Service / Deadline" ? "4px solid #ef4444" : rowStatus==="Operational with Deficiencies" ? "4px solid #f59e0b" : "4px solid transparent";
               return (
-                <tr key={wo.id} onClick={()=>openEdit(wo)} style={{ borderBottom:`1px solid ${T.border}`, borderLeft:rowBorder, background:rowBg, cursor:"pointer", transition:"background .12s" }}
-                  onMouseEnter={e=>e.currentTarget.style.background=rowHover}
-                  onMouseLeave={e=>e.currentTarget.style.background=rowBg}>
-                  <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:T.subtext, whiteSpace:"nowrap" }}>{wo.equipment || "—"}</td>
-                  <td style={{ padding:"11px 14px", color:T.subtext, whiteSpace:"nowrap" }}>
-                    <div style={{ fontWeight:600, color:T.text }}>{eqLabel}</div>
-                    {wo.parentName && <div style={{ fontSize:11, color:T.muted }}>on: {wo.parentName}</div>}
-                  </td>
-                  <td style={{ padding:"11px 14px", minWidth:220 }}>
-                    <div style={{ fontWeight:500, color:T.text }}>{wo.faultDescription || wo.description || wo.title || "—"}</div>
-                    {wo.serviceInterval && <div style={{ fontSize:11, color:T.accent, marginTop:1 }}>{wo.serviceInterval}</div>}
+                <tr key={wo.id} onClick={()=>openDetail(wo)} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer", transition:"background .12s" }}
+                  onMouseEnter={e=>e.currentTarget.style.background=T.accentLt}
+                  onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"#fff":T.grayLt}>
+                  <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:11, color:T.muted, whiteSpace:"nowrap" }}>{wo.id}</td>
+                  <td style={{ padding:"11px 14px" }}>
+                    {typeInfo ? <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"2px 8px", borderRadius:4, background:typeInfo.bg, color:typeInfo.color, fontSize:11, fontWeight:600 }}>{typeInfo.icon} {typeInfo.id}</span> : <span style={{ color:T.muted }}>—</span>}
                   </td>
                   <td style={{ padding:"11px 14px" }}>
-                    {typeInfo ? <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"2px 8px", borderRadius:4, background:typeInfo.bg, color:typeInfo.color, fontSize:11, fontWeight:600 }}>{typeInfo.icon} {typeInfo.label || typeInfo.id}</span> : <span style={{ color:T.muted }}>Repair Work Order</span>}
+                    <div style={{ fontWeight:500, color:T.text }}>{wo.title}</div>
+                    {wo.serviceInterval && <div style={{ fontSize:11, color:T.accent, marginTop:1 }}>{wo.serviceInterval}</div>}
                   </td>
+                  <td style={{ padding:"11px 14px", color:T.subtext, whiteSpace:"nowrap" }}>
+                    <div>{eqLabel}</div>
+                    {wo.parentName && <div style={{ fontSize:11, color:T.muted }}>on: {wo.parentName}</div>}
+                  </td>
+                  <td style={{ padding:"11px 14px", color:T.subtext, whiteSpace:"nowrap" }}>{wo.tech||"—"}</td>
                   <td style={{ padding:"11px 14px" }}><Badge label={wo.priority} type="priority" /></td>
                   <td style={{ padding:"11px 14px" }}><Badge label={wo.status} /></td>
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:wo.due&&wo.due<today()&&wo.status!=="Completed"?T.red:T.subtext, whiteSpace:"nowrap" }}>{wo.due}</td>
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:T.subtext, whiteSpace:"nowrap" }}>{total>0?`$${total.toFixed(0)}`:"—"}</td>
-                  <td style={{ padding:"4px 10px", whiteSpace:"nowrap", display:"flex", gap:6, alignItems:"center" }} onClick={e=>e.stopPropagation()}>
-                    <select title="Change Work Order Status" value={wo.status||"Open"} onChange={e=>quickUpdateWO(wo,{status:e.target.value})} style={{ ...sel, width:145, minWidth:145, padding:"7px 10px", fontSize:12 }}>
-                      {["Open","In Progress","Awaiting Parts","On Hold","Completed"].map(s=><option key={s}>{s}</option>)}
-                    </select>
-                    <select title="Change Equipment Status" value={wo.status==="Completed"?"Fully Operational":(wo.equipmentStatus||eq?.status||"Fully Operational")} onChange={e=>quickUpdateWO(wo,{equipmentStatus:e.target.value})} disabled={wo.status==="Completed"} style={{ ...sel, width:240, minWidth:240, padding:"7px 10px", fontSize:12, opacity:wo.status==="Completed"?.65:1 }}>
-                      {["Fully Operational","Operational with Deficiencies","Out of Service / Deadline"].map(s=><option key={s}>{s}</option>)}
-                    </select>
-                    <button
-                      title="Edit Work Order"
-                      onClick={e=>{ e.stopPropagation(); openEdit(wo); }}
-                      style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:13, color:T.subtext, display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
-                      ✏️
-                    </button>
+                  <td style={{ padding:"4px 10px", whiteSpace:"nowrap" }} onClick={e=>e.stopPropagation()}>
                     <button
                       title="Print Work Order"
                       onClick={e=>{ e.stopPropagation(); printWO(wo); }}
                       style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:14, color:T.subtext, display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
                       🖨
-                    </button>
-                    <button
-                      title="Delete Work Order"
-                      onClick={e=>{ e.stopPropagation(); del(wo.id); }}
-                      style={{ background:"#fff5f5", border:"1px solid #fca5a5", borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:14, color:T.red, display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
-                      🗑
                     </button>
                   </td>
                 </tr>
@@ -1624,7 +1447,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
       {/* Edit modal */}
       {modal==="edit" && (
-        <Modal title={`Edit Work Order — ${form.id}`} onClose={()=>setModal(null)}>
+        <Modal title={`Edit ${form.id}`} onClose={()=>setModal(null)}>
           <div style={{ background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 14px", marginBottom:14 }}>
             <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:3 }}>Equipment</div>
             <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:600, color:T.text }}>{state.equipment.find(e=>e.id===form.equipment)?.name||form.equipmentLabel||form.equipment||"—"}</div>
@@ -1632,7 +1455,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           {renderWOForm()}
           <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:8 }}>
             <Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn>
-            <Btn onClick={()=>save(true)}>Save Work Order Changes</Btn>
+            <Btn onClick={()=>save(true)}>Save Changes</Btn>
           </div>
         </Modal>
       )}
@@ -1641,7 +1464,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       {modal==="pick" && (
         <Modal title="Select Equipment or Attachment" onClose={()=>setModal(null)}>
           <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.subtext }}>Choose the equipment or attachment this work order is for.</p>
-          <input style={{ ...inp, marginBottom:14 }} placeholder="Search by nomenclature, serial, EIL #..." value={eqSearch} onChange={e=>setEqSearch(e.target.value)} autoFocus />
+          <input style={{ ...inp, marginBottom:14 }} placeholder="Search by name, serial, EIL #..." value={eqSearch} onChange={e=>setEqSearch(e.target.value)} autoFocus />
           <div style={{ display:"flex", flexDirection:"column", gap:6, maxHeight:400, overflowY:"auto" }}>
             {filteredPickable.length===0 && (
               <div style={{ padding:32, textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13 }}>
@@ -1712,7 +1535,7 @@ function AttachmentsCard({ eq, dispatch }) {
   const cancel = () => { setShowForm(false); setEditId(null); setForm({}); };
 
   const save = () => {
-    if(!form.name) return alert("Attachment nomenclature is required.");
+    if(!form.name) return alert("Attachment name is required.");
     const updated = editId
       ? attachments.map(a => a.id===editId ? {...form, id:editId} : a)
       : [...attachments, { ...form, id:`AT-${String(Date.now()).slice(-5)}` }];
@@ -1826,7 +1649,7 @@ function AttachmentsCard({ eq, dispatch }) {
 function Equipment({ state, dispatch, setTab }) {
   const [modal, setModal]       = useState(null);
   const [detail, setDetail]     = useState(null);
-  const [viewWO, setViewWO]     = useState(null);
+  const [viewWO, setViewWO]     = useState(null); /* WO being viewed from history */
   const [attachDetail, setAttachDetail] = useState(null);
   const [expandedAt, setExpandedAt]     = useState({});
   const [form, setForm]         = useState({});
@@ -1834,7 +1657,6 @@ function Equipment({ state, dispatch, setTab }) {
   const [statusF, setStatusF]   = useState("All");
   const [typeF, setTypeF]       = useState("All");
   const [locationF, setLocationF] = useState("All");
-  const [equipSort, setEquipSort] = useState("status");
   const [showNewCat, setShowNewCat] = useState(false);
   const [newCat, setNewCat]     = useState("");
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
@@ -1858,15 +1680,11 @@ function Equipment({ state, dispatch, setTab }) {
     const mt  = typeF==="All"   || e.type===typeF;
     const ml  = locationF==="All" || e.location===locationF;
     return ms&&mst&&mt&&ml;
-  }).sort((a,b)=>{
-    if(equipSort==="equipAsc") return String(a.id||"").localeCompare(String(b.id||""), undefined, { numeric:true, sensitivity:"base" });
-    if(equipSort==="equipDesc") return String(b.id||"").localeCompare(String(a.id||""), undefined, { numeric:true, sensitivity:"base" });
-    return (STATUS_SORT[a.status]??99)-(STATUS_SORT[b.status]??99);
-  });
+  }).sort((a,b)=>(STATUS_SORT[a.status]??99)-(STATUS_SORT[b.status]??99));
 
   const woForEq  = eq => state.workOrders.filter(w=>w.equipment===eq.id);
 
-  /* Print a WO from history */
+  /* Print a WO (shared logic similar to WorkOrders.printWO) */
   const printWOFromEq = (wo) => {
     const gs = state.settings || {};
     const ws = state.woSettings || {};
@@ -1906,9 +1724,9 @@ function Equipment({ state, dispatch, setTab }) {
       <h2>${wo.title}</h2>
       <div class="info-grid">
         <div><b>Equipment:</b> ${eq?.name||wo.equipment} (${wo.equipment})</div>
-        <div><b>Mechanic:</b> ${wo.tech||"&mdash;"}</div>
-        <div><b>Created:</b> ${wo.created||"&mdash;"}</div>
-        <div><b>Due:</b> ${wo.due||"&mdash;"}</div>
+        <div><b>Mechanic:</b> ${wo.tech||"—"}</div>
+        <div><b>Created:</b> ${wo.created||"—"}</div>
+        <div><b>Due:</b> ${wo.due||"—"}</div>
         ${wo.completed?`<div><b>Completed:</b> ${wo.completed}</div>`:""}
         ${wo.serviceInterval?`<div><b>Interval:</b> ${wo.serviceInterval}</div>`:""}
       </div>
@@ -1921,7 +1739,10 @@ function Equipment({ state, dispatch, setTab }) {
         <tr><td>Parts Cost</td><td style="text-align:right">$${(partsTotal+(+wo.partsCost||0)).toFixed(2)}</td></tr>
         <tr style="font-weight:700;background:#f3f4f6"><td>TOTAL</td><td style="text-align:right">$${total.toFixed(2)}</td></tr>
       </table>
-      <div class="sig"><div>Mechanic Signature</div><div>Supervisor Signature</div></div>
+      <div class="sig">
+        <div>Mechanic Signature</div>
+        <div>Supervisor Signature</div>
+      </div>
       <br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
       </body></html>`);
     win.document.close();
@@ -1929,7 +1750,7 @@ function Equipment({ state, dispatch, setTab }) {
   const openAdd  = () => { setForm({ status:"Fully Operational", faultDescription:"", faultDate:"" }); setModal("add"); };
   const openEdit = eq => { setForm({...eq}); setModal("editing"); };
   const save = () => {
-    if(!form.name) return alert("Nomenclature required.");
+    if(!form.name) return alert("Name required.");
     if(modal==="add") {
       const newId = form.id && form.id.trim() ? form.id.trim() : genId("EQ");
       dispatch({type:"ADD_EQ", payload:{...form, id:newId}});
@@ -1961,14 +1782,14 @@ function Equipment({ state, dispatch, setTab }) {
     const categories = state.categories || [];
     return (
     <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
-      <Field label="Nomenclature">
-        <SmartInput historyKey="equipment.name" style={inp} value={form.name||""} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="e.g. John Deere Zero-Turn" />
+      <Field label="Equipment Name">
+        <input style={inp} value={form.name||""} onChange={e=>setForm(f=>({...f,name:e.target.value}))} placeholder="e.g. John Deere Zero-Turn" />
       </Field>
       <Field label="Equipment #" half>
-        <SmartInput historyKey="equipment.id" style={inp} value={form.id||""} onChange={e=>setForm(f=>({...f,id:e.target.value}))} placeholder="e.g. EQ-005" />
+        <input style={inp} value={form.id||""} onChange={e=>setForm(f=>({...f,id:e.target.value}))} placeholder="e.g. EQ-005" />
       </Field>
       <Field label="EIL #" half>
-        <SmartInput historyKey="equipment.eilNumber" style={inp} value={form.eilNumber||""} onChange={e=>setForm(f=>({...f,eilNumber:e.target.value}))} placeholder="EE#" />
+        <input style={inp} value={form.eilNumber||""} onChange={e=>setForm(f=>({...f,eilNumber:e.target.value}))} placeholder="EE#" />
       </Field>
 
       {/* Category dropdown with Create New */}
@@ -1994,25 +1815,25 @@ function Equipment({ state, dispatch, setTab }) {
         </select>
       </Field>
       <Field label="Make" half>
-        <SmartInput historyKey="equipment.make" style={inp} value={form.make||""} onChange={e=>setForm(f=>({...f,make:e.target.value}))} />
+        <input style={inp} value={form.make||""} onChange={e=>setForm(f=>({...f,make:e.target.value}))} />
       </Field>
       <Field label="Model" half>
-        <SmartInput historyKey="equipment.model" style={inp} value={form.model||""} onChange={e=>setForm(f=>({...f,model:e.target.value}))} />
+        <input style={inp} value={form.model||""} onChange={e=>setForm(f=>({...f,model:e.target.value}))} />
       </Field>
       <Field label="Year" half>
-        <SmartInput historyKey="equipment.year" style={inp} type="number" value={form.year||""} onChange={e=>setForm(f=>({...f,year:e.target.value}))} />
+        <input style={inp} type="number" value={form.year||""} onChange={e=>setForm(f=>({...f,year:e.target.value}))} />
       </Field>
       <Field label="Serial Number" half>
-        <SmartInput historyKey="equipment.serial" style={inp} value={form.serial||""} onChange={e=>setForm(f=>({...f,serial:e.target.value}))} />
+        <input style={inp} value={form.serial||""} onChange={e=>setForm(f=>({...f,serial:e.target.value}))} />
       </Field>
       <Field label="Location" half>
-        <SmartInput historyKey="equipment.location" style={inp} listId="equipment-location-history" extraOptions={[...new Set([...(state.settings?.locations||[]), ...(state.equipment||[]).map(e=>e.location).filter(Boolean)])]} value={form.location||""} onChange={e=>setForm(f=>({...f,location:e.target.value}))} placeholder="Select or type location..." />
+        <input style={inp} value={form.location||""} onChange={e=>setForm(f=>({...f,location:e.target.value}))} placeholder="Main Shop, Motor Pool..." />
       </Field>
       <Field label="Acquisition Date" half>
         <input style={inp} type="date" value={form.acquisitionDate||""} onChange={e=>setForm(f=>({...f,acquisitionDate:e.target.value}))} />
       </Field>
       <Field label="Purchase Price ($)" half>
-        <SmartInput historyKey="equipment.acquisitionCost" style={inp} type="number" value={form.acquisitionCost||""} onChange={e=>setForm(f=>({...f,acquisitionCost:e.target.value}))} placeholder="0.00" />
+        <input style={inp} type="number" value={form.acquisitionCost||""} onChange={e=>setForm(f=>({...f,acquisitionCost:e.target.value}))} placeholder="0.00" />
       </Field>
       <Field label="Warranty Start Date" half>
         <input style={inp} type="date" value={form.warrantyStart||""} onChange={e=>setForm(f=>({...f,warrantyStart:e.target.value}))} />
@@ -2048,7 +1869,7 @@ function Equipment({ state, dispatch, setTab }) {
         <Field label="Fault Date" half>
           <input style={inp} type="date" value={form.faultDate||""} onChange={e=>setForm(f=>({...f,faultDate:e.target.value}))} />
         </Field>
-        <Field label="Description">
+        <Field label="Fault Description">
           <textarea style={{ ...inp, minHeight:70, resize:"vertical" }} value={form.faultDescription||""} onChange={e=>setForm(f=>({...f,faultDescription:e.target.value}))} placeholder="Describe the fault or deficiency..." />
         </Field>
       </>)}
@@ -2130,7 +1951,7 @@ function Equipment({ state, dispatch, setTab }) {
                     <div style={{ fontFamily:T.mono, fontSize:14, fontWeight:700, color:isOOS?T.red:T.amber }}>{eq.faultDate||"—"}</div>
                   </div>
                   <div style={{ flex:1 }}>
-                    <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:3 }}>Description</div>
+                    <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:3 }}>Fault Description</div>
                     <div style={{ fontFamily:T.sans, fontSize:13, color:T.text }}>{eq.faultDescription||"No description provided."}</div>
                   </div>
                 </div>
@@ -2175,7 +1996,7 @@ function Equipment({ state, dispatch, setTab }) {
             </div>
           </Card>
 
-          {/* Work Order History — 3 categories */}
+          {/* Work Order History — split into 3 categories */}
           <Card style={{ gridColumn:"span 2" }}>
             <h4 style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>📋 Work Order History</h4>
             {wos.length===0
@@ -2203,7 +2024,7 @@ function Equipment({ state, dispatch, setTab }) {
                                   const partsTot = (wo.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
                                   const total = (+wo.laborCost||0)+partsTot+(+wo.partsCost||0);
                                   return (
-                                    <tr key={wo.id} onClick={()=>setViewWO(wo)} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer" }}
+                                    <tr key={wo.id} onClick={()=>setViewWO(wo)} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer", transition:"background .1s" }}
                                       onMouseEnter={e=>e.currentTarget.style.background=T.accentLt}
                                       onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"#fff":T.grayLt}>
                                       <td style={{ padding:"7px 10px", fontFamily:T.mono, fontSize:11, color:T.muted }}>{wo.id}</td>
@@ -2213,7 +2034,7 @@ function Equipment({ state, dispatch, setTab }) {
                                       <td style={{ padding:"7px 10px", fontFamily:T.mono, fontSize:11, color:T.subtext }}>{wo.completed||wo.created||"—"}</td>
                                       <td style={{ padding:"7px 10px", fontFamily:T.mono, fontSize:11, color:T.subtext }}>${total.toFixed(2)}</td>
                                       <td style={{ padding:"7px 10px", textAlign:"right" }} onClick={e=>e.stopPropagation()}>
-                                        <button onClick={()=>{ setTab&&setTab("workorders"); }} title="Edit in Work Orders" style={{ background:"none", border:"none", color:T.accent, cursor:"pointer", fontSize:14, padding:"2px 4px" }}>✏️</button>
+                                        <button onClick={()=>{ setTab&&setTab("workorders"); setTimeout(()=>{ const el=document.querySelector(`[data-wo-id="${wo.id}"]`); el?.click(); },100); }} title="Edit in Work Orders" style={{ background:"none", border:"none", color:T.accent, cursor:"pointer", fontSize:14, padding:"2px 4px" }}>✏️</button>
                                       </td>
                                     </tr>
                                   );
@@ -2295,7 +2116,7 @@ function Equipment({ state, dispatch, setTab }) {
                   </table>
                 </div>
               )}
-              <div style={{ background:T.accentLt, borderRadius:7, padding:"10px 14px", display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
+              <div style={{ background:T.accentLt, borderRadius:7, padding:"10px 14px", display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, fontFamily:T.sans }}>
                 <div><div style={{ fontSize:10, color:T.muted, textTransform:"uppercase" }}>Labor</div><div style={{ fontSize:16, fontWeight:700, color:T.accent }}>${(+viewWO.laborCost||0).toFixed(2)}</div></div>
                 <div><div style={{ fontSize:10, color:T.muted, textTransform:"uppercase" }}>Parts</div><div style={{ fontSize:16, fontWeight:700, color:T.accent }}>${((viewWO.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0)+(+viewWO.partsCost||0)).toFixed(2)}</div></div>
                 <div><div style={{ fontSize:10, color:T.muted, textTransform:"uppercase" }}>Total</div><div style={{ fontSize:18, fontWeight:800, color:T.text }}>${((+viewWO.laborCost||0)+(viewWO.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0)+(+viewWO.partsCost||0)).toFixed(2)}</div></div>
@@ -2328,27 +2149,26 @@ function Equipment({ state, dispatch, setTab }) {
     <div>
       <Card style={{ marginBottom:16 }}>
         <div style={{ display:"flex", gap:10, marginBottom:14, flexWrap:"wrap" }}>
-          <input style={{ ...inp, flex:1, minWidth:200 }} placeholder="Search by nomenclature, make, model, serial, EIL #, location…" value={search} onChange={e=>setSearch(e.target.value)} />
+          <input style={{ ...inp, flex:1, minWidth:200 }} placeholder="Search by name, make, model, serial, EIL #, location…" value={search} onChange={e=>setSearch(e.target.value)} />
           <Btn variant="secondary" onClick={()=>{
             const reportEqs = state.equipment.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies");
-            const exportRows = reportEqs.map(e=>({Status:e.status||"", Nomenclature:e.name||"", "Make/Model":`${e.make||""} ${e.model||""}`.trim(), "Serial #":e.serial||"", "EIL #":e.eilNumber||"", "Fault Date":e.faultDate||"", "Description":e.faultDescription||""}));
             const win = window.open("","_blank");
             win.document.write(`<html><head><title>Equipment Status Report</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{font-size:20px;margin-bottom:4px}p{font-size:12px;color:#666;margin:0 0 20px}.section{margin-bottom:28px}h2{font-size:14px;margin-bottom:8px;padding:6px 10px;border-radius:4px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#f3f4f6;padding:7px 10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px}td{padding:7px 10px;border-bottom:1px solid #e5e7eb}.red{background:#fef2f2;color:#7f1d1d}.yellow{background:#fffbeb;color:#92400e}@media print{button{display:none}}</style></head><body>`);
             win.document.write(`<h1>Equipment Status Report</h1><p>Generated: ${new Date().toLocaleDateString()} — NCA Maintenance Manager</p>`);
             const oos = reportEqs.filter(e=>e.status==="Out of Service / Deadline");
             const def = reportEqs.filter(e=>e.status==="Operational with Deficiencies");
             if(oos.length){
-              win.document.write(`<div class="section"><h2 class="red">🚨 Out of Service / Deadline (${oos.length})</h2><table><tr><th>Nomenclature</th><th>Make/Model</th><th>Serial #</th><th>EIL #</th><th>Fault Date</th><th>Description</th></tr>`);
+              win.document.write(`<div class="section"><h2 class="red">🚨 Out of Service / Deadline (${oos.length})</h2><table><tr><th>Name</th><th>Make/Model</th><th>Serial #</th><th>EIL #</th><th>Fault Date</th><th>Fault Description</th></tr>`);
               oos.forEach(e=>win.document.write(`<tr><td><b>${e.name}</b></td><td>${e.make||""} ${e.model||""}</td><td>${e.serial||"—"}</td><td>${e.eilNumber||"—"}</td><td>${e.faultDate||"—"}</td><td>${e.faultDescription||"—"}</td></tr>`));
               win.document.write(`</table></div>`);
             }
             if(def.length){
-              win.document.write(`<div class="section"><h2 class="yellow">⚠️ Operational with Deficiencies (${def.length})</h2><table><tr><th>Nomenclature</th><th>Make/Model</th><th>Serial #</th><th>EIL #</th><th>Fault Date</th><th>Description</th></tr>`);
+              win.document.write(`<div class="section"><h2 class="yellow">⚠️ Operational with Deficiencies (${def.length})</h2><table><tr><th>Name</th><th>Make/Model</th><th>Serial #</th><th>EIL #</th><th>Fault Date</th><th>Fault Description</th></tr>`);
               def.forEach(e=>win.document.write(`<tr><td><b>${e.name}</b></td><td>${e.make||""} ${e.model||""}</td><td>${e.serial||"—"}</td><td>${e.eilNumber||"—"}</td><td>${e.faultDate||"—"}</td><td>${e.faultDescription||"—"}</td></tr>`));
               win.document.write(`</table></div>`);
             }
             if(!oos.length&&!def.length) win.document.write(`<p>No equipment in deadline or deficiency status.</p>`);
-            win.document.write(reportButtonsHtml(exportRows)+`</body></html>`);
+            win.document.write(`<br/><button onclick="window.print()">🖨 Print / Save as PDF</button></body></html>`);
             win.document.close();
           }}>🖨 Deadline Report</Btn>
           <Btn onClick={openAdd}>+ Add New Equipment</Btn>
@@ -2368,14 +2188,6 @@ function Equipment({ state, dispatch, setTab }) {
               </select>
             </div>
           ))}
-          <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-            <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Sort</label>
-            <select style={{ ...sel, width:210 }} value={equipSort} onChange={e=>setEquipSort(e.target.value)}>
-              <option value="status">Status priority</option>
-              <option value="equipAsc">Equip # ascending</option>
-              <option value="equipDesc">Equip # descending</option>
-            </select>
-          </div>
           {(statusF!=="All"||typeF!=="All"||locationF!=="All") && (
             <button onClick={()=>{setStatusF("All");setTypeF("All");setLocationF("All");}} style={{ background:"none", border:"none", color:T.accent, fontFamily:T.sans, fontSize:12, fontWeight:600, cursor:"pointer", padding:"0 0 6px", alignSelf:"flex-end" }}>
               ✕ Clear filters
@@ -2422,7 +2234,7 @@ function Equipment({ state, dispatch, setTab }) {
                     </div>
 
                     <div style={{ flex:1, minWidth:180, marginRight:20 }}>
-                      <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Nomenclature</div>
+                      <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Equipment Name</div>
                       <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginTop:3 }}>{eq.name}</div>
                       <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:1 }}>{eq.type||""}</div>
                     </div>
@@ -2472,7 +2284,7 @@ function Equipment({ state, dispatch, setTab }) {
                     </div>
                     {eq.faultDescription && (
                       <div style={{ flex:1, minWidth:180 }}>
-                        <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Description</div>
+                        <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Fault Description</div>
                         <div style={{ fontFamily:T.sans, fontSize:12, color:T.text, marginTop:2, lineHeight:1.5 }}>{eq.faultDescription}</div>
                       </div>
                     )}
@@ -2601,13 +2413,8 @@ function Parts({ state, dispatch }) {
   const [invUpdate, setInvUpdate] = useState(null);
   const [poForm, setPoForm]     = useState({ poNumber:"", vendor:"", date:today(), parts:[{name:"",partNumber:"",category:"",qty:"",unitCost:"",location:"",equipmentId:"",modelFit:""}] });
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
-  const partCategories = [...new Set([...(state.categories||[]), ...(state.parts||[]).map(p=>p.category).filter(Boolean)])].sort((a,b)=>a.localeCompare(b));
-  const rememberPartCategory = (category) => {
-    const clean = String(category||"").trim();
-    if(clean && !(state.categories||[]).includes(clean)) dispatch({ type:"ADD_CATEGORY", payload:clean });
-  };
 
-  const cats     = ["All",...partCategories];
+  const cats     = ["All",...new Set(state.parts.map(p=>p.category).filter(Boolean))];
   const filtered = state.parts.filter(p=>{
     const mc = catF==="All"||p.category===catF;
     const ms = `${p.name} ${p.partNumber||""} ${p.vendor||""} ${p.modelFit||""} ${p.equipmentId||""}`.toLowerCase().includes(search.toLowerCase());
@@ -2618,12 +2425,10 @@ function Parts({ state, dispatch }) {
   const openAdd  = () => { setForm({qty:0,minQty:1,unitCost:0,lowStockAlert:true}); setModal("add"); };
   const openEdit = p  => { setForm({...p}); setModal(p); };
   const save = () => {
-    if(!form.name) return alert("Nomenclature required.");
-    rememberPartCategory(form.category);
-    const cleanForm = { ...form, category:String(form.category||"").trim() };
+    if(!form.name) return alert("Name required.");
     modal==="add"
-      ? dispatch({type:"ADD_PART",  payload:{...cleanForm,id:genId("PT")}})
-      : dispatch({type:"UPDATE_PART",payload:cleanForm});
+      ? dispatch({type:"ADD_PART",  payload:{...form,id:genId("PT")}})
+      : dispatch({type:"UPDATE_PART",payload:form});
     setModal(null);
   };
   const del = id => { if(confirm("Delete part?")) dispatch({type:"DELETE_PART",payload:id}); };
@@ -2650,14 +2455,14 @@ function Parts({ state, dispatch }) {
       ${reportHeaderHTML(state, "Parts Inventory Report")}
       <p style="font-size:12px;color:#666;margin-bottom:12px">SKUs: ${state.parts.length} | Total Value: $${totalVal.toFixed(2)} | Low Stock: ${lowParts.length}</p>
       <table>
-        <tr><th>Part #</th><th>Nomenclature</th><th>Category</th><th>Location</th><th>Equipment / Model</th><th style="text-align:right">Unit $</th><th style="text-align:right">Qty</th><th style="text-align:right">Total $</th><th>New Count</th></tr>
+        <tr><th>Part #</th><th>Name</th><th>Category</th><th>Location</th><th>Equipment / Model</th><th style="text-align:right">Unit $</th><th style="text-align:right">Qty</th><th style="text-align:right">Total $</th><th>New Count</th></tr>
         ${state.parts.sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||"")).map(p=>{
           const eq = p.equipmentId ? state.equipment.find(e=>e.id===p.equipmentId) : null;
           return `<tr class="${p.qty<=(p.minQty||0)?"low":""}"><td>${p.partNumber||"—"}</td><td>${p.name}</td><td>${p.category||"—"}</td><td>${p.location||"—"}</td><td>${eq?`${eq.name} (${eq.id})`:p.modelFit||"—"}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td style="text-align:right">${p.qty}</td><td style="text-align:right">$${(p.qty*(+p.unitCost||0)).toFixed(2)}</td><td style="border-bottom:1px solid #bbb;min-width:80px">&nbsp;</td></tr>`;
         }).join("")}
         <tr class="total-row"><td colspan="7" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">$${totalVal.toFixed(2)}</td><td></td></tr>
       </table>
-      ${reportButtonsHtml(exportRows)}
+      <br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
       </body></html>`);
     win.document.close();
   };
@@ -2667,8 +2472,7 @@ function Parts({ state, dispatch }) {
     if(!valid.length) return alert("Add at least one part.");
     valid.forEach(p=>{
       const eq = state.equipment.find(e=>e.id===p.equipmentId);
-      rememberPartCategory(p.category);
-      dispatch({type:"ADD_PART",payload:{...p,category:String(p.category||"").trim(),id:genId("PT"),qty:+p.qty||0,unitCost:+p.unitCost||0,minQty:1,lowStockAlert:true,vendor:poForm.vendor,poNumber:poForm.poNumber,dateReceived:poForm.date,modelFit:eq?`${eq.make||""} ${eq.model||""}`.trim():p.modelFit}});
+      dispatch({type:"ADD_PART",payload:{...p,id:genId("PT"),qty:+p.qty||0,unitCost:+p.unitCost||0,minQty:1,lowStockAlert:true,vendor:poForm.vendor,poNumber:poForm.poNumber,dateReceived:poForm.date,modelFit:eq?`${eq.make||""} ${eq.model||""}`.trim():p.modelFit}});
     });
     setModal(null);
     setPoForm({poNumber:"",vendor:"",date:today(),parts:[{name:"",partNumber:"",category:"",qty:"",unitCost:"",location:"",equipmentId:"",modelFit:""}]});
@@ -2679,7 +2483,6 @@ function Parts({ state, dispatch }) {
 
   return (
     <div>
-      <datalist id="part-category-options">{partCategories.map(c=><option key={c} value={c} />)}</datalist>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12, marginBottom:16 }}>
         {[["Inventory Value","$"+totalVal.toLocaleString("en-US",{minimumFractionDigits:2}),T.accent],["Total SKUs",state.parts.length,T.text],["Low Stock",state.parts.filter(p=>p.lowStockAlert!==false&&p.qty<=(p.minQty||0)).length,T.red]].map(([l,v,c])=>(
           <Card key={l} style={{ padding:"14px 16px" }}>
@@ -2799,7 +2602,7 @@ function Parts({ state, dispatch }) {
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
             <Field label="Part Number" half><input style={inp} value={form.partNumber||""} onChange={F("partNumber")} /></Field>
             <Field label="Part Name"><input style={inp} value={form.name||""} onChange={F("name")} /></Field>
-            <Field label="Category" half><input style={inp} list="part-category-options" value={form.category||""} onChange={F("category")} placeholder="Pick or type category" /></Field>
+            <Field label="Category" half><input style={inp} value={form.category||""} onChange={F("category")} /></Field>
             <div style={{ marginBottom:14, gridColumn:"span 2" }}>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>
                 Linked Equipment <span style={{ fontFamily:T.sans, fontSize:11, fontWeight:400, color:T.muted }}>(optional)</span>
@@ -2847,7 +2650,7 @@ function Parts({ state, dispatch }) {
             <div key={i} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 55px 65px 1fr 1fr auto", gap:6, marginBottom:6, alignItems:"center" }}>
               <input style={inp} placeholder="Part name*" value={p.name} onChange={e=>setPoRow(i,"name",e.target.value)} />
               <input style={inp} placeholder="Part #" value={p.partNumber} onChange={e=>setPoRow(i,"partNumber",e.target.value)} />
-              <input style={inp} list="part-category-options" placeholder="Category" value={p.category} onChange={e=>setPoRow(i,"category",e.target.value)} />
+              <input style={inp} placeholder="Category" value={p.category} onChange={e=>setPoRow(i,"category",e.target.value)} />
               <input style={inp} type="number" placeholder="Qty" value={p.qty} onChange={e=>setPoRow(i,"qty",e.target.value)} />
               <input style={inp} type="number" step="0.01" placeholder="0.00" value={p.unitCost} onChange={e=>setPoRow(i,"unitCost",e.target.value)} />
               <input style={inp} placeholder="Location" value={p.location} onChange={e=>setPoRow(i,"location",e.target.value)} />
@@ -2873,10 +2676,9 @@ function Parts({ state, dispatch }) {
 /* PM */
 
 function PM({ state, dispatch }) {
-  const [modal, setModal]         = useState(null); /* null | "edit" | "schedule" | "manualTrigger" */
+  const [modal, setModal]         = useState(null); /* null | "edit" | "schedule" */
   const [form, setForm]           = useState({});
   const [schForm, setSchForm]     = useState({ equipmentId:"", taskId:"", task:"", triggerType:"time", timeInterval:"", timeUnit:"months", usageInterval:"", usageType:"hours", lastDoneDate:today(), lastDoneUsage:"" });
-  const [manualForm, setManualForm] = useState({ scheduleId:"" });
   const [taskModal, setTaskModal] = useState(false);
   const [editTaskId, setEditTaskId] = useState(null);
   const blankTaskForm = () => ({ name:"", description:"", steps:[""], parts:[{name:"",qty:"",unit:"ea"}], triggers:[{type:"time",timeInterval:"",timeUnit:"months",usageInterval:"",usageType:"hours",usageMode:"every"}] });
@@ -2943,7 +2745,7 @@ function PM({ state, dispatch }) {
         created:today(), due:sch.nextDueDate||today(),
         tech:"", laborHours:0, laborCost:0, partsCost:0,
         description:`Auto-generated: ${sch.task}`,
-        mechanicNotes:"", faultEnabled:true, faultDescription:"", partsUsed:[], scheduleId:sch.id,
+        mechanicNotes:"", partsUsed:[], scheduleId:sch.id,
       }});
       const logs    = (state.usageLogs||[]).filter(l=>l.equipmentId===sch.equipmentId);
       const curUsage = sch.usageType==="mileage"
@@ -2987,70 +2789,18 @@ function PM({ state, dispatch }) {
   const openEdit = pm => { setForm({...pm}); setModal("edit"); };
   const save = () => { dispatch({type:"UPDATE_PM", payload:form}); setModal(null); };
 
-  const getTaskTriggerSettings = (task) => {
-    const triggers = (task?.triggers||[]).filter(Boolean);
-    const timeTrig  = triggers.find(t=>t.type==="time") || null;
-    const usageTrig = triggers.find(t=>t.type==="hours" || t.type==="mileage") || null;
-    const triggerType = timeTrig && usageTrig ? "both" : usageTrig ? "usage" : "time";
-    return {
-      triggerType,
-      timeInterval: timeTrig?.timeInterval || "",
-      timeUnit: timeTrig?.timeUnit || "months",
-      usageInterval: usageTrig?.usageInterval || "",
-      usageType: usageTrig?.type==="mileage" ? "mileage" : "hours",
-    };
-  };
-
-  const describeTaskTriggers = (task) => {
-    const triggers = (task?.triggers||[]).filter(Boolean);
-    if(triggers.length===0) return "No trigger saved on this task yet.";
-    return triggers.map(t=>{
-      if(t.type==="time") return `Every ${t.timeInterval||"—"} ${t.timeUnit||"months"}`;
-      if(t.type==="hours") return `${t.usageMode==="at"?"At":"Every"} ${t.usageInterval||"—"} engine hours`;
-      if(t.type==="mileage") return `${t.usageMode==="at"?"At":"Every"} ${t.usageInterval||"—"} miles`;
-      return "Trigger saved";
-    }).join(" • ");
-  };
-
   const saveSchedule = () => {
     if(!schForm.equipmentId) return alert("Select equipment.");
-    const selectedTask = pmTasks.find(t=>t.id===schForm.taskId);
-    if(!selectedTask) return alert("Pick a named PM task first. The trigger is controlled by the task.");
-    const trig = getTaskTriggerSettings(selectedTask);
-    const schedulePayload = { ...schForm, task:selectedTask.name, ...trig };
-    const nextDate  = schedulePayload.triggerType!=="usage" ? nextDueDate(schedulePayload.lastDoneDate, schedulePayload.timeInterval, schedulePayload.timeUnit) : "";
-    const nextUsage = schedulePayload.triggerType!=="time"  ? (+(schedulePayload.lastDoneUsage||0))+(+(schedulePayload.usageInterval||0)) : "";
+    if(!schForm.task)        return alert("Enter task name.");
+    const nextDate  = schForm.triggerType!=="usage" ? nextDueDate(schForm.lastDoneDate, schForm.timeInterval, schForm.timeUnit) : "";
+    const nextUsage = schForm.triggerType!=="time"  ? (+(schForm.lastDoneUsage||0))+(+(schForm.usageInterval||0)) : "";
     dispatch({type:"ADD_PM_SCHEDULE", payload:{
-      ...schedulePayload, id:genId("SCH"),
+      ...schForm, id:genId("SCH"),
       nextDueDate:nextDate, nextDueUsage:nextUsage,
       created:today(),
     }});
     setModal(null);
     setSchForm({equipmentId:"",taskId:"",task:"",triggerType:"time",timeInterval:"",timeUnit:"months",usageInterval:"",usageType:"hours",lastDoneDate:today(),lastDoneUsage:""});
-  };
-
-  const createPMWorkOrderFromSchedule = (sch, manual=false) => {
-    if(!sch) return;
-    const existing = state.workOrders.filter(w=>w.id.startsWith(sch.equipmentId+"-"));
-    const nums = existing.map(w=>parseInt(w.id.split("-").pop(),10)||0);
-    const next = nums.length>0 ? Math.max(...nums)+1 : 1;
-    const woId = `${sch.equipmentId}-${String(next).padStart(2,"0")}`;
-    dispatch({type:"ADD_WO", payload:{
-      id:woId, title:sch.task, equipment:sch.equipmentId,
-      status:"Open", priority:"Medium", woType:"Service",
-      created:today(), due:sch.nextDueDate||today(),
-      tech:"", laborHours:0, laborCost:0, partsCost:0,
-      description:`${manual?"Manually triggered":"Auto-generated"}: ${sch.task}`,
-      mechanicNotes:"", faultEnabled:true, faultDescription:"", partsUsed:[], scheduleId:sch.id,
-    }});
-  };
-
-  const manualTriggerService = () => {
-    const sch = schedules.find(s=>s.id===manualForm.scheduleId);
-    if(!sch) return alert("Select a task-to-equipment schedule to trigger.");
-    createPMWorkOrderFromSchedule(sch, true);
-    setModal(null);
-    setManualForm({scheduleId:""});
   };
 
   const delSchedule = id => { if(confirm("Delete this maintenance schedule?")) dispatch({type:"DELETE_PM_SCHEDULE",payload:id}); };
@@ -3145,7 +2895,6 @@ function PM({ state, dispatch }) {
         </Btn>
         <Btn variant="secondary" onClick={openNewTask}>+ Create New Task</Btn>
         <Btn onClick={()=>setModal("schedule")}>Task-to-Equipment</Btn>
-        <Btn variant="secondary" onClick={()=>setModal("manualTrigger")}>Manual Trigger</Btn>
       </div>
 
       {/* Named Tasks Library Modal */}
@@ -3304,37 +3053,11 @@ function PM({ state, dispatch }) {
         </Modal>
       )}
 
-      {modal==="manualTrigger"&&(
-        <Modal title="Manual PM Service Trigger" onClose={()=>setModal(null)}>
-          <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.subtext }}>
-            Manually create a PM/service work order from an existing Task-to-Equipment schedule. This does not change the task trigger settings.
-          </p>
-          <Field label="Task-to-Equipment Schedule">
-            <select style={{ ...sel, minWidth:420 }} value={manualForm.scheduleId||""} onChange={e=>setManualForm({scheduleId:e.target.value})}>
-              <option value="">-- Select schedule to trigger --</option>
-              {schedules.map(sch=>{
-                const eq = state.equipment.find(e=>e.id===sch.equipmentId);
-                return <option key={sch.id} value={sch.id}>{eq?.name||sch.equipmentId} — {sch.task}</option>;
-              })}
-            </select>
-          </Field>
-          {manualForm.scheduleId && (()=>{ const sch=schedules.find(s=>s.id===manualForm.scheduleId); return (
-            <div style={{ background:T.accentLt, border:`1px solid ${T.accent}44`, borderRadius:8, padding:"10px 12px", marginTop:8, fontFamily:T.sans, fontSize:12, color:T.subtext }}>
-              This will create an open service work order for <b>{sch?.task}</b>.
-            </div>
-          ); })()}
-          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
-            <Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn>
-            <Btn onClick={manualTriggerService}>Create Service WO</Btn>
-          </div>
-        </Modal>
-      )}
-
       {/* Create Maintenance Schedule */}
       {modal==="schedule"&&(
         <Modal title="Task-to-Equipment" onClose={()=>setModal(null)}>
           <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.subtext }}>
-            Assign a PM task to equipment. The trigger comes from the task itself; this screen only links the task to the equipment.
+            Define a recurring service. Work orders auto-generate when the threshold is reached.
           </p>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
             <div style={{ gridColumn:"span 2", marginBottom:14 }}>
@@ -3349,20 +3072,32 @@ function PM({ state, dispatch }) {
               <div style={{ display:"flex", gap:8, alignItems:"center" }}>
                 <select style={{ ...sel, flex:1 }} value={schForm.taskId||""} onChange={e=>{
                   const t = pmTasks.find(t=>t.id===e.target.value);
-                  if(t) setSchForm(f=>({...f, taskId:t.id, task:t.name, ...getTaskTriggerSettings(t)}));
-                  else  setSchForm(f=>({...f,taskId:"",task:""}));
+                  if(t) setSchForm(f=>({...f,taskId:t.id,task:t.name,timeInterval:t.timeInterval||f.timeInterval,timeUnit:t.timeUnit||f.timeUnit,triggerType:t.triggerType||f.triggerType}));
+                  else  setSchForm(f=>({...f,taskId:""}));
                 }}>
                   <option value="">-- Pick from Named Tasks Library --</option>
                   {pmTasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
+                <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>or</span>
+                <input style={{ ...inp, flex:1 }} placeholder="Custom task name..." value={schForm.task} onChange={SF("task")} />
               </div>
             </div>
-            {schForm.taskId && (()=>{ const selectedTask = pmTasks.find(t=>t.id===schForm.taskId); return (
-              <div style={{ gridColumn:"span 2", marginBottom:14, background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 12px" }}>
-                <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:4 }}>Trigger controlled by the selected task</div>
-                <div style={{ fontFamily:T.sans, fontSize:12, color:T.subtext }}>{describeTaskTriggers(selectedTask)}</div>
+            <div style={{ gridColumn:"span 2", marginBottom:14 }}>
+              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:6 }}>Trigger Type</label>
+              <div style={{ display:"flex", gap:6 }}>
+                {[["time","By Time"],["usage","By Usage"],["both","Both"]].map(([v,l])=>(
+                  <button key={v} type="button" onClick={()=>setSchForm(f=>({...f,triggerType:v}))} style={{ flex:1, padding:"7px 0", borderRadius:6, border:`1px solid ${schForm.triggerType===v?T.accent:T.border}`, background:schForm.triggerType===v?T.accentLt:"#fff", color:schForm.triggerType===v?T.accent:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:schForm.triggerType===v?700:400 }}>{l}</button>
+                ))}
               </div>
-            ); })()}
+            </div>
+            {(schForm.triggerType==="time"||schForm.triggerType==="both")&&(<>
+              <Field label="Time Interval" half><input style={inp} type="number" min="1" value={schForm.timeInterval} onChange={SF("timeInterval")} placeholder="e.g. 6" /></Field>
+              <Field label="Unit" half><select style={sel} value={schForm.timeUnit} onChange={SF("timeUnit")}>{["days","weeks","months","years"].map(u=><option key={u}>{u}</option>)}</select></Field>
+            </>)}
+            {(schForm.triggerType==="usage"||schForm.triggerType==="both")&&(<>
+              <Field label="Usage Interval" half><input style={inp} type="number" min="1" value={schForm.usageInterval} onChange={SF("usageInterval")} placeholder="e.g. 100" /></Field>
+              <Field label="Usage Type" half><select style={sel} value={schForm.usageType} onChange={SF("usageType")}><option value="hours">Engine Hours</option><option value="mileage">Mileage</option></select></Field>
+            </>)}
             <Field label="Last Service Date" half><input style={inp} type="date" value={schForm.lastDoneDate} onChange={SF("lastDoneDate")} /></Field>
             {(schForm.triggerType==="usage"||schForm.triggerType==="both")&&(
               <Field label={`Usage at Last Service (${schForm.usageType})`} half><input style={inp} type="number" value={schForm.lastDoneUsage} onChange={SF("lastDoneUsage")} placeholder="e.g. 100" /></Field>
@@ -3615,21 +3350,17 @@ function UserProfile({ state, dispatch, onClose }) {
 function WOSettings({ state, dispatch, onClose }) {
   const s = state.woSettings || {};
   const [form, setForm] = useState({
+    companyName: s.companyName||"National Cemetery Administration",
     headerText:  s.headerText||"Maintenance Work Order",
+    logo:        s.logo||"",
     showEquipment: s.showEquipment!==false,
     showTech:      s.showTech!==false,
     showDates:     s.showDates!==false,
     showCosts:     s.showCosts!==false,
     showPriority:  s.showPriority!==false,
-    showFaultDescription: s.showFaultDescription!==false,
     showDescription: s.showDescription!==false,
-    showTypeSpecific: s.showTypeSpecific!==false,
-    showMechanicNotes: s.showMechanicNotes!==false,
     showParts:     s.showParts!==false,
     showLaborHours: s.showLaborHours!==false,
-    showSignature: s.showSignature!==false,
-    showFooterText: s.showFooterText!==false,
-    showFooterBar: s.showFooterBar!==false,
     footerText:  s.footerText||"",
   });
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
@@ -3649,36 +3380,41 @@ function WOSettings({ state, dispatch, onClose }) {
     reader.readAsDataURL(file);
   };
 
-  const save = () => { const { companyName, logo, ...cleanForm } = form; dispatch({ type:"UPDATE_WO_SETTINGS", payload:cleanForm }); onClose(); };
+  const save = () => { dispatch({ type:"UPDATE_WO_SETTINGS", payload:form }); onClose(); };
 
   return (
     <Modal title="Work Order Settings" onClose={onClose}>
       <div style={{ display:"flex", flexDirection:"column", gap:14, marginBottom:14 }}>
-        <div style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt, fontFamily:T.sans, fontSize:12, color:T.subtext }}>
-          Company / Organization name and logo are controlled in main Settings.
-        </div>
+        <Field label="Company / Organization Name">
+          <input style={inp} value={form.companyName} onChange={F("companyName")} />
+        </Field>
         <Field label="Work Order Header Title">
           <input style={inp} value={form.headerText} onChange={F("headerText")} />
         </Field>
         <Field label="Footer / Notes Text">
           <textarea style={{ ...inp, minHeight:56, resize:"vertical" }} value={form.footerText} onChange={F("footerText")} placeholder="e.g. Authorized signatures required…" />
         </Field>
+        <div>
+          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:6 }}>Logo</label>
+          <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+            {form.logo && <img src={form.logo} alt="logo" style={{ height:48, objectFit:"contain", border:`1px solid ${T.border}`, borderRadius:6, padding:4 }} />}
+            <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.accent, cursor:"pointer", padding:"7px 14px", border:`1px solid ${T.accent}`, borderRadius:6 }}>
+              📁 Upload Logo
+              <input type="file" accept="image/*" onChange={handleLogo} style={{ display:"none" }} />
+            </label>
+            {form.logo && <button onClick={()=>setForm(f=>({...f,logo:""}))} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12 }}>Remove</button>}
+          </div>
+        </div>
       </div>
       <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:8 }}>Fields to show on printed Work Order</div>
-      <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginBottom:8 }}>Assigned mechanic and priority are kept inside the system but are no longer printed on the work order.</div>
-      <Toggle label="Equipment Information" k="showEquipment" />
-      <Toggle label="Usage Reading / Mileage / Hours" k="showUsageReading" />
+      <Toggle label="Equipment" k="showEquipment" />
+      <Toggle label="Mechanic" k="showTech" />
       <Toggle label="Dates (Created / Due / Completed)" k="showDates" />
-      <Toggle label="Description" k="showFaultDescription" />
-      <Toggle label="Work Description / Work Performed" k="showDescription" />
-      <Toggle label="Service / Inspection Details" k="showTypeSpecific" />
-      <Toggle label="Mechanic Notes" k="showMechanicNotes" />
-      <Toggle label="Parts Table" k="showParts" />
+      <Toggle label="Priority" k="showPriority" />
+      <Toggle label="Description" k="showDescription" />
+      <Toggle label="Parts Cost" k="showParts" />
       <Toggle label="Labor Hours & Cost" k="showLaborHours" />
-      <Toggle label="Grand Total" k="showCosts" />
-      <Toggle label="Mechanic Signature Block" k="showSignature" />
-      <Toggle label="Remarks / Footer Notes" k="showFooterText" />
-      <Toggle label="Bottom Footer Bar" k="showFooterBar" />
+      <Toggle label="Total Cost" k="showCosts" />
       <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:16 }}>
         <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
         <Btn onClick={save}>Save Settings</Btn>
@@ -3948,7 +3684,7 @@ function EquipmentInventory({ state, dispatch }) {
   const openItem = item => { setForm({...item}); setModal(item); };
 
   const save = () => {
-    if(!form.name) return alert("Nomenclature required.");
+    if(!form.name) return alert("Name required.");
     if(modal==="add") {
       dispatch({type:"ADD_INV", payload:{...form, id:genId("INV"), turnInStatus:"Active"}});
     } else {
@@ -4160,7 +3896,6 @@ function ReportPartsInv({ state }) {
   const totalVal = state.parts.reduce((s,p)=>s+(+p.qty*(+p.unitCost||0)),0);
   const lowParts = state.parts.filter(p=>p.lowStockAlert!==false&&p.qty<=(p.minQty||0));
   const sorted = [...state.parts].sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||""));
-  const exportRows = sorted.map(p=>{ const eq = p.equipmentId?state.equipment.find(e=>e.id===p.equipmentId):null; return {"Part #":p.partNumber||"", Name:p.name||"", Category:p.category||"", Location:p.location||"", "Equipment / Model":eq?`${eq.name} (${eq.id})`:(p.modelFit||""), "Unit $":(+p.unitCost||0).toFixed(2), Qty:p.qty||0, "Total $":(p.qty*(+p.unitCost||0)).toFixed(2)}; });
 
   const print = () => {
     const win = window.open("","_blank","width=900,height=700");
@@ -4171,7 +3906,7 @@ function ReportPartsInv({ state }) {
       <h1>Parts Inventory Report</h1>
       <p>Generated: ${new Date().toLocaleDateString()} | Total SKUs: ${state.parts.length} | Total Value: $${totalVal.toFixed(2)} | Low Stock Items: ${lowParts.length}</p>
       <table>
-        <tr><th>Part #</th><th>Nomenclature</th><th>Category</th><th>Location</th><th>Equipment / Model</th><th style="text-align:right">Unit $</th><th style="text-align:right">Qty</th><th style="text-align:right">Total $</th><th>New Count</th></tr>
+        <tr><th>Part #</th><th>Name</th><th>Category</th><th>Location</th><th>Equipment / Model</th><th style="text-align:right">Unit $</th><th style="text-align:right">Qty</th><th style="text-align:right">Total $</th><th>New Count</th></tr>
         ${sorted.map(p=>{
           const eq = p.equipmentId?state.equipment.find(e=>e.id===p.equipmentId):null;
           const low = p.qty<=(p.minQty||0)&&p.lowStockAlert!==false;
@@ -4179,7 +3914,7 @@ function ReportPartsInv({ state }) {
         }).join("")}
         <tr class="total-row"><td colspan="7" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">$${totalVal.toFixed(2)}</td><td></td></tr>
       </table>
-      ${reportButtonsHtml(exportRows)}
+      <br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
       </body></html>`);
     win.document.close();
   };
@@ -4191,7 +3926,7 @@ function ReportPartsInv({ state }) {
           <Card key={l} style={{ padding:"14px 16px" }}><div style={{ fontFamily:T.sans, fontSize:22, fontWeight:700, color:c }}>{v}</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{l}</div></Card>
         ))}
       </div>
-      <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginBottom:12 }}><Btn onClick={print}>Print / PDF</Btn><Btn variant="secondary" onClick={()=>downloadCSV("parts-inventory-report.csv", exportRows)}>Excel CSV</Btn></div>
+      <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:12 }}><Btn onClick={print}>Print Inventory Report</Btn></div>
       <Card style={{ padding:0, overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead><tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
@@ -4273,12 +4008,11 @@ function ReportUsage({ state }) {
       if(Object.keys(months).length===0) body+=`<tr><td colspan="5" style="color:#999;font-style:italic">No logs recorded</td></tr>`;
       body+=`</table>`;
     });
-    body+=`${reportButtonsHtml(exportRows)}</body></html>`;
+    body+=`<br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button></body></html>`;
     win.document.write(body); win.document.close();
   };
 
   const eqList = selEq==="all" ? trackableEq : trackableEq.filter(e=>e.id===selEq);
-  const exportRows = eqList.flatMap(eq=>logsFor(eq.id).map(l=>({ Equipment:eq.name, "Equip #":eq.id, Date:l.date, Hours:l.hours||"", Mileage:l.mileage||"", "Fuel gal":l.fuel||"", Notes:l.notes||"" })));
 
   return (
     <div>
@@ -4294,8 +4028,7 @@ function ReportUsage({ state }) {
               <button key={v} onClick={()=>setViewMode(v)} style={{ padding:"6px 14px", border:"none", borderLeft:i>0?`1px solid ${T.border}`:"none", background:viewMode===v?T.accent:"#fff", color:viewMode===v?"#fff":T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:viewMode===v?600:400 }}>{l}</button>
             ))}
           </div>
-          <Btn small onClick={printUsageReport}>Print / PDF</Btn>
-          <Btn small variant="secondary" onClick={()=>downloadCSV("usage-report.csv", exportRows)}>Excel CSV</Btn>
+          <Btn small onClick={printUsageReport}>Print Report</Btn>
         </div>
       </Card>
 
@@ -4369,7 +4102,6 @@ function ReportDeadline({ state }) {
   const oos  = state.equipment.filter(e=>e.status==="Out of Service / Deadline");
   const def  = state.equipment.filter(e=>e.status==="Operational with Deficiencies");
   const openWO = (eqId) => state.workOrders.filter(w=>w.equipment===eqId && w.status!=="Completed");
-  const exportRows = [...oos.map(eq=>({Status:"Out of Service / Deadline", "Equip #":eq.id, Nomenclature:eq.name, "Fault Date":eq.faultDate||"", "Description":eq.faultDescription||"", "Open Work Orders":openWO(eq.id).map(w=>`${w.id} (${w.status})`).join(", ")})), ...def.map(eq=>({Status:"Operational with Deficiencies", "Equip #":eq.id, Nomenclature:eq.name, "Fault Date":eq.faultDate||"", "Description":eq.faultDescription||"", "Open Work Orders":openWO(eq.id).map(w=>`${w.id} (${w.status})`).join(", ")}))];
 
   const printReport = () => {
     const win = window.open("","_blank","width=900,height=700");
@@ -4388,20 +4120,19 @@ function ReportDeadline({ state }) {
       </head><body>
       ${reportHeaderHTML(state, "Deadline & Deficiency Report")}
       ${oos.length?`<h2 style="color:#dc2626">Out of Service / Deadline (${oos.length})</h2>
-      <table><tr><th>Equip #</th><th>Nomenclature</th><th>Fault Date</th><th>Description</th><th>Work Orders</th></tr>${rows(oos,"#fff5f5","")}</table>`:""}
+      <table><tr><th>Equip #</th><th>Name</th><th>Fault Date</th><th>Fault Description</th><th>Work Orders</th></tr>${rows(oos,"#fff5f5","")}</table>`:""}
       ${def.length?`<h2 style="color:#d97706">Operational w/ Deficiencies (${def.length})</h2>
-      <table><tr><th>Equip #</th><th>Nomenclature</th><th>Fault Date</th><th>Description</th><th>Work Orders</th></tr>${rows(def,"#fffdf0","")}</table>`:""}
+      <table><tr><th>Equip #</th><th>Name</th><th>Fault Date</th><th>Fault Description</th><th>Work Orders</th></tr>${rows(def,"#fffdf0","")}</table>`:""}
       ${!oos.length&&!def.length?`<p>No equipment in deadline or deficiency status.</p>`:""}
-      ${reportButtonsHtml(exportRows)}
+      <br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
       </body></html>`);
     win.document.close();
   };
 
   return (
     <div>
-      <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginBottom:14 }}>
-        <Btn onClick={printReport}>Print / PDF</Btn>
-        <Btn variant="secondary" onClick={()=>downloadCSV("deadline-deficiency-report.csv", exportRows)}>Excel CSV</Btn>
+      <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:14 }}>
+        <Btn onClick={printReport}>Print Report</Btn>
       </div>
       {[{list:oos,label:"Out of Service / Deadline",color:T.red,bg:"#fff5f5",leftBorder:"4px solid #ef4444"},
         {list:def,label:"Operational with Deficiencies",color:T.amber,bg:"#fffdf0",leftBorder:"4px solid #f59e0b"}].map(({list,label,color,bg,leftBorder})=>(
@@ -4414,9 +4145,9 @@ function ReportDeadline({ state }) {
               <div key={eq.id} style={{ background:bg, border:`1px solid ${T.border}`, borderLeft:leftBorder, borderRadius:8, padding:"12px 18px", marginBottom:8, boxShadow:T.shadow }}>
                 <div style={{ display:"grid", gridTemplateColumns:"90px 1fr 130px 1fr", gap:16, flexWrap:"wrap" }}>
                   <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Equip #</div><div style={{ fontFamily:T.mono, fontSize:12, fontWeight:700, color:T.text, marginTop:2 }}>{eq.id}</div></div>
-                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Nomenclature</div><div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginTop:2 }}>{eq.name}</div></div>
+                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Equipment Name</div><div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginTop:2 }}>{eq.name}</div></div>
                   <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Fault Date</div><div style={{ fontFamily:T.mono, fontSize:12, color, fontWeight:700, marginTop:2 }}>{eq.faultDate||"—"}</div></div>
-                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Description</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.text, marginTop:2 }}>{eq.faultDescription||"—"}</div></div>
+                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Fault Description</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.text, marginTop:2 }}>{eq.faultDescription||"—"}</div></div>
                 </div>
                 {wos.length>0 && (
                   <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${T.border}` }}>
@@ -4450,12 +4181,11 @@ function ReportPM({ state }) {
     const m = new Date(); m.setDate(1);
     return d >= m;
   });
-  const eqName = (id) => state.equipment.find(e=>e.id===id)?.name||id;
-  const exportRows = [...overdue.map(p=>({Group:"Overdue", Equipment:eqName(p.equipment), Task:p.task, Interval:p.interval, "Last Done":p.lastDone||"", "Next Due":p.nextDue||"", Status:p.status})), ...dueSoon.map(p=>({Group:"Due Soon", Equipment:eqName(p.equipment), Task:p.task, Interval:p.interval, "Last Done":p.lastDone||"", "Next Due":p.nextDue||"", Status:p.status})), ...completed.map(p=>({Group:"Completed This Month", Equipment:eqName(p.equipment), Task:p.task, Interval:p.interval, "Last Done":p.lastDone||"", "Next Due":p.nextDue||"", Status:p.status}))];
 
   const printPMReport = () => {
     const win = window.open("","_blank","width=900,height=700");
     if(!win) return;
+    const eqName = (id) => state.equipment.find(e=>e.id===id)?.name||id;
     const pmRows = (list) => list.map(p=>`<tr><td>${eqName(p.equipment)}</td><td>${p.task}</td><td>${p.interval}</td><td>${p.lastDone||"—"}</td><td>${p.nextDue||"—"}</td><td>${p.status}</td></tr>`).join("");
     win.document.write(`<!DOCTYPE html><html><head><title>PM Report</title>
       <style>body{font-family:Arial,sans-serif;padding:24px}h2{font-size:14px;margin:16px 0 6px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px;text-transform:uppercase}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}@media print{button{display:none}}</style>
@@ -4482,8 +4212,7 @@ function ReportPM({ state }) {
             <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext }}>Miles/hrs before service:</label>
             <input type="number" style={{ ...inp, width:70 }} value={mileageLookAhead} onChange={e=>setMileageLookAhead(+e.target.value)} min={1} />
           </div>
-          <Btn small onClick={printPMReport}>Print / PDF</Btn>
-          <Btn small variant="secondary" onClick={()=>downloadCSV("pm-report.csv", exportRows)}>Excel CSV</Btn>
+          <Btn small onClick={printPMReport}>Print PM Report</Btn>
         </div>
       </Card>
       {[{list:overdue,label:"Overdue",color:T.red},{list:dueSoon,label:`Due within ${lookAheadDays} days`,color:T.amber},{list:completed,label:"Completed This Month",color:T.green}].map(({list,label,color})=>(
@@ -4526,9 +4255,7 @@ function ReportSpending({ state }) {
   const monthTotal = monthly.reduce((s,w)=>s+totalCost(w),0);
   const fyTotal    = annual.reduce((s,w)=>s+totalCost(w),0);
 
-  const spendingRows = (list) => list.map(w=>({"WO #":w.id, Title:w.title||"", Equipment:state.equipment.find(e=>e.id===w.equipment)?.name||w.equipment, Mechanic:w.tech||"", Date:w.completed||w.created||"", Labor:(+w.laborCost||0).toFixed(2), Parts:(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0)).toFixed(2), Total:totalCost(w).toFixed(2)}));
   const printSpending = (list, title) => {
-    const rows = spendingRows(list);
     const win = window.open("","_blank","width=900,height=700");
     if(!win) return;
     win.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
@@ -4537,7 +4264,7 @@ function ReportSpending({ state }) {
       <table><tr><th>WO #</th><th>Title</th><th>Equipment</th><th>Mechanic</th><th>Date</th><th>Labor</th><th>Parts</th><th>Total</th></tr>
       ${list.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${state.equipment.find(e=>e.id===w.equipment)?.name||w.equipment}</td><td>${w.tech||"—"}</td><td>${w.completed||w.created||"—"}</td><td>$${(+w.laborCost||0).toFixed(2)}</td><td>$${(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0)).toFixed(2)}</td><td><b>$${totalCost(w).toFixed(2)}</b></td></tr>`).join("")}
       <tr style="font-weight:700;background:#f3f4f6"><td colspan="7">TOTAL</td><td>$${list.reduce((s,w)=>s+totalCost(w),0).toFixed(2)}</td></tr>
-      </table>${reportButtonsHtml(rows)}</body></html>`);
+      </table><br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button></body></html>`);
     win.document.close();
   };
 
@@ -4548,13 +4275,13 @@ function ReportSpending({ state }) {
           <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>This Month</div>
           <div style={{ fontFamily:T.sans, fontSize:32, fontWeight:800, color:T.accent, margin:"6px 0" }}>${monthTotal.toFixed(2)}</div>
           <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>{monthly.length} completed WOs</div>
-          <div style={{ display:"flex", gap:8, marginTop:10 }}><Btn small onClick={()=>printSpending(monthly,"Monthly Spending Report")}>Print / PDF</Btn><Btn small variant="secondary" onClick={()=>downloadCSV("monthly-spending-report.csv", spendingRows(monthly))}>Excel CSV</Btn></div>
+          <Btn small onClick={()=>printSpending(monthly,"Monthly Spending Report")} style={{ marginTop:10 }}>Print Monthly Report</Btn>
         </Card>
         <Card style={{ padding:"16px 20px" }}>
           <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Fiscal Year (Oct-Sep)</div>
           <div style={{ fontFamily:T.sans, fontSize:32, fontWeight:800, color:T.accent, margin:"6px 0" }}>${fyTotal.toFixed(2)}</div>
           <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>{annual.length} completed WOs</div>
-          <div style={{ display:"flex", gap:8, marginTop:10 }}><Btn small onClick={()=>printSpending(annual,"FY Spending Report")}>Print / PDF</Btn><Btn small variant="secondary" onClick={()=>downloadCSV("fy-spending-report.csv", spendingRows(annual))}>Excel CSV</Btn></div>
+          <Btn small onClick={()=>printSpending(annual,"FY Spending Report")} style={{ marginTop:10 }}>Print FY Report</Btn>
         </Card>
       </div>
     </div>
@@ -4580,7 +4307,7 @@ function ReportCombined({ state }) {
 
     if(selected.deadline) {
       const bad = state.equipment.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies");
-      body += `<h2>Deadline / Deficiency Equipment (${bad.length})</h2><table><tr><th>Equip #</th><th>Nomenclature</th><th>Status</th><th>Fault Date</th><th>Description</th></tr>${bad.map(e=>`<tr><td>${e.id}</td><td>${e.name}</td><td>${e.status}</td><td>${e.faultDate||"—"}</td><td>${e.faultDescription||"—"}</td></tr>`).join("")}</table>`;
+      body += `<h2>Deadline / Deficiency Equipment (${bad.length})</h2><table><tr><th>Equip #</th><th>Name</th><th>Status</th><th>Fault Date</th><th>Description</th></tr>${bad.map(e=>`<tr><td>${e.id}</td><td>${e.name}</td><td>${e.status}</td><td>${e.faultDate||"—"}</td><td>${e.faultDescription||"—"}</td></tr>`).join("")}</table>`;
     }
     if(selected.pm) {
       const pmBad = state.preventiveMaintenance.filter(p=>p.status==="Overdue"||p.status==="Due Soon");
@@ -4589,25 +4316,25 @@ function ReportCombined({ state }) {
     if(selected.spending) {
       const wos = state.workOrders.filter(w=>w.completed);
       const total = wos.reduce((s,w)=>s+totalCost(w),0);
-      body += `<h2>Completed Work Orders — Total $${total.toFixed(2)}</h2><table><tr><th>WO#</th><th>Title</th><th>Equipment</th><th>Description</th><th>Mechanic</th><th>Completed</th><th>Total</th></tr>${wos.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${eqName(w.equipment)}</td><td>${w.faultEnabled?(w.faultDescription||"—"):"—"}</td><td>${w.tech||"—"}</td><td>${w.completed||"—"}</td><td>$${totalCost(w).toFixed(2)}</td></tr>`).join("")}</table>`;
+      body += `<h2>Completed Work Orders — Total $${total.toFixed(2)}</h2><table><tr><th>WO#</th><th>Title</th><th>Equipment</th><th>Mechanic</th><th>Completed</th><th>Total</th></tr>${wos.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${eqName(w.equipment)}</td><td>${w.tech||"—"}</td><td>${w.completed||"—"}</td><td>$${totalCost(w).toFixed(2)}</td></tr>`).join("")}</table>`;
     }
     if(selected.parts) {
       const lowStock = state.parts.filter(p=>p.lowStockAlert!==false&&(+(p.qty||0))<=(+(p.minQty||0)));
       const totalVal = state.parts.reduce((s,p)=>s+(+(p.qty||0))*(+(p.unitCost||0)),0);
       body += `<h2>Parts Inventory — ${state.parts.length} SKUs, Total Value $${totalVal.toFixed(2)}</h2>`;
       if(lowStock.length>0) body += `<p style="color:#b91c1c;font-size:12px"><b>⚠ Low stock alerts: ${lowStock.length} items</b></p>`;
-      body += `<table><tr><th>Part #</th><th>Nomenclature</th><th>Category</th><th>Qty</th><th>Min</th><th>Unit $</th><th>Total $</th></tr>${state.parts.map(p=>`<tr style="${(+(p.qty||0))<=(+(p.minQty||0))?'background:#fee2e2':''}"><td>${p.partNumber||"—"}</td><td>${p.name}</td><td>${p.category||"—"}</td><td>${p.qty||0}</td><td>${p.minQty||0}</td><td>$${(+(p.unitCost||0)).toFixed(2)}</td><td>$${((+(p.qty||0))*(+(p.unitCost||0))).toFixed(2)}</td></tr>`).join("")}</table>`;
+      body += `<table><tr><th>Part #</th><th>Name</th><th>Category</th><th>Qty</th><th>Min</th><th>Unit $</th><th>Total $</th></tr>${state.parts.map(p=>`<tr style="${(+(p.qty||0))<=(+(p.minQty||0))?'background:#fee2e2':''}"><td>${p.partNumber||"—"}</td><td>${p.name}</td><td>${p.category||"—"}</td><td>${p.qty||0}</td><td>${p.minQty||0}</td><td>$${(+(p.unitCost||0)).toFixed(2)}</td><td>$${((+(p.qty||0))*(+(p.unitCost||0))).toFixed(2)}</td></tr>`).join("")}</table>`;
     }
     if(selected.usage) {
       const trackable = state.equipment.filter(e=>e.trackUsage);
-      body += `<h2>Current Usage Readings (${trackable.length} tracked units)</h2><table><tr><th>Equip #</th><th>Nomenclature</th><th>Hours</th><th>Mileage</th><th>Last Entry</th></tr>${trackable.map(e=>{ const logs = allLogs.filter(l=>l.equipmentId===e.id); const last = logs.sort((a,b)=>b.date.localeCompare(a.date))[0]; return `<tr><td>${e.id}</td><td>${e.name}</td><td>${currentReading(e.id,"hours").toFixed(1)}</td><td>${currentReading(e.id,"mileage").toLocaleString()}</td><td>${last?.date||"—"}</td></tr>`; }).join("")}</table>`;
+      body += `<h2>Current Usage Readings (${trackable.length} tracked units)</h2><table><tr><th>Equip #</th><th>Name</th><th>Hours</th><th>Mileage</th><th>Last Entry</th></tr>${trackable.map(e=>{ const logs = allLogs.filter(l=>l.equipmentId===e.id); const last = logs.sort((a,b)=>b.date.localeCompare(a.date))[0]; return `<tr><td>${e.id}</td><td>${e.name}</td><td>${currentReading(e.id,"hours").toFixed(1)}</td><td>${currentReading(e.id,"mileage").toLocaleString()}</td><td>${last?.date||"—"}</td></tr>`; }).join("")}</table>`;
     }
     if(selected.equipment) {
-      body += `<h2>Equipment Roster (${state.equipment.length})</h2><table><tr><th>Equip #</th><th>Nomenclature</th><th>Make/Model</th><th>Serial #</th><th>Location</th><th>Status</th></tr>${state.equipment.map(e=>`<tr><td>${e.id}</td><td>${e.name}</td><td>${e.make||""} ${e.model||""}</td><td>${e.serial||"—"}</td><td>${e.location||"—"}</td><td>${e.status}</td></tr>`).join("")}</table>`;
+      body += `<h2>Equipment Roster (${state.equipment.length})</h2><table><tr><th>Equip #</th><th>Name</th><th>Make/Model</th><th>Serial #</th><th>Location</th><th>Status</th></tr>${state.equipment.map(e=>`<tr><td>${e.id}</td><td>${e.name}</td><td>${e.make||""} ${e.model||""}</td><td>${e.serial||"—"}</td><td>${e.location||"—"}</td><td>${e.status}</td></tr>`).join("")}</table>`;
     }
     if(selected.workorders) {
       const active = state.workOrders.filter(w=>w.status!=="Completed");
-      body += `<h2>Active Work Orders (${active.length})</h2><table><tr><th>WO#</th><th>Title</th><th>Equipment</th><th>Description</th><th>Mechanic</th><th>Priority</th><th>Status</th><th>Due</th></tr>${active.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${eqName(w.equipment)}</td><td>${w.faultEnabled?(w.faultDescription||"—"):"—"}</td><td>${w.tech||"—"}</td><td>${w.priority}</td><td>${w.status}</td><td>${w.due||"—"}</td></tr>`).join("")}</table>`;
+      body += `<h2>Active Work Orders (${active.length})</h2><table><tr><th>WO#</th><th>Title</th><th>Equipment</th><th>Mechanic</th><th>Priority</th><th>Status</th><th>Due</th></tr>${active.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${eqName(w.equipment)}</td><td>${w.tech||"—"}</td><td>${w.priority}</td><td>${w.status}</td><td>${w.due||"—"}</td></tr>`).join("")}</table>`;
     }
     body += `<br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button></body></html>`;
     win.document.write(body);
@@ -5122,12 +4849,24 @@ const PAGE_TITLES = {
   reports_combined: "Combined Report",
 };
 
-export default function App() {
-  /* Start empty - will load from Supabase after login */
+
+async function loadSession(setSession, setAuthLoading) {
+  const { data } = await supabase.auth.getSession();
+  setSession(data.session || null);
+
+  supabase.auth.onAuthStateChange((_event, session) => {
+    setSession(session || null);
+  });
+
+  setAuthLoading(false);
+}
+
+function App() {
+  /* Start with empty state — will be replaced once the user logs in and we load from Supabase */
   const emptyState = { ...INIT, inventoryItems:[], profile:null, woSettings:null };
   const [state, dispatch] = useReducer(reducer, emptyState);
 
-  /* Sync indicators */
+  /* Sync status indicators */
   const [dataLoaded, setDataLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState("idle"); /* idle | saving | saved | error */
 
@@ -5137,10 +4876,9 @@ export default function App() {
   const [showWOSettings, setShowWOSettings] = useState(false);
   const [showSettings, setShowSettings]   = useState(false);
 
-  /* Auth state */
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [authMode, setAuthMode] = useState("login");
+  const [authMode, setAuthMode] = useState("login"); /* "login" or "signup" */
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authConfirmPassword, setAuthConfirmPassword] = useState("");
@@ -5148,23 +4886,12 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authInfoMsg, setAuthInfoMsg] = useState("");
 
-  /* Initialize session and listen for auth changes */
+  /* Load data from Supabase when user logs in */
   useEffect(() => {
-    let mounted = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (!mounted) return;
-      setSession(data?.session || null);
-      setAuthLoading(false);
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, sess) => {
-      if (mounted) setSession(sess);
-    });
-    return () => { mounted = false; sub?.subscription?.unsubscribe?.(); };
-  }, []);
-
-  /* Load user data from Supabase on login */
-  useEffect(() => {
-    if (!session) { setDataLoaded(false); return; }
+    if (!session) {
+      setDataLoaded(false);
+      return;
+    }
     let cancelled = false;
     async function loadData() {
       try {
@@ -5173,30 +4900,42 @@ export default function App() {
           .select("data")
           .eq("user_id", session.user.id)
           .maybeSingle();
+
         if (cancelled) return;
         if (error) {
           console.error("Load error:", error);
+          /* Fall back to localStorage one time for migration purposes */
           const localData = localStorage.getItem("ncaState");
           if (localData) {
-            try { dispatch({ type:"REPLACE_STATE", payload: JSON.parse(localData) }); } catch(e){}
+            try {
+              const parsed = JSON.parse(localData);
+              dispatch({ type: "REPLACE_STATE", payload: parsed });
+            } catch(e) { console.warn("Local migration parse failed:", e); }
           }
         } else if (data && data.data && Object.keys(data.data).length > 0) {
-          dispatch({ type:"REPLACE_STATE", payload: data.data });
+          /* Found existing cloud data, load it */
+          dispatch({ type: "REPLACE_STATE", payload: data.data });
         } else {
-          /* First-time login on this account - migrate localStorage if any */
+          /* No cloud data exists yet for this user — check localStorage for migration */
           const localData = localStorage.getItem("ncaState");
           if (localData) {
-            try { dispatch({ type:"REPLACE_STATE", payload: JSON.parse(localData) }); } catch(e){}
+            try {
+              const parsed = JSON.parse(localData);
+              dispatch({ type: "REPLACE_STATE", payload: parsed });
+            } catch(e) { console.warn("Migration parse failed:", e); }
           }
         }
-      } catch (e) { console.error("Load exception:", e); }
-      finally { if (!cancelled) setDataLoaded(true); }
+      } catch (e) {
+        console.error("Load exception:", e);
+      } finally {
+        if (!cancelled) setDataLoaded(true);
+      }
     }
     loadData();
     return () => { cancelled = true; };
   }, [session]);
 
-  /* Save state to Supabase (debounced) */
+  /* Save state to Supabase, debounced */
   useEffect(() => {
     if (!session || !dataLoaded) return;
     setSyncStatus("saving");
@@ -5209,21 +4948,33 @@ export default function App() {
             data: state,
             updated_at: new Date().toISOString(),
           }, { onConflict: "user_id" });
-        if (error) { console.error("Save error:", error); setSyncStatus("error"); }
-        else {
+
+        if (error) {
+          console.error("Save error:", error);
+          setSyncStatus("error");
+        } else {
           setSyncStatus("saved");
-          try { localStorage.setItem("ncaState", JSON.stringify(state)); } catch(e){}
+          /* Also keep a localStorage copy as cache/backup */
+          try { localStorage.setItem("ncaState", JSON.stringify(state)); } catch(e) {}
           setTimeout(() => setSyncStatus("idle"), 2000);
         }
-      } catch (e) { console.error("Save exception:", e); setSyncStatus("error"); }
-    }, 1000);
+      } catch (e) {
+        console.error("Save exception:", e);
+        setSyncStatus("error");
+      }
+    }, 1000); /* 1-second debounce — wait until user stops making changes */
     return () => clearTimeout(timer);
   }, [state, session, dataLoaded]);
 
-  /* Auth helpers */
+
+  useEffect(() => {
+    loadSession(setSession, setAuthLoading);
+  }, []);
+
   function validateEmail(email) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   }
+
   async function handleLogin() {
     setAuthError(""); setAuthInfoMsg("");
     if(!authEmail.trim()) { setAuthError("Please enter your email."); return; }
@@ -5237,6 +4988,7 @@ export default function App() {
     setAuthBusy(false);
     if (error) setAuthError(error.message);
   }
+
   async function handleSignup() {
     setAuthError(""); setAuthInfoMsg("");
     if(!authEmail.trim()) { setAuthError("Please enter your email."); return; }
@@ -5253,21 +5005,26 @@ export default function App() {
     if (error) {
       setAuthError(error.message);
     } else if (data.user && !data.session) {
-      setAuthInfoMsg("✓ Account created! Check your email to confirm your address, then sign in.");
+      /* Email confirmation required */
+      setAuthInfoMsg("✓ Account created! Check your email to confirm your address, then log in.");
       setAuthMode("login");
       setAuthPassword(""); setAuthConfirmPassword("");
     } else {
+      /* Auto-signed in */
       setAuthInfoMsg("✓ Account created and signed in!");
     }
   }
+
   function switchAuthMode(mode) {
     setAuthMode(mode);
     setAuthError(""); setAuthInfoMsg("");
     setAuthPassword(""); setAuthConfirmPassword("");
   }
+
   async function handleLogout() {
     await supabase.auth.signOut();
   }
+
 
   const profile      = state.profile || {};
   const settings     = state.settings || {};
@@ -5277,7 +5034,7 @@ export default function App() {
   const displayName = profile.firstName ? `${profile.firstName} ${profile.lastName}` : "J. Martinez";
 
   const pages = {
-    dashboard:        <Dashboard        state={state} dispatch={dispatch} setTab={setTab} onSettings={()=>setShowSettings(true)} />,
+    dashboard:        <Dashboard        state={state} dispatch={dispatch} setTab={setTab} />,
     workorders:       <WorkOrders       state={state} dispatch={dispatch} woSettings={state.woSettings} onWOSettings={()=>setShowWOSettings(true)} />,
     equipment:        <Equipment        state={state} dispatch={dispatch} setTab={setTab} />,
     parts:            <Parts            state={state} dispatch={dispatch} />,
@@ -5293,58 +5050,180 @@ export default function App() {
     reports_combined: <ReportCombined   state={state} />,
   };
 
-  /* Auth loading */
+
   if (authLoading) {
-    return <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, fontFamily:T.sans, color:T.text }}>
-      <div style={{ textAlign:"center" }}><div style={{ fontSize:32, marginBottom:12 }}>⟳</div><div style={{ fontSize:14, color:T.muted }}>Loading...</div></div>
-    </div>;
+    return <div style={{ padding:40, fontSize:20, fontFamily:T.sans }}>Loading...</div>;
   }
 
-  /* Login / Signup screen */
   if (!session) {
     const isSignup = authMode==="signup";
     return (
-      <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"linear-gradient(135deg, #0f172a 0%, #1e293b 100%)", color:"white", fontFamily:T.sans, padding:16 }}>
-        <div style={{ width:420, maxWidth:"100%", background:"#1f2937", padding:32, borderRadius:14, boxShadow:"0 20px 60px rgba(0,0,0,.4)", border:"1px solid #374151" }}>
+      <div style={{
+        minHeight:"100vh",
+        display:"flex",
+        alignItems:"center",
+        justifyContent:"center",
+        background:"linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
+        color:"white",
+        fontFamily:T.sans,
+        padding:16,
+      }}>
+        <div style={{
+          width:420,
+          maxWidth:"100%",
+          background:"#1f2937",
+          padding:32,
+          borderRadius:14,
+          boxShadow:"0 20px 60px rgba(0,0,0,.4)",
+          border:"1px solid #374151",
+        }}>
+          {/* Header */}
           <div style={{ textAlign:"center", marginBottom:22 }}>
             <div style={{ fontSize:36, marginBottom:6 }}>🔧</div>
             <h1 style={{ margin:0, fontSize:24, fontWeight:700 }}>WIN Maintenance</h1>
-            <p style={{ opacity:.65, margin:"6px 0 0", fontSize:13 }}>{isSignup ? "Create your account to get started" : "Sign in to your account"}</p>
+            <p style={{ opacity:.65, margin:"6px 0 0", fontSize:13 }}>
+              {isSignup ? "Create your account to get started" : "Sign in to your account"}
+            </p>
           </div>
+
+          {/* Tab switcher */}
           <div style={{ display:"flex", background:"#111827", borderRadius:8, padding:4, marginBottom:20 }}>
-            <button onClick={()=>switchAuthMode("login")} style={{ flex:1, padding:"10px", borderRadius:6, border:"none", cursor:"pointer", background:!isSignup?"#3b82f6":"transparent", color:!isSignup?"white":"#9ca3af", fontWeight:600, fontSize:13 }}>Sign In</button>
-            <button onClick={()=>switchAuthMode("signup")} style={{ flex:1, padding:"10px", borderRadius:6, border:"none", cursor:"pointer", background:isSignup?"#3b82f6":"transparent", color:isSignup?"white":"#9ca3af", fontWeight:600, fontSize:13 }}>Create Account</button>
+            <button
+              onClick={()=>switchAuthMode("login")}
+              style={{
+                flex:1, padding:"10px", borderRadius:6, border:"none", cursor:"pointer",
+                background: !isSignup ? "#3b82f6" : "transparent",
+                color: !isSignup ? "white" : "#9ca3af",
+                fontWeight:600, fontSize:13, transition:"all .15s"
+              }}>
+              Sign In
+            </button>
+            <button
+              onClick={()=>switchAuthMode("signup")}
+              style={{
+                flex:1, padding:"10px", borderRadius:6, border:"none", cursor:"pointer",
+                background: isSignup ? "#3b82f6" : "transparent",
+                color: isSignup ? "white" : "#9ca3af",
+                fontWeight:600, fontSize:13, transition:"all .15s"
+              }}>
+              Create Account
+            </button>
           </div>
-          {authInfoMsg && <div style={{ padding:"10px 12px", background:"#065f46", border:"1px solid #10b981", borderRadius:6, marginBottom:14, fontSize:13 }}>{authInfoMsg}</div>}
-          {authError && <div style={{ padding:"10px 12px", background:"#7f1d1d", border:"1px solid #ef4444", borderRadius:6, marginBottom:14, fontSize:13 }}>⚠ {authError}</div>}
+
+          {/* Info / Error messages */}
+          {authInfoMsg && (
+            <div style={{ padding:"10px 12px", background:"#065f46", border:"1px solid #10b981", borderRadius:6, marginBottom:14, fontSize:13 }}>
+              {authInfoMsg}
+            </div>
+          )}
+          {authError && (
+            <div style={{ padding:"10px 12px", background:"#7f1d1d", border:"1px solid #ef4444", borderRadius:6, marginBottom:14, fontSize:13 }}>
+              ⚠ {authError}
+            </div>
+          )}
+
+          {/* Email */}
           <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#9ca3af", marginBottom:5 }}>Email</label>
-          <input type="email" placeholder="you@example.com" value={authEmail} onChange={(e)=>{ setAuthEmail(e.target.value); setAuthError(""); }} onKeyDown={(e)=>{ if(e.key==="Enter") (isSignup?handleSignup:handleLogin)(); }} disabled={authBusy} style={{ width:"100%", padding:"12px 14px", marginBottom:14, borderRadius:7, border:"1px solid #374151", background:"#111827", color:"white", fontSize:14, outline:"none", fontFamily:T.sans }} />
-          <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#9ca3af", marginBottom:5 }}>Password {isSignup && <span style={{ fontWeight:400, opacity:.7 }}>(min 6 characters)</span>}</label>
-          <input type="password" placeholder={isSignup ? "Choose a password" : "Your password"} value={authPassword} onChange={(e)=>{ setAuthPassword(e.target.value); setAuthError(""); }} onKeyDown={(e)=>{ if(e.key==="Enter") (isSignup?handleSignup:handleLogin)(); }} disabled={authBusy} style={{ width:"100%", padding:"12px 14px", marginBottom:14, borderRadius:7, border:"1px solid #374151", background:"#111827", color:"white", fontSize:14, outline:"none", fontFamily:T.sans }} />
-          {isSignup && <>
-            <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#9ca3af", marginBottom:5 }}>Confirm Password</label>
-            <input type="password" placeholder="Re-enter your password" value={authConfirmPassword} onChange={(e)=>{ setAuthConfirmPassword(e.target.value); setAuthError(""); }} onKeyDown={(e)=>{ if(e.key==="Enter") handleSignup(); }} disabled={authBusy} style={{ width:"100%", padding:"12px 14px", marginBottom:14, borderRadius:7, border:"1px solid #374151", background:"#111827", color:"white", fontSize:14, outline:"none", fontFamily:T.sans }} />
-          </>}
-          <button onClick={isSignup ? handleSignup : handleLogin} disabled={authBusy} style={{ width:"100%", padding:"13px", borderRadius:8, border:"none", cursor:authBusy?"wait":"pointer", fontWeight:700, fontSize:14, background:authBusy?"#475569":"#3b82f6", color:"white", marginTop:6, fontFamily:T.sans }}>
+          <input
+            type="email"
+            placeholder="you@example.com"
+            value={authEmail}
+            onChange={(e)=>{ setAuthEmail(e.target.value); setAuthError(""); }}
+            onKeyDown={(e)=>{ if(e.key==="Enter") (isSignup?handleSignup:handleLogin)(); }}
+            disabled={authBusy}
+            style={{
+              width:"100%", padding:"12px 14px", marginBottom:14, borderRadius:7,
+              border:"1px solid #374151", background:"#111827", color:"white",
+              fontSize:14, outline:"none", fontFamily:T.sans,
+            }}
+          />
+
+          {/* Password */}
+          <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#9ca3af", marginBottom:5 }}>
+            Password {isSignup && <span style={{ fontWeight:400, opacity:.7 }}>(min 6 characters)</span>}
+          </label>
+          <input
+            type="password"
+            placeholder={isSignup ? "Choose a password" : "Your password"}
+            value={authPassword}
+            onChange={(e)=>{ setAuthPassword(e.target.value); setAuthError(""); }}
+            onKeyDown={(e)=>{ if(e.key==="Enter") (isSignup?handleSignup:handleLogin)(); }}
+            disabled={authBusy}
+            style={{
+              width:"100%", padding:"12px 14px", marginBottom:14, borderRadius:7,
+              border:"1px solid #374151", background:"#111827", color:"white",
+              fontSize:14, outline:"none", fontFamily:T.sans,
+            }}
+          />
+
+          {/* Confirm Password — only on signup */}
+          {isSignup && (
+            <>
+              <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#9ca3af", marginBottom:5 }}>Confirm Password</label>
+              <input
+                type="password"
+                placeholder="Re-enter your password"
+                value={authConfirmPassword}
+                onChange={(e)=>{ setAuthConfirmPassword(e.target.value); setAuthError(""); }}
+                onKeyDown={(e)=>{ if(e.key==="Enter") handleSignup(); }}
+                disabled={authBusy}
+                style={{
+                  width:"100%", padding:"12px 14px", marginBottom:14, borderRadius:7,
+                  border:"1px solid #374151", background:"#111827", color:"white",
+                  fontSize:14, outline:"none", fontFamily:T.sans,
+                }}
+              />
+            </>
+          )}
+
+          {/* Submit button */}
+          <button
+            onClick={isSignup ? handleSignup : handleLogin}
+            disabled={authBusy}
+            style={{
+              width:"100%", padding:"13px", borderRadius:8, border:"none",
+              cursor: authBusy ? "wait" : "pointer", fontWeight:700, fontSize:14,
+              background: authBusy ? "#475569" : "#3b82f6",
+              color:"white", marginTop:6, fontFamily:T.sans,
+              transition:"background .15s",
+            }}>
             {authBusy ? "Please wait..." : (isSignup ? "Create Account" : "Sign In")}
           </button>
+
+          {/* Footer toggle hint */}
           <div style={{ textAlign:"center", marginTop:16, fontSize:13, color:"#9ca3af" }}>
-            {isSignup ? <>Already have an account?{" "}<button onClick={()=>switchAuthMode("login")} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontWeight:600, padding:0, fontSize:13 }}>Sign in</button></>
-                     : <>Don't have an account?{" "}<button onClick={()=>switchAuthMode("signup")} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontWeight:600, padding:0, fontSize:13 }}>Create one</button></>}
+            {isSignup ? (
+              <>Already have an account?{" "}
+                <button onClick={()=>switchAuthMode("login")} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontWeight:600, padding:0, fontSize:13 }}>
+                  Sign in
+                </button>
+              </>
+            ) : (
+              <>Don't have an account?{" "}
+                <button onClick={()=>switchAuthMode("signup")} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontWeight:600, padding:0, fontSize:13 }}>
+                  Create one
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
     );
   }
 
-  /* Cloud data loading */
+  /* First-run setup wizard */
+  /* While Supabase loads the user's data, show a brief loading screen */
   if (session && !dataLoaded) {
-    return <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, fontFamily:T.sans, color:T.text }}>
-      <div style={{ textAlign:"center" }}><div style={{ fontSize:32, marginBottom:12 }}>⟳</div><div style={{ fontSize:14, color:T.muted }}>Loading your data from the cloud...</div></div>
-    </div>;
+    return (
+      <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, fontFamily:T.sans, color:T.text }}>
+        <div style={{ textAlign:"center" }}>
+          <div style={{ fontSize:32, marginBottom:12 }}>⟳</div>
+          <div style={{ fontSize:14, color:T.muted }}>Loading your data from the cloud...</div>
+        </div>
+      </div>
+    );
   }
 
-  /* First-run setup wizard */
   if(!state.setupComplete) {
     return <SetupWizard onComplete={(setupData)=>dispatch({type:"COMPLETE_SETUP",payload:setupData})} />;
   }
@@ -5354,8 +5233,6 @@ export default function App() {
       <style>{`
         * { box-sizing:border-box; }
         body { margin:0; }
-        #root { width:100%; min-width:0; }
-        table { width:100%; }
         ::-webkit-scrollbar { width:6px; height:6px; }
         ::-webkit-scrollbar-track { background:#f1f1f1; }
         ::-webkit-scrollbar-thumb { background:#c1c7d0; border-radius:3px; }
@@ -5378,24 +5255,31 @@ export default function App() {
           {settings?.logo && (
             <img src={settings.logo} alt="logo" style={{ height:36, maxWidth:80, objectFit:"contain", borderRadius:4 }} />
           )}
-          <button onClick={()=>setTab("dashboard")} title="Go to dashboard" style={{ background:"none", border:"none", padding:0, textAlign:"left", cursor:"pointer" }}>
+          <div>
             <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, letterSpacing:-.3, lineHeight:1.2 }}>{companyName}</div>
             <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, letterSpacing:.3 }}>National Cemetery Administration</div>
-          </button>
+          </div>
           <span style={{ color:T.border, fontSize:18 }}>›</span>
           <span style={{ fontFamily:T.sans, fontSize:13, color:T.subtext, fontWeight:500 }}>{PAGE_TITLES[tab]}</span>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
           {/* Sync status indicator */}
           {syncStatus !== "idle" && (
-            <span style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, padding:"3px 9px", borderRadius:10, background:syncStatus==="saving"?"#fef3c7":syncStatus==="saved"?"#d1fae5":"#fee2e2", color:syncStatus==="saving"?"#92400e":syncStatus==="saved"?"#065f46":"#991b1b", border:`1px solid ${syncStatus==="saving"?"#fbbf24":syncStatus==="saved"?"#10b981":"#ef4444"}` }}>
+            <span style={{
+              fontFamily:T.sans, fontSize:11, fontWeight:600,
+              padding:"3px 9px", borderRadius:10,
+              background: syncStatus==="saving"?"#fef3c7":syncStatus==="saved"?"#d1fae5":"#fee2e2",
+              color:     syncStatus==="saving"?"#92400e":syncStatus==="saved"?"#065f46":"#991b1b",
+              border: `1px solid ${syncStatus==="saving"?"#fbbf24":syncStatus==="saved"?"#10b981":"#ef4444"}`,
+            }}>
               {syncStatus==="saving"?"⟳ Saving...":syncStatus==="saved"?"✓ Saved":"⚠ Save failed"}
             </span>
           )}
           {/* Notification bell */}
           <NotifBell notifications={state.notifications} dispatch={dispatch} />
-          {/* Logout */}
-          <button onClick={handleLogout} style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:"#fff", cursor:"pointer", fontFamily:T.sans, fontSize:12, color:T.subtext }}>Logout</button>
+          <button onClick={handleLogout} style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:"#fff", cursor:"pointer", fontSize:13 }}>
+            Logout
+          </button>
           {/* User profile button */}
           <button onClick={()=>setShowProfile(true)} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:"none", cursor:"pointer" }}>
             <div style={{ width:24, height:24, borderRadius:"50%", background:T.accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, color:"#fff", fontWeight:700, fontFamily:T.mono, overflow:"hidden" }}>
@@ -5406,7 +5290,7 @@ export default function App() {
         </div>
       </header>
 
-      <main style={{ width:"100%", maxWidth:"none", padding:"16px 18px", minHeight:"calc(100vh - 56px)", overflowX:"auto" }}>
+      <main style={{ width:"100%", padding:"24px 32px", minHeight:"calc(100vh - 56px)" }}>
         <div style={{ marginBottom:20 }}>
           <h1 style={{ margin:0, fontFamily:T.sans, fontSize:24, fontWeight:700, color:T.text, letterSpacing:-.4 }}>{PAGE_TITLES[tab]}</h1>
           <div style={{ width:32, height:3, background:T.accent, borderRadius:2, marginTop:6 }} />
@@ -5435,3 +5319,5 @@ function NotifBell({ notifications, dispatch }) {
     </>
   );
 }
+
+export default App;
