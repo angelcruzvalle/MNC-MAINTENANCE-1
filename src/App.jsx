@@ -43,6 +43,8 @@ const INIT = {
   parts: [],
   pmSchedules: [],
   pmTasks: [],
+  inspectionTasks: [],
+  inspectionSchedules: [],
   inventoryItems: [],
   profile: null,
   settings: null,
@@ -57,20 +59,21 @@ function reducer(state, { type, payload }) {
     case "ADD_WO":        return { ...state, workOrders: [payload,...state.workOrders], notifications:[{id:`N${Date.now()}`,type:"wo",msg:`Work Order ${payload.id} created`,time:"Just now",read:false},...state.notifications] };
     case "UPDATE_WO": {
       const updated = state.workOrders.map(w => w.id===payload.id ? payload : w);
-      /* If WO is being completed and is linked to a PM schedule, advance the schedule */
+      const advanceSch = (sch) => {
+        const logs = (state.usageLogs||[]).filter(l=>l.equipmentId===sch.equipmentId);
+        const curU  = sch.usageType==="mileage"
+          ? Math.max(...logs.map(l=>+(l.mileage||0)), 0)
+          : Math.max(...logs.map(l=>+(l.hours||0)), 0);
+        return { ...sch, lastDoneDate:payload.completed||new Date().toISOString().split("T")[0], lastDoneUsage:curU,
+          nextDueDate: sch.timeInterval ? (() => { const d=new Date(payload.completed||new Date()); if(sch.timeUnit==="days")d.setDate(d.getDate()+(+sch.timeInterval)); if(sch.timeUnit==="weeks")d.setDate(d.getDate()+(+sch.timeInterval)*7); if(sch.timeUnit==="months")d.setMonth(d.getMonth()+(+sch.timeInterval)); if(sch.timeUnit==="years")d.setFullYear(d.getFullYear()+(+sch.timeInterval)); return d.toISOString().split("T")[0]; })() : sch.nextDueDate,
+          nextDueUsage: sch.usageInterval ? curU+(+sch.usageInterval) : sch.nextDueUsage,
+        };
+      };
       if(payload.status==="Completed" && payload.scheduleId) {
-        const sch = (state.pmSchedules||[]).find(s=>s.id===payload.scheduleId);
-        if(sch) {
-          const logs = (state.usageLogs||[]).filter(l=>l.equipmentId===sch.equipmentId);
-          const curU  = sch.usageType==="mileage"
-            ? Math.max(...logs.map(l=>+(l.mileage||0)), 0)
-            : Math.max(...logs.map(l=>+(l.hours||0)), 0);
-          const advancedSch = { ...sch, lastDoneDate:payload.completed||new Date().toISOString().split("T")[0], lastDoneUsage:curU,
-            nextDueDate: sch.timeInterval ? (() => { const d=new Date(payload.completed||new Date()); if(sch.timeUnit==="days")d.setDate(d.getDate()+(+sch.timeInterval)); if(sch.timeUnit==="weeks")d.setDate(d.getDate()+(+sch.timeInterval)*7); if(sch.timeUnit==="months")d.setMonth(d.getMonth()+(+sch.timeInterval)); if(sch.timeUnit==="years")d.setFullYear(d.getFullYear()+(+sch.timeInterval)); return d.toISOString().split("T")[0]; })() : sch.nextDueDate,
-            nextDueUsage: sch.usageInterval ? curU+(+sch.usageInterval) : sch.nextDueUsage,
-          };
-          return { ...state, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
-        }
+        const pmSch = (state.pmSchedules||[]).find(s=>s.id===payload.scheduleId);
+        if(pmSch) return { ...state, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>s.id===pmSch.id?advanceSch(pmSch):s) };
+        const inspSch = (state.inspectionSchedules||[]).find(s=>s.id===payload.scheduleId);
+        if(inspSch) return { ...state, workOrders:updated, inspectionSchedules:(state.inspectionSchedules||[]).map(s=>s.id===inspSch.id?advanceSch(inspSch):s) };
       }
       return { ...state, workOrders: updated };
     }
@@ -94,6 +97,12 @@ function reducer(state, { type, payload }) {
     case "ADD_PM_TASK":       return { ...state, pmTasks: [...(state.pmTasks||[]), payload] };
     case "UPDATE_PM_TASK":    return { ...state, pmTasks: (state.pmTasks||[]).map(t=>t.id===payload.id?payload:t) };
     case "DELETE_PM_TASK":    return { ...state, pmTasks: (state.pmTasks||[]).filter(t=>t.id!==payload) };
+    case "ADD_INSP_TASK":         return { ...state, inspectionTasks: [...(state.inspectionTasks||[]), payload] };
+    case "UPDATE_INSP_TASK":      return { ...state, inspectionTasks: (state.inspectionTasks||[]).map(t=>t.id===payload.id?payload:t) };
+    case "DELETE_INSP_TASK":      return { ...state, inspectionTasks: (state.inspectionTasks||[]).filter(t=>t.id!==payload) };
+    case "ADD_INSP_SCHEDULE":     return { ...state, inspectionSchedules: [...(state.inspectionSchedules||[]), payload] };
+    case "UPDATE_INSP_SCHEDULE":  return { ...state, inspectionSchedules: (state.inspectionSchedules||[]).map(s=>s.id===payload.id?payload:s) };
+    case "DELETE_INSP_SCHEDULE":  return { ...state, inspectionSchedules: (state.inspectionSchedules||[]).filter(s=>s.id!==payload) };
     case "ADD_INV":       return { ...state, inventoryItems: [...(state.inventoryItems||[]), payload] };
     case "DELETE_INV":    return { ...state, inventoryItems: (state.inventoryItems||[]).filter(i => i.id!==payload) };
     case "UPDATE_PROFILE":return { ...state, profile: payload };
@@ -342,6 +351,7 @@ const NAV = [
   { id:"inventory",  icon:"📋", label:"Equipment Inventory" },
   { id:"parts",      icon:"📦", label:"Parts Inventory" },
   { id:"pm",         icon:"🔧", label:"Preventive Maint." },
+  { id:"inspections",icon:"🔍", label:"Inspections" },
   { id:"usage",      icon:"📊", label:"Usage Tracking" },
   { id:"spending",   icon:"💰", label:"Spending & Costs" },
 ];
@@ -700,14 +710,12 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const WO_TYPES = [
     { id:"Service",    label:"Service Work Order",    icon:"🔧", desc:"Scheduled maintenance and service tasks", color:"#1e40af", bg:"#eff6ff" },
-    { id:"Inspection", label:"Inspection Work Order", icon:"🔍", desc:"Safety checks and equipment inspections",  color:"#065f46", bg:"#ecfdf5" },
     { id:"Repair",     label:"Repair Work Order",     icon:"🛠", desc:"Fault repairs and breakdown response",     color:"#7f1d1d", bg:"#fef2f2" },
   ];
 
-  /* Intervals shown for Service and Inspection types */
+  /* Intervals shown for Service type */
   const SERVICE_INTERVALS   = ["New Equipment Service","Weekly","Bi-Weekly","Monthly","Bi-Monthly","Quarterly","Bi-Annual","Annual"];
-  const INSPECT_INTERVALS   = ["New Equipment Inspection","Weekly","Bi-Weekly","Monthly","Bi-Monthly","Quarterly","Bi-Annual","Annual"];
-  const getIntervals = (woType) => woType==="Inspection" ? INSPECT_INTERVALS : SERVICE_INTERVALS;
+  const getIntervals = (woType) => SERVICE_INTERVALS;
 
   const STATUS_TABS = ["Active","Open","In Progress","Awaiting Parts","On Hold","Completed","All"];
   const PRIO_ORDER  = {"High":0,"Medium":1,"Low":2};
@@ -760,7 +768,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const buildTitle = (woType, interval) => {
     if (!woType) return "";
-    if ((woType==="Service"||woType==="Inspection") && interval) return `${interval} ${woType}`;
+    if (woType==="Service" && interval) return `${interval} ${woType}`;
     return woType;
   };
 
@@ -946,7 +954,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         </div>
       </div>
       <div class="sec"><div class="sh">Work Description &amp; Work Performed</div><div class="sb">${wo.description||"&nbsp;"}</div></div>
-      ${wo.woType==="Inspection"||wo.inspectionItems?`<div class="sec"><div class="sh">Inspection Section</div><div class="sb" style="min-height:70px">${wo.inspectionItems||"Check safety items, fluids, leaks, tires/tracks, blades/attachments, PTO/guards, lights, controls, belts, blades, pins, hydraulic hoses, and overall equipment condition."}</div></div>`:""}
+      
       ${wo.adjustmentsMade?`<div class="sec"><div class="sh">Adjustments Made</div><div class="sb" style="min-height:55px">${wo.adjustmentsMade}</div></div>`:""}
       <div class="bg">
         <div class="sec"><div class="sh">Mechanic Notes (Write-In)</div><div class="sb" style="min-height:80px">${wo.mechanicNotes||"&nbsp;"}</div></div>
@@ -987,7 +995,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   /* ---- Tech dropdown ---- */
   /* ---- WO form fields ---- */
   const renderWOForm = () => {
-    const needsInterval = form.woType==="Service" || form.woType==="Inspection";
+    const needsInterval = form.woType==="Service";
     const techObj = technicians.find(t=>t.id===form.techId);
     return (
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
@@ -1013,7 +1021,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         {needsInterval && (
           <div style={{ gridColumn:"span 2", marginBottom:10 }}>
             <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:6 }}>
-              {form.woType==="Inspection" ? "Inspection Interval" : "Service Interval"} <span style={{ color:T.red }}>*</span>
+              {"Service Interval"} <span style={{ color:T.red }}>*</span>
             </label>
             <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
               {getIntervals(form.woType).map(interval => {
@@ -1098,17 +1106,6 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         <Field label="Work Description / Problem Reported">
           <textarea style={{ ...inp, minHeight:60, resize:"vertical" }} value={form.description||""} onChange={e=>setForm(f=>({...f,description:e.target.value}))} />
         </Field>
-
-        {form.woType==="Inspection" && (
-          <Field label="Inspection Section / Checklist">
-            <textarea
-              style={{ ...inp, minHeight:80, resize:"vertical" }}
-              value={form.inspectionItems||""}
-              onChange={e=>setForm(f=>({...f,inspectionItems:e.target.value}))}
-              placeholder="Inspection items checked: safety guards, fluids, leaks, tires/tracks, PTO, attachments, lights, controls, belts, blades, pins, hydraulic hoses..."
-            />
-          </Field>
-        )}
 
         <Field label="Adjustments Made">
           <textarea
@@ -1261,14 +1258,6 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           </div>
         )}
 
-        {/* Inspection Section */}
-        {(wo.woType==="Inspection" || wo.inspectionItems) && (
-          <div style={{ background:"#ecfdf5", borderRadius:6, padding:"10px 12px", border:"1px solid #86efac" }}>
-            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:"#065f46", textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Inspection Section</div>
-            <div style={{ fontFamily:T.sans, fontSize:13, color:wo.inspectionItems?T.text:T.muted, lineHeight:1.6, fontStyle:wo.inspectionItems?"normal":"italic" }}>{wo.inspectionItems||"Check safety items, fluids, leaks, tires/tracks, blades/attachments, PTO/guards, lights, controls, belts, blades, pins, hydraulic hoses, and overall equipment condition."}</div>
-          </div>
-        )}
-
         {/* Adjustments Made */}
         <div style={{ background:T.grayLt, borderRadius:6, padding:"10px 12px", border:`1px solid ${T.border}` }}>
           <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Adjustments Made</div>
@@ -1332,7 +1321,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           {/* Type */}
           <select style={{ ...sel, width:140 }} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
             <option value="All">All Types</option>
-            {["Service","Inspection","Repair"].map(t=><option key={t}>{t}</option>)}
+            {["Service","Repair"].map(t=><option key={t}>{t}</option>)}
           </select>
           {/* Priority */}
           <select style={{ ...sel, width:130 }} value={priorityFilter} onChange={e=>setPriorityFilter(e.target.value)}>
@@ -2048,8 +2037,7 @@ function Equipment({ state, dispatch, setTab }) {
                   return <>
                     {renderCategory("Repair History",    "Repair",     T.red,    "🔧")}
                     {renderCategory("Service History",   "Service",    "#1e40af", "🛠")}
-                    {renderCategory("Inspection History","Inspection", T.green,  "🔍")}
-                    {wos.filter(w=>!["Repair","Service","Inspection"].includes(w.woType)).length>0 && renderCategory("Other","Other", T.muted, "📋")}
+                    {wos.filter(w=>!["Repair","Service"].includes(w.woType)).length>0 && renderCategory("Other","Other", T.muted, "📋")}
                   </>;
                 })()
             }
@@ -4832,12 +4820,441 @@ function SetupWizard({ onComplete }) {
   );
 }
 
+/* INSPECTIONS - cloned from PM pattern */
+function Inspections({ state, dispatch }) {
+  const [modal, setModal]             = useState(null); /* null | "schedule" | "manual" */
+  const [taskModal, setTaskModal]     = useState(false);
+  const [editTaskId, setEditTaskId]   = useState(null);
+  const [showTaskLib, setShowTaskLib] = useState(false);
+  const [schForm, setSchForm]         = useState({ equipmentId:"", taskId:"", task:"", triggerType:"time", timeInterval:"", timeUnit:"months", usageInterval:"", usageType:"hours", lastDoneDate:today(), lastDoneUsage:"" });
+  const [manualForm, setManualForm]   = useState({ equipmentId:"", taskId:"" });
+  const blankTaskForm = () => ({ name:"", description:"", steps:[""], triggers:[{type:"time",timeInterval:"",timeUnit:"months",usageInterval:"",usageType:"hours",usageMode:"every"}] });
+  const [taskForm, setTaskForm]       = useState(blankTaskForm());
+  const [autoFired, setAutoFired]     = useState(false);
+
+  const SF = k => e => setSchForm(f=>({...f,[k]:e.target.value}));
+
+  const inspTasks  = state.inspectionTasks     || [];
+  const schedules  = state.inspectionSchedules || [];
+
+  const nextDueDate = (lastDate, intervalVal, unit) => {
+    if(!lastDate||!intervalVal) return "";
+    const d = new Date(lastDate);
+    const n = +intervalVal;
+    if(unit==="days")   d.setDate(d.getDate()+n);
+    if(unit==="weeks")  d.setDate(d.getDate()+n*7);
+    if(unit==="months") d.setMonth(d.getMonth()+n);
+    if(unit==="years")  d.setFullYear(d.getFullYear()+n);
+    return d.toISOString().split("T")[0];
+  };
+
+  const shouldTrigger = (sch) => {
+    try {
+      if(!sch.equipmentId) return false;
+      const alreadyOpen = state.workOrders.some(w =>
+        w.equipment===sch.equipmentId &&
+        w.scheduleId===sch.id &&
+        (w.status==="Open"||w.status==="In Progress")
+      );
+      if(alreadyOpen) return false;
+      if((sch.triggerType==="time"||sch.triggerType==="both") && sch.nextDueDate) {
+        if(today() >= sch.nextDueDate) return true;
+      }
+      if((sch.triggerType==="usage"||sch.triggerType==="both") && sch.nextDueUsage) {
+        const logs = (state.usageLogs||[]).filter(l=>l.equipmentId===sch.equipmentId);
+        const totalH  = Math.max(...logs.map(l=>+(l.hours||0)), 0);
+        const totalMi = Math.max(...logs.map(l=>+(l.mileage||0)), 0);
+        const usage = sch.usageType==="mileage" ? totalMi : totalH;
+        if(usage >= +sch.nextDueUsage) return true;
+      }
+    } catch(e) {}
+    return false;
+  };
+
+  const triggered = schedules.filter(shouldTrigger);
+
+  /* Auto-create inspection WOs on mount when triggered */
+  useEffect(() => {
+    if(autoFired || triggered.length===0) return;
+    setAutoFired(true);
+    triggered.forEach(sch => {
+      const task = inspTasks.find(t => t.id===sch.taskId);
+      const existing = state.workOrders.filter(w => w.id.startsWith(sch.equipmentId+"-"));
+      const nums = existing.map(w => parseInt(w.id.split("-").pop(),10)||0);
+      const next = nums.length>0 ? Math.max(...nums)+1 : 1;
+      const woId = `${sch.equipmentId}-${String(next).padStart(2,"0")}`;
+      dispatch({ type:"ADD_WO", payload:{
+        id:woId, title:`Inspection: ${sch.task||task?.name||"Equipment"}`, equipment:sch.equipmentId,
+        status:"Open", priority:"Medium", woType:"Inspection",
+        created:today(), due:sch.nextDueDate||today(),
+        tech:"", laborHours:0, laborCost:0, partsCost:0,
+        description:`Auto-generated inspection: ${sch.task||task?.name||""}`,
+        mechanicNotes:"", partsUsed:[], scheduleId:sch.id,
+        inspectionSteps: (task?.steps||[]).filter(Boolean).map(s => ({ text:s, passed:false })),
+      }});
+    });
+  }, []);
+
+  /* Task library helpers */
+  const openNewTask  = () => { setEditTaskId(null); setTaskForm(blankTaskForm()); setTaskModal(true); };
+  const openEditTask = (t) => { setEditTaskId(t.id); setTaskForm({...t, triggers:t.triggers || [{type:"time",timeInterval:t.timeInterval||"",timeUnit:t.timeUnit||"months",usageInterval:"",usageType:"hours",usageMode:"every"}]}); setTaskModal(true); };
+  const saveTask = () => {
+    if(!taskForm.name) return alert("Task name required.");
+    if(editTaskId) dispatch({ type:"UPDATE_INSP_TASK", payload:{...taskForm, id:editTaskId} });
+    else           dispatch({ type:"ADD_INSP_TASK",    payload:{...taskForm, id:genId("INSPT")} });
+    setTaskModal(false); setEditTaskId(null); setTaskForm(blankTaskForm());
+  };
+  const addTrigger = () => setTaskForm(f=>({...f,triggers:[...(f.triggers||[]),{type:"time",timeInterval:"",timeUnit:"months",usageInterval:"",usageType:"hours",usageMode:"every"}]}));
+  const setTrigger = (i,k,v) => setTaskForm(f=>{ const tr=[...(f.triggers||[])]; tr[i]={...tr[i],[k]:v}; return {...f,triggers:tr}; });
+  const delTrigger = i => setTaskForm(f=>{ const tr=[...(f.triggers||[])]; tr.splice(i,1); return {...f,triggers:tr}; });
+  const addStep    = () => setTaskForm(f=>({...f,steps:[...(f.steps||[]),""] }));
+  const setStep    = (i,v) => setTaskForm(f=>{ const s=[...(f.steps||[])]; s[i]=v; return {...f,steps:s}; });
+  const delStep    = i => setTaskForm(f=>{ const s=[...(f.steps||[])]; s.splice(i,1); return {...f,steps:s}; });
+
+  /* Save schedule */
+  const saveSchedule = () => {
+    if(!schForm.equipmentId) return alert("Select equipment.");
+    if(!schForm.task)        return alert("Pick or enter a task.");
+    const nextDate  = schForm.triggerType!=="usage" ? nextDueDate(schForm.lastDoneDate, schForm.timeInterval, schForm.timeUnit) : "";
+    const nextUsage = schForm.triggerType!=="time"  ? (+(schForm.lastDoneUsage||0))+(+(schForm.usageInterval||0)) : "";
+    dispatch({ type:"ADD_INSP_SCHEDULE", payload:{
+      ...schForm, id:genId("INSPS"),
+      nextDueDate:nextDate, nextDueUsage:nextUsage,
+      created:today(),
+    }});
+    setModal(null);
+    setSchForm({ equipmentId:"", taskId:"", task:"", triggerType:"time", timeInterval:"", timeUnit:"months", usageInterval:"", usageType:"hours", lastDoneDate:today(), lastDoneUsage:"" });
+  };
+  const delSchedule = id => { if(confirm("Delete this inspection schedule?")) dispatch({ type:"DELETE_INSP_SCHEDULE", payload:id }); };
+
+  /* Trigger manually - creates an inspection WO on the spot */
+  const triggerManual = () => {
+    if(!manualForm.equipmentId) return alert("Pick equipment.");
+    if(!manualForm.taskId)      return alert("Pick a task.");
+    const task = inspTasks.find(t=>t.id===manualForm.taskId);
+    if(!task) return;
+    const existing = state.workOrders.filter(w=>w.id.startsWith(manualForm.equipmentId+"-"));
+    const nums = existing.map(w=>parseInt(w.id.split("-").pop(),10)||0);
+    const next = nums.length>0 ? Math.max(...nums)+1 : 1;
+    const woId = `${manualForm.equipmentId}-${String(next).padStart(2,"0")}`;
+    dispatch({ type:"ADD_WO", payload:{
+      id:woId, title:`Inspection: ${task.name}`, equipment:manualForm.equipmentId,
+      status:"Open", priority:"Medium", woType:"Inspection",
+      created:today(), due:today(),
+      tech:"", laborHours:0, laborCost:0, partsCost:0,
+      description:`Manual inspection: ${task.name}${task.description?` — ${task.description}`:""}`,
+      mechanicNotes:"", partsUsed:[],
+      inspectionSteps: (task.steps||[]).filter(Boolean).map(s => ({ text:s, passed:false })),
+    }});
+    setModal(null);
+    setManualForm({ equipmentId:"", taskId:"" });
+    alert(`Inspection work order ${woId} created.`);
+  };
+
+  /* Group schedules by status: Overdue / Due Soon / Up to Date */
+  const sched_status = (sch) => {
+    if(!sch.nextDueDate && !sch.nextDueUsage) return "Up to Date";
+    const overdueByDate = sch.nextDueDate && sch.nextDueDate <= today();
+    const dueSoonByDate = sch.nextDueDate && !overdueByDate && (new Date(sch.nextDueDate) - new Date()) <= 7*86400000;
+    if(overdueByDate) return "Overdue";
+    if(dueSoonByDate) return "Due Soon";
+    return "Up to Date";
+  };
+  const byStatus = { Overdue:[], "Due Soon":[], "Up to Date":[] };
+  schedules.forEach(s => {
+    const eq = state.equipment.find(e => e.id===s.equipmentId);
+    byStatus[sched_status(s)].push({ ...s, eqName: eq?.name || s.equipmentId });
+  });
+
+  const renderSection = (title, items, color) => items.length===0 ? null : (
+    <Card style={{ marginBottom:14, padding:0, overflow:"hidden" }}>
+      <div style={{ background:color, padding:"8px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <span style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:"#fff" }}>{title} ({items.length})</span>
+      </div>
+      <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
+        <thead><tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
+          {["Equipment","Inspection Task","Trigger","Last Done","Next Due"].map(h=>(
+            <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</th>
+          ))}
+          <th></th>
+        </tr></thead>
+        <tbody>
+          {items.map(s=>(
+            <tr key={s.id} style={{ borderBottom:`1px solid ${T.border}` }}>
+              <td style={{ padding:"9px 12px" }}>{s.eqName}</td>
+              <td style={{ padding:"9px 12px", fontWeight:500 }}>{s.task}</td>
+              <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:T.muted }}>
+                {s.triggerType!=="usage" && `${s.timeInterval||"—"} ${s.timeUnit||""}`}
+                {s.triggerType==="both" && " / "}
+                {s.triggerType!=="time" && `${s.usageInterval||"—"} ${s.usageType||""}`}
+              </td>
+              <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:T.subtext }}>{s.lastDoneDate||"—"}</td>
+              <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:T.subtext }}>{s.nextDueDate||(s.nextDueUsage?`${s.nextDueUsage} ${s.usageType}`:"—")}</td>
+              <td style={{ padding:"9px 12px", textAlign:"right" }}>
+                <Btn small variant="danger" onClick={()=>delSchedule(s.id)}>Del</Btn>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+
+  return (
+    <div>
+      {triggered.length > 0 && (
+        <Card style={{ background:"#fef2f2", border:"1px solid #fca5a5", marginBottom:14 }}>
+          <div style={{ fontFamily:T.sans, fontSize:13, color:T.red, fontWeight:600 }}>
+            🚨 {triggered.length} inspection{triggered.length>1?"s":""} triggered — work order{triggered.length>1?"s":""} auto-generated.
+          </div>
+        </Card>
+      )}
+
+      {/* Action buttons */}
+      <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginBottom:16, flexWrap:"wrap" }}>
+        <Btn variant="secondary" onClick={()=>setShowTaskLib(true)}>Inspection Task Library ({inspTasks.length})</Btn>
+        <Btn variant="secondary" onClick={openNewTask}>+ Add Inspection Task</Btn>
+        <Btn variant="secondary" onClick={()=>setModal("schedule")}>Assign Task to Equipment</Btn>
+        <Btn onClick={()=>setModal("manual")}>▶ Trigger Inspection Manually</Btn>
+      </div>
+
+      {/* Status sections */}
+      {renderSection("Overdue",    byStatus.Overdue,    T.red)}
+      {renderSection("Due Soon",   byStatus["Due Soon"], T.amber)}
+      {renderSection("Up to Date", byStatus["Up to Date"], T.green)}
+
+      {schedules.length===0 && (
+        <Card style={{ textAlign:"center", padding:"36px 20px" }}>
+          <div style={{ fontFamily:T.sans, fontSize:32, marginBottom:8 }}>🔍</div>
+          <div style={{ fontFamily:T.sans, fontSize:14, color:T.text, fontWeight:600, marginBottom:4 }}>No inspections scheduled yet</div>
+          <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>Create an inspection task, then assign it to equipment.</div>
+        </Card>
+      )}
+
+      {/* Task Library modal */}
+      {showTaskLib && (
+        <Modal title={`Inspection Task Library (${inspTasks.length})`} onClose={()=>setShowTaskLib(false)}>
+          {inspTasks.length===0 ? (
+            <div style={{ textAlign:"center", padding:"24px 0", color:T.muted, fontFamily:T.sans, fontSize:13 }}>No tasks yet. Click "+ Add Inspection Task" to create one.</div>
+          ) : inspTasks.map(t => {
+            const activeScheds = schedules.filter(s => s.taskId===t.id);
+            return (
+              <div key={t.id} style={{ borderBottom:`1px solid ${T.border}`, padding:"14px 0" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:8 }}>
+                  <div>
+                    <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text }}>{t.name}</div>
+                    {t.description && <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:2 }}>{t.description}</div>}
+                  </div>
+                  <div style={{ display:"flex", gap:6 }}>
+                    <Btn small variant="secondary" onClick={()=>{ setShowTaskLib(false); openEditTask(t); }}>Edit</Btn>
+                    <Btn small variant="danger" onClick={()=>{ if(confirm(`Delete task "${t.name}"?`)) dispatch({ type:"DELETE_INSP_TASK", payload:t.id }); }}>Del</Btn>
+                  </div>
+                </div>
+                {(t.steps||[]).filter(Boolean).length>0 && (
+                  <div style={{ marginBottom:8 }}>
+                    <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Steps</div>
+                    {t.steps.filter(Boolean).map((s,j)=>(
+                      <div key={j} style={{ display:"flex", gap:8, fontSize:12, color:T.subtext, marginBottom:2 }}>
+                        <span style={{ width:14 }}>☐</span><span>{s}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div>
+                  <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Active On</div>
+                  {activeScheds.length===0
+                    ? <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, fontStyle:"italic" }}>Not assigned to any equipment</div>
+                    : <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                        {activeScheds.map(sch=>{
+                          const eq = state.equipment.find(e=>e.id===sch.equipmentId);
+                          return (
+                            <div key={sch.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", background:T.accentLt, border:`1px solid ${T.accent}44`, borderRadius:6, padding:"6px 10px" }}>
+                              <span style={{ fontFamily:T.sans, fontSize:12 }}>{eq?.name||sch.equipmentId} — Next: {sch.nextDueDate||"—"}</span>
+                              <Btn small variant="danger" onClick={()=>{ if(confirm("Remove schedule?")) delSchedule(sch.id); }}>Remove</Btn>
+                            </div>
+                          );
+                        })}
+                      </div>}
+                </div>
+              </div>
+            );
+          })}
+          <div style={{ display:"flex", justifyContent:"flex-end", marginTop:14 }}>
+            <Btn variant="secondary" onClick={()=>setShowTaskLib(false)}>Close</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Create/Edit Task modal */}
+      {taskModal && (
+        <Modal title={editTaskId?"Edit Inspection Task":"Add Inspection Task"} onClose={()=>{ setTaskModal(false); setEditTaskId(null); setTaskForm(blankTaskForm()); }}>
+          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+            <Field label="Task Name"><input style={inp} value={taskForm.name} onChange={e=>setTaskForm(f=>({...f,name:e.target.value}))} placeholder="e.g. Daily Safety Inspection, Pre-Op Checklist" /></Field>
+            <Field label="Description"><textarea style={{ ...inp, minHeight:50, resize:"vertical" }} value={taskForm.description} onChange={e=>setTaskForm(f=>({...f,description:e.target.value}))} placeholder="What is this inspection for..." /></Field>
+            <div>
+              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:8 }}>Inspection Steps (each step gets a checkbox during the inspection)</label>
+              {(taskForm.steps||[""]).map((step,i)=>(
+                <div key={i} style={{ display:"flex", gap:6, marginBottom:6, alignItems:"center" }}>
+                  <span style={{ fontFamily:T.mono, fontSize:11, color:T.muted, minWidth:20 }}>☐</span>
+                  <input style={{ ...inp, flex:1 }} value={step} onChange={e=>setStep(i,e.target.value)} placeholder={`Inspection item ${i+1}...`} />
+                  {(taskForm.steps||[]).length>1 && <button onClick={()=>delStep(i)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
+                </div>
+              ))}
+              <button onClick={addStep} style={{ background:"none", border:"1px dashed #c8d0e0", borderRadius:6, padding:"5px 12px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>+ Add Step</button>
+            </div>
+            <div style={{ background:T.grayLt, borderRadius:8, padding:"12px 14px", border:`1px solid ${T.border}` }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext }}>Triggers (when this inspection should fire)</label>
+                <button onClick={addTrigger} style={{ background:"none", border:`1px solid ${T.accent}`, borderRadius:5, padding:"3px 10px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:600 }}>+ Add Trigger</button>
+              </div>
+              {(taskForm.triggers||[]).map((tr,i)=>(
+                <div key={i} style={{ background:"#fff", border:`1px solid ${T.border}`, borderRadius:7, padding:"10px 12px", marginBottom:8 }}>
+                  <div style={{ display:"flex", gap:6, marginBottom:8, alignItems:"center" }}>
+                    <span style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted }}>Trigger {i+1}</span>
+                    <div style={{ display:"flex", gap:4, marginLeft:4 }}>
+                      {[["time","By Time"],["hours","By Hours"],["mileage","By Mileage"]].map(([v,l])=>(
+                        <button key={v} type="button" onClick={()=>setTrigger(i,"type",v)} style={{ padding:"3px 9px", borderRadius:5, border:`1px solid ${tr.type===v?T.accent:T.border}`, background:tr.type===v?T.accentLt:"#fff", color:tr.type===v?T.accent:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:tr.type===v?700:400 }}>{l}</button>
+                      ))}
+                    </div>
+                    {(taskForm.triggers||[]).length>1 && <button onClick={()=>delTrigger(i)} style={{ marginLeft:"auto", background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:16 }}>×</button>}
+                  </div>
+                  {tr.type==="time" && (
+                    <div style={{ display:"grid", gridTemplateColumns:"80px 1fr", gap:8 }}>
+                      <div><label style={{ fontFamily:T.sans, fontSize:10, color:T.muted, display:"block", marginBottom:3 }}>Every</label><input style={inp} type="number" value={tr.timeInterval} onChange={e=>setTrigger(i,"timeInterval",e.target.value)} placeholder="1" /></div>
+                      <div><label style={{ fontFamily:T.sans, fontSize:10, color:T.muted, display:"block", marginBottom:3 }}>Unit</label><select style={sel} value={tr.timeUnit} onChange={e=>setTrigger(i,"timeUnit",e.target.value)}>{["days","weeks","months","years"].map(u=><option key={u}>{u}</option>)}</select></div>
+                    </div>
+                  )}
+                  {(tr.type==="hours"||tr.type==="mileage") && (
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 100px 1fr", gap:8 }}>
+                      <div><label style={{ fontFamily:T.sans, fontSize:10, color:T.muted, display:"block", marginBottom:3 }}>Mode</label>
+                        <select style={sel} value={tr.usageMode||"every"} onChange={e=>setTrigger(i,"usageMode",e.target.value)}>
+                          <option value="every">Every X {tr.type}</option>
+                          <option value="at">At specific {tr.type}</option>
+                        </select>
+                      </div>
+                      <div><label style={{ fontFamily:T.sans, fontSize:10, color:T.muted, display:"block", marginBottom:3 }}>Value</label><input style={inp} type="number" value={tr.usageInterval||""} onChange={e=>setTrigger(i,"usageInterval",e.target.value)} placeholder="100" /></div>
+                      <div style={{ display:"flex", alignItems:"flex-end", paddingBottom:2 }}><span style={{ fontFamily:T.sans, fontSize:11, color:T.muted }}>{tr.type==="hours"?"engine hours":"miles"}</span></div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+            <Btn variant="secondary" onClick={()=>{ setTaskModal(false); setEditTaskId(null); setTaskForm(blankTaskForm()); }}>Cancel</Btn>
+            <Btn onClick={saveTask}>{editTaskId?"Update Task":"Save Task to Library"}</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Assign Task to Equipment modal */}
+      {modal==="schedule" && (
+        <Modal title="Assign Inspection Task to Equipment" onClose={()=>setModal(null)}>
+          <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.subtext }}>
+            Schedule recurring inspections. Work orders auto-generate when the trigger is reached.
+          </p>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
+            <div style={{ gridColumn:"span 2", marginBottom:14 }}>
+              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Equipment *</label>
+              <select style={sel} value={schForm.equipmentId} onChange={SF("equipmentId")}>
+                <option value="">-- Select Equipment --</option>
+                {state.equipment.map(e=><option key={e.id} value={e.id}>{e.name} ({e.id})</option>)}
+              </select>
+            </div>
+            <div style={{ gridColumn:"span 2", marginBottom:14 }}>
+              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Inspection Task</label>
+              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <select style={{ ...sel, flex:1 }} value={schForm.taskId||""} onChange={e=>{
+                  const t = inspTasks.find(t=>t.id===e.target.value);
+                  if(t) {
+                    const firstTrigger = (t.triggers||[])[0]||{};
+                    setSchForm(f=>({...f, taskId:t.id, task:t.name,
+                      triggerType: firstTrigger.type==="time" ? "time" : (firstTrigger.type==="hours"||firstTrigger.type==="mileage"?"usage":"time"),
+                      timeInterval: firstTrigger.timeInterval||f.timeInterval,
+                      timeUnit: firstTrigger.timeUnit||f.timeUnit,
+                      usageInterval: firstTrigger.usageInterval||f.usageInterval,
+                      usageType: firstTrigger.type==="mileage" ? "mileage" : "hours",
+                    }));
+                  } else setSchForm(f=>({...f,taskId:""}));
+                }}>
+                  <option value="">-- Pick from Task Library --</option>
+                  {inspTasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+                <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>or</span>
+                <input style={{ ...inp, flex:1 }} placeholder="Custom task name..." value={schForm.task} onChange={SF("task")} />
+              </div>
+            </div>
+            <div style={{ gridColumn:"span 2", marginBottom:14 }}>
+              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:6 }}>Trigger Type</label>
+              <div style={{ display:"flex", gap:6 }}>
+                {[["time","By Time"],["usage","By Usage"],["both","Both"]].map(([v,l])=>(
+                  <button key={v} type="button" onClick={()=>setSchForm(f=>({...f,triggerType:v}))} style={{ flex:1, padding:"7px 0", borderRadius:6, border:`1px solid ${schForm.triggerType===v?T.accent:T.border}`, background:schForm.triggerType===v?T.accentLt:"#fff", color:schForm.triggerType===v?T.accent:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:schForm.triggerType===v?700:400 }}>{l}</button>
+                ))}
+              </div>
+            </div>
+            {(schForm.triggerType==="time"||schForm.triggerType==="both") && (<>
+              <Field label="Time Interval" half><input style={inp} type="number" min="1" value={schForm.timeInterval} onChange={SF("timeInterval")} placeholder="e.g. 1" /></Field>
+              <Field label="Unit" half><select style={sel} value={schForm.timeUnit} onChange={SF("timeUnit")}>{["days","weeks","months","years"].map(u=><option key={u}>{u}</option>)}</select></Field>
+            </>)}
+            {(schForm.triggerType==="usage"||schForm.triggerType==="both") && (<>
+              <Field label="Usage Interval" half><input style={inp} type="number" min="1" value={schForm.usageInterval} onChange={SF("usageInterval")} placeholder="e.g. 100" /></Field>
+              <Field label="Usage Type" half><select style={sel} value={schForm.usageType} onChange={SF("usageType")}><option value="hours">Engine Hours</option><option value="mileage">Mileage</option></select></Field>
+            </>)}
+            <Field label="Last Inspection Date" half><input style={inp} type="date" value={schForm.lastDoneDate} onChange={SF("lastDoneDate")} /></Field>
+            {(schForm.triggerType==="usage"||schForm.triggerType==="both") && (
+              <Field label={`Usage at Last Inspection (${schForm.usageType})`} half><input style={inp} type="number" value={schForm.lastDoneUsage} onChange={SF("lastDoneUsage")} placeholder="e.g. 0" /></Field>
+            )}
+          </div>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+            <Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn>
+            <Btn onClick={saveSchedule}>Assign Inspection</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Manual trigger modal */}
+      {modal==="manual" && (
+        <Modal title="Trigger Inspection Manually" onClose={()=>setModal(null)}>
+          <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.subtext }}>
+            Create an inspection work order right now (not on a schedule).
+          </p>
+          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+            <Field label="Equipment *">
+              <select style={sel} value={manualForm.equipmentId} onChange={e=>setManualForm(f=>({...f,equipmentId:e.target.value}))}>
+                <option value="">-- Select Equipment --</option>
+                {state.equipment.map(e=><option key={e.id} value={e.id}>{e.name} ({e.id})</option>)}
+              </select>
+            </Field>
+            <Field label="Inspection Task *">
+              <select style={sel} value={manualForm.taskId} onChange={e=>setManualForm(f=>({...f,taskId:e.target.value}))}>
+                <option value="">-- Select Task from Library --</option>
+                {inspTasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </Field>
+            {inspTasks.length===0 && (
+              <div style={{ background:"#fef3c7", border:"1px solid #fbbf24", borderRadius:7, padding:"10px 12px", fontSize:12, color:"#92400e" }}>
+                ⚠ No tasks in your library yet. Click "+ Add Inspection Task" first.
+              </div>
+            )}
+          </div>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+            <Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn>
+            <Btn onClick={triggerManual}>Create Inspection WO</Btn>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+
 const PAGE_TITLES = {
   dashboard:        "Maintenance Dashboard",
   workorders:       "Work Orders",
   equipment:        "Equipment",
   parts:            "Parts Inventory",
   pm:               "Preventive Maintenance",
+  inspections:      "Inspections",
   usage:            "Usage Tracking",
   spending:         "Spending & Costs",
   inventory:        "Equipment Inventory List",
@@ -4862,7 +5279,7 @@ async function loadSession(setSession, setAuthLoading) {
 }
 
 function App() {
-  /* Start with empty state — will be replaced once the user logs in and we load from Supabase */
+  /* Start with empty state - will be replaced once the user logs in and we load from Supabase */
   const emptyState = { ...INIT, inventoryItems:[], profile:null, woSettings:null };
   const [state, dispatch] = useReducer(reducer, emptyState);
 
@@ -4916,7 +5333,7 @@ function App() {
           /* Found existing cloud data, load it */
           dispatch({ type: "REPLACE_STATE", payload: data.data });
         } else {
-          /* No cloud data exists yet for this user — check localStorage for migration */
+          /* No cloud data exists yet for this user - check localStorage for migration */
           const localData = localStorage.getItem("ncaState");
           if (localData) {
             try {
@@ -5039,6 +5456,7 @@ function App() {
     equipment:        <Equipment        state={state} dispatch={dispatch} setTab={setTab} />,
     parts:            <Parts            state={state} dispatch={dispatch} />,
     pm:               <PM               state={state} dispatch={dispatch} />,
+    inspections:      <Inspections      state={state} dispatch={dispatch} />,
     usage:            <UsageTracking    state={state} dispatch={dispatch} />,
     spending:         <Spending         state={state} />,
     inventory:        <EquipmentInventory state={state} dispatch={dispatch} />,
