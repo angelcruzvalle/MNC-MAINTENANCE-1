@@ -225,26 +225,34 @@ const rowsToDataUri = rows => {
   return `data:text/csv;charset=utf-8,${encodeURIComponent(csv)}`;
 };
 
-function printCustomizePanelHtml() {
+function printCustomizePanelHtml(layoutType="Report") {
+  const safeLayoutType = String(layoutType || "Report").replace(/[^a-z0-9_-]/gi, "_");
   return `<details class="print-customize" open style="margin:14px auto;max-width:900px;border:1px solid #cbd5e1;border-radius:10px;padding:10px 12px;background:#f8fafc;font-family:Arial,sans-serif">
     <summary style="cursor:pointer;font-weight:800;color:#111827">Customize what prints</summary>
-    <div style="font-size:12px;color:#475569;margin:6px 0 10px">Turn sections or table columns on/off before printing or saving as PDF.</div>
+    <div style="font-size:12px;color:#475569;margin:6px 0 10px">Turn sections or table columns on/off before printing or saving as PDF. This layout is saved for ${safeLayoutType} work orders.</div>
     <div id="printSectionToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px;margin-bottom:10px"></div>
     <div id="printColumnToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px"></div>
-    <button onclick="window.print()" style="margin-top:10px;padding:8px 18px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer">Print Selected Layout</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button onclick="window.print()" style="padding:8px 18px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer">Print Selected Layout</button><button onclick="localStorage.removeItem(\'ncaPrintLayout_${safeLayoutType}\');location.reload()" style="padding:8px 14px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;font-weight:700;cursor:pointer">Reset Saved Layout</button></div>
   </details>
   <style>@media print{.print-customize,.pbtn{display:none!important}}</style>
   <script>
   (function(){
+    var layoutKey = 'ncaPrintLayout_${safeLayoutType}';
+    var savedLayout = {};
+    try { savedLayout = JSON.parse(localStorage.getItem(layoutKey) || '{}') || {}; } catch(e) { savedLayout = {}; }
+    function saveLayout(){ try { localStorage.setItem(layoutKey, JSON.stringify(savedLayout)); } catch(e) {} }
     function clean(txt){ return (txt||'').replace(/\s+/g,' ').trim(); }
-    function addToggle(container, label, checked, onChange){
+    function addToggle(container, label, checked, onChange, key){
       if(!container || !label) return;
+      key = key || label;
+      var initial = Object.prototype.hasOwnProperty.call(savedLayout, key) ? savedLayout[key] !== false : checked !== false;
       var wrap=document.createElement('label');
       wrap.style.cssText='display:flex;align-items:center;gap:7px;font-size:12px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:7px 9px;cursor:pointer';
-      var cb=document.createElement('input'); cb.type='checkbox'; cb.checked=checked!==false;
-      cb.onchange=function(){ onChange(cb.checked); };
+      var cb=document.createElement('input'); cb.type='checkbox'; cb.checked=initial;
+      cb.onchange=function(){ savedLayout[key]=cb.checked; saveLayout(); onChange(cb.checked); };
       var span=document.createElement('span'); span.textContent=label; span.style.fontWeight='700';
       wrap.appendChild(cb); wrap.appendChild(span); container.appendChild(wrap);
+      onChange(initial);
     }
     function sectionLabel(el, i){
       if(el.classList.contains('hdr')) return 'Header';
@@ -263,7 +271,7 @@ function printCustomizePanelHtml() {
         var label=sectionLabel(el,i);
         var key=label+'-'+i;
         if(seen[key]) return; seen[key]=true;
-        addToggle(secBox,label,true,function(show){ el.style.display=show?'':'none'; });
+        addToggle(secBox,label,true,function(show){ el.style.display=show?'':'none'; }, 'section:'+label+':'+i);
       });
       var tables=Array.from(document.querySelectorAll('table')).filter(function(t){ return !t.closest('.print-customize'); });
       tables.forEach(function(table,tIndex){
@@ -274,7 +282,7 @@ function printCustomizePanelHtml() {
           var prefix=tables.length>1 ? 'Table '+(tIndex+1)+': ' : 'Column: ';
           addToggle(colBox,prefix+label,true,function(show){
             Array.from(table.rows).forEach(function(row){ if(row.cells[idx]) row.cells[idx].style.display=show?'':'none'; });
-          });
+          }, 'table:'+tIndex+':column:'+idx+':'+label);
         });
       });
       if(secBox && !secBox.children.length) secBox.innerHTML='<div style="font-size:12px;color:#64748b">No separate sections detected.</div>';
@@ -1363,7 +1371,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       <a href="${woCsv}" download="work-order-${wo.id}.csv" style="padding:9px 24px;font-size:13px;font-weight:700;border-radius:6px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;text-decoration:none;font-family:Arial,sans-serif">Download Excel CSV</a>
       <button onclick="var blob=new Blob([document.documentElement.outerHTML],{type:'application/msword'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='work-order-${wo.id}.doc';a.click();URL.revokeObjectURL(a.href);" style="padding:9px 24px;font-size:13px;font-weight:700;border-radius:6px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;cursor:pointer">Download Word</button>
     </div>
-    ${printCustomizePanelHtml()}
+    ${printCustomizePanelHtml(wo.woType || "WorkOrder")}
     </body></html>`);
     win.document.close();
   };
@@ -1831,9 +1839,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               const total = (+wo.laborCost||0)+partsTotal+(+wo.partsCost||0);
               const typeInfo = WO_TYPES.find(t=>t.id===wo.woType);
               const rowStatus = wo.status==="Completed" ? "Fully Operational" : (wo.equipmentStatus || eq?.status || "Fully Operational");
-              const rowBg = rowStatus==="Out of Service / Deadline" ? "#fff5f5" : rowStatus==="Operational with Deficiencies" ? "#fffbeb" : (i%2===0?"#fff":T.grayLt);
-              const rowHover = rowStatus==="Out of Service / Deadline" ? "#fee2e2" : rowStatus==="Operational with Deficiencies" ? "#fef3c7" : T.accentLt;
-              const rowBorder = rowStatus==="Out of Service / Deadline" ? "4px solid #ef4444" : rowStatus==="Operational with Deficiencies" ? "4px solid #f59e0b" : "4px solid transparent";
+              const isOpenInspection = wo.woType==="Inspection" && wo.status!=="Completed";
+              const rowBg = isOpenInspection ? "#dbeafe" : rowStatus==="Out of Service / Deadline" ? "#fff5f5" : rowStatus==="Operational with Deficiencies" ? "#fffbeb" : (i%2===0?"#fff":T.grayLt);
+              const rowHover = isOpenInspection ? "#bfdbfe" : rowStatus==="Out of Service / Deadline" ? "#fee2e2" : rowStatus==="Operational with Deficiencies" ? "#fef3c7" : T.accentLt;
+              const rowBorder = isOpenInspection ? "4px solid #7dd3fc" : rowStatus==="Out of Service / Deadline" ? "4px solid #ef4444" : rowStatus==="Operational with Deficiencies" ? "4px solid #f59e0b" : "4px solid transparent";
               return (
                 <tr key={wo.id} onClick={()=>openEdit(wo)} style={{ borderBottom:`1px solid ${T.border}`, borderLeft:rowBorder, background:rowBg, cursor:"pointer", transition:"background .12s" }}
                   onMouseEnter={e=>e.currentTarget.style.background=rowHover}
@@ -3237,7 +3246,7 @@ function Inspections({ state, dispatch }) {
       title:`Inspection - ${task.name}`,
       inspectionTaskName:task.name,
       equipment:eq.id,
-      equipmentStatus:eq.status || "Fully Operational",
+      equipmentStatus:"Fully Operational",
       status:"Open",
       priority:"Normal",
       created:today(),
@@ -5947,7 +5956,7 @@ export default function App() {
         title:`Inspection - ${task.name}`,
         inspectionTaskName:task.name,
         equipment:eq.id,
-        equipmentStatus:eq.status || "Fully Operational",
+        equipmentStatus:"Fully Operational",
         status:"Open",
         priority:"Normal",
         created:todayStr,
