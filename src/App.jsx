@@ -1610,9 +1610,10 @@ function AttachmentsCard({ eq, dispatch }) {
 
 /* EQUIPMENT */
 
-function Equipment({ state, dispatch }) {
+function Equipment({ state, dispatch, setTab }) {
   const [modal, setModal]       = useState(null);
   const [detail, setDetail]     = useState(null);
+  const [viewWO, setViewWO]     = useState(null); /* WO being viewed from history */
   const [attachDetail, setAttachDetail] = useState(null);
   const [expandedAt, setExpandedAt]     = useState({});
   const [form, setForm]         = useState({});
@@ -1646,6 +1647,70 @@ function Equipment({ state, dispatch }) {
   }).sort((a,b)=>(STATUS_SORT[a.status]??99)-(STATUS_SORT[b.status]??99));
 
   const woForEq  = eq => state.workOrders.filter(w=>w.equipment===eq.id);
+
+  /* Print a WO (shared logic similar to WorkOrders.printWO) */
+  const printWOFromEq = (wo) => {
+    const gs = state.settings || {};
+    const ws = state.woSettings || {};
+    const eq = state.equipment.find(e=>e.id===wo.equipment);
+    const companyName = ws.companyName || gs.companyName || "Maintenance Department";
+    const companyLogo = ws.logo || gs.logo || "";
+    const dept = ws.department || gs.department || "";
+    const partsRows = (wo.partsUsed||[]).map(p=>`<tr><td>${p.name||""}</td><td style="text-align:center">${p.qty||1}</td><td style="text-align:right">$${(+(p.unitCost||0)).toFixed(2)}</td><td style="text-align:right">$${((+(p.qty||1))*(+(p.unitCost||0))).toFixed(2)}</td></tr>`).join("");
+    const partsTotal = (wo.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
+    const total = (+wo.laborCost||0)+partsTotal+(+wo.partsCost||0);
+    const win = window.open("","_blank","width=900,height=900");
+    if(!win) return;
+    win.document.write(`<!DOCTYPE html><html><head><title>Work Order ${wo.id}</title>
+      <style>
+        body{font-family:Arial,sans-serif;padding:30px;color:#1a1a2e}
+        .hdr{display:flex;align-items:center;gap:18px;border-bottom:3px solid #1a1a2e;padding-bottom:14px;margin-bottom:18px}
+        .hdr img{height:60px;max-width:120px;object-fit:contain}
+        .hdr-mid{flex:1;text-align:center}
+        .hdr-mid h1{margin:0;font-size:20px}
+        .hdr-mid div{font-size:12px;color:#666}
+        .wo-id{font-family:monospace;font-size:14px;font-weight:700}
+        h2{font-size:14px;margin:18px 0 8px;color:#1a1a2e;border-bottom:1px solid #ddd;padding-bottom:4px}
+        table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px}
+        th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px}
+        td{padding:6px 10px;border-bottom:1px solid #e5e7eb}
+        .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;font-size:12px}
+        .info-grid b{color:#555;font-weight:600}
+        .sig{margin-top:30px;display:grid;grid-template-columns:1fr 1fr;gap:30px}
+        .sig div{border-top:1px solid #333;padding-top:6px;font-size:11px;color:#666}
+        @media print{button{display:none}}
+      </style></head><body>
+      <div class="hdr">
+        ${companyLogo?`<img src="${companyLogo}" alt="logo">`:""}
+        <div class="hdr-mid"><h1>${companyName}</h1><div>${dept}</div><div style="margin-top:6px;font-size:14px;font-weight:700">${wo.woType||"MAINTENANCE"} WORK ORDER</div></div>
+        <div style="text-align:right"><div class="wo-id">${wo.id}</div><div style="font-size:11px;color:#666">Status: ${wo.status}<br>Priority: ${wo.priority}</div></div>
+      </div>
+      <h2>${wo.title}</h2>
+      <div class="info-grid">
+        <div><b>Equipment:</b> ${eq?.name||wo.equipment} (${wo.equipment})</div>
+        <div><b>Mechanic:</b> ${wo.tech||"—"}</div>
+        <div><b>Created:</b> ${wo.created||"—"}</div>
+        <div><b>Due:</b> ${wo.due||"—"}</div>
+        ${wo.completed?`<div><b>Completed:</b> ${wo.completed}</div>`:""}
+        ${wo.serviceInterval?`<div><b>Interval:</b> ${wo.serviceInterval}</div>`:""}
+      </div>
+      ${wo.description?`<h2>Description</h2><p style="font-size:12px">${wo.description}</p>`:""}
+      ${wo.mechanicNotes?`<h2>Mechanic Notes</h2><p style="font-size:12px;white-space:pre-wrap">${wo.mechanicNotes}</p>`:""}
+      ${partsRows?`<h2>Parts Used</h2><table><tr><th>Part</th><th style="text-align:center">Qty</th><th style="text-align:right">Unit Cost</th><th style="text-align:right">Total</th></tr>${partsRows}</table>`:""}
+      <h2>Cost Summary</h2>
+      <table>
+        <tr><td>Labor Cost</td><td style="text-align:right">$${(+wo.laborCost||0).toFixed(2)}</td></tr>
+        <tr><td>Parts Cost</td><td style="text-align:right">$${(partsTotal+(+wo.partsCost||0)).toFixed(2)}</td></tr>
+        <tr style="font-weight:700;background:#f3f4f6"><td>TOTAL</td><td style="text-align:right">$${total.toFixed(2)}</td></tr>
+      </table>
+      <div class="sig">
+        <div>Mechanic Signature</div>
+        <div>Supervisor Signature</div>
+      </div>
+      <br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
+      </body></html>`);
+    win.document.close();
+  };
   const openAdd  = () => { setForm({ status:"Fully Operational", faultDescription:"", faultDate:"" }); setModal("add"); };
   const openEdit = eq => { setForm({...eq}); setModal("editing"); };
   const save = () => {
@@ -1895,34 +1960,133 @@ function Equipment({ state, dispatch }) {
             </div>
           </Card>
 
-          {/* Work Order History */}
+          {/* Work Order History — split into 3 categories */}
           <Card style={{ gridColumn:"span 2" }}>
-            <h4 style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Work Order History</h4>
+            <h4 style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>📋 Work Order History</h4>
             {wos.length===0
-              ? <p style={{ margin:0, fontFamily:T.sans, fontSize:13, color:T.muted }}>No work orders for this equipment.</p>
-              : <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
-                  <thead>
-                    <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-                      {["WO #","Title","Status","Priority","Date","Cost"].map(h=>(
-                        <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {wos.map((wo,i)=>(
-                      <tr key={wo.id} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
-                        <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:T.muted }}>{wo.id}</td>
-                        <td style={{ padding:"9px 12px", fontWeight:500, color:T.text }}>{wo.title}</td>
-                        <td style={{ padding:"9px 12px" }}><Badge label={wo.status} /></td>
-                        <td style={{ padding:"9px 12px" }}><Badge label={wo.priority} type="priority" /></td>
-                        <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{wo.created}</td>
-                        <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>${(+wo.laborCost||0)+(+wo.partsCost||0)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              ? <p style={{ margin:0, fontFamily:T.sans, fontSize:13, color:T.muted }}>No work orders for this equipment yet.</p>
+              : (() => {
+                  const renderCategory = (title, type, color, icon) => {
+                    const list = wos.filter(w=>w.woType===type).sort((a,b)=>(b.created||"").localeCompare(a.created||""));
+                    return (
+                      <div style={{ marginBottom:18 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8, paddingBottom:6, borderBottom:`2px solid ${color}` }}>
+                          <span style={{ fontSize:16 }}>{icon}</span>
+                          <h5 style={{ margin:0, fontFamily:T.sans, fontSize:13, fontWeight:700, color:color }}>{title}</h5>
+                          <span style={{ background:T.grayLt, color:T.subtext, border:`1px solid ${T.border}`, borderRadius:10, padding:"1px 8px", fontSize:11, fontWeight:600 }}>{list.length}</span>
+                        </div>
+                        {list.length===0
+                          ? <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, fontStyle:"italic", padding:"6px 0" }}>No {title.toLowerCase()} on file</div>
+                          : <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, fontFamily:T.sans }}>
+                              <thead><tr style={{ background:T.grayLt }}>
+                                {["WO #","Title","Mechanic","Status","Date","Cost",""].map(h=>(
+                                  <th key={h} style={{ padding:"6px 10px", textAlign:"left", fontWeight:600, fontSize:10, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</th>
+                                ))}
+                              </tr></thead>
+                              <tbody>
+                                {list.map((wo,i)=>{
+                                  const partsTot = (wo.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
+                                  const total = (+wo.laborCost||0)+partsTot+(+wo.partsCost||0);
+                                  return (
+                                    <tr key={wo.id} onClick={()=>setViewWO(wo)} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer", transition:"background .1s" }}
+                                      onMouseEnter={e=>e.currentTarget.style.background=T.accentLt}
+                                      onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"#fff":T.grayLt}>
+                                      <td style={{ padding:"7px 10px", fontFamily:T.mono, fontSize:11, color:T.muted }}>{wo.id}</td>
+                                      <td style={{ padding:"7px 10px", fontWeight:500, color:T.text }}>{wo.title}</td>
+                                      <td style={{ padding:"7px 10px", color:T.subtext }}>{wo.tech||"—"}</td>
+                                      <td style={{ padding:"7px 10px" }}><Badge label={wo.status} /></td>
+                                      <td style={{ padding:"7px 10px", fontFamily:T.mono, fontSize:11, color:T.subtext }}>{wo.completed||wo.created||"—"}</td>
+                                      <td style={{ padding:"7px 10px", fontFamily:T.mono, fontSize:11, color:T.subtext }}>${total.toFixed(2)}</td>
+                                      <td style={{ padding:"7px 10px", textAlign:"right" }} onClick={e=>e.stopPropagation()}>
+                                        <button onClick={()=>{ setTab&&setTab("workorders"); setTimeout(()=>{ const el=document.querySelector(`[data-wo-id="${wo.id}"]`); el?.click(); },100); }} title="Edit in Work Orders" style={{ background:"none", border:"none", color:T.accent, cursor:"pointer", fontSize:14, padding:"2px 4px" }}>✏️</button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                        }
+                      </div>
+                    );
+                  };
+                  return <>
+                    {renderCategory("Repair History",    "Repair",     T.red,    "🔧")}
+                    {renderCategory("Service History",   "Service",    "#1e40af", "🛠")}
+                    {renderCategory("Inspection History","Inspection", T.green,  "🔍")}
+                    {wos.filter(w=>!["Repair","Service","Inspection"].includes(w.woType)).length>0 && renderCategory("Other","Other", T.muted, "📋")}
+                  </>;
+                })()
             }
           </Card>
+
+          {/* WO Viewer modal */}
+          {viewWO && (
+            <Modal title={`Work Order — ${viewWO.id}`} onClose={()=>setViewWO(null)}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12, gap:8 }}>
+                <div>
+                  <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap", marginBottom:6 }}>
+                    <span style={{ fontFamily:T.mono, fontSize:11, color:T.muted }}>{viewWO.id}</span>
+                    <Badge label={viewWO.status} />
+                    <Badge label={viewWO.priority} type="priority" />
+                    {viewWO.woType && <span style={{ padding:"2px 8px", borderRadius:4, background:T.accentLt, color:T.accent, fontSize:11, fontWeight:600 }}>{viewWO.woType}</span>}
+                  </div>
+                  <h3 style={{ margin:0, fontFamily:T.sans, fontSize:17, fontWeight:700 }}>{viewWO.title}</h3>
+                </div>
+                <div style={{ display:"flex", gap:6 }}>
+                  <Btn small variant="secondary" onClick={()=>printWOFromEq(viewWO)}>🖨 Print</Btn>
+                  <button onClick={()=>{ setViewWO(null); setTab&&setTab("workorders"); }} title="Edit in Work Orders" style={{ background:"none", border:`1px solid ${T.accent}`, borderRadius:6, padding:"5px 10px", cursor:"pointer", color:T.accent, fontSize:13 }}>✏️ Edit</button>
+                </div>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"8px 16px", fontSize:13, fontFamily:T.sans, marginBottom:14, padding:"12px 14px", background:T.grayLt, borderRadius:7 }}>
+                <div><span style={{ color:T.muted }}>Equipment:</span> <b>{eq?.name}</b></div>
+                <div><span style={{ color:T.muted }}>Mechanic:</span> <b>{viewWO.tech||"—"}</b></div>
+                <div><span style={{ color:T.muted }}>Created:</span> <b>{viewWO.created||"—"}</b></div>
+                <div><span style={{ color:T.muted }}>Due:</span> <b>{viewWO.due||"—"}</b></div>
+                {viewWO.completed && <div><span style={{ color:T.muted }}>Completed:</span> <b>{viewWO.completed}</b></div>}
+                {viewWO.serviceInterval && <div><span style={{ color:T.muted }}>Interval:</span> <b>{viewWO.serviceInterval}</b></div>}
+              </div>
+              {viewWO.description && (
+                <div style={{ marginBottom:12 }}>
+                  <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Description</div>
+                  <div style={{ fontFamily:T.sans, fontSize:13, color:T.text, whiteSpace:"pre-wrap" }}>{viewWO.description}</div>
+                </div>
+              )}
+              {viewWO.mechanicNotes && (
+                <div style={{ marginBottom:12 }}>
+                  <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:4 }}>Mechanic Notes</div>
+                  <div style={{ fontFamily:T.sans, fontSize:13, color:T.text, whiteSpace:"pre-wrap", padding:"8px 12px", background:T.grayLt, borderRadius:6, border:`1px solid ${T.border}` }}>{viewWO.mechanicNotes}</div>
+                </div>
+              )}
+              {(viewWO.partsUsed||[]).length > 0 && (
+                <div style={{ marginBottom:12 }}>
+                  <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:6 }}>Parts Used</div>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12, fontFamily:T.sans }}>
+                    <thead><tr style={{ background:T.grayLt }}>
+                      <th style={{ padding:"6px 10px", textAlign:"left", fontWeight:600, fontSize:10, color:T.muted }}>PART</th>
+                      <th style={{ padding:"6px 10px", textAlign:"center", fontWeight:600, fontSize:10, color:T.muted }}>QTY</th>
+                      <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:600, fontSize:10, color:T.muted }}>UNIT</th>
+                      <th style={{ padding:"6px 10px", textAlign:"right", fontWeight:600, fontSize:10, color:T.muted }}>TOTAL</th>
+                    </tr></thead>
+                    <tbody>
+                      {viewWO.partsUsed.map((p,i)=>(
+                        <tr key={i} style={{ borderBottom:`1px solid ${T.border}` }}>
+                          <td style={{ padding:"6px 10px" }}>{p.name}</td>
+                          <td style={{ padding:"6px 10px", textAlign:"center", fontFamily:T.mono }}>{p.qty}</td>
+                          <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:T.mono }}>${(+(p.unitCost||0)).toFixed(2)}</td>
+                          <td style={{ padding:"6px 10px", textAlign:"right", fontFamily:T.mono }}>${((+(p.qty||1))*(+(p.unitCost||0))).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div style={{ background:T.accentLt, borderRadius:7, padding:"10px 14px", display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, fontFamily:T.sans }}>
+                <div><div style={{ fontSize:10, color:T.muted, textTransform:"uppercase" }}>Labor</div><div style={{ fontSize:16, fontWeight:700, color:T.accent }}>${(+viewWO.laborCost||0).toFixed(2)}</div></div>
+                <div><div style={{ fontSize:10, color:T.muted, textTransform:"uppercase" }}>Parts</div><div style={{ fontSize:16, fontWeight:700, color:T.accent }}>${((viewWO.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0)+(+viewWO.partsCost||0)).toFixed(2)}</div></div>
+                <div><div style={{ fontSize:10, color:T.muted, textTransform:"uppercase" }}>Total</div><div style={{ fontSize:18, fontWeight:800, color:T.text }}>${((+viewWO.laborCost||0)+(viewWO.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0)+(+viewWO.partsCost||0)).toFixed(2)}</div></div>
+              </div>
+            </Modal>
+          )}
 
           {/* Attachments / Implements */}
           <AttachmentsCard eq={eq} dispatch={dispatch} />
@@ -4836,7 +5000,7 @@ function App() {
   const pages = {
     dashboard:        <Dashboard        state={state} dispatch={dispatch} setTab={setTab} />,
     workorders:       <WorkOrders       state={state} dispatch={dispatch} woSettings={state.woSettings} onWOSettings={()=>setShowWOSettings(true)} />,
-    equipment:        <Equipment        state={state} dispatch={dispatch} />,
+    equipment:        <Equipment        state={state} dispatch={dispatch} setTab={setTab} />,
     parts:            <Parts            state={state} dispatch={dispatch} />,
     pm:               <PM               state={state} dispatch={dispatch} />,
     usage:            <UsageTracking    state={state} dispatch={dispatch} />,
