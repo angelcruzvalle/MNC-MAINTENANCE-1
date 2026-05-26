@@ -106,6 +106,7 @@ function reducer(state, { type, payload }) {
     case "UPDATE_SETTINGS": return { ...state, settings: payload };
     case "COMPLETE_SETUP":  return { ...state, settings: payload.settings, profile: payload.profile, technicians: payload.technicians, categories: payload.categories, setupComplete: true };
     case "RESET_SETUP":     return { ...state, setupComplete: false };
+    case "REPLACE_STATE":   return { ...state, ...payload };
     default: return state;
   }
 }
@@ -4661,25 +4662,14 @@ async function loadSession(setSession, setAuthLoading) {
 }
 
 function App() {
-  /* Load saved state from localStorage on first mount, fall back to INIT */
-  const initialState = (() => {
-    try {
-      const saved = localStorage.getItem("ncaState");
-      if(saved) return JSON.parse(saved);
-    } catch(e) { console.warn("Failed to load saved state:", e); }
-    return { ...INIT, inventoryItems:[], profile:null, woSettings:null };
-  })();
+  /* Start with empty state — will be replaced once the user logs in and we load from Supabase */
+  const emptyState = { ...INIT, inventoryItems:[], profile:null, woSettings:null };
+  const [state, dispatch] = useReducer(reducer, emptyState);
 
-  const [state, dispatch] = useReducer(reducer, initialState);
+  /* Sync status indicators */
+  const [dataLoaded, setDataLoaded] = useState(false);
+  const [syncStatus, setSyncStatus] = useState("idle"); /* idle | saving | saved | error */
 
-  /* Save state to localStorage on every change */
-  useEffect(() => {
-    try {
-      localStorage.setItem("ncaState", JSON.stringify(state));
-    } catch(e) {
-      console.warn("Failed to save state:", e);
-    }
-  }, [state]);
   const [tab, setTab]       = useState("dashboard");
   const [menuOpen, setMenuOpen]           = useState(false);
   const [showProfile, setShowProfile]     = useState(false);
@@ -4695,6 +4685,87 @@ function App() {
   const [authError, setAuthError] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authInfoMsg, setAuthInfoMsg] = useState("");
+
+  /* Load data from Supabase when user logs in */
+  useEffect(() => {
+    if (!session) {
+      setDataLoaded(false);
+      return;
+    }
+    let cancelled = false;
+    async function loadData() {
+      try {
+        const { data, error } = await supabase
+          .from("user_state")
+          .select("data")
+          .eq("user_id", session.user.id)
+          .maybeSingle();
+
+        if (cancelled) return;
+        if (error) {
+          console.error("Load error:", error);
+          /* Fall back to localStorage one time for migration purposes */
+          const localData = localStorage.getItem("ncaState");
+          if (localData) {
+            try {
+              const parsed = JSON.parse(localData);
+              dispatch({ type: "REPLACE_STATE", payload: parsed });
+            } catch(e) { console.warn("Local migration parse failed:", e); }
+          }
+        } else if (data && data.data && Object.keys(data.data).length > 0) {
+          /* Found existing cloud data, load it */
+          dispatch({ type: "REPLACE_STATE", payload: data.data });
+        } else {
+          /* No cloud data exists yet for this user — check localStorage for migration */
+          const localData = localStorage.getItem("ncaState");
+          if (localData) {
+            try {
+              const parsed = JSON.parse(localData);
+              dispatch({ type: "REPLACE_STATE", payload: parsed });
+            } catch(e) { console.warn("Migration parse failed:", e); }
+          }
+        }
+      } catch (e) {
+        console.error("Load exception:", e);
+      } finally {
+        if (!cancelled) setDataLoaded(true);
+      }
+    }
+    loadData();
+    return () => { cancelled = true; };
+  }, [session]);
+
+  /* Save state to Supabase, debounced */
+  useEffect(() => {
+    if (!session || !dataLoaded) return;
+    setSyncStatus("saving");
+    const timer = setTimeout(async () => {
+      try {
+        const { error } = await supabase
+          .from("user_state")
+          .upsert({
+            user_id: session.user.id,
+            data: state,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: "user_id" });
+
+        if (error) {
+          console.error("Save error:", error);
+          setSyncStatus("error");
+        } else {
+          setSyncStatus("saved");
+          /* Also keep a localStorage copy as cache/backup */
+          try { localStorage.setItem("ncaState", JSON.stringify(state)); } catch(e) {}
+          setTimeout(() => setSyncStatus("idle"), 2000);
+        }
+      } catch (e) {
+        console.error("Save exception:", e);
+        setSyncStatus("error");
+      }
+    }, 1000); /* 1-second debounce — wait until user stops making changes */
+    return () => clearTimeout(timer);
+  }, [state, session, dataLoaded]);
+
 
   useEffect(() => {
     loadSession(setSession, setAuthLoading);
@@ -4941,6 +5012,18 @@ function App() {
   }
 
   /* First-run setup wizard */
+  /* While Supabase loads the user's data, show a brief loading screen */
+  if (session && !dataLoaded) {
+    return (
+      <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, fontFamily:T.sans, color:T.text }}>
+        <div style={{ textAlign:"center" }}>
+          <div style={{ fontSize:32, marginBottom:12 }}>⟳</div>
+          <div style={{ fontSize:14, color:T.muted }}>Loading your data from the cloud...</div>
+        </div>
+      </div>
+    );
+  }
+
   if(!state.setupComplete) {
     return <SetupWizard onComplete={(setupData)=>dispatch({type:"COMPLETE_SETUP",payload:setupData})} />;
   }
@@ -4980,6 +5063,18 @@ function App() {
           <span style={{ fontFamily:T.sans, fontSize:13, color:T.subtext, fontWeight:500 }}>{PAGE_TITLES[tab]}</span>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          {/* Sync status indicator */}
+          {syncStatus !== "idle" && (
+            <span style={{
+              fontFamily:T.sans, fontSize:11, fontWeight:600,
+              padding:"3px 9px", borderRadius:10,
+              background: syncStatus==="saving"?"#fef3c7":syncStatus==="saved"?"#d1fae5":"#fee2e2",
+              color:     syncStatus==="saving"?"#92400e":syncStatus==="saved"?"#065f46":"#991b1b",
+              border: `1px solid ${syncStatus==="saving"?"#fbbf24":syncStatus==="saved"?"#10b981":"#ef4444"}`,
+            }}>
+              {syncStatus==="saving"?"⟳ Saving...":syncStatus==="saved"?"✓ Saved":"⚠ Save failed"}
+            </span>
+          )}
           {/* Notification bell */}
           <NotifBell notifications={state.notifications} dispatch={dispatch} />
           <button onClick={handleLogout} style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:"#fff", cursor:"pointer", fontSize:13 }}>
