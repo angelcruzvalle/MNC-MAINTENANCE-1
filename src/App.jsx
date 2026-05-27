@@ -2572,7 +2572,18 @@ function Equipment({ state, dispatch }) {
           <input style={{ ...inp, flex:1, minWidth:200 }} placeholder="Search by nomenclature, make, model, serial, EIL #, location…" value={search} onChange={e=>setSearch(e.target.value)} />
           <Btn variant="secondary" onClick={()=>{
             const reportEqs = state.equipment.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies");
-            const exportRows = reportEqs.map(e=>({Status:e.status||"", Nomenclature:e.name||"", "Make/Model":`${e.make||""} ${e.model||""}`.trim(), "Serial #":e.serial||"", "EIL #":e.eilNumber||"", "Fault Date":e.faultDate||"", "Description":e.faultDescription||""}));
+            const openWOForEq = (eqId) => (state.workOrders||[]).filter(w=>w.equipment===eqId && w.status!=="Completed").sort((a,b)=>String(b.created||"").localeCompare(String(a.created||"")));
+            const woFaultText = (w={}) => w.faultDescription || w.repairComplaint || w.description || w.problem || w.title || "";
+            const faultInfo = (e) => {
+              const wos = openWOForEq(e.id);
+              const primary = wos.find(w=>woFaultText(w)) || wos[0] || {};
+              return {
+                faultDate: e.faultDate || primary.faultDate || primary.created || primary.due || "",
+                description: e.faultDescription || woFaultText(primary) || "",
+                openWOs: wos.map(w=>`${w.id} (${w.status||"Open"})`).join(", ")
+              };
+            };
+            const exportRows = reportEqs.map(e=>{ const f=faultInfo(e); return {Status:e.status||"", Nomenclature:e.name||"", "Make/Model":`${e.make||""} ${e.model||""}`.trim(), "Serial #":e.serial||"", "EIL #":e.eilNumber||"", "Fault Date":f.faultDate||"", "Description":f.description||"", "Open Work Orders":f.openWOs||""}; });
             const win = window.open("","_blank");
             win.document.write(`<html><head><title>Equipment Status Report</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{font-size:20px;margin-bottom:4px}p{font-size:12px;color:#666;margin:0 0 20px}.section{margin-bottom:28px}h2{font-size:14px;margin-bottom:8px;padding:6px 10px;border-radius:4px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#f3f4f6;padding:7px 10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px}td{padding:7px 10px;border-bottom:1px solid #e5e7eb}.red{background:#fef2f2;color:#7f1d1d}.yellow{background:#fffbeb;color:#92400e}@media print{button{display:none}}</style></head><body>`);
             win.document.write(`<h1>Equipment Status Report</h1><p>Generated: ${new Date().toLocaleDateString()} — NCA Maintenance Manager</p>`);
@@ -2580,12 +2591,12 @@ function Equipment({ state, dispatch }) {
             const def = reportEqs.filter(e=>e.status==="Operational with Deficiencies");
             if(oos.length){
               win.document.write(`<div class="section"><h2 class="red">🚨 Out of Service / Deadline (${oos.length})</h2><table><tr><th>Nomenclature</th><th>Make/Model</th><th>Serial #</th><th>EIL #</th><th>Fault Date</th><th>Description</th></tr>`);
-              oos.forEach(e=>win.document.write(`<tr><td><b>${e.name}</b></td><td>${e.make||""} ${e.model||""}</td><td>${e.serial||"—"}</td><td>${e.eilNumber||"—"}</td><td>${e.faultDate||"—"}</td><td>${e.faultDescription||"—"}</td></tr>`));
+              oos.forEach(e=>{ const f=faultInfo(e); win.document.write(`<tr><td><b>${e.name}</b></td><td>${e.make||""} ${e.model||""}</td><td>${e.serial||"—"}</td><td>${e.eilNumber||"—"}</td><td>${f.faultDate||"—"}</td><td>${f.description||"—"}${f.openWOs?`<br><small style="color:#666">WO: ${f.openWOs}</small>`:""}</td></tr>`); });
               win.document.write(`</table></div>`);
             }
             if(def.length){
               win.document.write(`<div class="section"><h2 class="yellow">⚠️ Operational with Deficiencies (${def.length})</h2><table><tr><th>Nomenclature</th><th>Make/Model</th><th>Serial #</th><th>EIL #</th><th>Fault Date</th><th>Description</th></tr>`);
-              def.forEach(e=>win.document.write(`<tr><td><b>${e.name}</b></td><td>${e.make||""} ${e.model||""}</td><td>${e.serial||"—"}</td><td>${e.eilNumber||"—"}</td><td>${e.faultDate||"—"}</td><td>${e.faultDescription||"—"}</td></tr>`));
+              def.forEach(e=>{ const f=faultInfo(e); win.document.write(`<tr><td><b>${e.name}</b></td><td>${e.make||""} ${e.model||""}</td><td>${e.serial||"—"}</td><td>${e.eilNumber||"—"}</td><td>${f.faultDate||"—"}</td><td>${f.description||"—"}${f.openWOs?`<br><small style="color:#666">WO: ${f.openWOs}</small>`:""}</td></tr>`); });
               win.document.write(`</table></div>`);
             }
             if(!oos.length&&!def.length) win.document.write(`<p>No equipment in deadline or deficiency status.</p>`);
@@ -3280,7 +3291,13 @@ function Inspections({ state, dispatch }) {
     lines[idx] = value;
     setTaskForm(f=>({ ...f, steps:lines.join("\n") }));
   };
-  const addStep = () => setTaskForm(f=>({ ...f, steps:[...stepLines(f.steps), "New inspection step"].join("\n") }));
+  const addStep = () => setTaskForm(f=>({ ...f, steps:[...stepLines(f.steps), ""].join("\n") }));
+  const copyInspectionTask = (task) => {
+    const clone = { ...task, id:null, name:`Copy of ${task.name||"Inspection Task"}`, created:today() };
+    setTaskForm({ ...clone, attachments:Array.isArray(clone.attachments)?clone.attachments:[] });
+    setSelectedTask(null);
+    setModal("task");
+  };
   const removeStep = (idx) => setTaskForm(f=>({ ...f, steps:stepLines(f.steps).filter((_,i)=>i!==idx).join("\n") }));
 
   return (
@@ -3301,7 +3318,7 @@ function Inspections({ state, dispatch }) {
         <div style={{ overflowX:"auto" }}>
           <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:13 }}>
             <thead><tr style={{ background:T.grayLt }}>
-              {['Task Name','Frequency','Steps','Attachments','Notes','Edit'].map(h=><th key={h} style={{ textAlign:"left", padding:"10px", borderBottom:`1px solid ${T.border}`, color:T.subtext }}>{h}</th>)}
+              {['Task Name','Frequency','Steps','Attachments','Notes','Actions'].map(h=><th key={h} style={{ textAlign:"left", padding:"10px", borderBottom:`1px solid ${T.border}`, color:T.subtext }}>{h}</th>)}
             </tr></thead>
             <tbody>
               {tasks.length===0 && <tr><td colSpan="6" style={{ padding:16, color:T.muted }}>No inspection tasks yet.</td></tr>}
@@ -3313,7 +3330,7 @@ function Inspections({ state, dispatch }) {
                   <td style={{ padding:"10px", color:T.subtext }}>{steps.length}</td>
                   <td style={{ padding:"10px", color:T.subtext }}>{(t.attachments||[]).length}</td>
                   <td style={{ padding:"10px", color:T.subtext, maxWidth:260, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{t.notes||"—"}</td>
-                  <td style={{ padding:"10px" }}><Btn variant="secondary" onClick={(e)=>{e.stopPropagation(); openTask(t);}}>Edit</Btn></td>
+                  <td style={{ padding:"10px" }}><div style={{ display:"flex", gap:6 }}><Btn variant="secondary" onClick={(e)=>{e.stopPropagation(); openTask(t);}}>Edit</Btn><Btn variant="secondary" onClick={(e)=>{e.stopPropagation(); copyInspectionTask(t);}}>Copy</Btn></div></td>
                 </tr>;
               })}
             </tbody>
@@ -3325,7 +3342,7 @@ function Inspections({ state, dispatch }) {
               <div style={{ fontWeight:800, color:T.text }}>{selectedTask.name}</div>
               <div style={{ color:T.subtext, fontSize:12 }}>{selectedTask.frequency||"No frequency"} • {(selectedTask.attachments||[]).length} attachment(s)</div>
             </div>
-            <Btn variant="secondary" onClick={()=>openTask(selectedTask)}>Edit Task</Btn>
+            <div style={{ display:"flex", gap:8 }}><Btn variant="secondary" onClick={()=>openTask(selectedTask)}>Edit Task</Btn><Btn variant="secondary" onClick={()=>copyInspectionTask(selectedTask)}>Copy Task</Btn></div>
           </div>
           <div style={{ marginTop:12, display:"grid", gap:8 }}>
             {stepLines(selectedTask.steps).length===0 ? <div style={{ color:T.muted }}>No steps added.</div> : stepLines(selectedTask.steps).map((step,i)=>(
@@ -3380,14 +3397,14 @@ function Inspections({ state, dispatch }) {
             {(taskForm.attachments||[]).length>0 && <div style={{ display:"grid", gap:6 }}>{taskForm.attachments.map(a=><div key={a.id||a.name} style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center", padding:8, border:`1px solid ${T.border}`, borderRadius:10 }}><span style={{ fontSize:13 }}>{a.name}</span><Btn variant="danger" onClick={()=>removeTaskFile(a.id)}>Remove</Btn></div>)}</div>}
             <Field label="Inspection Steps / Checklist"><div style={{ display:"grid", gap:8 }}>
               {stepLines(taskForm.steps).map((step,i)=><div key={i} style={{ display:"grid", gridTemplateColumns:"40px 1fr auto", gap:8, alignItems:"center" }}>
-                <b>{i+1}</b><input style={inp} value={step} onClick={e=>e.stopPropagation()} onKeyDownCapture={e=>e.stopPropagation()} onKeyDown={e=>e.stopPropagation()} onChange={e=>updateStep(i,e.target.value)} placeholder="Inspection step" />
+                <b>{i+1}</b><input style={inp} value={step} autoFocus={i===stepLines(taskForm.steps).length-1 && step===""} onClick={e=>e.stopPropagation()} onChange={e=>updateStep(i,e.target.value)} placeholder="Start typing inspection step..." />
                 <Btn variant="danger" onClick={()=>removeStep(i)}>X</Btn>
               </div>)}
               <Btn variant="secondary" onClick={addStep}>+ Add Step Line</Btn>
             </div></Field>
             <Field label="Notes"><textarea style={{...inp,minHeight:70}} value={taskForm.notes||""} onChange={e=>setTaskForm(f=>({...f,notes:e.target.value}))} /></Field>
             <div style={{ display:"flex", justifyContent:"space-between", gap:8 }}>
-              {taskForm.id ? <Btn variant="danger" onClick={()=>{ if(confirm("Delete this inspection task?")){ dispatch({type:"DELETE_INSPECTION_TASK", payload:taskForm.id}); setModal(null); } }}>Delete</Btn> : <span/>}
+              <div style={{ display:"flex", gap:8 }}>{taskForm.id ? <Btn variant="danger" onClick={()=>{ if(confirm("Delete this inspection task?")){ dispatch({type:"DELETE_INSPECTION_TASK", payload:taskForm.id}); setModal(null); } }}>Delete</Btn> : <span/>}{taskForm.id ? <Btn variant="secondary" onClick={()=>copyInspectionTask(taskForm)}>Copy</Btn> : null}</div>
               <div style={{ display:"flex", gap:8 }}><Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn><Btn onClick={saveTask}>Save Task</Btn></div>
             </div>
           </div>
@@ -3645,6 +3662,7 @@ function PM({ state, dispatch }) {
   /* Task library */
   const openNewTask = () => { setEditTaskId(null); setTaskForm(blankTaskForm()); setTaskModal(true); };
   const openEditTask = (t) => { setEditTaskId(t.id); setTaskForm({...t, triggers:t.triggers||[{type:"time",timeInterval:t.timeInterval||"",timeUnit:t.timeUnit||"months",usageInterval:"",usageType:"hours",usageMode:"every"}]}); setTaskModal(true); };
+  const copyPMTask = (t) => { setEditTaskId(null); setTaskForm({...t, id:undefined, name:`Copy of ${t.name||"PM Task"}`, steps:Array.isArray(t.steps)?[...t.steps]:[""], parts:Array.isArray(t.parts)?t.parts.map(p=>({...p})):[{name:"",qty:"",unit:"ea"}], triggers:Array.isArray(t.triggers)?t.triggers.map(tr=>({...tr})):[{type:"time",timeInterval:t.timeInterval||"",timeUnit:t.timeUnit||"months",usageInterval:"",usageType:"hours",usageMode:"every"}]}); setTaskModal(true); };
   const saveTask = () => {
     if(!taskForm.name) return alert("Task name required.");
     if(editTaskId) {
@@ -3730,7 +3748,7 @@ function PM({ state, dispatch }) {
         <Btn variant="secondary" onClick={()=>{ setSelectedTaskId(pmTasks[0]?.id||null); setShowTaskLib(true); }}>
           Tasks Library ({pmTasks.length})
         </Btn>
-        <Btn variant="secondary" onClick={openNewTask}>+ Create New Task</Btn>
+        <div style={{ display:"flex", gap:8 }}><Btn variant="secondary" onClick={openNewTask}>+ Create New Task</Btn>{selectedLibraryTask&&<Btn variant="secondary" onClick={()=>copyPMTask(selectedLibraryTask)}>Copy Selected Task</Btn>}</div>
         <Btn onClick={()=>setModal("schedule")}>Task-to-Equipment</Btn>
         <Btn variant="secondary" onClick={()=>setModal("manualTrigger")}>Manual Trigger</Btn>
       </div>
@@ -3845,7 +3863,7 @@ function PM({ state, dispatch }) {
             </div>
           )}
           <div style={{ display:"flex", justifyContent:"space-between", marginTop:14 }}>
-            <Btn variant="secondary" onClick={openNewTask}>+ Create New Task</Btn>
+            <div style={{ display:"flex", gap:8 }}><Btn variant="secondary" onClick={openNewTask}>+ Create New Task</Btn>{selectedLibraryTask&&<Btn variant="secondary" onClick={()=>copyPMTask(selectedLibraryTask)}>Copy Selected Task</Btn>}</div>
             <Btn variant="secondary" onClick={()=>setShowTaskLib(false)}>Close</Btn>
           </div>
         </Modal>
@@ -3867,7 +3885,7 @@ function PM({ state, dispatch }) {
               {(taskForm.steps||[""]).map((step,i)=>(
                 <div key={i} style={{ display:"flex", gap:6, marginBottom:6, alignItems:"center" }}>
                   <span style={{ fontFamily:T.mono, fontSize:11, color:T.muted, minWidth:20 }}>{i+1}.</span>
-                  <input style={{ ...inp, flex:1 }} value={step} onChange={e=>setStep(i,e.target.value)} placeholder={`Step ${i+1}...`} />
+                  <input style={{ ...inp, flex:1 }} value={step} autoFocus={i===(taskForm.steps||[]).length-1 && step===""} onChange={e=>setStep(i,e.target.value)} placeholder={`Step ${i+1}...`} />
                   {(taskForm.steps||[]).length>1&&<button onClick={()=>delStep(i)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
                 </div>
               ))}
@@ -3932,7 +3950,7 @@ function PM({ state, dispatch }) {
           </div>
           <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
             <Btn variant="secondary" onClick={()=>{ setTaskModal(false); setEditTaskId(null); setTaskForm(blankTaskForm()); }}>Cancel</Btn>
-            <Btn onClick={saveTask}>{editTaskId?"Update Task":"Save Task to Library"}</Btn>
+            {editTaskId&&<Btn variant="secondary" onClick={()=>copyPMTask({...taskForm,id:editTaskId})}>Copy as New</Btn>}<Btn onClick={saveTask}>{editTaskId?"Update Task":"Save Task to Library"}</Btn>
           </div>
         </Modal>
       )}
@@ -4910,371 +4928,87 @@ function ReportPartsInv({ state }) {
 }
 
 function ReportUsage({ state }) {
-  const [selEq, setSelEq]       = useState("all");
-  const [viewMode, setViewMode] = useState("all"); /* "all" | "monthly" | "annual" */
-
-  const trackableEq = state.equipment.filter(e=>e.trackUsage);
-  const allLogs     = state.usageLogs || [];
-  const logsFor     = (eqId) => allLogs.filter(l=>l.equipmentId===eqId).sort((a,b)=>a.date.localeCompare(b.date));
-
-  const currentHours   = (eqId) => { const l=logsFor(eqId).filter(x=>x.hours).pop(); return l?+(l.hours||0):0; };
-  const currentMileage = (eqId) => { const l=logsFor(eqId).filter(x=>x.mileage).pop(); return l?+(l.mileage||0):0; };
-  const totalFuel      = (eqId) => logsFor(eqId).reduce((s,l)=>s+(+(l.fuel||0)),0);
-  const dateOnly = d => new Date(String(d) + "T00:00:00");
-  const todayDate = new Date();
-  const monthStart = new Date(todayDate.getFullYear(), todayDate.getMonth(), 1);
-  const sixMonthStart = new Date(todayDate.getFullYear(), todayDate.getMonth() - 5, 1);
-  const fyStartYear = todayDate.getMonth() >= 9 ? todayDate.getFullYear() : todayDate.getFullYear() - 1;
-  const fyStart = new Date(fyStartYear, 9, 1);
-  const latestReading = (eqId, field, endDate=null) => {
-    const logs = logsFor(eqId).filter(l=>l[field] && (!endDate || dateOnly(l.date) <= endDate));
+  const [selEq, setSelEq] = useState("all");
+  const trackableEq = (state.equipment||[]).filter(e=>e.trackUsage);
+  const allLogs = state.usageLogs || [];
+  const dateOnly = d => new Date(String(d||today()) + "T00:00:00");
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const fyStart = new Date(now.getMonth() >= 9 ? now.getFullYear() : now.getFullYear()-1, 9, 1);
+  const eqList = selEq==="all" ? trackableEq : trackableEq.filter(e=>e.id===selEq);
+  const logsFor = (eqId) => allLogs.filter(l=>l.equipmentId===eqId).sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
+  const latestReading = (eqId, field, before=null) => {
+    const logs = logsFor(eqId).filter(l=>l[field]!=="" && l[field]!=null && (!before || dateOnly(l.date) < before));
     const last = logs[logs.length-1];
     return last ? +(last[field]||0) : 0;
   };
-  const firstReadingOnOrAfter = (eqId, field, startDate) => {
-    const logs = logsFor(eqId).filter(l=>l[field] && dateOnly(l.date) >= startDate);
-    const first = logs[0];
-    return first ? +(first[field]||0) : 0;
-  };
-  const usageDelta = (eqId, field, startDate) => {
-    const end = latestReading(eqId, field);
-    const start = latestReading(eqId, field, new Date(startDate.getTime()-86400000)) || firstReadingOnOrAfter(eqId, field, startDate);
-    return Math.max(0, end - start);
-  };
-  const usageStats = (eqId, field) => ({
-    current: latestReading(eqId, field),
-    month: usageDelta(eqId, field, monthStart),
-    sixMonths: usageDelta(eqId, field, sixMonthStart),
-    fy: usageDelta(eqId, field, fyStart)
+  const currentReading = (eqId, field) => latestReading(eqId, field, null);
+  const deltaSince = (eqId, field, startDate) => Math.max(0, currentReading(eqId, field) - latestReading(eqId, field, startDate));
+  const statsFor = (eq, field) => ({
+    current: currentReading(eq.id, field),
+    month: deltaSince(eq.id, field, monthStart),
+    fy: deltaSince(eq.id, field, fyStart),
+    entries: logsFor(eq.id).length,
+    lastDate: logsFor(eq.id).slice(-1)[0]?.date || "—"
   });
-
-  /* Monthly breakdown */
-  const byMonth = (eqId) => {
-    const result = {};
-    logsFor(eqId).forEach(l=>{
-      const m = l.date.slice(0,7);
-      if(!result[m]) result[m] = {hours:0,mileage:0,fuel:0,count:0,lastHours:0,lastMileage:0};
-      if(l.hours)   { result[m].lastHours   = +(l.hours||0); }
-      if(l.mileage) { result[m].lastMileage = +(l.mileage||0); }
-      result[m].fuel   += +(l.fuel||0);
-      result[m].count  += 1;
-    });
-    return result;
-  };
+  const fmt = (n, decimals=1) => Number(n||0).toLocaleString(undefined,{maximumFractionDigits:decimals, minimumFractionDigits:decimals});
+  const isMileageEq = (eq) => (eq.usageType||"hours") === "mileage";
+  const primaryField = (eq) => isMileageEq(eq) ? "mileage" : "hours";
+  const primaryLabel = (eq) => isMileageEq(eq) ? "Miles" : "Hours";
+  const exportRows = eqList.map(eq=>{ const field=primaryField(eq); const st=statsFor(eq, field); return {"Equipment #":eq.id, Equipment:eq.name||"", Type:primaryLabel(eq), Current:st.current, "New This Month":st.month, "This FY":st.fy, "Last Entry":st.lastDate, Entries:st.entries}; });
 
   const printUsageReport = () => {
-    const win = window.open("","_blank","width=900,height=700");
+    const win = window.open("","_blank","width=1000,height=760");
     if(!win) return;
-    const eqList = selEq==="all" ? trackableEq : trackableEq.filter(e=>e.id===selEq);
-    let body = `<!DOCTYPE html><html><head><title>Usage Report</title>
-      <style>body{font-family:Arial;padding:24px}h2{font-size:14px;margin:20px 0 6px;color:#1a1a2e}table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}.total{font-weight:700;background:#f3f4f6}@media print{button{display:none}}</style>
-      </head><body>${reportHeaderHTML(state,"Usage Report")}`;
-
-    eqList.forEach(eq=>{
-      const mode=eq.usageType||"hours";
-      const months=byMonth(eq.id);
-      body += `<h2>${eq.name} (${eq.id}) — ${eq.category||""}</h2>`;
-      const hStats = usageStats(eq.id,"hours");
-      const mStats = usageStats(eq.id,"mileage");
-      body += `<p style="font-size:11px;color:#666">Current Hours: <b>${hStats.current.toFixed(1)}</b> | Hours This Month: <b>${hStats.month.toFixed(1)}</b> | Hours Last 6 Months: <b>${hStats.sixMonths.toFixed(1)}</b> | Hours FY: <b>${hStats.fy.toFixed(1)}</b><br/>Current Mileage: <b>${mStats.current.toLocaleString()}</b> | Miles This Month: <b>${mStats.month.toLocaleString()}</b> | Miles Last 6 Months: <b>${mStats.sixMonths.toLocaleString()}</b> | Miles FY: <b>${mStats.fy.toLocaleString()}</b><br/>Total Fuel: <b>${totalFuel(eq.id).toFixed(1)} gal</b> | Log Entries: <b>${logsFor(eq.id).length}</b></p>`;
-      body += `<table><tr><th>Month</th><th>Entries</th>${mode!=="mileage"?`<th>Hours (end of month)</th>`:""}${mode!=="hours"?`<th>Mileage (end of month)</th>`:""}${`<th>Fuel Added (gal)</th>`}</tr>`;
-      Object.entries(months).sort().forEach(([m,d])=>{
-        body+=`<tr><td>${m}</td><td>${d.count}</td>${mode!=="mileage"?`<td>${d.lastHours||"—"}</td>`:""}${mode!=="hours"?`<td>${d.lastMileage?d.lastMileage.toLocaleString():"—"}</td>`:""}${`<td>${d.fuel.toFixed(1)}</td>`}</tr>`;
-      });
-      if(Object.keys(months).length===0) body+=`<tr><td colspan="5" style="color:#999;font-style:italic">No logs recorded</td></tr>`;
-      body+=`</table>`;
-    });
-    body+=`${reportButtonsHtml(exportRows)}</body></html>`;
-    win.document.write(body); win.document.close();
-  };
-
-  const eqList = selEq==="all" ? trackableEq : trackableEq.filter(e=>e.id===selEq);
-  const exportRows = eqList.flatMap(eq=>logsFor(eq.id).map(l=>({ Equipment:eq.name, "Equip #":eq.id, Date:l.date, Hours:l.hours||"", Mileage:l.mileage||"", "Fuel gal":l.fuel||"", Notes:l.notes||"" })));
-
-  return (
-    <div>
-      {/* Controls */}
-      <Card style={{ marginBottom:16, padding:"14px 18px" }}>
-        <div style={{ display:"flex", gap:12, flexWrap:"wrap", alignItems:"center" }}>
-          <select style={{ ...sel, width:220 }} value={selEq} onChange={e=>setSelEq(e.target.value)}>
-            <option value="all">All Tracked Equipment</option>
-            {trackableEq.map(e=><option key={e.id} value={e.id}>{e.name} ({e.id})</option>)}
-          </select>
-          <div style={{ display:"flex", gap:0, border:`1px solid ${T.border}`, borderRadius:6, overflow:"hidden" }}>
-            {[["all","Lifetime"],["monthly","By Month"],["annual","By Year"]].map(([v,l],i)=>(
-              <button key={v} onClick={()=>setViewMode(v)} style={{ padding:"6px 14px", border:"none", borderLeft:i>0?`1px solid ${T.border}`:"none", background:viewMode===v?T.accent:"#fff", color:viewMode===v?"#fff":T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:viewMode===v?600:400 }}>{l}</button>
-            ))}
-          </div>
-          <Btn small onClick={printUsageReport}>Print / PDF</Btn>
-          <Btn small variant="secondary" onClick={()=>downloadCSV("usage-report.csv", exportRows)}>Excel CSV</Btn>
-        </div>
-      </Card>
-
-      {/* Current Usage Summary */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))", gap:12, marginBottom:16 }}>
-        {eqList.map(eq=>{
-          const mode=eq.usageType||"hours";
-          const showH=mode==="hours"||mode==="both";
-          const showM=mode==="mileage"||mode==="both";
-          return (
-            <Card key={eq.id} style={{ padding:"14px 16px" }}>
-              <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text, marginBottom:4 }}>{eq.name}</div>
-              <div style={{ fontFamily:T.mono, fontSize:10, color:T.muted, marginBottom:10 }}>{eq.id}</div>
-              {showH&&(()=>{ const s=usageStats(eq.id,"hours"); return <div style={{ marginBottom:10 }}>
-                <div style={{ fontFamily:T.sans, fontSize:9, color:"#1e40af", fontWeight:700, textTransform:"uppercase" }}>Hours Usage</div>
-                <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:6, marginTop:4 }}>
-                  <div><small style={{ color:T.muted }}>Current</small><div style={{ fontWeight:800, color:"#1e40af" }}>{s.current.toFixed(1)}</div></div>
-                  <div><small style={{ color:T.muted }}>This Month</small><div style={{ fontWeight:800, color:"#1e40af" }}>{s.month.toFixed(1)}</div></div>
-                  <div><small style={{ color:T.muted }}>Last 6 Months</small><div style={{ fontWeight:800, color:"#1e40af" }}>{s.sixMonths.toFixed(1)}</div></div>
-                  <div><small style={{ color:T.muted }}>FY</small><div style={{ fontWeight:800, color:"#1e40af" }}>{s.fy.toFixed(1)}</div></div>
-                </div>
-              </div>; })()}
-              {showM&&(()=>{ const s=usageStats(eq.id,"mileage"); return <div style={{ marginBottom:10 }}>
-                <div style={{ fontFamily:T.sans, fontSize:9, color:T.green, fontWeight:700, textTransform:"uppercase" }}>Mileage Usage</div>
-                <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:6, marginTop:4 }}>
-                  <div><small style={{ color:T.muted }}>Current</small><div style={{ fontWeight:800, color:T.green }}>{s.current.toLocaleString()}</div></div>
-                  <div><small style={{ color:T.muted }}>This Month</small><div style={{ fontWeight:800, color:T.green }}>{s.month.toLocaleString()}</div></div>
-                  <div><small style={{ color:T.muted }}>Last 6 Months</small><div style={{ fontWeight:800, color:T.green }}>{s.sixMonths.toLocaleString()}</div></div>
-                  <div><small style={{ color:T.muted }}>FY</small><div style={{ fontWeight:800, color:T.green }}>{s.fy.toLocaleString()}</div></div>
-                </div>
-              </div>; })()}
-              <div><div style={{ fontFamily:T.sans, fontSize:9, color:"#7c3aed", fontWeight:700, textTransform:"uppercase" }}>Fuel (gal)</div><div style={{ fontFamily:T.sans, fontSize:20, fontWeight:800, color:"#7c3aed" }}>{totalFuel(eq.id).toFixed(1)}</div></div>
-              <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, marginTop:6 }}>{logsFor(eq.id).length} log entries</div>
-            </Card>
-          );
-        })}
-        {eqList.length===0&&<Card><div style={{ fontFamily:T.sans, fontSize:13, color:T.muted, padding:"16px 0" }}>No tracked equipment selected.</div></Card>}
-      </div>
-
-      {/* Monthly / Annual Detail Tables */}
-      {(viewMode==="monthly"||viewMode==="annual") && eqList.map(eq=>{
-        const mode=eq.usageType||"hours";
-        const months=byMonth(eq.id);
-        const showH=mode==="hours"||mode==="both";
-        const showM=mode==="mileage"||mode==="both";
-        /* Group by year for annual view */
-        const annualData = {};
-        Object.entries(months).forEach(([m,d])=>{ const yr=m.slice(0,4); if(!annualData[yr])annualData[yr]={fuel:0,count:0,lastH:0,lastM:0}; annualData[yr].fuel+=d.fuel; annualData[yr].count+=d.count; if(d.lastHours)annualData[yr].lastH=d.lastHours; if(d.lastMileage)annualData[yr].lastM=d.lastMileage; });
-        const rows = viewMode==="annual" ? Object.entries(annualData).sort() : Object.entries(months).sort();
-        return (
-          <Card key={eq.id} style={{ padding:0, overflow:"hidden", marginBottom:14 }}>
-            <div style={{ background:T.accent, padding:"8px 16px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-              <span style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:"#fff" }}>{eq.name} ({eq.id}) — {viewMode==="annual"?"Annual":"Monthly"} Log</span>
-              <span style={{ fontFamily:T.mono, fontSize:11, color:"#fff9" }}>{rows.length} periods</span>
-            </div>
-            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
-              <thead><tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-                <th style={{ padding:"8px 12px", textAlign:"left", fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase" }}>{viewMode==="annual"?"Year":"Month"}</th>
-                <th style={{ padding:"8px 12px", textAlign:"left", fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase" }}>Entries</th>
-                {showH&&<th style={{ padding:"8px 12px", textAlign:"left", fontSize:11, fontWeight:600, color:"#1e40af", textTransform:"uppercase" }}>Hours (end)</th>}
-                {showM&&<th style={{ padding:"8px 12px", textAlign:"left", fontSize:11, fontWeight:600, color:T.green, textTransform:"uppercase" }}>Mileage (end)</th>}
-                <th style={{ padding:"8px 12px", textAlign:"left", fontSize:11, fontWeight:600, color:"#7c3aed", textTransform:"uppercase" }}>Fuel Added (gal)</th>
-              </tr></thead>
-              <tbody>
-                {rows.map(([period,d],i)=>(
-                  <tr key={period} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
-                    <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12 }}>{period}</td>
-                    <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.muted }}>{d.count}</td>
-                    {showH&&<td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:"#1e40af" }}>{(d.lastH||d.lastHours||0)>0?(d.lastH||d.lastHours||0).toFixed?.(1):"—"}</td>}
-                    {showM&&<td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.green }}>{(d.lastM||d.lastMileage||0)>0?(d.lastM||d.lastMileage||0).toLocaleString():"—"}</td>}
-                    <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:"#7c3aed" }}>{d.fuel.toFixed(1)}</td>
-                  </tr>
-                ))}
-                {rows.length===0&&<tr><td colSpan={5} style={{ padding:24, textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13 }}>No log entries recorded.</td></tr>}
-              </tbody>
-            </table>
-          </Card>
-        );
-      })}
-    </div>
-  );
-}
-
-function ReportDeadline({ state }) {
-  const oos  = state.equipment.filter(e=>e.status==="Out of Service / Deadline");
-  const def  = state.equipment.filter(e=>e.status==="Operational with Deficiencies");
-  const openWO = (eqId) => state.workOrders.filter(w=>w.equipment===eqId && w.status!=="Completed");
-  const woText = (w) => w.faultDescription || w.description || w.problem || w.title || "";
-  const eqReportData = (eq) => {
-    const wos = openWO(eq.id);
-    const primary = wos.find(w=>woText(w)) || wos[0] || {};
-    return {
-      faultDate: eq.faultDate || primary.faultDate || primary.created || primary.due || "",
-      description: eq.faultDescription || woText(primary) || "",
-      workOrders: wos.map(w=>`${w.id} (${w.status})`).join(", ")
-    };
-  };
-  const exportRows = [
-    ...oos.map(eq=>{ const d=eqReportData(eq); return {Status:"Out of Service / Deadline", "Equip #":eq.id, Nomenclature:eq.name, "Fault Date":d.faultDate, Description:d.description, "Open Work Orders":d.workOrders}; }),
-    ...def.map(eq=>{ const d=eqReportData(eq); return {Status:"Operational with Deficiencies", "Equip #":eq.id, Nomenclature:eq.name, "Fault Date":d.faultDate, Description:d.description, "Open Work Orders":d.workOrders}; })
-  ];
-
-  const printReport = () => {
-    const win = window.open("","_blank","width=1100,height=760");
-    if(!win) return;
-    const rows = (list,color) => list.map(eq=>{
-      const wos = openWO(eq.id);
-      const d = eqReportData(eq);
-      return `<tr style="background:${color}">
-        <td class="equip">${eq.id}</td>
-        <td class="nomenclature"><b>${eq.name}</b></td>
-        <td class="faultDate">${d.faultDate||"—"}</td>
-        <td class="description">${d.description||"—"}</td>
-        <td class="workOrders">${wos.length>0?wos.map(w=>`${w.id} (${w.status})`).join(", "):"No open WOs"}</td>
-      </tr>`;
+    const cards = eqList.map(eq=>{
+      const field=primaryField(eq), label=primaryLabel(eq), st=statsFor(eq, field);
+      return `<tr><td><b>${eq.name||""}</b><br><small>${eq.id} • ${eq.category||""}</small></td><td>${label}</td><td><b>${fmt(st.current)}</b></td><td><b>${fmt(st.month)}</b></td><td><b>${fmt(st.fy)}</b></td><td>${st.lastDate}</td><td>${st.entries}</td></tr>`;
     }).join("");
-    const table = (list, color, heading, headingColor) => list.length ? `
-      <h2 style="color:${headingColor}">${heading} (${list.length})</h2>
-      <table class="deadline-table">
-        <colgroup>
-          <col style="width:14%" />
-          <col style="width:24%" />
-          <col style="width:13%" />
-          <col style="width:32%" />
-          <col style="width:17%" />
-        </colgroup>
-        <thead><tr><th>Equip #</th><th>Nomenclature</th><th>Fault Date</th><th>Description</th><th>Work Orders</th></tr></thead>
-        <tbody>${rows(list,color)}</tbody>
-      </table>` : "";
-    win.document.write(`<!DOCTYPE html><html><head><title>Deadline Report</title>
-      <style>
-        @page{size:landscape;margin:0.45in}
-        body{font-family:Arial,sans-serif;padding:24px;color:#111827}h1{font-size:18px;margin-bottom:4px}h2{font-size:13px;margin:18px 0 7px}
-        .deadline-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px;margin-bottom:16px}
-        .deadline-table th{background:#1a1a2e;color:#fff;padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;vertical-align:middle}
-        .deadline-table td{padding:8px;border-bottom:1px solid #d1d5db;vertical-align:top;line-height:1.25}
-        .deadline-table .equip{font-weight:700;white-space:nowrap;font-family:monospace}
-        .deadline-table .nomenclature{overflow-wrap:break-word}
-        .deadline-table .faultDate{white-space:nowrap;font-family:monospace}
-        .deadline-table .description,.deadline-table .workOrders{overflow-wrap:anywhere}
-        @media print{button{display:none}body{padding:0}.deadline-table{page-break-inside:auto}tr{page-break-inside:avoid;page-break-after:auto}}
-      </style>
-      </head><body>
-      ${reportHeaderHTML(state, "Deadline & Deficiency Report")}
-      ${table(oos,"#fff5f5","Out of Service / Deadline","#dc2626")}
-      ${table(def,"#fffdf0","Operational w/ Deficiencies","#d97706")}
-      ${!oos.length&&!def.length?`<p>No equipment in deadline or deficiency status.</p>`:""}
-      ${reportButtonsHtml(exportRows)}
-      </body></html>`);
+    win.document.write(`<!DOCTYPE html><html><head><title>Usage Report</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111827}h1{margin:0 0 4px}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0}.box{border:1px solid #dbeafe;background:#eff6ff;border-radius:12px;padding:12px}.box small{color:#64748b;text-transform:uppercase;font-weight:700}.box div{font-size:22px;font-weight:800;color:#1d4ed8;margin-top:4px}table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}th{background:#1e3a8a;color:white;padding:8px 10px;text-align:left;font-size:11px;text-transform:uppercase}td{padding:9px 10px;border-bottom:1px solid #e5e7eb}tr:nth-child(even){background:#f8fafc}@media print{button{display:none}}</style></head><body>${reportHeaderHTML(state,"Equipment Usage Report")}
+      <p style="color:#64748b;font-size:12px;margin-top:4px">Shows current reading, new usage this month, and usage this fiscal year for monthly and annual reporting.</p>
+      <table><thead><tr><th>Equipment</th><th>Meter</th><th>Current</th><th>New This Month</th><th>This FY</th><th>Last Entry</th><th>Entries</th></tr></thead><tbody>${cards || `<tr><td colspan="7">No tracked equipment found.</td></tr>`}</tbody></table>${reportButtonsHtml(exportRows)}</body></html>`);
     win.document.close();
   };
 
   return (
     <div>
-      <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginBottom:14 }}>
-        <Btn onClick={printReport}>Print / PDF</Btn>
-        <Btn variant="secondary" onClick={()=>downloadCSV("deadline-deficiency-report.csv", exportRows)}>Excel CSV</Btn>
-      </div>
-      {[{list:oos,label:"Out of Service / Deadline",color:T.red,bg:"#fff5f5",leftBorder:"4px solid #ef4444"},
-        {list:def,label:"Operational with Deficiencies",color:T.amber,bg:"#fffdf0",leftBorder:"4px solid #f59e0b"}].map(({list,label,color,bg,leftBorder})=>(
-        <div key={label} style={{ marginBottom:20 }}>
-          <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color, marginBottom:8 }}>{label} ({list.length})</div>
-          {list.length===0 ? <Card><div style={{ padding:"16px 0", textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13 }}>None</div></Card> :
-          list.map(eq=>{
-            const wos = openWO(eq.id);
-            const d = eqReportData(eq);
-            return (
-              <div key={eq.id} style={{ background:bg, border:`1px solid ${T.border}`, borderLeft:leftBorder, borderRadius:8, padding:"12px 18px", marginBottom:8, boxShadow:T.shadow }}>
-                <div style={{ display:"grid", gridTemplateColumns:"120px 1.3fr 130px 1.7fr 170px", gap:16, flexWrap:"wrap" }}>
-                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Equip #</div><div style={{ fontFamily:T.mono, fontSize:12, fontWeight:700, color:T.text, marginTop:2 }}>{eq.id}</div></div>
-                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Nomenclature</div><div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginTop:2 }}>{eq.name}</div></div>
-                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Fault Date</div><div style={{ fontFamily:T.mono, fontSize:12, color, fontWeight:700, marginTop:2 }}>{d.faultDate||"—"}</div></div>
-                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Description</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.text, marginTop:2 }}>{d.description||"—"}</div></div>
-                </div>
-                {wos.length>0 && (
-                  <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${T.border}` }}>
-                    <div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5, marginBottom:5 }}>Open Work Orders</div>
-                    <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                      {wos.map(w=><span key={w.id} style={{ fontFamily:T.mono, fontSize:11, padding:"2px 8px", borderRadius:4, background:"#fff", border:`1px solid ${T.border}` }}>{w.id} <Badge label={w.status} /></span>)}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ReportPM({ state }) {
-  const [lookAheadDays, setLookAheadDays] = useState(30);
-  const [mileageLookAhead, setMileageLookAhead] = useState(25);
-  const today_str = today();
-  const futureDate = (days) => { const d=new Date(); d.setDate(d.getDate()+days); return d.toISOString().split("T")[0]; };
-  const cutoff = futureDate(lookAheadDays);
-
-  const overdue   = state.preventiveMaintenance.filter(p=>p.status==="Overdue");
-  const dueSoon   = state.preventiveMaintenance.filter(p=>p.status==="Due Soon"||p.nextDue<=cutoff);
-  const completed = state.preventiveMaintenance.filter(p=>{
-    if(!p.lastDone) return false;
-    const d = new Date(p.lastDone);
-    const m = new Date(); m.setDate(1);
-    return d >= m;
-  });
-  const eqName = (id) => state.equipment.find(e=>e.id===id)?.name||id;
-  const exportRows = [...overdue.map(p=>({Group:"Overdue", Equipment:eqName(p.equipment), Task:p.task, Interval:p.interval, "Last Done":p.lastDone||"", "Next Due":p.nextDue||"", Status:p.status})), ...dueSoon.map(p=>({Group:"Due Soon", Equipment:eqName(p.equipment), Task:p.task, Interval:p.interval, "Last Done":p.lastDone||"", "Next Due":p.nextDue||"", Status:p.status})), ...completed.map(p=>({Group:"Completed This Month", Equipment:eqName(p.equipment), Task:p.task, Interval:p.interval, "Last Done":p.lastDone||"", "Next Due":p.nextDue||"", Status:p.status}))];
-
-  const printPMReport = () => {
-    const win = window.open("","_blank","width=900,height=700");
-    if(!win) return;
-    const pmRows = (list) => list.map(p=>`<tr><td>${eqName(p.equipment)}</td><td>${p.task}</td><td>${p.interval}</td><td>${p.lastDone||"—"}</td><td>${p.nextDue||"—"}</td><td>${p.status}</td></tr>`).join("");
-    win.document.write(`<!DOCTYPE html><html><head><title>PM Report</title>
-      <style>body{font-family:Arial,sans-serif;padding:24px}h2{font-size:14px;margin:16px 0 6px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px;text-transform:uppercase}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}@media print{button{display:none}}</style>
-      </head><body>
-      ${reportHeaderHTML(state, "Preventive Maintenance Report")}
-      <p style="color:#666;font-size:12px">Look-ahead: ${lookAheadDays} days</p>
-      ${overdue.length?`<h2 style="color:#dc2626">OVERDUE (${overdue.length})</h2><table><tr><th>Equipment</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(overdue)}</table>`:""}
-      ${dueSoon.length?`<h2 style="color:#d97706">DUE WITHIN ${lookAheadDays} DAYS (${dueSoon.length})</h2><table><tr><th>Equipment</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(dueSoon)}</table>`:""}
-      ${completed.length?`<h2 style="color:#059669">COMPLETED THIS MONTH (${completed.length})</h2><table><tr><th>Equipment</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(completed)}</table>`:""}
-      <br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
-      </body></html>`);
-    win.document.close();
-  };
-
-  return (
-    <div>
-      <Card style={{ marginBottom:16, padding:"14px 18px" }}>
-        <div style={{ display:"flex", gap:16, alignItems:"center", flexWrap:"wrap" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-            <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext }}>Look-ahead days:</label>
-            <input type="number" style={{ ...inp, width:70 }} value={lookAheadDays} onChange={e=>setLookAheadDays(+e.target.value)} min={1} max={365} />
+      <Card style={{ marginBottom:16 }}>
+        <div style={{ display:"flex", gap:12, flexWrap:"wrap", alignItems:"center", justifyContent:"space-between" }}>
+          <div>
+            <h2 style={{ margin:0, fontFamily:T.sans, fontSize:20, color:T.text }}>Equipment Usage Report</h2>
+            <p style={{ margin:"4px 0 0", fontFamily:T.sans, fontSize:13, color:T.subtext }}>Simple monthly and FY usage numbers for reporting and planning future equipment needs.</p>
           </div>
-          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-            <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext }}>Miles/hrs before service:</label>
-            <input type="number" style={{ ...inp, width:70 }} value={mileageLookAhead} onChange={e=>setMileageLookAhead(+e.target.value)} min={1} />
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            <select style={{ ...sel, width:240 }} value={selEq} onChange={e=>setSelEq(e.target.value)}>
+              <option value="all">All Tracked Equipment</option>
+              {trackableEq.map(e=><option key={e.id} value={e.id}>{e.name} ({e.id})</option>)}
+            </select>
+            <Btn small onClick={printUsageReport}>Print / PDF</Btn>
+            <Btn small variant="secondary" onClick={()=>downloadCSV("usage-report.csv", exportRows)}>Excel CSV</Btn>
           </div>
-          <Btn small onClick={printPMReport}>Print / PDF</Btn>
-          <Btn small variant="secondary" onClick={()=>downloadCSV("pm-report.csv", exportRows)}>Excel CSV</Btn>
         </div>
       </Card>
-      {[{list:overdue,label:"Overdue",color:T.red},{list:dueSoon,label:`Due within ${lookAheadDays} days`,color:T.amber},{list:completed,label:"Completed This Month",color:T.green}].map(({list,label,color})=>(
-        <div key={label} style={{ marginBottom:16 }}>
-          <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color, marginBottom:8 }}>{label} ({list.length})</div>
-          <Card style={{ padding:0, overflow:"hidden" }}>
-            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
-              <thead><tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-                {["Equipment","Task","Interval","Last Done","Next Due","Status"].map(h=><th key={h} style={{ padding:"8px 12px", textAlign:"left", fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</th>)}
-              </tr></thead>
-              <tbody>
-                {list.map((p,i)=>{
-                  const eq = state.equipment.find(e=>e.id===p.equipment);
-                  return <tr key={p.id} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
-                    <td style={{ padding:"9px 12px", fontWeight:500 }}>{eq?.name||p.equipment}</td>
-                    <td style={{ padding:"9px 12px" }}>{p.task}</td>
-                    <td style={{ padding:"9px 12px", color:T.muted }}>{p.interval}</td>
-                    <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12 }}>{p.lastDone||"—"}</td>
-                    <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color }}>{p.nextDue||"—"}</td>
-                    <td style={{ padding:"9px 12px" }}><Badge label={p.status} /></td>
-                  </tr>;
-                })}
-                {list.length===0&&<tr><td colSpan={6} style={{ padding:20, textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13 }}>None</td></tr>}
-              </tbody>
-            </table>
-          </Card>
-        </div>
-      ))}
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:14 }}>
+        {eqList.map(eq=>{
+          const field=primaryField(eq), label=primaryLabel(eq), st=statsFor(eq, field);
+          return <Card key={eq.id} style={{ padding:0, overflow:"hidden", border:`1px solid ${T.border}` }}>
+            <div style={{ padding:"12px 14px", background:"#eff6ff", borderBottom:`1px solid ${T.border}` }}>
+              <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:800, color:T.text }}>{eq.name}</div>
+              <div style={{ fontFamily:T.mono, fontSize:11, color:T.muted }}>{eq.id} • {label}</div>
+            </div>
+            <div style={{ padding:14, display:"grid", gap:10 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
+                <div style={{ background:"#f8fafc", border:`1px solid ${T.border}`, borderRadius:10, padding:10 }}><div style={{ fontSize:10, fontWeight:800, color:T.muted, textTransform:"uppercase" }}>Current</div><div style={{ fontSize:22, fontWeight:900, color:"#1d4ed8" }}>{fmt(st.current)}</div></div>
+                <div style={{ background:"#f8fafc", border:`1px solid ${T.border}`, borderRadius:10, padding:10 }}><div style={{ fontSize:10, fontWeight:800, color:T.muted, textTransform:"uppercase" }}>New This Month</div><div style={{ fontSize:22, fontWeight:900, color:"#047857" }}>{fmt(st.month)}</div></div>
+                <div style={{ background:"#f8fafc", border:`1px solid ${T.border}`, borderRadius:10, padding:10 }}><div style={{ fontSize:10, fontWeight:800, color:T.muted, textTransform:"uppercase" }}>This FY</div><div style={{ fontSize:22, fontWeight:900, color:"#7c3aed" }}>{fmt(st.fy)}</div></div>
+              </div>
+              <div style={{ display:"flex", justifyContent:"space-between", fontFamily:T.sans, fontSize:12, color:T.subtext }}><span>Last entry: <b>{st.lastDate}</b></span><span>{st.entries} log entries</span></div>
+            </div>
+          </Card>;
+        })}
+        {eqList.length===0 && <Card><div style={{ padding:16, color:T.muted, fontFamily:T.sans }}>No tracked equipment found.</div></Card>}
+      </div>
     </div>
   );
 }
