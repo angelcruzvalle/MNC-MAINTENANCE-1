@@ -6486,6 +6486,9 @@ export default function App() {
         ::-webkit-scrollbar-thumb { background:#c1c7d0; border-radius:3px; }
         input:focus, select:focus, textarea:focus { border-color:${T.accent} !important; box-shadow:0 0 0 3px ${T.accentLt}; outline:none; }
         tr:hover { background:${T.accentLt} !important; }
+
+        .mobile-x-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; max-width:100%; }
+        .mobile-x-scroll table { min-width:960px; }
         @media print { .no-print { display:none !important; } }
         @media (max-width: 768px) {
           html, body { width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
@@ -6498,7 +6501,47 @@ export default function App() {
           main > div { max-width:100%; min-width:0; }
           h1 { font-size:20px !important; }
           h2 { font-size:22px !important; }
-          table { min-width:760px; width:100%; }
+          /* Mobile spreadsheet-style tables: keep first column frozen and swipe left/right for the rest */
+          main { max-width:100vw !important; }
+          main, main > div, section, article { overflow-x:auto !important; -webkit-overflow-scrolling:touch !important; }
+          main table {
+            display:block !important;
+            width:max-content !important;
+            min-width:980px !important;
+            max-width:none !important;
+            overflow-x:auto !important;
+            overflow-y:visible !important;
+            -webkit-overflow-scrolling:touch !important;
+            table-layout:auto !important;
+            border-collapse:separate !important;
+            border-spacing:0 !important;
+          }
+          main thead, main tbody, main tr { width:max-content !important; }
+          main th, main td {
+            min-width:130px !important;
+            max-width:none !important;
+            white-space:nowrap !important;
+            overflow:visible !important;
+            text-overflow:clip !important;
+            vertical-align:top !important;
+          }
+          main th:first-child, main td:first-child {
+            position:sticky !important;
+            left:0 !important;
+            z-index:5 !important;
+            min-width:165px !important;
+            max-width:220px !important;
+            white-space:normal !important;
+            overflow-wrap:anywhere !important;
+            background:#fff !important;
+            box-shadow:2px 0 5px rgba(15,23,42,.12) !important;
+          }
+          main th:first-child { z-index:8 !important; background:#f8fafc !important; }
+          main tr:hover td:first-child { background:${T.accentLt} !important; }
+          main th:last-child, main td:last-child { padding-right:22px !important; }
+          main [style*="overflow:hidden"], main [style*="overflow: hidden"] { overflow:visible !important; }
+          main [style*="textOverflow"], main [style*="text-overflow"] { text-overflow:clip !important; }
+          main [style*="whiteSpace:"nowrap""], main [style*="white-space: nowrap"] { white-space:nowrap !important; }
           input, select, textarea, button { font-size:16px !important; }
           textarea { min-height:88px; }
           button { min-height:40px; touch-action:manipulation; }
@@ -6516,7 +6559,7 @@ export default function App() {
         }
         @media (max-width: 480px) {
           div[style*="grid-template-columns:repeat(auto-fit"], div[style*="grid-template-columns:repeat(2"] { grid-template-columns:1fr !important; }
-          table { min-width:820px; }
+          main table { min-width:1040px !important; }
         }
       `}</style>
 
