@@ -1869,7 +1869,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                     <select title="Change Work Order Status" value={wo.status||"Open"} onChange={e=>quickUpdateWO(wo,{status:e.target.value})} style={{ ...sel, width:145, minWidth:145, padding:"7px 10px", fontSize:12 }}>
                       {["Open","In Progress","Awaiting Parts","On Hold","Completed"].map(s=><option key={s}>{s}</option>)}
                     </select>
-                    <select title="Change Equipment Status" value={wo.status==="Completed"?"Fully Operational":(wo.equipmentStatus||eq?.status||"Fully Operational")} onChange={e=>quickUpdateWO(wo,{equipmentStatus:e.target.value})} disabled={wo.status==="Completed"} style={{ ...sel, width:240, minWidth:240, padding:"7px 10px", fontSize:12, opacity:wo.status==="Completed"?.65:1 }}>
+                    <select title="Change Equipment Status" value={wo.status==="Completed"?"Fully Operational":(wo.equipmentStatus||eq?.status||"Fully Operational")} onChange={e=>quickUpdateWO(wo,{equipmentStatus:e.target.value})} disabled={wo.status==="Completed"} style={{ ...sel, width:240, minWidth:240, padding:"7px 10px", fontSize:12, opacity:wo.status==="Completed" ? .65 : 1 }}>
                       {["Fully Operational","Operational with Deficiencies","Out of Service / Deadline"].map(s=><option key={s}>{s}</option>)}
                     </select>
                     <button
@@ -2572,8 +2572,8 @@ function Equipment({ state, dispatch }) {
           <input style={{ ...inp, flex:1, minWidth:200 }} placeholder="Search by nomenclature, make, model, serial, EIL #, location…" value={search} onChange={e=>setSearch(e.target.value)} />
           <Btn variant="secondary" onClick={()=>{
             const reportEqs = state.equipment.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies");
-            const openWOForEq = (eqId) => (state.workOrders||[]).filter(w=>w.equipment===eqId && w.status!=="Completed").sort((a,b)=>String(b.created||"").localeCompare(String(a.created||"")));
-            const woFaultText = (w={}) => w.faultDescription || w.repairComplaint || w.description || w.problem || w.title || "";
+            const openWOForEq = (eqId) => (state.workOrders||[]).filter(w=>(w.equipment===eqId || w.equipmentId===eqId) && w.status!=="Completed").sort((a,b)=>String(b.created||"").localeCompare(String(a.created||"")));
+            const woFaultText = (w={}) => w.faultDescription || w.repairComplaint || w.description || w.problem || w.title || w.notes || "";
             const faultInfo = (e) => {
               const wos = openWOForEq(e.id);
               const primary = wos.find(w=>woFaultText(w)) || wos[0] || {};
@@ -5009,6 +5009,195 @@ function ReportUsage({ state }) {
         })}
         {eqList.length===0 && <Card><div style={{ padding:16, color:T.muted, fontFamily:T.sans }}>No tracked equipment found.</div></Card>}
       </div>
+    </div>
+  );
+}
+
+function ReportDeadline({ state }) {
+  const oos  = state.equipment.filter(e=>e.status==="Out of Service / Deadline");
+  const def  = state.equipment.filter(e=>e.status==="Operational with Deficiencies");
+  const openWO = (eqId) => (state.workOrders||[]).filter(w=>(w.equipment===eqId || w.equipmentId===eqId) && w.status!=="Completed");
+  const woText = (w={}) => w.faultDescription || w.repairComplaint || w.description || w.problem || w.title || w.notes || "";
+  const eqReportData = (eq) => {
+    const wos = openWO(eq.id);
+    const primary = wos.find(w=>woText(w)) || wos[0] || {};
+    return {
+      faultDate: eq.faultDate || primary.faultDate || primary.created || primary.due || "",
+      description: eq.faultDescription || woText(primary) || "",
+      workOrders: wos.map(w=>`${w.id} (${w.status})`).join(", ")
+    };
+  };
+  const exportRows = [
+    ...oos.map(eq=>{ const d=eqReportData(eq); return {Status:"Out of Service / Deadline", "Equip #":eq.id, Nomenclature:eq.name, "Fault Date":d.faultDate, Description:d.description, "Open Work Orders":d.workOrders}; }),
+    ...def.map(eq=>{ const d=eqReportData(eq); return {Status:"Operational with Deficiencies", "Equip #":eq.id, Nomenclature:eq.name, "Fault Date":d.faultDate, Description:d.description, "Open Work Orders":d.workOrders}; })
+  ];
+
+  const printReport = () => {
+    const win = window.open("","_blank","width=1100,height=760");
+    if(!win) return;
+    const rows = (list,color) => list.map(eq=>{
+      const wos = openWO(eq.id);
+      const d = eqReportData(eq);
+      return `<tr style="background:${color}">
+        <td class="equip">${eq.id}</td>
+        <td class="nomenclature"><b>${eq.name}</b></td>
+        <td class="faultDate">${d.faultDate||"—"}</td>
+        <td class="description">${d.description||"—"}</td>
+        <td class="workOrders">${wos.length>0?wos.map(w=>`${w.id} (${w.status})`).join(", "):"No open WOs"}</td>
+      </tr>`;
+    }).join("");
+    const table = (list, color, heading, headingColor) => list.length ? `
+      <h2 style="color:${headingColor}">${heading} (${list.length})</h2>
+      <table class="deadline-table">
+        <colgroup>
+          <col style="width:14%" />
+          <col style="width:24%" />
+          <col style="width:13%" />
+          <col style="width:32%" />
+          <col style="width:17%" />
+        </colgroup>
+        <thead><tr><th>Equip #</th><th>Nomenclature</th><th>Fault Date</th><th>Description</th><th>Work Orders</th></tr></thead>
+        <tbody>${rows(list,color)}</tbody>
+      </table>` : "";
+    win.document.write(`<!DOCTYPE html><html><head><title>Deadline Report</title>
+      <style>
+        @page{size:landscape;margin:0.45in}
+        body{font-family:Arial,sans-serif;padding:24px;color:#111827}h1{font-size:18px;margin-bottom:4px}h2{font-size:13px;margin:18px 0 7px}
+        .deadline-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px;margin-bottom:16px}
+        .deadline-table th{background:#1a1a2e;color:#fff;padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;vertical-align:middle}
+        .deadline-table td{padding:8px;border-bottom:1px solid #d1d5db;vertical-align:top;line-height:1.25}
+        .deadline-table .equip{font-weight:700;white-space:nowrap;font-family:monospace}
+        .deadline-table .nomenclature{overflow-wrap:break-word}
+        .deadline-table .faultDate{white-space:nowrap;font-family:monospace}
+        .deadline-table .description,.deadline-table .workOrders{overflow-wrap:anywhere}
+        @media print{button{display:none}body{padding:0}.deadline-table{page-break-inside:auto}tr{page-break-inside:avoid;page-break-after:auto}}
+      </style>
+      </head><body>
+      ${reportHeaderHTML(state, "Deadline & Deficiency Report")}
+      ${table(oos,"#fff5f5","Out of Service / Deadline","#dc2626")}
+      ${table(def,"#fffdf0","Operational w/ Deficiencies","#d97706")}
+      ${!oos.length&&!def.length?`<p>No equipment in deadline or deficiency status.</p>`:""}
+      ${reportButtonsHtml(exportRows)}
+      </body></html>`);
+    win.document.close();
+  };
+
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginBottom:14 }}>
+        <Btn onClick={printReport}>Print / PDF</Btn>
+        <Btn variant="secondary" onClick={()=>downloadCSV("deadline-deficiency-report.csv", exportRows)}>Excel CSV</Btn>
+      </div>
+      {[{list:oos,label:"Out of Service / Deadline",color:T.red,bg:"#fff5f5",leftBorder:"4px solid #ef4444"},
+        {list:def,label:"Operational with Deficiencies",color:T.amber,bg:"#fffdf0",leftBorder:"4px solid #f59e0b"}].map(({list,label,color,bg,leftBorder})=>(
+        <div key={label} style={{ marginBottom:20 }}>
+          <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color, marginBottom:8 }}>{label} ({list.length})</div>
+          {list.length===0 ? <Card><div style={{ padding:"16px 0", textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13 }}>None</div></Card> :
+          list.map(eq=>{
+            const wos = openWO(eq.id);
+            const d = eqReportData(eq);
+            return (
+              <div key={eq.id} style={{ background:bg, border:`1px solid ${T.border}`, borderLeft:leftBorder, borderRadius:8, padding:"12px 18px", marginBottom:8, boxShadow:T.shadow }}>
+                <div style={{ display:"grid", gridTemplateColumns:"120px 1.3fr 130px 1.7fr 170px", gap:16, flexWrap:"wrap" }}>
+                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Equip #</div><div style={{ fontFamily:T.mono, fontSize:12, fontWeight:700, color:T.text, marginTop:2 }}>{eq.id}</div></div>
+                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Nomenclature</div><div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginTop:2 }}>{eq.name}</div></div>
+                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Fault Date</div><div style={{ fontFamily:T.mono, fontSize:12, color, fontWeight:700, marginTop:2 }}>{d.faultDate||"—"}</div></div>
+                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Description</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.text, marginTop:2 }}>{d.description||"—"}</div></div>
+                </div>
+                {wos.length>0 && (
+                  <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${T.border}` }}>
+                    <div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5, marginBottom:5 }}>Open Work Orders</div>
+                    <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                      {wos.map(w=><span key={w.id} style={{ fontFamily:T.mono, fontSize:11, padding:"2px 8px", borderRadius:4, background:"#fff", border:`1px solid ${T.border}` }}>{w.id} <Badge label={w.status} /></span>)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ReportPM({ state }) {
+  const [lookAheadDays, setLookAheadDays] = useState(30);
+  const [mileageLookAhead, setMileageLookAhead] = useState(25);
+  const today_str = today();
+  const futureDate = (days) => { const d=new Date(); d.setDate(d.getDate()+days); return d.toISOString().split("T")[0]; };
+  const cutoff = futureDate(lookAheadDays);
+
+  const overdue   = state.preventiveMaintenance.filter(p=>p.status==="Overdue");
+  const dueSoon   = state.preventiveMaintenance.filter(p=>p.status==="Due Soon"||p.nextDue<=cutoff);
+  const completed = state.preventiveMaintenance.filter(p=>{
+    if(!p.lastDone) return false;
+    const d = new Date(p.lastDone);
+    const m = new Date(); m.setDate(1);
+    return d >= m;
+  });
+  const eqName = (id) => state.equipment.find(e=>e.id===id)?.name||id;
+  const exportRows = [...overdue.map(p=>({Group:"Overdue", Equipment:eqName(p.equipment), Task:p.task, Interval:p.interval, "Last Done":p.lastDone||"", "Next Due":p.nextDue||"", Status:p.status})), ...dueSoon.map(p=>({Group:"Due Soon", Equipment:eqName(p.equipment), Task:p.task, Interval:p.interval, "Last Done":p.lastDone||"", "Next Due":p.nextDue||"", Status:p.status})), ...completed.map(p=>({Group:"Completed This Month", Equipment:eqName(p.equipment), Task:p.task, Interval:p.interval, "Last Done":p.lastDone||"", "Next Due":p.nextDue||"", Status:p.status}))];
+
+  const printPMReport = () => {
+    const win = window.open("","_blank","width=900,height=700");
+    if(!win) return;
+    const pmRows = (list) => list.map(p=>`<tr><td>${eqName(p.equipment)}</td><td>${p.task}</td><td>${p.interval}</td><td>${p.lastDone||"—"}</td><td>${p.nextDue||"—"}</td><td>${p.status}</td></tr>`).join("");
+    win.document.write(`<!DOCTYPE html><html><head><title>PM Report</title>
+      <style>body{font-family:Arial,sans-serif;padding:24px}h2{font-size:14px;margin:16px 0 6px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px;text-transform:uppercase}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}@media print{button{display:none}}</style>
+      </head><body>
+      ${reportHeaderHTML(state, "Preventive Maintenance Report")}
+      <p style="color:#666;font-size:12px">Look-ahead: ${lookAheadDays} days</p>
+      ${overdue.length?`<h2 style="color:#dc2626">OVERDUE (${overdue.length})</h2><table><tr><th>Equipment</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(overdue)}</table>`:""}
+      ${dueSoon.length?`<h2 style="color:#d97706">DUE WITHIN ${lookAheadDays} DAYS (${dueSoon.length})</h2><table><tr><th>Equipment</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(dueSoon)}</table>`:""}
+      ${completed.length?`<h2 style="color:#059669">COMPLETED THIS MONTH (${completed.length})</h2><table><tr><th>Equipment</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(completed)}</table>`:""}
+      <br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
+      </body></html>`);
+    win.document.close();
+  };
+
+  return (
+    <div>
+      <Card style={{ marginBottom:16, padding:"14px 18px" }}>
+        <div style={{ display:"flex", gap:16, alignItems:"center", flexWrap:"wrap" }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext }}>Look-ahead days:</label>
+            <input type="number" style={{ ...inp, width:70 }} value={lookAheadDays} onChange={e=>setLookAheadDays(+e.target.value)} min={1} max={365} />
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext }}>Miles/hrs before service:</label>
+            <input type="number" style={{ ...inp, width:70 }} value={mileageLookAhead} onChange={e=>setMileageLookAhead(+e.target.value)} min={1} />
+          </div>
+          <Btn small onClick={printPMReport}>Print / PDF</Btn>
+          <Btn small variant="secondary" onClick={()=>downloadCSV("pm-report.csv", exportRows)}>Excel CSV</Btn>
+        </div>
+      </Card>
+      {[{list:overdue,label:"Overdue",color:T.red},{list:dueSoon,label:`Due within ${lookAheadDays} days`,color:T.amber},{list:completed,label:"Completed This Month",color:T.green}].map(({list,label,color})=>(
+        <div key={label} style={{ marginBottom:16 }}>
+          <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color, marginBottom:8 }}>{label} ({list.length})</div>
+          <Card style={{ padding:0, overflow:"hidden" }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
+              <thead><tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
+                {["Equipment","Task","Interval","Last Done","Next Due","Status"].map(h=><th key={h} style={{ padding:"8px 12px", textAlign:"left", fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {list.map((p,i)=>{
+                  const eq = state.equipment.find(e=>e.id===p.equipment);
+                  return <tr key={p.id} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
+                    <td style={{ padding:"9px 12px", fontWeight:500 }}>{eq?.name||p.equipment}</td>
+                    <td style={{ padding:"9px 12px" }}>{p.task}</td>
+                    <td style={{ padding:"9px 12px", color:T.muted }}>{p.interval}</td>
+                    <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12 }}>{p.lastDone||"—"}</td>
+                    <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color }}>{p.nextDue||"—"}</td>
+                    <td style={{ padding:"9px 12px" }}><Badge label={p.status} /></td>
+                  </tr>;
+                })}
+                {list.length===0&&<tr><td colSpan={6} style={{ padding:20, textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13 }}>None</td></tr>}
+              </tbody>
+            </table>
+          </Card>
+        </div>
+      ))}
     </div>
   );
 }
