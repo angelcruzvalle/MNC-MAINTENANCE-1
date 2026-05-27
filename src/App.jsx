@@ -148,9 +148,21 @@ function reducer(state, { type, payload }) {
           const curU  = sch.usageType==="mileage"
             ? Math.max(...logs.map(l=>+(l.mileage||0)), 0)
             : Math.max(...logs.map(l=>+(l.hours||0)), 0);
-          const advancedSch = { ...sch, lastDoneDate:payload.completed||new Date().toISOString().split("T")[0], lastDoneUsage:curU,
-            nextDueDate: sch.timeInterval ? (() => { const d=new Date(payload.completed||new Date()); if(sch.timeUnit==="days")d.setDate(d.getDate()+(+sch.timeInterval)); if(sch.timeUnit==="weeks")d.setDate(d.getDate()+(+sch.timeInterval)*7); if(sch.timeUnit==="months")d.setMonth(d.getMonth()+(+sch.timeInterval)); if(sch.timeUnit==="years")d.setFullYear(d.getFullYear()+(+sch.timeInterval)); return d.toISOString().split("T")[0]; })() : sch.nextDueDate,
-            nextDueUsage: sch.usageInterval ? curU+(+sch.usageInterval) : sch.nextDueUsage,
+          const doneDate = payload.completed||new Date().toISOString().split("T")[0];
+          const sourceTriggers = Array.isArray(sch.triggers) && sch.triggers.length ? sch.triggers : [{type:sch.triggerType==="usage"?(sch.usageType||"hours"):"time",timeInterval:sch.timeInterval,timeUnit:sch.timeUnit||"months",usageInterval:sch.usageInterval,usageMode:"every"}];
+          const advancedTriggers = sourceTriggers.map(t=>{
+            if((t.type||"time")==="time") {
+              const d=new Date(doneDate);
+              const n=+(t.timeInterval||sch.timeInterval||0);
+              const unit=t.timeUnit||sch.timeUnit||"months";
+              if(n){ if(unit==="days")d.setDate(d.getDate()+n); if(unit==="weeks")d.setDate(d.getDate()+n*7); if(unit==="months")d.setMonth(d.getMonth()+n); if(unit==="years")d.setFullYear(d.getFullYear()+n); }
+              return {...t,nextDueDate:n?d.toISOString().split("T")[0]:"",nextDueUsage:""};
+            }
+            return {...t,nextDueDate:"",nextDueUsage:(t.usageMode==="at" ? +(t.usageInterval||0) : curU+(+(t.usageInterval||sch.usageInterval||0)))};
+          });
+          const advancedSch = { ...sch, triggers:advancedTriggers, lastDoneDate:doneDate, lastDoneUsage:curU,
+            nextDueDate: advancedTriggers.find(t=>(t.type||"time")==="time")?.nextDueDate || "",
+            nextDueUsage: advancedTriggers.find(t=>t.type==="hours"||t.type==="mileage")?.nextDueUsage || "",
           };
           return { ...state, parts, equipment, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
         }
@@ -2571,38 +2583,49 @@ function Equipment({ state, dispatch }) {
         <div style={{ display:"flex", gap:10, marginBottom:14, flexWrap:"wrap" }}>
           <input style={{ ...inp, flex:1, minWidth:200 }} placeholder="Search by nomenclature, make, model, serial, EIL #, location…" value={search} onChange={e=>setSearch(e.target.value)} />
           <Btn variant="secondary" onClick={()=>{
-            const reportEqs = state.equipment.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies");
-            const openWOForEq = (eqId) => (state.workOrders||[]).filter(w=>(w.equipment===eqId || w.equipmentId===eqId) && w.status!=="Completed").sort((a,b)=>String(b.created||"").localeCompare(String(a.created||"")));
-            const woFaultText = (w={}) => w.faultDescription || w.repairComplaint || w.description || w.problem || w.title || w.notes || "";
+            const allEquipment = state.equipment || [];
+            const esc = v => String(v ?? "").replace(/[&<>"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
+            const activeWOForEq = (eqId) => (state.workOrders||[])
+              .filter(w => (w.equipment===eqId || w.equipmentId===eqId) && !["Completed","Closed","Cancelled"].includes(w.status))
+              .sort((a,b)=>String(b.faultDate||b.date||b.created||"").localeCompare(String(a.faultDate||a.date||a.created||"")));
+            const woFaultText = (w={}) => w.faultDescription || w.fault || w.complaint || w.repairComplaint || w.description || w.problem || w.issue || w.title || w.notes || "";
             const faultInfo = (e) => {
-              const wos = openWOForEq(e.id);
-              const primary = wos.find(w=>woFaultText(w)) || wos[0] || {};
+              const wos = activeWOForEq(e.id);
+              const primary = wos.find(w=>woFaultText(w) || w.faultDate || w.date || w.created) || {};
               return {
-                faultDate: e.faultDate || primary.faultDate || primary.created || primary.due || "",
-                description: e.faultDescription || woFaultText(primary) || "",
-                openWOs: wos.map(w=>`${w.id} (${w.status||"Open"})`).join(", ")
+                faultDate: e.faultDate || e.deadlineDate || e.deficiencyDate || primary.faultDate || primary.date || primary.created || primary.due || "",
+                description: e.faultDescription || e.deficiencyDescription || e.statusDescription || e.description || woFaultText(primary) || "",
+                openWOs: wos.map(w=>`${w.id || w.woNumber || "WO"} (${w.status||"Open"})`).join(", "),
+                openWOCount: wos.length
               };
             };
-            const exportRows = reportEqs.map(e=>{ const f=faultInfo(e); return {Status:e.status||"", Nomenclature:e.name||"", "Make/Model":`${e.make||""} ${e.model||""}`.trim(), "Serial #":e.serial||"", "EIL #":e.eilNumber||"", "Fault Date":f.faultDate||"", "Description":f.description||"", "Open Work Orders":f.openWOs||""}; });
+            const statusRank = s => s==="Out of Service / Deadline" ? 0 : s==="Operational with Deficiencies" ? 1 : s==="Fully Operational" ? 2 : 3;
+            const reportEqs = [...allEquipment].sort((a,b)=>statusRank(a.status)-statusRank(b.status) || String(a.id||"").localeCompare(String(b.id||"")));
+            const exportRows = reportEqs.map(e=>{ const f=faultInfo(e); return {Status:e.status||"Fully Operational", "Equipment #":e.id||"", Nomenclature:e.name||e.nomenclature||"", Location:e.location||"", "Make/Model":`${e.make||""} ${e.model||""}`.trim(), "Serial #":e.serial||"", "EIL #":e.eilNumber||"", "Fault Date":f.faultDate||"", "Fault / Deficiency Description":f.description||"", "Open Work Orders":f.openWOs||""}; });
             const win = window.open("","_blank");
-            win.document.write(`<html><head><title>Equipment Status Report</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{font-size:20px;margin-bottom:4px}p{font-size:12px;color:#666;margin:0 0 20px}.section{margin-bottom:28px}h2{font-size:14px;margin-bottom:8px;padding:6px 10px;border-radius:4px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#f3f4f6;padding:7px 10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.4px}td{padding:7px 10px;border-bottom:1px solid #e5e7eb}.red{background:#fef2f2;color:#7f1d1d}.yellow{background:#fffbeb;color:#92400e}@media print{button{display:none}}</style></head><body>`);
-            win.document.write(`<h1>Equipment Status Report</h1><p>Generated: ${new Date().toLocaleDateString()} — NCA Maintenance Manager</p>`);
+            const rowHtml = (e) => {
+              const f = faultInfo(e);
+              return `<tr><td><b>${esc(e.id||"—")}</b></td><td><b>${esc(e.name||e.nomenclature||"—")}</b><br><small>${esc(e.location||"")}</small></td><td>${esc(e.status||"Fully Operational")}</td><td>${esc(e.make||"")} ${esc(e.model||"")}</td><td>${esc(e.serial||"—")}</td><td>${esc(e.eilNumber||"—")}</td><td>${esc(f.faultDate||"—")}</td><td>${esc(f.description||"—")}${f.openWOs?`<br><small>WO: ${esc(f.openWOs)}</small>`:""}</td></tr>`;
+            };
+            const section = (title, rows, cls) => {
+              if(!rows.length) return "";
+              return `<div class="section"><h2 class="${cls}">${esc(title)} (${rows.length})</h2><table><tr><th>Equip #</th><th>Nomenclature / Location</th><th>Status</th><th>Make/Model</th><th>Serial #</th><th>EIL #</th><th>Fault Date</th><th>Fault / Deficiency / Open WO Description</th></tr>${rows.map(rowHtml).join("")}</table></div>`;
+            };
             const oos = reportEqs.filter(e=>e.status==="Out of Service / Deadline");
             const def = reportEqs.filter(e=>e.status==="Operational with Deficiencies");
-            if(oos.length){
-              win.document.write(`<div class="section"><h2 class="red">🚨 Out of Service / Deadline (${oos.length})</h2><table><tr><th>Nomenclature</th><th>Make/Model</th><th>Serial #</th><th>EIL #</th><th>Fault Date</th><th>Description</th></tr>`);
-              oos.forEach(e=>{ const f=faultInfo(e); win.document.write(`<tr><td><b>${e.name}</b></td><td>${e.make||""} ${e.model||""}</td><td>${e.serial||"—"}</td><td>${e.eilNumber||"—"}</td><td>${f.faultDate||"—"}</td><td>${f.description||"—"}${f.openWOs?`<br><small style="color:#666">WO: ${f.openWOs}</small>`:""}</td></tr>`); });
-              win.document.write(`</table></div>`);
-            }
-            if(def.length){
-              win.document.write(`<div class="section"><h2 class="yellow">⚠️ Operational with Deficiencies (${def.length})</h2><table><tr><th>Nomenclature</th><th>Make/Model</th><th>Serial #</th><th>EIL #</th><th>Fault Date</th><th>Description</th></tr>`);
-              def.forEach(e=>{ const f=faultInfo(e); win.document.write(`<tr><td><b>${e.name}</b></td><td>${e.make||""} ${e.model||""}</td><td>${e.serial||"—"}</td><td>${e.eilNumber||"—"}</td><td>${f.faultDate||"—"}</td><td>${f.description||"—"}${f.openWOs?`<br><small style="color:#666">WO: ${f.openWOs}</small>`:""}</td></tr>`); });
-              win.document.write(`</table></div>`);
-            }
-            if(!oos.length&&!def.length) win.document.write(`<p>No equipment in deadline or deficiency status.</p>`);
+            const full = reportEqs.filter(e=>(e.status||"Fully Operational")==="Fully Operational");
+            const other = reportEqs.filter(e=>!["Out of Service / Deadline","Operational with Deficiencies","Fully Operational",""] .includes(e.status||""));
+            win.document.write(`<html><head><title>Equipment Status Report</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111;background:#fff}h1{font-size:22px;margin:0 0 4px}p{font-size:12px;color:#666;margin:0 0 18px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0 22px}.box{border:1px solid #e5e7eb;border-radius:12px;padding:12px;background:#f9fafb}.num{font-size:24px;font-weight:800}.label{font-size:11px;color:#667085;text-transform:uppercase;letter-spacing:.4px}.section{margin-bottom:26px}h2{font-size:14px;margin:0 0 8px;padding:8px 10px;border-radius:8px}.red{background:#fee2e2;color:#7f1d1d}.yellow{background:#fef3c7;color:#92400e}.green{background:#dcfce7;color:#14532d}.blue{background:#dbeafe;color:#1e3a8a}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#f3f4f6;padding:8px 10px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.4px}td{padding:8px 10px;border-bottom:1px solid #e5e7eb;vertical-align:top}small{color:#667085}@media print{button{display:none}.summary{break-inside:avoid}.section{break-inside:auto}}</style></head><body>`);
+            win.document.write(`<h1>Equipment Status Report</h1><p>Generated: ${new Date().toLocaleDateString()} — NCA Maintenance Manager</p>`);
+            win.document.write(`<div class="summary"><div class="box"><div class="num">${allEquipment.length}</div><div class="label">Total Equipment</div></div><div class="box"><div class="num" style="color:#7f1d1d">${oos.length}</div><div class="label">Out of Service / Deadline</div></div><div class="box"><div class="num" style="color:#92400e">${def.length}</div><div class="label">Operational w/ Deficiencies</div></div><div class="box"><div class="num" style="color:#14532d">${full.length}</div><div class="label">Fully Operational</div></div></div>`);
+            win.document.write(section("🚨 Out of Service / Deadline", oos, "red"));
+            win.document.write(section("⚠️ Operational with Deficiencies", def, "yellow"));
+            win.document.write(section("✅ Fully Operational", full, "green"));
+            win.document.write(section("ℹ️ Other Status", other, "blue"));
+            if(!reportEqs.length) win.document.write(`<p>No equipment found.</p>`);
             win.document.write(reportButtonsHtml(exportRows)+`</body></html>`);
             win.document.close();
-          }}>🖨 Deadline Report</Btn>
+          }}>🖨 Equipment Status Report</Btn>
           <Btn onClick={openAdd}>+ Add New Equipment</Btn>
         </div>
         <div style={{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"flex-end" }}>
@@ -3396,8 +3419,8 @@ function Inspections({ state, dispatch }) {
             <Field label="Upload Existing Inspection Sheet"><input style={inp} type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,image/*" onChange={e=>addTaskFiles(e.target.files)} /></Field>
             {(taskForm.attachments||[]).length>0 && <div style={{ display:"grid", gap:6 }}>{taskForm.attachments.map(a=><div key={a.id||a.name} style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center", padding:8, border:`1px solid ${T.border}`, borderRadius:10 }}><span style={{ fontSize:13 }}>{a.name}</span><Btn variant="danger" onClick={()=>removeTaskFile(a.id)}>Remove</Btn></div>)}</div>}
             <Field label="Inspection Steps / Checklist"><div style={{ display:"grid", gap:8 }}>
-              {stepLines(taskForm.steps).map((step,i)=><div key={i} style={{ display:"grid", gridTemplateColumns:"40px 1fr auto", gap:8, alignItems:"center" }}>
-                <b>{i+1}</b><input style={inp} value={step} autoFocus={i===stepLines(taskForm.steps).length-1 && step===""} onClick={e=>e.stopPropagation()} onChange={e=>updateStep(i,e.target.value)} placeholder="Start typing inspection step..." />
+              {stepLines(taskForm.steps).map((step,i,arr)=><div key={`step-${i}`} style={{ display:"grid", gridTemplateColumns:"40px 1fr auto", gap:8, alignItems:"center" }}>
+                <b>{i+1}</b><input style={inp} value={step} autoFocus={i===arr.length-1 && step===""} onClick={e=>e.stopPropagation()} onKeyDown={e=>e.stopPropagation()} onChange={e=>updateStep(i,e.target.value)} placeholder="Start typing inspection step..." />
                 <Btn variant="danger" onClick={()=>removeStep(i)}>X</Btn>
               </div>)}
               <Btn variant="secondary" onClick={addStep}>+ Add Step Line</Btn>
@@ -3448,6 +3471,20 @@ function PM({ state, dispatch }) {
   const F  = k => e => setForm(f=>({...f,[k]:e.target.value}));
   const SF = k => e => setSchForm(f=>({...f,[k]:e.target.value}));
 
+  // Keeps pasted text exactly as pasted. This prevents browser/handler issues where spaces
+  // disappear from task descriptions and step lines.
+  const pasteIntoText = (setter) => (e) => {
+    const text = e.clipboardData?.getData("text/plain");
+    if(text == null) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    const start = el.selectionStart ?? String(el.value||"").length;
+    const end = el.selectionEnd ?? start;
+    const next = String(el.value||"").slice(0,start) + text + String(el.value||"").slice(end);
+    setter(next);
+    requestAnimationFrame(()=>{ try { el.selectionStart = el.selectionEnd = start + text.length; } catch(_) {} });
+  };
+
   const pmTasks  = state.pmTasks    || [];
   const schedules = state.pmSchedules || [];
   const selectedLibraryTask = pmTasks.find(t=>t.id===selectedTaskId) || pmTasks[0] || null;
@@ -3464,7 +3501,48 @@ function PM({ state, dispatch }) {
     return d.toISOString().split("T")[0];
   };
 
-  /* Check if a schedule should trigger - pure computation */
+  const normalizeTaskTriggers = (taskOrSchedule) => {
+    const raw = Array.isArray(taskOrSchedule?.triggers) && taskOrSchedule.triggers.length
+      ? taskOrSchedule.triggers
+      : [{
+          type: taskOrSchedule?.triggerType === "usage" ? (taskOrSchedule?.usageType || "hours") : "time",
+          timeInterval: taskOrSchedule?.timeInterval || "",
+          timeUnit: taskOrSchedule?.timeUnit || "months",
+          usageInterval: taskOrSchedule?.usageInterval || "",
+          usageMode: "every",
+        }];
+    return raw
+      .map(t=>({
+        type: t.type || "time",
+        timeInterval: t.timeInterval || "",
+        timeUnit: t.timeUnit || "months",
+        usageInterval: t.usageInterval || "",
+        usageMode: t.usageMode || "every",
+        nextDueDate: t.nextDueDate || "",
+        nextDueUsage: t.nextDueUsage || "",
+      }))
+      .filter(t=> t.type==="time" ? !!t.timeInterval : !!t.usageInterval);
+  };
+
+  const currentUsageFor = (equipmentId, type="hours") => {
+    const logs = (state.usageLogs||[]).filter(l=>l.equipmentId===equipmentId);
+    const key = type === "mileage" ? "mileage" : "hours";
+    return Math.max(...logs.map(l=>+(l[key]||0)), 0);
+  };
+
+  const buildScheduleTriggers = (triggers, lastDate, lastUsage) => normalizeTaskTriggers({triggers}).map(t=>{
+    if(t.type === "time") return { ...t, nextDueDate: nextDueDate(lastDate, t.timeInterval, t.timeUnit), nextDueUsage:"" };
+    const base = +(lastUsage || 0);
+    return { ...t, nextDueDate:"", nextDueUsage: t.usageMode==="at" ? +(t.usageInterval||0) : base + +(t.usageInterval||0) };
+  });
+
+  const advanceScheduleTriggers = (sch, doneDate=today(), doneUsage=null) => normalizeTaskTriggers(sch).map(t=>{
+    if(t.type === "time") return { ...t, nextDueDate: nextDueDate(doneDate, t.timeInterval, t.timeUnit), nextDueUsage:"" };
+    const usage = doneUsage ?? currentUsageFor(sch.equipmentId, t.type);
+    return { ...t, nextDueDate:"", nextDueUsage: t.usageMode==="at" ? +(t.usageInterval||0) : usage + +(t.usageInterval||0) };
+  });
+
+  /* Check if a schedule should trigger. Supports multiple triggers on the same PM task. */
   const shouldTrigger = (sch) => {
     try {
       if(!sch.equipmentId) return false;
@@ -3474,16 +3552,16 @@ function PM({ state, dispatch }) {
         (w.status==="Open"||w.status==="In Progress")
       );
       if(alreadyOpen) return false;
-      if((sch.triggerType==="time"||sch.triggerType==="both") && sch.nextDueDate) {
-        if(today() >= sch.nextDueDate) return true;
-      }
-      if((sch.triggerType==="usage"||sch.triggerType==="both") && sch.nextDueUsage) {
-        const logs   = (state.usageLogs||[]).filter(l=>l.equipmentId===sch.equipmentId);
-        const totalH  = logs.reduce((s,l)=>s+(+(l.hours||0)),0);
-        const totalMi = logs.reduce((s,l)=>s+(+(l.mileage||0)),0);
-        const usage   = sch.usageType==="mileage" ? totalMi : totalH;
-        if(usage >= +sch.nextDueUsage) return true;
-      }
+      const triggersToCheck = normalizeTaskTriggers(sch);
+      return triggersToCheck.some(t=>{
+        if(t.type==="time") {
+          const dueDate = t.nextDueDate || sch.nextDueDate;
+          return !!dueDate && today() >= dueDate;
+        }
+        const usage = currentUsageFor(sch.equipmentId, t.type);
+        const dueUsage = t.nextDueUsage || sch.nextDueUsage;
+        return !!dueUsage && usage >= +dueUsage;
+      });
     } catch(e) { /* swallow any errors in trigger check */ }
     return false;
   };
@@ -3513,11 +3591,13 @@ function PM({ state, dispatch }) {
         mechanicNotes:"", faultEnabled:true, faultDescription:sch.task||"Service", partsUsed:[], scheduleId:sch.id,
         usageType:sch.usageType||"hours", usageHours:(sch.usageType==="hours"?curUsage:""), usageMileage:(sch.usageType==="mileage"?curUsage:""), usageNA:!(eq?.trackUsage),
       }});
+      const advancedTriggers = advanceScheduleTriggers(sch, today(), curUsage);
       dispatch({type:"UPDATE_PM_SCHEDULE", payload:{
         ...sch,
+        triggers: advancedTriggers,
         lastDoneDate:today(), lastDoneUsage:curUsage,
-        nextDueDate:  nextDueDate(today(), sch.timeInterval, sch.timeUnit),
-        nextDueUsage: sch.usageInterval ? curUsage+(+sch.usageInterval) : sch.nextDueUsage,
+        nextDueDate: advancedTriggers.find(t=>t.type==="time")?.nextDueDate || "",
+        nextDueUsage: advancedTriggers.find(t=>t.type==="hours"||t.type==="mileage")?.nextDueUsage || "",
       }});
     });
   }, []); /* run once on mount only */
@@ -3552,11 +3632,12 @@ function PM({ state, dispatch }) {
   const save = () => { dispatch({type:"UPDATE_PM", payload:form}); setModal(null); };
 
   const getTaskTriggerSettings = (task) => {
-    const triggers = (task?.triggers||[]).filter(Boolean);
+    const triggers = normalizeTaskTriggers(task);
     const timeTrig  = triggers.find(t=>t.type==="time") || null;
     const usageTrig = triggers.find(t=>t.type==="hours" || t.type==="mileage") || null;
     const triggerType = timeTrig && usageTrig ? "both" : usageTrig ? "usage" : "time";
     return {
+      triggers,
       triggerType,
       timeInterval: timeTrig?.timeInterval || "",
       timeUnit: timeTrig?.timeUnit || "months",
@@ -3582,10 +3663,12 @@ function PM({ state, dispatch }) {
     if(!selectedTask) return alert("Pick a named PM task first. The trigger is controlled by the task.");
     const trig = getTaskTriggerSettings(selectedTask);
     const schedulePayload = { ...schForm, task:selectedTask.name, ...trig };
-    const nextDate  = schedulePayload.triggerType!=="usage" ? nextDueDate(schedulePayload.lastDoneDate, schedulePayload.timeInterval, schedulePayload.timeUnit) : "";
-    const nextUsage = schedulePayload.triggerType!=="time"  ? (+(schedulePayload.lastDoneUsage||0))+(+(schedulePayload.usageInterval||0)) : "";
+    const nextTriggers = buildScheduleTriggers(schedulePayload.triggers, schedulePayload.lastDoneDate, schedulePayload.lastDoneUsage);
+    const nextDate  = nextTriggers.find(t=>t.type==="time")?.nextDueDate || "";
+    const nextUsage = nextTriggers.find(t=>t.type==="hours"||t.type==="mileage")?.nextDueUsage || "";
     dispatch({type:"ADD_PM_SCHEDULE", payload:{
       ...schedulePayload, id:genId("SCH"),
+      triggers:nextTriggers,
       nextDueDate:nextDate, nextDueUsage:nextUsage,
       created:today(),
     }});
@@ -3658,6 +3741,51 @@ function PM({ state, dispatch }) {
   };
 
   const delSchedule = id => { if(confirm("Delete this maintenance schedule?")) dispatch({type:"DELETE_PM_SCHEDULE",payload:id}); };
+
+
+  const getAssignedPMRows = () => schedules.map(s=>{
+    const task = pmTasks.find(t=>t.id===s.taskId) || {};
+    const eq = state.equipment.find(e=>e.id===s.equipmentId) || {};
+    const triggers = normalizeTaskTriggers(s).length ? normalizeTaskTriggers(s) : normalizeTaskTriggers(task);
+    const dueBits = triggers.map(t=>{
+      if(t.type==="time") return `Date ${t.nextDueDate || s.nextDueDate || "—"}`;
+      const unit = t.type==="mileage" ? "mi" : "hrs";
+      return `${t.nextDueUsage || s.nextDueUsage || "—"} ${unit}`;
+    }).filter(Boolean);
+    const isOverdue = triggers.some(t=>{
+      if(t.type==="time") {
+        const d = t.nextDueDate || s.nextDueDate;
+        return !!d && today() >= d;
+      }
+      const due = +(t.nextDueUsage || s.nextDueUsage || 0);
+      return !!due && currentUsageFor(s.equipmentId, t.type) >= due;
+    });
+    const soonLimit = new Date();
+    soonLimit.setDate(soonLimit.getDate()+30);
+    const dueSoon = !isOverdue && triggers.some(t=>{
+      if(t.type!=="time") return false;
+      const d = t.nextDueDate || s.nextDueDate;
+      if(!d) return false;
+      const dt = new Date(d);
+      return dt <= soonLimit;
+    });
+    return {
+      ...s,
+      eqName: eq.name || s.equipmentId || "—",
+      taskName: task.name || s.task || "PM Task",
+      taskDescription: task.description || "",
+      triggerText: describeTaskTriggers(task),
+      nextDueText: dueBits.length ? dueBits.join(" • ") : "—",
+      currentHours: currentUsageFor(s.equipmentId, "hours"),
+      currentMileage: currentUsageFor(s.equipmentId, "mileage"),
+      status: isOverdue ? "Overdue" : dueSoon ? "Due Soon" : "OK",
+    };
+  }).sort((a,b)=>{
+    const order = { Overdue:0, "Due Soon":1, OK:2 };
+    return ((order[a.status] ?? 3) - (order[b.status] ?? 3)) || String(a.eqName).localeCompare(String(b.eqName));
+  });
+
+  const assignedPMRows = getAssignedPMRows();
 
   /* Task library */
   const openNewTask = () => { setEditTaskId(null); setTaskForm(blankTaskForm()); setTaskModal(true); };
@@ -3751,6 +3879,51 @@ function PM({ state, dispatch }) {
         <div style={{ display:"flex", gap:8 }}><Btn variant="secondary" onClick={openNewTask}>+ Create New Task</Btn>{selectedLibraryTask&&<Btn variant="secondary" onClick={()=>copyPMTask(selectedLibraryTask)}>Copy Selected Task</Btn>}</div>
         <Btn onClick={()=>setModal("schedule")}>Task-to-Equipment</Btn>
         <Btn variant="secondary" onClick={()=>setModal("manualTrigger")}>Manual Trigger</Btn>
+      </div>
+
+
+      <div style={{ border:`1px solid ${T.border}`, borderRadius:14, background:"#fff", overflow:"hidden", marginBottom:18, boxShadow:"0 1px 2px rgba(15,23,42,.04)" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"center", padding:"12px 14px", background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
+          <div>
+            <h3 style={{ margin:0, fontFamily:T.sans, fontSize:16, color:T.text }}>Assigned Preventive Maintenance</h3>
+            <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>PM tasks currently linked to equipment, like the inspection assignments list.</div>
+          </div>
+          <div style={{ fontFamily:T.mono, fontSize:11, color:T.muted }}>{assignedPMRows.length} assigned</div>
+        </div>
+        {assignedPMRows.length===0 ? (
+          <div style={{ padding:18, fontFamily:T.sans, fontSize:13, color:T.muted }}>
+            No PM tasks assigned yet. Use <b>Task-to-Equipment</b> to link a PM task to a piece of equipment.
+          </div>
+        ) : (
+          <div style={{ overflow:"auto" }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:12, minWidth:900 }}>
+              <thead>
+                <tr style={{ background:"#f8fafc", borderBottom:`1px solid ${T.border}` }}>
+                  {["Equipment","PM Task","Triggers","Next Due","Current Usage","Status","Actions"].map(h=>(
+                    <th key={h} style={{ padding:"9px 10px", textAlign:"left", fontSize:10, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, whiteSpace:"nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {assignedPMRows.map(r=>(
+                  <tr key={r.id} style={{ borderBottom:`1px solid ${T.border}`, background:r.status==="Overdue"?"#fff1f2":r.status==="Due Soon"?"#fffbeb":"#fff" }}>
+                    <td style={{ padding:"10px", fontWeight:800, color:T.text, whiteSpace:"nowrap" }}>{r.eqName}<div style={{ fontFamily:T.mono, fontSize:10, color:T.muted, marginTop:2 }}>{r.equipmentId}</div></td>
+                    <td style={{ padding:"10px", color:T.subtext, minWidth:180 }}><b style={{ color:T.text }}>{r.taskName}</b>{r.taskDescription&&<div style={{ fontSize:11, color:T.muted, marginTop:2 }}>{r.taskDescription}</div>}</td>
+                    <td style={{ padding:"10px", color:T.subtext, minWidth:180 }}>{r.triggerText}</td>
+                    <td style={{ padding:"10px", fontFamily:T.mono, fontSize:11, color:T.text, minWidth:150 }}>{r.nextDueText}</td>
+                    <td style={{ padding:"10px", fontFamily:T.mono, fontSize:11, color:T.subtext, whiteSpace:"nowrap" }}>{r.currentHours} hrs • {r.currentMileage} mi</td>
+                    <td style={{ padding:"10px", whiteSpace:"nowrap" }}><span style={{ borderRadius:999, padding:"3px 9px", fontFamily:T.sans, fontSize:11, fontWeight:800, color:r.status==="Overdue"?T.red:r.status==="Due Soon"?T.amber:T.green, background:r.status==="Overdue"?"#fee2e2":r.status==="Due Soon"?"#fef3c7":"#dcfce7" }}>{r.status}</span></td>
+                    <td style={{ padding:"8px 10px", whiteSpace:"nowrap" }}>
+                      <Btn small onClick={()=>createPMWorkOrderFromSchedule(r, true)}>Create WO</Btn>
+                      <Btn small variant="secondary" onClick={()=>{ setSchForm({...r}); setModal("schedule"); }} style={{ marginLeft:6 }}>Edit</Btn>
+                      <Btn small variant="danger" onClick={()=>delSchedule(r.id)} style={{ marginLeft:6 }}>Del</Btn>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Tasks Library Modal */}
@@ -3878,14 +4051,14 @@ function PM({ state, dispatch }) {
         <Modal title={editTaskId?"Edit Task":"Create PM Task"} onClose={()=>{ setTaskModal(false); setEditTaskId(null); setTaskForm(blankTaskForm()); }}>
           <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.subtext }}>Create a reusable service task with steps and parts. Attach it to equipment using Task-to-Equipment.</p>
           <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-            <Field label="Task Name"><input style={inp} value={taskForm.name} onChange={e=>setTaskForm(f=>({...f,name:e.target.value}))} placeholder="e.g. 500-Hour Service, Annual Inspection" /></Field>
-            <Field label="Description"><textarea style={{ ...inp, minHeight:50, resize:"vertical" }} value={taskForm.description} onChange={e=>setTaskForm(f=>({...f,description:e.target.value}))} placeholder="Brief description..." /></Field>
+            <Field label="Task Name"><input style={inp} value={taskForm.name} onPaste={pasteIntoText(v=>setTaskForm(f=>({...f,name:v})))} onChange={e=>setTaskForm(f=>({...f,name:e.target.value}))} placeholder="e.g. 500-Hour Service, Annual Inspection" /></Field>
+            <Field label="Description"><textarea style={{ ...inp, minHeight:50, resize:"vertical" }} value={taskForm.description} onPaste={pasteIntoText(v=>setTaskForm(f=>({...f,description:v})))} onChange={e=>setTaskForm(f=>({...f,description:e.target.value}))} placeholder="Brief description..." /></Field>
             <div>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:8 }}>Service Steps</label>
               {(taskForm.steps||[""]).map((step,i)=>(
                 <div key={i} style={{ display:"flex", gap:6, marginBottom:6, alignItems:"center" }}>
                   <span style={{ fontFamily:T.mono, fontSize:11, color:T.muted, minWidth:20 }}>{i+1}.</span>
-                  <input style={{ ...inp, flex:1 }} value={step} autoFocus={i===(taskForm.steps||[]).length-1 && step===""} onChange={e=>setStep(i,e.target.value)} placeholder={`Step ${i+1}...`} />
+                  <input style={{ ...inp, flex:1 }} value={step} autoFocus={i===(taskForm.steps||[]).length-1 && step===""} onPaste={pasteIntoText(v=>setStep(i,v))} onChange={e=>setStep(i,e.target.value)} placeholder={`Step ${i+1}...`} />
                   {(taskForm.steps||[]).length>1&&<button onClick={()=>delStep(i)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
                 </div>
               ))}
@@ -3898,7 +4071,7 @@ function PM({ state, dispatch }) {
               </div>
               {(taskForm.parts||[]).map((p,i)=>(
                 <div key={i} style={{ display:"grid", gridTemplateColumns:"1fr 80px 80px auto", gap:6, marginBottom:6, alignItems:"center" }}>
-                  <input style={inp} placeholder="e.g. Engine Oil, Air Filter..." value={p.name} onChange={e=>setTaskPart(i,"name",e.target.value)} />
+                  <input style={inp} placeholder="e.g. Engine Oil, Air Filter..." value={p.name} onPaste={pasteIntoText(v=>setTaskPart(i,"name",v))} onChange={e=>setTaskPart(i,"name",e.target.value)} />
                   <input style={inp} type="number" placeholder="5" value={p.qty} onChange={e=>setTaskPart(i,"qty",e.target.value)} />
                   <select style={sel} value={p.unit||"ea"} onChange={e=>setTaskPart(i,"unit",e.target.value)}>
                     {["ea","qt","gal","L","oz","lbs","ft","m","set","pk"].map(u=><option key={u} value={u}>{u}</option>)}
@@ -4033,12 +4206,11 @@ function PM({ state, dispatch }) {
           {schForm.equipmentId&&schForm.task&&(
             <div style={{ background:T.accentLt, border:`1px solid ${T.accent}44`, borderRadius:8, padding:"12px 14px", marginTop:8 }}>
               <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.accent, marginBottom:6 }}>Preview</div>
-              {(schForm.triggerType==="time"||schForm.triggerType==="both")&&schForm.timeInterval&&(
-                <div style={{ fontFamily:T.sans, fontSize:13, color:T.text, marginBottom:4 }}>Next due date: <b>{nextDueDate(schForm.lastDoneDate,schForm.timeInterval,schForm.timeUnit)||"—"}</b></div>
-              )}
-              {(schForm.triggerType==="usage"||schForm.triggerType==="both")&&schForm.usageInterval&&(
-                <div style={{ fontFamily:T.sans, fontSize:13, color:T.text }}>Next due at: <b>{(+(schForm.lastDoneUsage||0))+(+(schForm.usageInterval||0))} {schForm.usageType}</b></div>
-              )}
+              {buildScheduleTriggers((pmTasks.find(t=>t.id===schForm.taskId)?.triggers)||[], schForm.lastDoneDate, schForm.lastDoneUsage).map((tr,i)=>(
+                <div key={i} style={{ fontFamily:T.sans, fontSize:13, color:T.text, marginBottom:4 }}>
+                  {tr.type==="time" ? <>Next due date: <b>{tr.nextDueDate||"—"}</b> <span style={{ color:T.muted }}>({tr.timeInterval} {tr.timeUnit})</span></> : <>Next due at: <b>{tr.nextDueUsage||"—"} {tr.type}</b></>}
+                </div>
+              ))}
             </div>
           )}
           <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
