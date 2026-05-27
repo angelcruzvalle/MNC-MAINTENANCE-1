@@ -191,6 +191,7 @@ function reducer(state, { type, payload }) {
     case "UPDATE_TECH":   return { ...state, technicians: (state.technicians||[]).map(t => t.id===payload.id ? payload : t) };
     case "ADD_CATEGORY":  return { ...state, categories: [...new Set([...(state.categories||[]), payload])] };
     case "ADD_USAGE_LOG": return { ...state, usageLogs: [...(state.usageLogs||[]), payload] };
+    case "UPDATE_USAGE_LOG": return { ...state, usageLogs: (state.usageLogs||[]).map(u=>u.id===payload.id?{...u,...payload}:u) };
     case "DELETE_USAGE_LOG": return { ...state, usageLogs: (state.usageLogs||[]).filter(u=>u.id!==payload) };
     case "UPDATE_SETTINGS": return { ...state, settings: payload };
     case "COMPLETE_SETUP":  return { ...state, settings: payload.settings, profile: payload.profile, technicians: payload.technicians, categories: payload.categories, setupComplete: true };
@@ -3105,7 +3106,7 @@ function Inspections({ state, dispatch }) {
 
   const taskById = id => tasks.find(t=>t.id===id) || null;
   const eqById = id => equipment.find(e=>e.id===id) || null;
-  const stepLines = (txt="") => String(txt||"").split(/\n+/).map(x=>x.trim()).filter(Boolean);
+  const stepLines = (txt="") => String(txt||"").split(/\n/).filter((x,i,arr)=>x.trim() || arr.length===1);
 
   const openTask = (task=null) => {
     const base = task || { id:null, name:"", frequency:"Monthly", steps:"", notes:"", attachments:[] };
@@ -3379,7 +3380,7 @@ function Inspections({ state, dispatch }) {
             {(taskForm.attachments||[]).length>0 && <div style={{ display:"grid", gap:6 }}>{taskForm.attachments.map(a=><div key={a.id||a.name} style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center", padding:8, border:`1px solid ${T.border}`, borderRadius:10 }}><span style={{ fontSize:13 }}>{a.name}</span><Btn variant="danger" onClick={()=>removeTaskFile(a.id)}>Remove</Btn></div>)}</div>}
             <Field label="Inspection Steps / Checklist"><div style={{ display:"grid", gap:8 }}>
               {stepLines(taskForm.steps).map((step,i)=><div key={i} style={{ display:"grid", gridTemplateColumns:"40px 1fr auto", gap:8, alignItems:"center" }}>
-                <b>{i+1}</b><input style={inp} value={step} onClick={e=>e.stopPropagation()} onKeyDown={e=>e.stopPropagation()} onChange={e=>updateStep(i,e.target.value)} placeholder="Inspection step" />
+                <b>{i+1}</b><input style={inp} value={step} onClick={e=>e.stopPropagation()} onKeyDownCapture={e=>e.stopPropagation()} onKeyDown={e=>e.stopPropagation()} onChange={e=>updateStep(i,e.target.value)} placeholder="Inspection step" />
                 <Btn variant="danger" onClick={()=>removeStep(i)}>X</Btn>
               </div>)}
               <Btn variant="secondary" onClick={addStep}>+ Add Step Line</Btn>
@@ -4335,12 +4336,14 @@ function WOSettings({ state, dispatch, onClose }) {
 
 function UsageTracking({ state, dispatch }) {
   const [detailEq, setDetailEq]    = useState(null); /* equipment id for detail modal */
+  const [editLog, setEditLog]      = useState(null); /* usage log being corrected */
   const [entry, setEntry]          = useState({});   /* {[eqId]: {hours, mileage, fuel, notes, date}} */
 
   const trackableEq = state.equipment.filter(e=>e.trackUsage);
   const allLogs     = state.usageLogs || [];
 
   const logsFor  = (eqId) => allLogs.filter(l=>l.equipmentId===eqId).sort((a,b)=>b.date.localeCompare(a.date));
+  const latestLogFor = (eqId) => logsFor(eqId)[0] || null;
   /* Current reading = most recent log entry value (not cumulative) */
   const currentOf = (eqId, field) => {
     const logs = logsFor(eqId);
@@ -4361,6 +4364,37 @@ function UsageTracking({ state, dispatch }) {
   };
 
   const del = id => { if(confirm("Delete this entry?")) dispatch({type:"DELETE_USAGE_LOG", payload:id}); };
+
+  const saveEditLog = () => {
+    if(!editLog) return;
+    if(!String(editLog.hours||"").trim() && !String(editLog.mileage||"").trim() && !String(editLog.fuel||"").trim()) {
+      alert("Enter at least one value, or delete the log instead.");
+      return;
+    }
+    dispatch({ type:"UPDATE_USAGE_LOG", payload:editLog });
+    setEditLog(null);
+  };
+
+  const renderEditUsageModal = () => {
+    if(!editLog) return null;
+    const eq = state.equipment.find(e=>e.id===editLog.equipmentId);
+    const mode = eq?.usageType || "both";
+    const showH = mode==="hours" || mode==="both";
+    const showM = mode==="mileage" || mode==="both";
+    return (
+      <Modal title={(eq?.name || "Equipment") + " — Correct Usage Entry"} onClose={()=>setEditLog(null)}>
+        <div style={{ display:"grid", gap:12 }}>
+          <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>Use this only to correct a wrong entry. This updates the selected usage history record.</div>
+          <Field label="Date"><input style={inp} type="date" value={editLog.date||today()} onChange={e=>setEditLog(l=>({...l,date:e.target.value}))} /></Field>
+          {showH && <Field label="Hours"><input style={inp} type="number" step="0.1" value={editLog.hours||""} onChange={e=>setEditLog(l=>({...l,hours:e.target.value}))} /></Field>}
+          {showM && <Field label="Mileage"><input style={inp} type="number" step="1" value={editLog.mileage||""} onChange={e=>setEditLog(l=>({...l,mileage:e.target.value}))} /></Field>}
+          <Field label="Fuel Added (gal)"><input style={inp} type="number" step="0.1" value={editLog.fuel||""} onChange={e=>setEditLog(l=>({...l,fuel:e.target.value}))} /></Field>
+          <Field label="Notes"><textarea style={{...inp,minHeight:70}} value={editLog.notes||""} onChange={e=>setEditLog(l=>({...l,notes:e.target.value}))} /></Field>
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}><Btn variant="secondary" onClick={()=>setEditLog(null)}>Cancel</Btn><Btn onClick={saveEditLog}>Save Correction</Btn></div>
+        </div>
+      </Modal>
+    );
+  };
 
   /* Detail modal for an equipment */
   const renderDetailModal = (eqId) => {
@@ -4410,6 +4444,7 @@ function UsageTracking({ state, dispatch }) {
                 <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, color:l.fuel?"#7c3aed":T.muted }}>{l.fuel||"—"}</td>
                 <td style={{ padding:"8px 12px", color:T.subtext, fontSize:12 }}>{l.notes||""}</td>
                 <td style={{ padding:"8px 12px" }}>
+                  <button onClick={()=>setEditLog({...l})} title="Edit usage entry" style={{ background:"none", border:"none", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:14, fontWeight:700, marginRight:8 }}>✏️</button>
                   <button onClick={()=>del(l.id)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>Del</button>
                 </td>
               </tr>
@@ -4434,11 +4469,12 @@ function UsageTracking({ state, dispatch }) {
   return (
     <div>
       {detailEq && renderDetailModal(detailEq)}
+      {editLog && renderEditUsageModal()}
 
       <Card style={{ padding:0, overflow:"hidden" }}>
         {/* Table header */}
-        <div style={{ display:"grid", gridTemplateColumns:"220px 80px 120px 120px 80px 1fr 110px 110px 40px", background:T.grayLt, borderBottom:`2px solid ${T.borderHi}`, padding:"9px 16px", gap:8, alignItems:"center" }}>
-          {["Equipment","Equip #","Current Hours","Current Miles","Fuel (gal)","Notes","Date","Track by",""].map(h=>(
+        <div style={{ display:"grid", gridTemplateColumns:"220px 80px 120px 120px 80px 1fr 110px 110px 76px", background:T.grayLt, borderBottom:`2px solid ${T.borderHi}`, padding:"9px 16px", gap:8, alignItems:"center" }}>
+          {["Equipment","Equip #","Current Hours","Current Miles","Fuel (gal)","Notes","Date","Track by","Actions"].map(h=>(
             <div key={h} style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>{h}</div>
           ))}
         </div>
@@ -4459,7 +4495,7 @@ function UsageTracking({ state, dispatch }) {
             <div key={eq.id} style={{ borderBottom:`1px solid ${T.border}`, background:idx%2===0?rs.bg:"#fafbfc", borderLeft:rs.left }}>
 
               {/* Data row */}
-              <div style={{ display:"grid", gridTemplateColumns:"220px 80px 120px 120px 80px 1fr 110px 110px 40px", padding:"10px 16px", gap:8, alignItems:"center" }}>
+              <div style={{ display:"grid", gridTemplateColumns:"220px 80px 120px 120px 80px 1fr 110px 110px 76px", padding:"10px 16px", gap:8, alignItems:"center" }}>
 
                 {/* Equipment name — click to open detail */}
                 <button onClick={()=>setDetailEq(eq.id)} style={{ background:"none", border:"none", cursor:"pointer", textAlign:"left", padding:0 }}>
@@ -4502,12 +4538,15 @@ function UsageTracking({ state, dispatch }) {
                   ))}
                 </div>
 
-                {/* Log entry count */}
-                <div style={{ fontFamily:T.mono, fontSize:11, color:T.muted, textAlign:"center" }}>{logsFor(eq.id).length} logs</div>
+                {/* Usage actions */}
+                <div style={{ display:"flex", justifyContent:"center", gap:4 }}>
+                  <button title="Edit latest usage entry" onClick={()=>{ const last=latestLogFor(eq.id); if(last) setEditLog({...last}); else alert("No usage history to edit yet."); }} style={{ border:`1px solid ${T.border}`, background:"#fff", borderRadius:6, cursor:"pointer", padding:"4px 6px", fontSize:13 }}>✏️</button>
+                  <button title="Usage history" onClick={()=>setDetailEq(eq.id)} style={{ border:`1px solid ${T.border}`, background:"#fff", borderRadius:6, cursor:"pointer", padding:"4px 6px", fontSize:13 }}>🕘</button>
+                </div>
               </div>
 
               {/* New entry input row */}
-              <div style={{ display:"grid", gridTemplateColumns:"220px 80px 120px 120px 80px 1fr 110px 110px 40px", padding:"6px 16px 10px", gap:8, alignItems:"center", background:"#f0f8ff", borderTop:`1px dashed ${T.border}` }}>
+              <div style={{ display:"grid", gridTemplateColumns:"220px 80px 120px 120px 80px 1fr 110px 110px 76px", padding:"6px 16px 10px", gap:8, alignItems:"center", background:"#f0f8ff", borderTop:`1px dashed ${T.border}` }}>
                 <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.accent, textTransform:"uppercase", letterSpacing:.5 }}>New Entry</div>
                 <div/>
                 {/* Hours input */}
@@ -4881,6 +4920,33 @@ function ReportUsage({ state }) {
   const currentHours   = (eqId) => { const l=logsFor(eqId).filter(x=>x.hours).pop(); return l?+(l.hours||0):0; };
   const currentMileage = (eqId) => { const l=logsFor(eqId).filter(x=>x.mileage).pop(); return l?+(l.mileage||0):0; };
   const totalFuel      = (eqId) => logsFor(eqId).reduce((s,l)=>s+(+(l.fuel||0)),0);
+  const dateOnly = d => new Date(String(d) + "T00:00:00");
+  const todayDate = new Date();
+  const monthStart = new Date(todayDate.getFullYear(), todayDate.getMonth(), 1);
+  const sixMonthStart = new Date(todayDate.getFullYear(), todayDate.getMonth() - 5, 1);
+  const fyStartYear = todayDate.getMonth() >= 9 ? todayDate.getFullYear() : todayDate.getFullYear() - 1;
+  const fyStart = new Date(fyStartYear, 9, 1);
+  const latestReading = (eqId, field, endDate=null) => {
+    const logs = logsFor(eqId).filter(l=>l[field] && (!endDate || dateOnly(l.date) <= endDate));
+    const last = logs[logs.length-1];
+    return last ? +(last[field]||0) : 0;
+  };
+  const firstReadingOnOrAfter = (eqId, field, startDate) => {
+    const logs = logsFor(eqId).filter(l=>l[field] && dateOnly(l.date) >= startDate);
+    const first = logs[0];
+    return first ? +(first[field]||0) : 0;
+  };
+  const usageDelta = (eqId, field, startDate) => {
+    const end = latestReading(eqId, field);
+    const start = latestReading(eqId, field, new Date(startDate.getTime()-86400000)) || firstReadingOnOrAfter(eqId, field, startDate);
+    return Math.max(0, end - start);
+  };
+  const usageStats = (eqId, field) => ({
+    current: latestReading(eqId, field),
+    month: usageDelta(eqId, field, monthStart),
+    sixMonths: usageDelta(eqId, field, sixMonthStart),
+    fy: usageDelta(eqId, field, fyStart)
+  });
 
   /* Monthly breakdown */
   const byMonth = (eqId) => {
@@ -4908,7 +4974,9 @@ function ReportUsage({ state }) {
       const mode=eq.usageType||"hours";
       const months=byMonth(eq.id);
       body += `<h2>${eq.name} (${eq.id}) — ${eq.category||""}</h2>`;
-      body += `<p style="font-size:11px;color:#666">Current Hours: <b>${currentHours(eq.id)}</b> | Current Mileage: <b>${currentMileage(eq.id).toLocaleString()}</b> | Total Fuel: <b>${totalFuel(eq.id).toFixed(1)} gal</b> | Log Entries: <b>${logsFor(eq.id).length}</b></p>`;
+      const hStats = usageStats(eq.id,"hours");
+      const mStats = usageStats(eq.id,"mileage");
+      body += `<p style="font-size:11px;color:#666">Current Hours: <b>${hStats.current.toFixed(1)}</b> | Hours This Month: <b>${hStats.month.toFixed(1)}</b> | Hours Last 6 Months: <b>${hStats.sixMonths.toFixed(1)}</b> | Hours FY: <b>${hStats.fy.toFixed(1)}</b><br/>Current Mileage: <b>${mStats.current.toLocaleString()}</b> | Miles This Month: <b>${mStats.month.toLocaleString()}</b> | Miles Last 6 Months: <b>${mStats.sixMonths.toLocaleString()}</b> | Miles FY: <b>${mStats.fy.toLocaleString()}</b><br/>Total Fuel: <b>${totalFuel(eq.id).toFixed(1)} gal</b> | Log Entries: <b>${logsFor(eq.id).length}</b></p>`;
       body += `<table><tr><th>Month</th><th>Entries</th>${mode!=="mileage"?`<th>Hours (end of month)</th>`:""}${mode!=="hours"?`<th>Mileage (end of month)</th>`:""}${`<th>Fuel Added (gal)</th>`}</tr>`;
       Object.entries(months).sort().forEach(([m,d])=>{
         body+=`<tr><td>${m}</td><td>${d.count}</td>${mode!=="mileage"?`<td>${d.lastHours||"—"}</td>`:""}${mode!=="hours"?`<td>${d.lastMileage?d.lastMileage.toLocaleString():"—"}</td>`:""}${`<td>${d.fuel.toFixed(1)}</td>`}</tr>`;
@@ -4952,11 +5020,25 @@ function ReportUsage({ state }) {
             <Card key={eq.id} style={{ padding:"14px 16px" }}>
               <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text, marginBottom:4 }}>{eq.name}</div>
               <div style={{ fontFamily:T.mono, fontSize:10, color:T.muted, marginBottom:10 }}>{eq.id}</div>
-              <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-                {showH&&<div><div style={{ fontFamily:T.sans, fontSize:9, color:"#1e40af", fontWeight:700, textTransform:"uppercase" }}>Hours</div><div style={{ fontFamily:T.sans, fontSize:20, fontWeight:800, color:"#1e40af" }}>{currentHours(eq.id).toFixed(1)}</div></div>}
-                {showM&&<div><div style={{ fontFamily:T.sans, fontSize:9, color:T.green, fontWeight:700, textTransform:"uppercase" }}>Mileage</div><div style={{ fontFamily:T.sans, fontSize:20, fontWeight:800, color:T.green }}>{currentMileage(eq.id).toLocaleString()}</div></div>}
-                <div><div style={{ fontFamily:T.sans, fontSize:9, color:"#7c3aed", fontWeight:700, textTransform:"uppercase" }}>Fuel (gal)</div><div style={{ fontFamily:T.sans, fontSize:20, fontWeight:800, color:"#7c3aed" }}>{totalFuel(eq.id).toFixed(1)}</div></div>
-              </div>
+              {showH&&(()=>{ const s=usageStats(eq.id,"hours"); return <div style={{ marginBottom:10 }}>
+                <div style={{ fontFamily:T.sans, fontSize:9, color:"#1e40af", fontWeight:700, textTransform:"uppercase" }}>Hours Usage</div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:6, marginTop:4 }}>
+                  <div><small style={{ color:T.muted }}>Current</small><div style={{ fontWeight:800, color:"#1e40af" }}>{s.current.toFixed(1)}</div></div>
+                  <div><small style={{ color:T.muted }}>This Month</small><div style={{ fontWeight:800, color:"#1e40af" }}>{s.month.toFixed(1)}</div></div>
+                  <div><small style={{ color:T.muted }}>Last 6 Months</small><div style={{ fontWeight:800, color:"#1e40af" }}>{s.sixMonths.toFixed(1)}</div></div>
+                  <div><small style={{ color:T.muted }}>FY</small><div style={{ fontWeight:800, color:"#1e40af" }}>{s.fy.toFixed(1)}</div></div>
+                </div>
+              </div>; })()}
+              {showM&&(()=>{ const s=usageStats(eq.id,"mileage"); return <div style={{ marginBottom:10 }}>
+                <div style={{ fontFamily:T.sans, fontSize:9, color:T.green, fontWeight:700, textTransform:"uppercase" }}>Mileage Usage</div>
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:6, marginTop:4 }}>
+                  <div><small style={{ color:T.muted }}>Current</small><div style={{ fontWeight:800, color:T.green }}>{s.current.toLocaleString()}</div></div>
+                  <div><small style={{ color:T.muted }}>This Month</small><div style={{ fontWeight:800, color:T.green }}>{s.month.toLocaleString()}</div></div>
+                  <div><small style={{ color:T.muted }}>Last 6 Months</small><div style={{ fontWeight:800, color:T.green }}>{s.sixMonths.toLocaleString()}</div></div>
+                  <div><small style={{ color:T.muted }}>FY</small><div style={{ fontWeight:800, color:T.green }}>{s.fy.toLocaleString()}</div></div>
+                </div>
+              </div>; })()}
+              <div><div style={{ fontFamily:T.sans, fontSize:9, color:"#7c3aed", fontWeight:700, textTransform:"uppercase" }}>Fuel (gal)</div><div style={{ fontFamily:T.sans, fontSize:20, fontWeight:800, color:"#7c3aed" }}>{totalFuel(eq.id).toFixed(1)}</div></div>
               <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, marginTop:6 }}>{logsFor(eq.id).length} log entries</div>
             </Card>
           );
@@ -5198,12 +5280,15 @@ function ReportPM({ state }) {
 }
 
 function ReportSpending({ state }) {
-  const fy_start = new Date(new Date().getFullYear(), 9, 1); // Oct 1
-  const month_start = new Date(); month_start.setDate(1);
+  const now = new Date();
+  const fyYear = now.getMonth() >= 9 ? now.getFullYear() : now.getFullYear() - 1;
+  const fy_start = new Date(fyYear, 9, 1); // Federal FY starts Oct 1
+  const fy_end = new Date(fyYear + 1, 9, 1); // exclusive
+  const month_start = new Date(now.getFullYear(), now.getMonth(), 1);
   const wos = state.workOrders;
   const totalCost = (w) => (+w.laborCost||0)+(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0))+(+w.partsCost||0);
   const monthly = wos.filter(w=>w.completed&&new Date(w.completed)>=month_start);
-  const annual  = wos.filter(w=>w.completed&&new Date(w.completed)>=fy_start);
+  const annual  = wos.filter(w=>w.completed&&new Date(w.completed)>=fy_start&&new Date(w.completed)<fy_end);
   const monthTotal = monthly.reduce((s,w)=>s+totalCost(w),0);
   const fyTotal    = annual.reduce((s,w)=>s+totalCost(w),0);
 
