@@ -1063,12 +1063,19 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const allMechanics = [...new Set(state.workOrders.map(w=>w.tech).filter(Boolean))];
   const technicians = state.technicians || [];
 
-  /* Smart WO ID: EQ-001-01 */
-  const genWOId = (eqId) => {
+  /* Smart WO ID. Service WOs are numbered per equipment: EQID SVC 01, EQID SVC 02... */
+  const genWOId = (eqId, woType="Repair") => {
     const id = eqId || "GEN";
-    const existing = state.workOrders.filter(w=>w.id.startsWith(id+"-"));
-    const nums = existing.map(w=>parseInt(w.id.slice(id.length+1),10)||0);
-    return `${id}-${String(nums.length>0?Math.max(...nums)+1:1).padStart(2,"0")}`;
+    if (woType === "Service") {
+      const prefix = `${id} SVC `;
+      const existing = state.workOrders.filter(w => String(w.id || w.woNumber || "").startsWith(prefix));
+      const nums = existing.map(w => parseInt(String(w.id || w.woNumber || "").slice(prefix.length), 10)).filter(n => !Number.isNaN(n));
+      return `${prefix}${String(nums.length ? Math.max(...nums) + 1 : 1).padStart(2, "0")}`;
+    }
+    const prefix = `${id}-`;
+    const existing = state.workOrders.filter(w=>String(w.id || w.woNumber || "").startsWith(prefix));
+    const nums = existing.map(w=>parseInt(String(w.id || w.woNumber || "").slice(prefix.length),10)).filter(n => !Number.isNaN(n));
+    return `${prefix}${String(nums.length>0?Math.max(...nums)+1:1).padStart(2,"0")}`;
   };
 
   const buildTitle = (woType, interval) => {
@@ -1209,7 +1216,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         }, 0);
       }
     } else {
-      dispatch({type:"ADD_WO", payload:{...form, woType:"Repair", title:form.faultDescription||"Repair", faultEnabled:true, id:genWOId(form.equipment), partsCost:partsTotal}});
+      const nextType = form.woType || "Repair";
+      const nextId = genWOId(form.equipment, nextType);
+      dispatch({type:"ADD_WO", payload:{...form, woType:nextType, title:form.faultDescription||nextType, faultEnabled:true, id:nextId, woNumber:nextId, partsCost:partsTotal}});
     }
     setModal(null);
     setDetailWO(null);
@@ -6479,25 +6488,35 @@ export default function App() {
         tr:hover { background:${T.accentLt} !important; }
         @media print { .no-print { display:none !important; } }
         @media (max-width: 768px) {
-          body { overflow-x:hidden; }
-          #root { width:100%; overflow-x:hidden; }
+          html, body { width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+          #root { width:100%; min-width:0; overflow-x:visible; }
           header.no-print { height:auto !important; min-height:56px !important; padding:8px 10px !important; gap:8px !important; align-items:flex-start !important; }
           header.no-print > div:first-child { min-width:0 !important; flex:1 1 auto !important; gap:8px !important; flex-wrap:wrap !important; }
           header.no-print > div:last-child { gap:6px !important; flex-wrap:wrap !important; justify-content:flex-end !important; }
           header.no-print span, header.no-print button div + div { max-width:160px !important; overflow:hidden !important; text-overflow:ellipsis !important; white-space:nowrap !important; }
-          main { padding:12px 10px 80px !important; overflow-x:hidden !important; }
+          main { padding:12px 10px 90px !important; overflow-x:auto !important; -webkit-overflow-scrolling:touch; }
+          main > div { max-width:100%; min-width:0; }
           h1 { font-size:20px !important; }
-          table { min-width:680px; }
+          h2 { font-size:22px !important; }
+          table { min-width:760px; width:100%; }
           input, select, textarea, button { font-size:16px !important; }
           textarea { min-height:88px; }
-          button { min-height:38px; }
+          button { min-height:40px; touch-action:manipulation; }
           form, .modal, [role=dialog] { max-width:100vw !important; }
-          div[style*="grid-template-columns"] { grid-template-columns:1fr !important; }
+          div[style*="grid-template-columns:repeat(6"] { grid-template-columns:1fr !important; }
+          div[style*="grid-template-columns: repeat(6"] { grid-template-columns:1fr !important; }
+          div[style*="grid-template-columns:repeat(auto-fit"] { grid-template-columns:repeat(2,minmax(140px,1fr)) !important; }
           div[style*="width:420"] { width:100% !important; }
           div[style*="width: 420"] { width:100% !important; }
           div[style*="max-width: 1100"] { max-width:100% !important; }
           div[style*="maxWidth:1100"] { max-width:100% !important; }
-          div[style*="overflowX"] { -webkit-overflow-scrolling:touch; }
+          div[style*="overflowX"], div[style*="overflow-x"] { overflow-x:auto !important; -webkit-overflow-scrolling:touch; }
+          td, th { white-space:nowrap; }
+          p, div, span { overflow-wrap:anywhere; }
+        }
+        @media (max-width: 480px) {
+          div[style*="grid-template-columns:repeat(auto-fit"], div[style*="grid-template-columns:repeat(2"] { grid-template-columns:1fr !important; }
+          table { min-width:820px; }
         }
       `}</style>
 
