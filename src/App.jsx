@@ -1149,11 +1149,37 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const addNewPartToInventory = (rowIdx) => {
     if(!newPartForm.name) return alert("Part name required.");
-    const newPart = { ...newPartForm, id:genId("PT"), qty:+(newPartForm.qty||0), unitCost:+(newPartForm.unitCost||0), minQty:+(newPartForm.minQty||1) };
+    const requestedQty = +(newPartForm.requestedQty || newPartForm.qty || 1);
+    const newPart = { ...newPartForm, id:genId("PT"), qty:+(newPartForm.qty||requestedQty||0), unitCost:+(newPartForm.unitCost||0), minQty:+(newPartForm.minQty||1) };
+    delete newPart.requestedQty;
     dispatch({ type:"ADD_PART", payload:newPart });
-    setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[rowIdx]={name:newPart.name,qty:1,unitCost:newPart.unitCost,partId:newPart.id}; return {...f,partsUsed:arr}; });
+    setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[rowIdx]={name:newPart.name,qty:requestedQty||1,unitCost:newPart.unitCost,partId:newPart.id}; return {...f,partsUsed:arr}; });
     setNewPartForm({});
     setShowNewPart(null);
+  };
+
+  const partMatchesInventory = (partName) => {
+    const key = String(partName||"").trim().toLowerCase();
+    if(!key) return true;
+    return (state.parts||[]).some(pt =>
+      String(pt.name||"").trim().toLowerCase() === key ||
+      String(pt.partNumber||"").trim().toLowerCase() === key
+    );
+  };
+
+  const promptMissingPartInventory = () => {
+    const idx = (form.partsUsed||[]).findIndex(p => String(p?.name||"").trim() && !p.partId && !partMatchesInventory(p.name));
+    if(idx < 0) return false;
+    const p = (form.partsUsed||[])[idx] || {};
+    const partName = String(p.name||"").trim();
+    const addIt = confirm(`Part "${partName}" is not in stock / not found in inventory.\n\nDo you want to add this part to inventory now?`);
+    if(addIt){
+      setNewPartForm({ name:partName, partNumber:"", qty:p.qty||1, requestedQty:p.qty||1, minQty:1, unitCost:p.unitCost||"", category:"", vendor:"" });
+      setShowNewPart(idx);
+      alert("Add the stock quantity and price, then click Add & Use. Save the work order after that.");
+      return true;
+    }
+    return false;
   };
 
   const save = (isEdit) => {
@@ -1172,6 +1198,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
     const newParts  = (form.partsUsed||[]);
     const partsTotal = newParts.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
+    if(promptMissingPartInventory()) return;
     if(isEdit) {
       const payload = {...form, woType:form.woType||"Repair", title:form.faultDescription||form.woType||"Work Order", faultEnabled:true, partsCost:partsTotal};
       if(prevWO && payload.status !== prevWO.status && !confirmWOStatusChange(prevWO, payload.status)) return;
@@ -1501,7 +1528,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                 <input style={{ ...inp, textAlign:"center" }} type="number" min="1" placeholder="Qty" value={p.qty||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],qty:e.target.value}; return {...f,partsUsed:arr}; })} />
                 <input style={inp} type="number" min="0" step="0.01" placeholder="Unit $" value={p.unitCost||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],unitCost:e.target.value}; return {...f,partsUsed:arr}; })} />
                 <button onClick={()=>setShowNewPart(showNewPart===idx?null:idx)} style={{ padding:"6px 8px", border:`1px solid ${T.border}`, borderRadius:6, background:T.grayLt, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.accent, whiteSpace:"nowrap" }}>
-                  {showNewPart===idx?"Close":"Inv"}
+                  {showNewPart===idx?"Close":"Inventory"}
                 </button>
                 <button onClick={()=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr.splice(idx,1); return {...f,partsUsed:arr}; })} style={{ padding:"6px 10px", border:"1px solid #fca5a5", borderRadius:6, background:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>
               </div>
@@ -6451,6 +6478,27 @@ export default function App() {
         input:focus, select:focus, textarea:focus { border-color:${T.accent} !important; box-shadow:0 0 0 3px ${T.accentLt}; outline:none; }
         tr:hover { background:${T.accentLt} !important; }
         @media print { .no-print { display:none !important; } }
+        @media (max-width: 768px) {
+          body { overflow-x:hidden; }
+          #root { width:100%; overflow-x:hidden; }
+          header.no-print { height:auto !important; min-height:56px !important; padding:8px 10px !important; gap:8px !important; align-items:flex-start !important; }
+          header.no-print > div:first-child { min-width:0 !important; flex:1 1 auto !important; gap:8px !important; flex-wrap:wrap !important; }
+          header.no-print > div:last-child { gap:6px !important; flex-wrap:wrap !important; justify-content:flex-end !important; }
+          header.no-print span, header.no-print button div + div { max-width:160px !important; overflow:hidden !important; text-overflow:ellipsis !important; white-space:nowrap !important; }
+          main { padding:12px 10px 80px !important; overflow-x:hidden !important; }
+          h1 { font-size:20px !important; }
+          table { min-width:680px; }
+          input, select, textarea, button { font-size:16px !important; }
+          textarea { min-height:88px; }
+          button { min-height:38px; }
+          form, .modal, [role=dialog] { max-width:100vw !important; }
+          div[style*="grid-template-columns"] { grid-template-columns:1fr !important; }
+          div[style*="width:420"] { width:100% !important; }
+          div[style*="width: 420"] { width:100% !important; }
+          div[style*="max-width: 1100"] { max-width:100% !important; }
+          div[style*="maxWidth:1100"] { max-width:100% !important; }
+          div[style*="overflowX"] { -webkit-overflow-scrolling:touch; }
+        }
       `}</style>
 
       <SlideMenu tab={tab} setTab={setTab} open={menuOpen} onClose={()=>setMenuOpen(false)} onSettings={()=>setShowSettings(true)} companyName={companyName} profile={profile} />
