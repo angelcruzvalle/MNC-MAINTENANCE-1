@@ -216,6 +216,50 @@ const genId = p => `${p}-${String(Date.now()).slice(-5)}`;
 const today = () => new Date().toISOString().split("T")[0];
 
 
+const CLOSED_WO_STATUSES = new Set(["Completed", "Closed", "Cancelled", "Canceled"]);
+const isOpenWOStatus = (status) => !CLOSED_WO_STATUSES.has(String(status || "Open"));
+const firstText = (...vals) => vals.map(v => String(v ?? "").trim()).find(Boolean) || "";
+const workOrderDescription = (w={}) => firstText(
+  w.faultDescription,
+  w.repairComplaint,
+  w.description,
+  w.problem,
+  w.issue,
+  w.complaint,
+  w.findings,
+  w.inspectionFindings,
+  w.correctiveAction,
+  w.serviceChecklist,
+  w.title,
+  w.notes,
+  w.mechanicNotes
+);
+const workOrderFaultDate = (w={}) => firstText(w.faultDate, w.date, w.created, w.opened, w.reportedDate, w.due);
+const workOrderNumber = (w={}) => firstText(w.id, w.woNumber, w.number, "WO");
+const workOrderEquipmentId = (w={}) => firstText(w.equipment, w.equipmentId, w.eqId, w.assetId);
+const openWorkOrdersForEquipment = (state={}, eqId="") => (state.workOrders || [])
+  .filter(w => workOrderEquipmentId(w) === String(eqId) && isOpenWOStatus(w.status))
+  .sort((a,b)=>String(workOrderFaultDate(b)).localeCompare(String(workOrderFaultDate(a))));
+const equipmentFaultInfo = (state={}, eq={}) => {
+  const wos = openWorkOrdersForEquipment(state, eq.id);
+  const primary = wos.find(w => workOrderDescription(w) || workOrderFaultDate(w)) || {};
+  const faultDate = firstText(eq.faultDate, eq.deadlineDate, eq.deficiencyDate, eq.statusDate, workOrderFaultDate(primary));
+  const description = firstText(eq.faultDescription, eq.deficiencyDescription, eq.statusDescription, eq.fault, eq.issue, eq.problem, eq.description, workOrderDescription(primary));
+  return {
+    faultDate,
+    description,
+    openWOs: wos.map(w => `${workOrderNumber(w)} (${w.status || "Open"})`).join(", "),
+    openWOCount: wos.length,
+    primaryWO: primary
+  };
+};
+const equipmentLabel = (state={}, id="") => {
+  const eq = (state.equipment || []).find(e => String(e.id) === String(id));
+  return eq ? `${eq.name || eq.nomenclature || "Equipment"} (${eq.id})` : (id || "—");
+};
+const htmlEscape = v => String(v ?? "").replace(/[&<>\"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
+
+
 const csvEscape = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
 const downloadCSV = (filename, rows=[]) => {
   if(!rows.length){ alert("No data available to export."); return; }
@@ -2620,21 +2664,8 @@ function Equipment({ state, dispatch }) {
           <input style={{ ...inp, flex:1, minWidth:200 }} placeholder="Search by nomenclature, make, model, serial, EIL #, location…" value={search} onChange={e=>setSearch(e.target.value)} />
           <Btn variant="secondary" onClick={()=>{
             const allEquipment = state.equipment || [];
-            const esc = v => String(v ?? "").replace(/[&<>"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
-            const activeWOForEq = (eqId) => (state.workOrders||[])
-              .filter(w => (w.equipment===eqId || w.equipmentId===eqId) && !["Completed","Closed","Cancelled"].includes(w.status))
-              .sort((a,b)=>String(b.faultDate||b.date||b.created||"").localeCompare(String(a.faultDate||a.date||a.created||"")));
-            const woFaultText = (w={}) => w.faultDescription || w.fault || w.complaint || w.repairComplaint || w.description || w.problem || w.issue || w.title || w.notes || "";
-            const faultInfo = (e) => {
-              const wos = activeWOForEq(e.id);
-              const primary = wos.find(w=>woFaultText(w) || w.faultDate || w.date || w.created) || {};
-              return {
-                faultDate: e.faultDate || e.deadlineDate || e.deficiencyDate || primary.faultDate || primary.date || primary.created || primary.due || "",
-                description: e.faultDescription || e.deficiencyDescription || e.statusDescription || e.description || woFaultText(primary) || "",
-                openWOs: wos.map(w=>`${w.id || w.woNumber || "WO"} (${w.status||"Open"})`).join(", "),
-                openWOCount: wos.length
-              };
-            };
+            const esc = htmlEscape;
+            const faultInfo = (e) => equipmentFaultInfo(state, e);
             const statusRank = s => s==="Out of Service / Deadline" ? 0 : s==="Operational with Deficiencies" ? 1 : s==="Fully Operational" ? 2 : 3;
             const reportEqs = [...allEquipment].sort((a,b)=>statusRank(a.status)-statusRank(b.status) || String(a.id||"").localeCompare(String(b.id||"")));
             const exportRows = reportEqs.map(e=>{ const f=faultInfo(e); return {Status:e.status||"Fully Operational", "Equipment #":e.id||"", Nomenclature:e.name||e.nomenclature||"", Location:e.location||"", "Make/Model":`${e.make||""} ${e.model||""}`.trim(), "Serial #":e.serial||"", "EIL #":e.eilNumber||"", "Fault Date":f.faultDate||"", "Fault / Deficiency Description":f.description||"", "Open Work Orders":f.openWOs||""}; });
@@ -5222,111 +5253,59 @@ function ReportUsage({ state }) {
 }
 
 function ReportDeadline({ state }) {
-  const oos  = state.equipment.filter(e=>e.status==="Out of Service / Deadline");
-  const def  = state.equipment.filter(e=>e.status==="Operational with Deficiencies");
-  const openWO = (eqId) => (state.workOrders||[]).filter(w=>(w.equipment===eqId || w.equipmentId===eqId) && w.status!=="Completed");
-  const woText = (w={}) => w.faultDescription || w.repairComplaint || w.description || w.problem || w.title || w.notes || "";
-  const eqReportData = (eq) => {
-    const wos = openWO(eq.id);
-    const primary = wos.find(w=>woText(w)) || wos[0] || {};
-    return {
-      faultDate: eq.faultDate || primary.faultDate || primary.created || primary.due || "",
-      description: eq.faultDescription || woText(primary) || "",
-      workOrders: wos.map(w=>`${w.id} (${w.status})`).join(", ")
-    };
-  };
+  const oos  = (state.equipment || []).filter(e=>e.status==="Out of Service / Deadline");
+  const def  = (state.equipment || []).filter(e=>e.status==="Operational with Deficiencies");
+  const eqReportData = (eq) => equipmentFaultInfo(state, eq);
   const exportRows = [
-    ...oos.map(eq=>{ const d=eqReportData(eq); return {Status:"Out of Service / Deadline", "Equip #":eq.id, Nomenclature:eq.name, "Fault Date":d.faultDate, Description:d.description, "Open Work Orders":d.workOrders}; }),
-    ...def.map(eq=>{ const d=eqReportData(eq); return {Status:"Operational with Deficiencies", "Equip #":eq.id, Nomenclature:eq.name, "Fault Date":d.faultDate, Description:d.description, "Open Work Orders":d.workOrders}; })
+    ...oos.map(eq=>{ const d=eqReportData(eq); return {Status:"Out of Service / Deadline", "Equip #":eq.id, Nomenclature:eq.name||eq.nomenclature||"", "Fault Date":d.faultDate, Description:d.description, "Open Work Orders":d.openWOs}; }),
+    ...def.map(eq=>{ const d=eqReportData(eq); return {Status:"Operational with Deficiencies", "Equip #":eq.id, Nomenclature:eq.name||eq.nomenclature||"", "Fault Date":d.faultDate, Description:d.description, "Open Work Orders":d.openWOs}; })
   ];
-
-  const printReport = () => {
-    const win = window.open("","_blank","width=1100,height=760");
+  const print = () => {
+    const win = window.open("","_blank","width=900,height=700");
     if(!win) return;
-    const rows = (list,color) => list.map(eq=>{
-      const wos = openWO(eq.id);
-      const d = eqReportData(eq);
-      return `<tr style="background:${color}">
-        <td class="equip">${eq.id}</td>
-        <td class="nomenclature"><b>${eq.name}</b></td>
-        <td class="faultDate">${d.faultDate||"—"}</td>
-        <td class="description">${d.description||"—"}</td>
-        <td class="workOrders">${wos.length>0?wos.map(w=>`${w.id} (${w.status})`).join(", "):"No open WOs"}</td>
-      </tr>`;
-    }).join("");
-    const table = (list, color, heading, headingColor) => list.length ? `
-      <h2 style="color:${headingColor}">${heading} (${list.length})</h2>
+    const table = (list,bg,title,color) => `<h2 style="background:${bg};color:${color};padding:8px 10px;border-radius:8px;font-size:14px">${title} (${list.length})</h2>
       <table class="deadline-table">
-        <colgroup>
-          <col style="width:14%" />
-          <col style="width:24%" />
-          <col style="width:13%" />
-          <col style="width:32%" />
-          <col style="width:17%" />
-        </colgroup>
+        <colgroup><col style="width:13%"><col style="width:22%"><col style="width:14%"><col style="width:33%"><col style="width:18%"></colgroup>
         <thead><tr><th>Equip #</th><th>Nomenclature</th><th>Fault Date</th><th>Description</th><th>Work Orders</th></tr></thead>
-        <tbody>${rows(list,color)}</tbody>
-      </table>` : "";
+        <tbody>${list.map(eq=>{ const d=eqReportData(eq); return `<tr><td class="equip">${htmlEscape(eq.id||"—")}</td><td class="nomenclature"><b>${htmlEscape(eq.name||eq.nomenclature||"—")}</b><br><small>${htmlEscape(eq.location||"")}</small></td><td class="faultDate">${htmlEscape(d.faultDate||"—")}</td><td class="description">${htmlEscape(d.description||"—")}</td><td class="workOrders">${htmlEscape(d.openWOs||"—")}</td></tr>`; }).join("")}</tbody>
+      </table>`;
     win.document.write(`<!DOCTYPE html><html><head><title>Deadline Report</title>
       <style>
-        @page{size:landscape;margin:0.45in}
-        body{font-family:Arial,sans-serif;padding:24px;color:#111827}h1{font-size:18px;margin-bottom:4px}h2{font-size:13px;margin:18px 0 7px}
-        .deadline-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px;margin-bottom:16px}
-        .deadline-table th{background:#1a1a2e;color:#fff;padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;vertical-align:middle}
-        .deadline-table td{padding:8px;border-bottom:1px solid #d1d5db;vertical-align:top;line-height:1.25}
-        .deadline-table .equip{font-weight:700;white-space:nowrap;font-family:monospace}
-        .deadline-table .nomenclature{overflow-wrap:break-word}
-        .deadline-table .faultDate{white-space:nowrap;font-family:monospace}
-        .deadline-table .description,.deadline-table .workOrders{overflow-wrap:anywhere}
-        @media print{button{display:none}body{padding:0}.deadline-table{page-break-inside:auto}tr{page-break-inside:avoid;page-break-after:auto}}
-      </style>
-      </head><body>
+        body{font-family:Arial,sans-serif;padding:24px;color:#111;background:white}h1{font-size:22px;margin:0 0 4px}.meta{font-size:12px;color:#64748b;margin:0 0 16px}.deadline-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px;margin-bottom:16px}.deadline-table th{background:#1a1a2e;color:#fff;padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;vertical-align:middle}.deadline-table td{padding:8px;border-bottom:1px solid #d1d5db;vertical-align:top;line-height:1.25}.deadline-table .equip{font-weight:700;white-space:nowrap;font-family:monospace}.deadline-table .nomenclature{overflow-wrap:break-word}.deadline-table .faultDate{white-space:nowrap;font-family:monospace}.deadline-table .description,.deadline-table .workOrders{overflow-wrap:anywhere}small{color:#64748b}@media print{button{display:none}body{padding:0}.deadline-table{page-break-inside:auto}tr{page-break-inside:avoid;page-break-after:auto}}
+      </style></head><body>
       ${reportHeaderHTML(state, "Deadline & Deficiency Report")}
+      <p class="meta">Fault date and description are pulled from the equipment record first. If blank, the report uses the latest open work order for that equipment.</p>
       ${table(oos,"#fff5f5","Out of Service / Deadline","#dc2626")}
-      ${table(def,"#fffdf0","Operational w/ Deficiencies","#d97706")}
+      ${table(def,"#fffbeb","Operational with Deficiencies","#b45309")}
       ${!oos.length&&!def.length?`<p>No equipment in deadline or deficiency status.</p>`:""}
-      ${reportButtonsHtml(exportRows)}
+      ${reportButtonsHtml(exportRows, "deadline-deficiency-report")}
       </body></html>`);
     win.document.close();
   };
-
-  return (
-    <div>
-      <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginBottom:14 }}>
-        <Btn onClick={printReport}>Print / PDF</Btn>
-        <Btn variant="secondary" onClick={()=>downloadCSV("deadline-deficiency-report.csv", exportRows)}>Excel CSV</Btn>
+  return <Card>
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginBottom:16, flexWrap:"wrap" }}>
+      <h3 style={{ margin:0, fontFamily:T.sans, fontSize:18, fontWeight:700 }}>Deadline / Deficiency Equipment</h3>
+      <div style={{ display:"flex", gap:8 }}>
+        <Btn small onClick={print}>Print / PDF</Btn>
+        <Btn small variant="secondary" onClick={()=>downloadCSV("deadline-deficiency-report.csv", exportRows)}>Excel CSV</Btn>
       </div>
-      {[{list:oos,label:"Out of Service / Deadline",color:T.red,bg:"#fff5f5",leftBorder:"4px solid #ef4444"},
-        {list:def,label:"Operational with Deficiencies",color:T.amber,bg:"#fffdf0",leftBorder:"4px solid #f59e0b"}].map(({list,label,color,bg,leftBorder})=>(
-        <div key={label} style={{ marginBottom:20 }}>
-          <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color, marginBottom:8 }}>{label} ({list.length})</div>
-          {list.length===0 ? <Card><div style={{ padding:"16px 0", textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13 }}>None</div></Card> :
-          list.map(eq=>{
-            const wos = openWO(eq.id);
-            const d = eqReportData(eq);
-            return (
-              <div key={eq.id} style={{ background:bg, border:`1px solid ${T.border}`, borderLeft:leftBorder, borderRadius:8, padding:"12px 18px", marginBottom:8, boxShadow:T.shadow }}>
-                <div style={{ display:"grid", gridTemplateColumns:"120px 1.3fr 130px 1.7fr 170px", gap:16, flexWrap:"wrap" }}>
-                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Equip #</div><div style={{ fontFamily:T.mono, fontSize:12, fontWeight:700, color:T.text, marginTop:2 }}>{eq.id}</div></div>
-                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Nomenclature</div><div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginTop:2 }}>{eq.name}</div></div>
-                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Fault Date</div><div style={{ fontFamily:T.mono, fontSize:12, color, fontWeight:700, marginTop:2 }}>{d.faultDate||"—"}</div></div>
-                  <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Description</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.text, marginTop:2 }}>{d.description||"—"}</div></div>
-                </div>
-                {wos.length>0 && (
-                  <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${T.border}` }}>
-                    <div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5, marginBottom:5 }}>Open Work Orders</div>
-                    <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                      {wos.map(w=><span key={w.id} style={{ fontFamily:T.mono, fontSize:11, padding:"2px 8px", borderRadius:4, background:"#fff", border:`1px solid ${T.border}` }}>{w.id} <Badge label={w.status} /></span>)}
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      ))}
     </div>
-  );
+    {[{list:oos,label:"Out of Service / Deadline",color:T.red,bg:"#fff5f5",leftBorder:"4px solid #ef4444"},
+      {list:def,label:"Operational with Deficiencies",color:T.amber,bg:"#fffbeb",leftBorder:"4px solid #f59e0b"}].map(sec=><div key={sec.label} style={{ marginBottom:18 }}>
+        <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:sec.color, marginBottom:8, textTransform:"uppercase", letterSpacing:.4 }}>{sec.label} ({sec.list.length})</div>
+        {sec.list.length ? sec.list.map(eq=>{ const d=eqReportData(eq); return <div key={eq.id} style={{ background:sec.bg, border:`1px solid ${T.border}`, borderLeft:sec.leftBorder, borderRadius:12, padding:12, marginBottom:8 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", gap:12, flexWrap:"wrap" }}>
+            <div><b style={{ color:sec.color }}>{eq.id}</b> — {eq.name||eq.nomenclature}</div>
+            <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>{eq.location||"No location"}</div>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:10, marginTop:10 }}>
+            <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Fault Date</div><div style={{ fontFamily:T.mono, fontSize:12, color:sec.color, fontWeight:700, marginTop:2 }}>{d.faultDate||"—"}</div></div>
+            <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Description</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.text, marginTop:2, whiteSpace:"pre-wrap" }}>{d.description||"—"}</div></div>
+            <div><div style={{ fontFamily:T.sans, fontSize:9, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Open Work Orders</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.text, marginTop:2 }}>{d.openWOs||"—"}</div></div>
+          </div>
+        </div>; }) : <div style={{ color:T.muted, fontSize:13 }}>No equipment in this status.</div>}
+      </div>)}
+  </Card>;
 }
 
 function ReportPM({ state }) {
@@ -5477,7 +5456,7 @@ function ReportCombined({ state }) {
 
     if(selected.deadline) {
       const bad = state.equipment.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies");
-      body += `<h2>Deadline / Deficiency Equipment (${bad.length})</h2><table><tr><th>Equip #</th><th>Nomenclature</th><th>Status</th><th>Fault Date</th><th>Description</th></tr>${bad.map(e=>`<tr><td>${e.id}</td><td>${e.name}</td><td>${e.status}</td><td>${e.faultDate||"—"}</td><td>${e.faultDescription||"—"}</td></tr>`).join("")}</table>`;
+      body += `<h2>Deadline / Deficiency Equipment (${bad.length})</h2><table><tr><th>Equip #</th><th>Nomenclature</th><th>Status</th><th>Fault Date</th><th>Description</th><th>Open WOs</th></tr>${bad.map(e=>{ const f=equipmentFaultInfo(state,e); return `<tr><td>${htmlEscape(e.id)}</td><td>${htmlEscape(e.name||e.nomenclature||"")}</td><td>${htmlEscape(e.status)}</td><td>${htmlEscape(f.faultDate||"—")}</td><td>${htmlEscape(f.description||"—")}</td><td>${htmlEscape(f.openWOs||"—")}</td></tr>`; }).join("")}</table>`;
     }
     if(selected.pm) {
       const pmBad = state.preventiveMaintenance.filter(p=>p.status==="Overdue"||p.status==="Due Soon");
@@ -5486,7 +5465,7 @@ function ReportCombined({ state }) {
     if(selected.spending) {
       const wos = state.workOrders.filter(w=>w.completed);
       const total = wos.reduce((s,w)=>s+totalCost(w),0);
-      body += `<h2>Completed Work Orders — Total $${total.toFixed(2)}</h2><table><tr><th>WO#</th><th>Title</th><th>Equipment</th><th>Description</th><th>Mechanic</th><th>Completed</th><th>Total</th></tr>${wos.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${eqName(w.equipment)}</td><td>${w.faultEnabled?(w.faultDescription||"—"):"—"}</td><td>${w.tech||"—"}</td><td>${w.completed||"—"}</td><td>$${totalCost(w).toFixed(2)}</td></tr>`).join("")}</table>`;
+      body += `<h2>Completed Work Orders — Total $${total.toFixed(2)}</h2><table><tr><th>WO#</th><th>Title</th><th>Equipment</th><th>Description</th><th>Mechanic</th><th>Completed</th><th>Total</th></tr>${wos.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${eqName(w.equipment)}</td><td>${htmlEscape(workOrderDescription(w)||"—")}</td><td>${w.tech||"—"}</td><td>${w.completed||"—"}</td><td>$${totalCost(w).toFixed(2)}</td></tr>`).join("")}</table>`;
     }
     if(selected.parts) {
       const lowStock = state.parts.filter(p=>p.lowStockAlert!==false&&(+(p.qty||0))<=(+(p.minQty||0)));
@@ -5504,7 +5483,7 @@ function ReportCombined({ state }) {
     }
     if(selected.workorders) {
       const active = state.workOrders.filter(w=>w.status!=="Completed");
-      body += `<h2>Active Work Orders (${active.length})</h2><table><tr><th>WO#</th><th>Title</th><th>Equipment</th><th>Description</th><th>Mechanic</th><th>Priority</th><th>Status</th><th>Due</th></tr>${active.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${eqName(w.equipment)}</td><td>${w.faultEnabled?(w.faultDescription||"—"):"—"}</td><td>${w.tech||"—"}</td><td>${w.priority}</td><td>${w.status}</td><td>${w.due||"—"}</td></tr>`).join("")}</table>`;
+      body += `<h2>Active Work Orders (${active.length})</h2><table><tr><th>WO#</th><th>Title</th><th>Equipment</th><th>Description</th><th>Mechanic</th><th>Priority</th><th>Status</th><th>Due</th></tr>${active.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${eqName(w.equipment)}</td><td>${htmlEscape(workOrderDescription(w)||"—")}</td><td>${w.tech||"—"}</td><td>${w.priority}</td><td>${w.status}</td><td>${w.due||"—"}</td></tr>`).join("")}</table>`;
     }
     body += `<br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button></body></html>`;
     win.document.write(body);
