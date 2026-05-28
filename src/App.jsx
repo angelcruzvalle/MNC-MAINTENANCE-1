@@ -1409,34 +1409,34 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .hdr{display:grid;grid-template-columns:1.35in 1fr 1.7in;min-height:.9in;border-bottom:1.8px solid #0f172a;background:#fff}
       .logoBox{border-right:1.5px solid #0f172a;display:flex;align-items:center;justify-content:center;padding:8px;background:#fff;overflow:hidden}
       .logoBox img{max-width:100%;max-height:.72in;object-fit:contain}
-      .logoText{font-size:16px;font-weight:900;color:var(--wo-dark);letter-spacing:1px;text-transform:uppercase;text-align:center}
+      .logoText{font-size:16px;font-weight:900;color:#0f172a;letter-spacing:1px;text-transform:uppercase;text-align:center}
       .companyBox{display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:8px 14px;background:linear-gradient(135deg,var(--wo-light),#fff)!important;min-width:0}
       .companyName{font-size:20px;font-weight:900;color:#0f172a;letter-spacing:.5px;text-transform:uppercase;line-height:1.08;max-width:100%;overflow-wrap:anywhere}
-      .companySub{font-size:12px;font-weight:900;color:var(--wo-dark);margin-top:6px;text-transform:uppercase;letter-spacing:.75px}
-      .typeBadge{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:5px 12px;border:1.4px solid var(--wo-border);border-radius:999px;background:var(--wo-light)!important;color:var(--wo-dark)!important;font-size:11px;font-weight:900;letter-spacing:.6px;text-transform:uppercase;margin-top:6px;white-space:nowrap}
+      .companySub{font-size:12px;font-weight:900;color:#0f172a;margin-top:6px;text-transform:uppercase;letter-spacing:.75px}
+      .typeBadge{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:5px 12px;border:1.4px solid var(--wo-border);border-radius:999px;background:var(--wo-light)!important;color:#0f172a!important;font-size:11px;font-weight:900;letter-spacing:.6px;text-transform:uppercase;margin-top:6px;white-space:nowrap}
       .woBox{border-left:1.5px solid #0f172a;display:grid;grid-template-rows:1fr auto;background:#fff;min-width:0}
       .woNum{padding:9px 8px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-width:0}
       .woLbl{font-size:9.5px;font-weight:900;text-transform:uppercase;letter-spacing:.55px;color:#475569;line-height:1.15}
-      .woVal{font-size:19px;font-weight:900;color:var(--wo-dark);font-family:monospace;line-height:1.1;margin-top:3px;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+      .woVal{font-size:19px;font-weight:900;color:#0f172a;font-family:monospace;line-height:1.1;margin-top:3px;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
       .status{border-top:1.5px solid #0f172a;padding:5px 8px;text-align:center;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.7px;background:var(--wo-dark)!important;color:#fff!important;overflow-wrap:anywhere}
       .dateStrip{display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1.5px solid #0f172a;background:#fff}
       .topCell{min-height:.36in;padding:6px 8px;border-right:1px solid #cbd5e1;display:grid;grid-template-columns:1fr 1.15fr;align-items:center;gap:7px;min-width:0}.topCell:last-child{border-right:none}
       .lbl{font-size:9.1px;font-weight:900;color:#475569;text-transform:uppercase;letter-spacing:.42px;line-height:1.15;min-width:0;overflow-wrap:anywhere}
       .val{font-size:11.6px;font-weight:800;color:#0f172a;min-width:0;overflow-wrap:anywhere;word-break:break-word;line-height:1.2}.mn{font-family:monospace}
       .block{border-bottom:1.5px solid #0f172a;background:#fff}.block:last-child{border-bottom:none}
-      .blockTitle{display:flex;align-items:center;gap:8px;background:var(--wo-light)!important;color:var(--wo-dark)!important;border-bottom:1.2px solid var(--wo-border);padding:6px 10px;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.7px}
+      .blockTitle{display:flex;align-items:center;gap:8px;background:var(--wo-light)!important;color:#0f172a!important;border-bottom:1.2px solid var(--wo-border);padding:6px 10px;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.7px}
       .blockBody{padding:0}
       .infoGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:0;border:0}
       .cell{padding:6px 8px;border-right:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;min-height:.39in;display:grid;grid-template-columns:.92in 1fr;align-items:center;gap:7px;min-width:0}.cell:nth-child(3n){border-right:none}.cell:nth-last-child(-n+3){border-bottom:none}.cell.full{grid-column:1/-1}.cell.full .lbl{max-width:1.3in}.cell.full{grid-template-columns:1.3in 1fr}
       .descriptionGrid{display:grid;grid-template-columns:1fr;gap:0}
       .textArea{border-bottom:1px solid #cbd5e1;padding:7px 10px;min-height:.72in;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;line-height:1.28}.textArea:last-child{border-bottom:none}
       .textArea.short{min-height:.55in}.textArea.med{min-height:1.02in}.textArea.tall{min-height:1.05in}
-      .textLbl{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.55px;color:var(--wo-dark);margin-bottom:4px}
+      .textLbl{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.55px;color:#0f172a;margin-bottom:4px}
       table{width:100%;border-collapse:collapse;font-size:11.6px;table-layout:fixed}
-      th{background:var(--wo-light)!important;color:var(--wo-dark);padding:6px;border:1px solid #cbd5e1;text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.45px;line-height:1.15}
+      th{background:var(--wo-light)!important;color:#0f172a;padding:6px;border:1px solid #cbd5e1;text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.45px;line-height:1.15}
       td{padding:6px;border:1px solid #e2e8f0;overflow-wrap:anywhere;word-break:break-word;vertical-align:top;line-height:1.22}
       .totalRow{display:grid;grid-template-columns:1fr 1.7in;border-top:1.2px solid #0f172a;min-height:.4in}
-      .totalLabel{padding:7px 12px;text-align:right;font-weight:900;text-transform:uppercase;color:var(--wo-dark);background:var(--wo-light)!important;border-right:1.2px solid #0f172a}
+      .totalLabel{padding:7px 12px;text-align:right;font-weight:900;text-transform:uppercase;color:#0f172a;background:var(--wo-light)!important;border-right:1.2px solid #0f172a}
       .totalVal{padding:7px 12px;font-size:15px;font-weight:900;color:#0f172a}
       .sigs{display:grid;grid-template-columns:2fr 1fr;border-top:1.5px solid #0f172a;background:#fff}
       .sigLeft,.sigRight{padding:10px 14px;min-height:.72in}.sigLeft{border-right:0}
@@ -1451,7 +1451,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       <div class="form">
         <div class="hdr">
           <div class="logoBox">${companyLogo?`<img src="${companyLogo}" alt="Company Logo">`:`<div class="logoText">Logo</div>`}</div>
-          <div class="companyBox"><div class="companyName">${companyName}</div><div class="companySub">Professional Work Order</div><div class="typeBadge">${woTypePrint.icon} ${woTypePrint.label}</div></div>
+          <div class="companyBox"><div class="companyName">${companyName}</div><div class="typeBadge">${woTypePrint.icon} ${woTypePrint.label}</div></div>
           <div class="woBox"><div class="woNum"><div class="woLbl">Work Order Number</div><div class="woVal">${wo.id}</div></div><div class="status">${wo.status||"Open"}</div></div>
         </div>
         ${printOpt("showDates") ? `<div class="dateStrip">
@@ -1463,7 +1463,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div class="blockTitle">Work Order Type and Equipment Information</div>
           <div class="blockBody">
             <div class="infoGrid">
-              <div class="cell"><div class="lbl">Work Order Type</div><div class="val" style="color:var(--wo-dark);font-weight:900">${woTypePrint.label}</div></div>
+              <div class="cell"><div class="lbl">Work Order Type</div><div class="val" style="color:#0f172a;font-weight:900">${woTypePrint.label}</div></div>
               <div class="cell"><div class="lbl">Equipment Number</div><div class="val mn">${wo.equipment||"&nbsp;"}</div></div>
               <div class="cell"><div class="lbl">Equipment Name</div><div class="val">${eq?.name||wo.equipmentLabel||"&nbsp;"}</div></div>
               <div class="cell"><div class="lbl">Make and Model</div><div class="val">${eq?`${eq.make||""} ${eq.model||""}`.trim():"&nbsp;"}</div></div>
