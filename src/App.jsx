@@ -1065,9 +1065,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const [editMode, setEditMode] = useState(false);
 
   const WO_TYPES = [
-    { id:"Repair",     label:"Repair Work Order",     icon:"🛠", desc:"Fault repairs and breakdown response",     color:"#7f1d1d", bg:"#fef2f2" },
-    { id:"Service",    label:"Service Work Order",    icon:"🧰", desc:"Preventive maintenance service generated from PM tasks", color:"#1e40af", bg:"#eff6ff" },
-    { id:"Inspection", label:"Inspection Work Order", icon:"🔍", desc:"Equipment inspection generated from inspection tasks", color:"#065f46", bg:"#ecfdf5" },
+    { id:"Repair",     label:"Repair",     longLabel:"Repair Work Order",     icon:"🛠", short:"Fault / Breakdown", desc:"Corrective work, faults, breakdowns, damage, and troubleshooting.", color:"#991b1b", bg:"#fff1f2", soft:"#ffe4e6", border:"#fb7185" },
+    { id:"Service",    label:"Service",    longLabel:"Service Work Order",    icon:"🧰", short:"Preventive Maintenance", desc:"Scheduled PM, services, fluids, filters, adjustments, and recurring maintenance.", color:"#1d4ed8", bg:"#eff6ff", soft:"#dbeafe", border:"#60a5fa" },
+    { id:"Inspection", label:"Inspection", longLabel:"Inspection Work Order", icon:"🔍", short:"Inspection / Check", desc:"Inspection tasks, condition checks, findings, and follow-up verification.", color:"#047857", bg:"#ecfdf5", soft:"#d1fae5", border:"#34d399" },
   ];
 
   /* Intervals shown for Service and Inspection types */
@@ -1114,11 +1114,19 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     else if(sortBy==="created") cmp = (a.created||"").localeCompare(b.created||"");
     else if(sortBy==="completed") cmp = getCompletedDate(a).localeCompare(getCompletedDate(b));
     else if(sortBy==="status")  cmp = (a.status||"").localeCompare(b.status||"");
-    else if(sortBy==="cost")    cmp = ((+a.laborCost||0)+(+a.partsCost||0))-((+b.laborCost||0)+(+b.partsCost||0));
+    else if(sortBy==="cost") {
+      const partsA = (a.partsUsed||[]).reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0);
+      const partsB = (b.partsUsed||[]).reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0);
+      cmp = ((+a.laborCost||0)+partsA)-((+b.laborCost||0)+partsB);
+    }
     return sortDir==="asc" ? cmp : -cmp;
   });
   const allMechanics = [...new Set(state.workOrders.map(w=>w.tech).filter(Boolean))];
   const technicians = state.technicians || [];
+  const getWOTypeInfo = (woType="Repair") => WO_TYPES.find(t=>t.id===woType) || WO_TYPES[0];
+  const woTypeCounts = WO_TYPES.reduce((acc,t)=>{ acc[t.id] = filtered.filter(w=>w.woType===t.id).length; return acc; },{});
+  const activeWOCount = filtered.filter(w=>w.status!=="Completed").length;
+  const completedWOCount = filtered.filter(w=>w.status==="Completed").length;
 
   /* Smart WO ID. Service WOs are numbered per equipment: EQID SVC 01, EQID SVC 02... */
   const genWOId = (eqId, woType="Repair") => {
@@ -1343,7 +1351,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const partsUsed  = wo.partsUsed || [];
     const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
     const laborTotal = +(wo.laborCost||0);
-    const grandTotal = laborTotal + partsTotal;
+    const grandTotal = laborTotal + partsTotal + (+(wo.partsCost||0));
     const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", Labor:laborTotal.toFixed(2), Parts:partsTotal.toFixed(2), Total:grandTotal.toFixed(2), Problem:wo.problem||wo.description||"", Description:wo.faultEnabled?(wo.faultDescription||""):"", "Repair Complaint":wo.repairComplaint||"", "Repair Cause":wo.repairCause||"", "Corrective Action":wo.correctiveAction||"", "Service Checklist":wo.serviceChecklist||"", "Inspection Findings":wo.inspectionFindings||"", Notes:wo.mechanicNotes||""}];
     const typeSpecificPrint = (() => {
       if(!printOpt("showTypeSpecific")) return "";
@@ -1702,7 +1710,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const renderWODetail = (wo) => {
     if(!wo) return null;
     const eq = state.equipment.find(e=>e.id===wo.equipment);
-    const typeInfo = WO_TYPES.find(t=>t.id===wo.woType);
+    const typeInfo = getWOTypeInfo(wo.woType);
     const partsUsed = wo.partsUsed||[];
     const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
     const total = (+wo.laborCost||0)+partsTotal;
@@ -1864,40 +1872,66 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   return (
     <div>
+      {/* Work Order Command Center */}
+      <div style={{ marginBottom:16, borderRadius:22, overflow:"hidden", border:`1px solid ${T.border}`, background:"linear-gradient(135deg,#0f172a 0%,#1e293b 48%,#111827 100%)", boxShadow:"0 18px 40px rgba(15,23,42,.16)" }}>
+        <div style={{ padding:18, display:"grid", gridTemplateColumns:"minmax(260px,1.1fr) repeat(3,minmax(150px,.75fr))", gap:12, alignItems:"stretch" }}>
+          <div style={{ color:"#fff", display:"flex", flexDirection:"column", justifyContent:"space-between", minHeight:118 }}>
+            <div>
+              <div style={{ fontFamily:T.sans, fontSize:11, letterSpacing:.8, textTransform:"uppercase", color:"#93c5fd", fontWeight:800 }}>Work Order Command Center</div>
+              <div style={{ fontFamily:T.sans, fontSize:24, fontWeight:900, marginTop:5 }}>Repair, Service, and Inspection separated at a glance</div>
+              <div style={{ fontFamily:T.sans, fontSize:12, color:"#cbd5e1", marginTop:6, maxWidth:520 }}>Color-coded cards, bold type badges, and status controls help you identify the WO type before opening it.</div>
+            </div>
+            <div style={{ display:"flex", gap:8, marginTop:14, flexWrap:"wrap" }}>
+              <Btn onClick={openAdd}>+ New Work Order</Btn>
+              <Btn variant="secondary" onClick={onWOSettings}>⚙ WO Settings</Btn>
+            </div>
+          </div>
+          {WO_TYPES.map(t=>(
+            <button key={t.id} onClick={()=>setTypeFilter(typeFilter===t.id?"All":t.id)} style={{ textAlign:"left", border:`1px solid ${typeFilter===t.id?t.border:"rgba(255,255,255,.14)"}`, borderRadius:18, padding:14, cursor:"pointer", background:typeFilter===t.id?t.bg:"rgba(255,255,255,.08)", boxShadow:typeFilter===t.id?`0 0 0 3px ${t.soft}`:"none", transition:"transform .12s, box-shadow .12s", color:typeFilter===t.id?T.text:"#fff" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
+                <span style={{ width:38, height:38, borderRadius:14, display:"grid", placeItems:"center", background:typeFilter===t.id?t.soft:"rgba(255,255,255,.12)", fontSize:20 }}>{t.icon}</span>
+                <span style={{ fontFamily:T.mono, fontSize:24, fontWeight:900, color:typeFilter===t.id?t.color:"#fff" }}>{woTypeCounts[t.id]||0}</span>
+              </div>
+              <div style={{ fontFamily:T.sans, fontSize:15, fontWeight:900, marginTop:10, color:typeFilter===t.id?t.color:"#fff" }}>{t.longLabel}</div>
+              <div style={{ fontFamily:T.sans, fontSize:11, color:typeFilter===t.id?T.subtext:"#cbd5e1", marginTop:3 }}>{t.short}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Toolbar */}
-      <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:16 }}>
-        {/* Row 1: Status tabs + New WO */}
+      <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:16, background:"#fff", border:`1px solid ${T.border}`, borderRadius:16, padding:12, boxShadow:"0 10px 24px rgba(15,23,42,.06)" }}>
+        {/* Row 1: Status tabs */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
-          <div style={{ display:"flex", gap:0, background:"#fff", border:`1px solid ${T.border}`, borderRadius:7, overflow:"hidden", flexWrap:"wrap" }}>
+          <div style={{ display:"flex", gap:0, background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:12, overflow:"hidden", flexWrap:"wrap" }}>
             {STATUS_TABS.map((s,i)=>(
-              <button key={s} onClick={()=>setFilter(s)} style={{ padding:"7px 12px", border:"none", borderLeft:i>0?`1px solid ${T.border}`:"none", background:filter===s?T.accent:"#fff", color:filter===s?"#fff":T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:filter===s?600:400 }}>{s}</button>
+              <button key={s} onClick={()=>setFilter(s)} style={{ padding:"9px 13px", border:"none", borderLeft:i>0?`1px solid ${T.border}`:"none", background:filter===s?T.accent:"transparent", color:filter===s?"#fff":T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:filter===s?800:600 }}>{s}</button>
             ))}
           </div>
-          <Btn onClick={openAdd}>+ New Work Order</Btn>
-          <Btn variant="secondary" onClick={onWOSettings}>⚙ WO Settings</Btn>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+            <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}><b style={{ color:T.text }}>{filtered.length}</b> shown</span>
+            <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}><b style={{ color:T.red }}>{activeWOCount}</b> active</span>
+            <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}><b style={{ color:T.green }}>{completedWOCount}</b> completed</span>
+          </div>
         </div>
 
         {/* Row 2: Filters + Sort */}
         <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
-          {/* Type */}
-          <select style={{ ...sel, width:140 }} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
-            <option value="All">All Types</option>
-            {["Repair","Service","Inspection"].map(t=><option key={t}>{t}</option>)}
+          <select style={{ ...sel, width:160 }} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
+            <option value="All">All WO Types</option>
+            {WO_TYPES.map(t=><option key={t.id} value={t.id}>{t.icon} {t.longLabel}</option>)}
           </select>
-          {/* Priority */}
           <select style={{ ...sel, width:130 }} value={priorityFilter} onChange={e=>setPriorityFilter(e.target.value)}>
             <option value="All">All Priorities</option>
             {["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}
           </select>
-          {/* Mechanic */}
           <select style={{ ...sel, width:150 }} value={mechFilter} onChange={e=>setMechFilter(e.target.value)}>
             <option value="All">All Mechanics</option>
             {allMechanics.map(m=><option key={m}>{m}</option>)}
           </select>
-          {/* Date range — only when viewing Completed */}
           {filter==="Completed" && (
-            <select style={{ ...sel, width:150 }} value={completedDateFilter} onChange={e=>setCompletedDateFilter(e.target.value)}>
-              <option value="all">All Time</option>
+            <select style={{ ...sel, width:170 }} value={completedDateFilter} onChange={e=>setCompletedDateFilter(e.target.value)}>
+              <option value="all">All Completed Dates</option>
               <option value="today">Today</option>
               <option value="thisweek">This Week</option>
               <option value="lastweek">Previous Week</option>
@@ -1905,9 +1939,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               <option value="lastmonth">Previous Month</option>
             </select>
           )}
-          {/* Sort by */}
-          <div style={{ display:"flex", gap:0, border:`1px solid ${T.border}`, borderRadius:6, overflow:"hidden" }}>
-            <select style={{ ...sel, border:"none", borderRadius:0, width:120 }} value={sortBy} onChange={e=>setSortBy(e.target.value)}>
+          <div style={{ display:"flex", gap:0, border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden" }}>
+            <select style={{ ...sel, border:"none", borderRadius:0, width:150 }} value={sortBy} onChange={e=>setSortBy(e.target.value)}>
               <option value="created">Date Created</option>
               <option value="due">Due Date</option>
               <option value="completed">Completed Date</option>
@@ -1915,27 +1948,22 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               <option value="status">Status</option>
               <option value="cost">Cost</option>
             </select>
-            <button onClick={()=>setSortDir(d=>d==="asc"?"desc":"asc")} style={{ padding:"0 10px", border:"none", borderLeft:`1px solid ${T.border}`, background:T.grayLt, cursor:"pointer", fontFamily:T.mono, fontSize:13, color:T.subtext }}>
+            <button onClick={()=>setSortDir(d=>d==="asc"?"desc":"asc")} style={{ padding:"0 12px", border:"none", borderLeft:`1px solid ${T.border}`, background:T.grayLt, cursor:"pointer", fontFamily:T.mono, fontSize:13, color:T.subtext }}>
               {sortDir==="asc"?"↑":"↓"}
             </button>
           </div>
-          {/* Clear filters */}
           {(typeFilter!=="All"||priorityFilter!=="All"||mechFilter!=="All") && (
-            <button onClick={()=>{ setTypeFilter("All"); setPriorityFilter("All"); setMechFilter("All"); }} style={{ background:"none", border:"none", color:T.accent, fontFamily:T.sans, fontSize:12, fontWeight:600, cursor:"pointer" }}>✕ Clear</button>
+            <button onClick={()=>{ setTypeFilter("All"); setPriorityFilter("All"); setMechFilter("All"); }} style={{ background:"none", border:"none", color:T.accent, fontFamily:T.sans, fontSize:12, fontWeight:700, cursor:"pointer" }}>✕ Clear filters</button>
           )}
-          <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginLeft:"auto" }}>
-            {filtered.length} work order{filtered.length!==1?"s":""}
-          </span>
         </div>
       </div>
-
       {/* WO Table — click anywhere on row to edit */}
-      <Card style={{ padding:0, overflow:"hidden" }}>
+      <Card style={{ padding:0, overflow:"hidden", borderRadius:18, boxShadow:"0 12px 30px rgba(15,23,42,.08)" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
-            <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
+            <tr style={{ background:"#0f172a", borderBottom:`1px solid ${T.border}` }}>
               {(filter==="Completed" ? ["Equipment #","Equipment Name","Description","Type of Work Order","Priority","Status","Created","Due","Completed Date","Cost","Actions"] : ["Equipment #","Equipment Name","Description","Type of Work Order","Priority","Status","Created","Due","Cost","Actions"]).map(h=>(
-                <th key={h} style={{ padding:"10px 14px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4, whiteSpace:"nowrap" }}>{h}</th>
+                <th key={h} style={{ padding:"12px 14px", textAlign:"left", fontWeight:800, fontSize:11, color:"#e2e8f0", textTransform:"uppercase", letterSpacing:.5, whiteSpace:"nowrap" }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -1945,15 +1973,15 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               const eqLabel = eq?.name || wo.equipmentLabel || wo.equipment || "—";
               const partsTotal = (wo.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
               const total = (+wo.laborCost||0)+partsTotal;
-              const typeInfo = WO_TYPES.find(t=>t.id===wo.woType);
+              const typeInfo = getWOTypeInfo(wo.woType);
               const rowStatus = wo.status==="Completed" ? "Fully Operational" : (wo.equipmentStatus || eq?.status || "Fully Operational");
               const isOpenInspection = wo.woType==="Inspection" && wo.status!=="Completed";
-              const rowBg = isOpenInspection ? "#dbeafe" : rowStatus==="Out of Service / Deadline" ? "#fff5f5" : rowStatus==="Operational with Deficiencies" ? "#fffbeb" : (i%2===0?"#fff":T.grayLt);
-              const rowHover = isOpenInspection ? "#bfdbfe" : rowStatus==="Out of Service / Deadline" ? "#fee2e2" : rowStatus==="Operational with Deficiencies" ? "#fef3c7" : T.accentLt;
-              const rowBorder = isOpenInspection ? "4px solid #7dd3fc" : rowStatus==="Out of Service / Deadline" ? "4px solid #ef4444" : rowStatus==="Operational with Deficiencies" ? "4px solid #f59e0b" : "4px solid transparent";
+              const rowBg = typeInfo.bg;
+              const rowHover = typeInfo.soft;
+              const rowBorder = `6px solid ${typeInfo.border}`;
               const completedDate = wo.completed || wo.completedDate || wo.dateCompleted || wo.closedDate || wo.closedAt || wo.completedAt || "";
               return (
-                <tr key={wo.id} onClick={()=>openEdit(wo)} style={{ borderBottom:`1px solid ${T.border}`, borderLeft:rowBorder, background:rowBg, cursor:"pointer", transition:"background .12s" }}
+                <tr key={wo.id} onClick={()=>openEdit(wo)} style={{ borderBottom:`8px solid #fff`, borderLeft:rowBorder, background:rowBg, cursor:"pointer", transition:"background .12s, transform .12s", boxShadow:"inset 0 0 0 1px rgba(15,23,42,.04)" }}
                   onMouseEnter={e=>e.currentTarget.style.background=rowHover}
                   onMouseLeave={e=>e.currentTarget.style.background=rowBg}>
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:T.subtext, whiteSpace:"nowrap" }}>{wo.equipment || "—"}</td>
@@ -1966,7 +1994,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                     {wo.serviceInterval && <div style={{ fontSize:11, color:T.accent, marginTop:1 }}>{wo.serviceInterval}</div>}
                   </td>
                   <td style={{ padding:"11px 14px" }}>
-                    {typeInfo ? <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"2px 8px", borderRadius:4, background:typeInfo.bg, color:typeInfo.color, fontSize:11, fontWeight:600 }}>{typeInfo.icon} {typeInfo.label || typeInfo.id}</span> : <span style={{ color:T.muted }}>Repair Work Order</span>}
+                    <div style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"7px 11px", borderRadius:999, background:"#fff", color:typeInfo.color, fontSize:12, fontWeight:900, border:`1px solid ${typeInfo.border}`, boxShadow:"0 4px 10px rgba(15,23,42,.06)", whiteSpace:"nowrap" }}>
+                      <span style={{ fontSize:16 }}>{typeInfo.icon}</span>
+                      <span>{typeInfo.longLabel}</span>
+                    </div>
                   </td>
                   <td style={{ padding:"11px 14px" }}><Badge label={wo.priority} type="priority" /></td>
                   <td style={{ padding:"11px 14px" }}><Badge label={wo.status} /></td>
@@ -2396,15 +2427,20 @@ function Equipment({ state, dispatch }) {
     if(!eq){ setDetail(null); return null; }
     const wos    = woForEq(eq);
     const completedHistory = wos.filter(w => (w.status||"").toLowerCase()==="completed").sort((a,b)=>String(b.completed||b.closedDate||b.created||"").localeCompare(String(a.completed||a.closedDate||a.created||"")));
+    const historyWOType = (w) => String(w.woType || w.type || "").trim().toLowerCase();
+    const isRepairHistoryWO = (w) => historyWOType(w) === "repair";
+    const isInspectionHistoryWO = (w) => historyWOType(w) === "inspection";
     const isServiceHistoryWO = (w) => {
-      const type = String(w.woType||w.type||"").toLowerCase();
-      const title = String(w.title||w.faultDescription||w.description||"").toLowerCase();
-      return type==="service" || type==="preventive" || type==="preventative" || title.includes("preventive") || title.includes("preventative") || title.includes("pm");
+      const type = historyWOType(w);
+      // Keep Repair WOs out of Service History even if the repair description
+      // contains words like PM, service, preventive, etc.
+      if (isRepairHistoryWO(w) || isInspectionHistoryWO(w)) return false;
+      return type === "service" || type === "preventive" || type === "preventative" || type === "pm";
     };
     const serviceHistory = completedHistory.filter(isServiceHistoryWO);
-    const repairHistory = completedHistory.filter(w => String(w.woType||w.type||"").toLowerCase()==="repair" || (!isServiceHistoryWO(w) && String(w.woType||w.type||"").toLowerCase()!=="inspection"));
-    const inspectionHistory = completedHistory.filter(w => String(w.woType||w.type||"").toLowerCase()==="inspection");
-    const historyCost = (wo) => (+wo.laborCost||0) + ((wo.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0));
+    const repairHistory = completedHistory.filter(isRepairHistoryWO);
+    const inspectionHistory = completedHistory.filter(isInspectionHistoryWO);
+    const historyCost = (wo) => (+wo.laborCost||0)+(+wo.partsCost||0);
     const historyUsage = (wo) => {
       if (wo.usageNA) return "N/A";
       if (wo.usageType==="mileage") return wo.usageMileage ? `${wo.usageMileage} mi` : "—";
@@ -3071,7 +3107,7 @@ function Parts({ state, dispatch }) {
         </Card>
       )}
 
-      <Card style={{ padding:0, overflow:"hidden" }}>
+      <Card style={{ padding:0, overflow:"hidden", borderRadius:18, boxShadow:"0 12px 30px rgba(15,23,42,.08)" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
@@ -4978,7 +5014,7 @@ function EquipmentInventory({ state, dispatch }) {
       </div>
 
       {/* Inventory Table */}
-      <Card style={{ padding:0, overflow:"hidden" }}>
+      <Card style={{ padding:0, overflow:"hidden", borderRadius:18, boxShadow:"0 12px 30px rgba(15,23,42,.08)" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
@@ -5150,7 +5186,7 @@ function ReportPartsInv({ state }) {
         ))}
       </div>
       <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginBottom:12 }}><Btn onClick={print}>Print / PDF</Btn><Btn variant="secondary" onClick={()=>downloadCSV("parts-inventory-report.csv", exportRows)}>Excel CSV</Btn></div>
-      <Card style={{ padding:0, overflow:"hidden" }}>
+      <Card style={{ padding:0, overflow:"hidden", borderRadius:18, boxShadow:"0 12px 30px rgba(15,23,42,.08)" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead><tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
             {["Part #","Name","Category","Location","Equipment / Model","Unit $","Qty","Total $"].map(h=>(
