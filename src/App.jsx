@@ -297,6 +297,13 @@ function printCustomizePanelHtml(layoutType="Report") {
   return `<details class="print-customize" open style="margin:14px auto;max-width:900px;border:1px solid #cbd5e1;border-radius:10px;padding:10px 12px;background:#f8fafc;font-family:Arial,sans-serif">
     <summary style="cursor:pointer;font-weight:800;color:#111827">Customize what prints</summary>
     <div style="font-size:12px;color:#475569;margin:6px 0 10px">Turn sections or table columns on/off before printing or saving as PDF. This layout is saved for ${safeLayoutType} work orders.</div>
+    <div id="printColorChoices" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;font-size:12px;color:#334155">
+      <strong style="margin-right:2px">Print color:</strong>
+      <button type="button" data-print-color="babyBlue" style="padding:6px 10px;border:1px solid #93c5fd;background:#dbeafe;color:#1e3a8a;border-radius:999px;font-weight:800;cursor:pointer">Baby blue</button>
+      <button type="button" data-print-color="softYellow" style="padding:6px 10px;border:1px solid #fde68a;background:#fef3c7;color:#92400e;border-radius:999px;font-weight:800;cursor:pointer">Soft yellow</button>
+      <button type="button" data-print-color="mint" style="padding:6px 10px;border:1px solid #86efac;background:#dcfce7;color:#166534;border-radius:999px;font-weight:800;cursor:pointer">Mint</button>
+      <button type="button" data-print-color="slate" style="padding:6px 10px;border:1px solid #cbd5e1;background:#f8fafc;color:#334155;border-radius:999px;font-weight:800;cursor:pointer">Slate</button>
+    </div>
     <div id="printSectionToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px;margin-bottom:10px"></div>
     <div id="printColumnToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button onclick="window.print()" style="padding:8px 18px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer">Print Selected Layout</button><button onclick="localStorage.removeItem(\'ncaPrintLayout_${safeLayoutType}\');location.reload()" style="padding:8px 14px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;font-weight:700;cursor:pointer">Reset Saved Layout</button></div>
@@ -308,6 +315,21 @@ function printCustomizePanelHtml(layoutType="Report") {
     var savedLayout = {};
     try { savedLayout = JSON.parse(localStorage.getItem(layoutKey) || '{}') || {}; } catch(e) { savedLayout = {}; }
     function saveLayout(){ try { localStorage.setItem(layoutKey, JSON.stringify(savedLayout)); } catch(e) {} }
+    var printPalettes = {
+      babyBlue: { dark:'#1e40af', color:'#3b82f6', light:'#eff6ff', border:'#93c5fd' },
+      softYellow: { dark:'#92400e', color:'#f59e0b', light:'#fffbeb', border:'#fde68a' },
+      mint: { dark:'#166534', color:'#22c55e', light:'#f0fdf4', border:'#86efac' },
+      slate: { dark:'#334155', color:'#64748b', light:'#f8fafc', border:'#cbd5e1' }
+    };
+    function applyPrintColor(name){
+      var p = printPalettes[name] || printPalettes.babyBlue;
+      document.documentElement.style.setProperty('--wo-dark', p.dark);
+      document.documentElement.style.setProperty('--wo-color', p.color);
+      document.documentElement.style.setProperty('--wo-light', p.light);
+      document.documentElement.style.setProperty('--wo-border', p.border);
+      savedLayout.printColor = name; saveLayout();
+      Array.from(document.querySelectorAll('[data-print-color]')).forEach(function(btn){ btn.style.outline = btn.getAttribute('data-print-color') === name ? '2px solid #111827' : 'none'; });
+    }
     function clean(txt){ return (txt||'').replace(/\s+/g,' ').trim(); }
     function addToggle(container, label, checked, onChange, key){
       if(!container || !label) return;
@@ -330,6 +352,8 @@ function printCustomizePanelHtml(layoutType="Report") {
       return clean(h && h.textContent) || ('Section '+(i+1));
     }
     function setup(){
+      Array.from(document.querySelectorAll('[data-print-color]')).forEach(function(btn){ btn.onclick=function(){ applyPrintColor(btn.getAttribute('data-print-color')); }; });
+      applyPrintColor(savedLayout.printColor || 'babyBlue');
       var secBox=document.getElementById('printSectionToggles');
       var colBox=document.getElementById('printColumnToggles');
       var sections=Array.from(document.querySelectorAll('.page .hdr,.page .row,.page .sec,.page .sigs,.page .ftr, body > h1, body > h2')).filter(function(el){ return !el.closest('.print-customize,.pbtn'); });
@@ -1338,10 +1362,11 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const woTypeRaw = String(wo.woType || "Repair");
     const woTypeLabel = `${woTypeRaw.toUpperCase()} WORK ORDER`;
     const woTypePrint = {
-      Repair: { icon:"🛠", label:"REPAIR", subtitle:"Corrective repair / breakdown", color:"#991b1b", light:"#fff1f2", border:"#fb7185", dark:"#7f1d1d" },
+      Repair: { icon:"🛠", label:"REPAIR", subtitle:"", color:"#3b82f6", light:"#eff6ff", border:"#93c5fd", dark:"#1e40af" },
       Service: { icon:"🧰", label:"SERVICE", subtitle:"Preventive maintenance / scheduled service", color:"#1d4ed8", light:"#eff6ff", border:"#60a5fa", dark:"#1e3a8a" },
       Inspection: { icon:"🔍", label:"INSPECTION", subtitle:"Inspection / condition check", color:"#047857", light:"#ecfdf5", border:"#34d399", dark:"#065f46" },
     }[woTypeRaw] || { icon:"📋", label:woTypeRaw.toUpperCase(), subtitle:"Work order", color:"#334155", light:"#f8fafc", border:"#94a3b8", dark:"#0f172a" };
+    const headerSubtitleHtml = woTypePrint.subtitle ? `<div class="hdr-sub">${woTypePrint.subtitle}</div>` : "";
     const statusClass = (wo.status === "Completed") ? "st-completed" : (wo.status === "In Progress") ? "st-in" : (wo.status === "On Hold") ? "st-on" : "st-open";
     const cleanInspectionTaskName = (value) => String(value || "").replace(/^\s*inspection\s*task\s*:\s*/i, "").trim();
     const printableDescription = wo.woType === "Inspection"
@@ -1377,24 +1402,25 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     win.document.write(`<!DOCTYPE html><html><head><title>${woTypePrint.label} Work Order ${wo.id}</title><style>
       *{box-sizing:border-box;margin:0;padding:0}
       body{font-family:Arial,sans-serif;background:#fff;color:#111;font-size:13.5px;line-height:1.45}
+      :root{--wo-dark:${woTypePrint.dark};--wo-color:${woTypePrint.color};--wo-light:${woTypePrint.light};--wo-border:${woTypePrint.border}}
       .page{width:8.5in;min-height:11in;margin:0 auto;padding:.35in .45in;display:flex;flex-direction:column;gap:8px}
-      .hdr{display:flex;align-items:stretch;border:2px solid ${woTypePrint.dark};border-radius:8px;overflow:hidden;box-shadow:0 6px 20px rgba(15,23,42,.10)}
-      .hdr-logo{width:155px;min-width:155px;height:96px;background:#fff;display:flex;align-items:center;justify-content:center;padding:5px;border-right:2px solid ${woTypePrint.dark};overflow:hidden}
+      .hdr{display:flex;align-items:stretch;border:2px solid var(--wo-dark);border-radius:8px;overflow:hidden;box-shadow:0 6px 20px rgba(15,23,42,.10)}
+      .hdr-logo{width:155px;min-width:155px;height:96px;background:#fff;display:flex;align-items:center;justify-content:center;padding:5px;border-right:2px solid var(--wo-dark);overflow:hidden}
       .hdr-logo img{width:100%;height:100%;max-width:145px;max-height:88px;object-fit:contain;object-position:center;display:block}
-      .hdr-logo-text{font-size:13px;font-weight:800;color:${woTypePrint.dark};text-align:center;line-height:1.35;padding:4px;text-transform:uppercase}
-      .hdr-center{flex:1;background:linear-gradient(135deg,${woTypePrint.dark},${woTypePrint.color});display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px;text-align:center}
+      .hdr-logo-text{font-size:13px;font-weight:800;color:var(--wo-dark);text-align:center;line-height:1.35;padding:4px;text-transform:uppercase}
+      .hdr-center{flex:1;background:linear-gradient(135deg,var(--wo-dark),var(--wo-color));display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px;text-align:center}
       .hdr-company{font-size:18px;font-weight:800;color:#fff;letter-spacing:1px;text-transform:uppercase}
       .hdr-type{font-size:13px;color:#fff;letter-spacing:1.8px;text-transform:uppercase;margin-top:5px;font-weight:900}
       .hdr-sub{font-size:10.5px;color:#e5e7eb;letter-spacing:.5px;text-transform:uppercase;margin-top:3px;font-weight:700}
-      .hdr-right{width:165px;min-width:165px;background:${woTypePrint.light};display:flex;flex-direction:column;align-items:center;justify-content:center;padding:7px;border-left:2px solid ${woTypePrint.dark};text-align:center}
+      .hdr-right{width:165px;min-width:165px;background:var(--wo-light);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:7px;border-left:2px solid var(--wo-dark);text-align:center}
       .hdr-wol{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#475569}
-      .hdr-won{font-size:23px;font-weight:900;color:${woTypePrint.dark};font-family:monospace;letter-spacing:1px}
+      .hdr-won{font-size:23px;font-weight:900;color:var(--wo-dark);font-family:monospace;letter-spacing:1px}
       .hdr-status{margin-top:5px;display:inline-block;padding:4px 10px;border-radius:999px;font-size:10.5px;font-weight:900;letter-spacing:.5px;text-transform:uppercase}
-      .type-strip{border:2px solid ${woTypePrint.border};background:${woTypePrint.light};border-radius:8px;padding:9px 12px;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center}
-      .type-icon{width:38px;height:38px;border-radius:12px;background:#fff;border:1px solid ${woTypePrint.border};display:grid;place-items:center;font-size:21px}
-      .type-title{font-size:18px;font-weight:900;color:${woTypePrint.dark};letter-spacing:.8px;text-transform:uppercase;line-height:1}
+      .type-strip{border:2px solid var(--wo-border);background:var(--wo-light);border-radius:8px;padding:9px 12px;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center}
+      .type-icon{width:38px;height:38px;border-radius:12px;background:#fff;border:1px solid var(--wo-border);display:grid;place-items:center;font-size:21px}
+      .type-title{font-size:18px;font-weight:900;color:var(--wo-dark);letter-spacing:.8px;text-transform:uppercase;line-height:1}
       .type-sub{font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.4px;margin-top:3px}
-      .type-chip{background:${woTypePrint.color};color:#fff;font-size:11px;font-weight:900;padding:7px 12px;border-radius:999px;letter-spacing:.6px;text-transform:uppercase;white-space:nowrap}
+      .type-chip{background:var(--wo-color);color:#fff;font-size:11px;font-weight:900;padding:7px 12px;border-radius:999px;letter-spacing:.6px;text-transform:uppercase;white-space:nowrap}
       .st-open{background:#dbeafe;color:#1e3a8a}.st-in{background:#fef9c3;color:#713f12}
       .st-completed{background:#dcfce7;color:#14532d}.st-on{background:#fee2e2;color:#7f1d1d}
       .row{display:grid;border:1.5px solid #1a1a2e;border-radius:3px;overflow:hidden}
@@ -1406,7 +1432,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#555;margin-bottom:3px}
       .val{font-size:14px;font-weight:600;color:#111;min-height:20px}.val.mn{font-family:monospace}
       .sec{border:1.5px solid #1a1a2e;border-radius:3px;overflow:hidden}
-      .sh{background:${woTypePrint.dark};color:#fff;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:6px 10px}
+      .sh{background:var(--wo-dark);color:#fff;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:6px 10px}
       .sb{padding:10px 12px;font-size:13.5px;color:#111;line-height:1.5;white-space:pre-wrap;min-height:70px}
       .bg{display:grid;grid-template-columns:1fr;gap:6px}
       .pt{width:100%;border-collapse:collapse;font-size:13px}
@@ -1415,7 +1441,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .pt .sub{font-weight:700;background:#f8faff}
       .cs{border-top:2px solid #1a1a2e}
       .cr{display:flex;justify-content:space-between;padding:6px 10px;border-bottom:1px solid #e5e7eb;font-size:13px}
-      .ct{display:flex;justify-content:space-between;padding:7px 10px;background:${woTypePrint.dark};color:#fff;font-size:14px;font-weight:700}
+      .ct{display:flex;justify-content:space-between;padding:7px 10px;background:var(--wo-dark);color:#fff;font-size:14px;font-weight:700}
       .phi{color:#991b1b;background:#fee2e2;border:1px solid #fca5a5;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
       .pmd{color:#92400e;background:#fef3c7;border:1px solid #fcd34d;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
       .plo{color:#374151;background:#f3f4f6;border:1px solid #d1d5db;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
@@ -1423,27 +1449,22 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .sc{display:flex;flex-direction:column;gap:10px}.sw{display:flex;flex-direction:column;gap:3px}
       .sl{border-bottom:1.5px solid #333;height:24px}
       .slb{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#555}
-      .ftr{background:${woTypePrint.dark};color:#fff;padding:7px 12px;border-radius:4px;display:flex;justify-content:space-between;font-size:10.5px}
+      .ftr{background:var(--wo-dark);color:#fff;padding:7px 12px;border-radius:4px;display:flex;justify-content:space-between;font-size:10.5px}
       .pbtn{margin-top:14px;display:flex;gap:10px;justify-content:center}
       .pbtn button{padding:9px 24px;font-size:13px;font-weight:700;border:none;border-radius:6px;cursor:pointer}
-      .bpr{background:${woTypePrint.dark};color:#fff}.bpdf{background:#0052cc;color:#fff}
+      .bpr{background:var(--wo-dark);color:#fff}.bpdf{background:#0052cc;color:#fff}
       @media print{.pbtn{display:none}.page{padding:.35in .45in;gap:8px}body{font-size:13px}}
     </style></head><body>
     <div class="page">
       <div class="hdr">
         <div class="hdr-logo">${companyLogo?`<img src="${companyLogo}" alt="logo">`:`<div class="hdr-logo-text">${companyName}</div>`}</div>
-        <div class="hdr-center"><div class="hdr-company">${companyName}</div><div class="hdr-type">${woTypeLabel}</div><div class="hdr-sub">${woTypePrint.subtitle}</div></div>
+        <div class="hdr-center"><div class="hdr-company">${companyName}</div><div class="hdr-type">${woTypeLabel}</div>${headerSubtitleHtml}</div>
         <div class="hdr-right"><div class="hdr-wol">Work Order No.</div><div class="hdr-won">${wo.id}</div>
           <div class="hdr-status ${statusClass}">${wo.status||"Open"}</div>
         </div>
       </div>
-      <div class="type-strip">
-        <div class="type-icon">${woTypePrint.icon}</div>
-        <div><div class="type-title">${woTypePrint.label} WORK ORDER</div><div class="type-sub">${woTypePrint.subtitle}</div></div>
-        <div class="type-chip">${wo.status||"Open"}</div>
-      </div>
       ${printOpt("showDates") ? `<div class="row c4">
-        <div class="cell"><div class="lbl">Work Order Type</div><div class="val" style="color:${woTypePrint.dark};font-weight:900">${woTypePrint.label}</div></div>
+        <div class="cell"><div class="lbl">Work Order Type</div><div class="val" style="color:var(--wo-dark);font-weight:900">${woTypePrint.label}</div></div>
         <div class="cell"><div class="lbl">Date Created</div><div class="val">${wo.created||"&nbsp;"}</div></div>
         <div class="cell"><div class="lbl">Due Date</div><div class="val">${wo.due||"&nbsp;"}</div></div>
         <div class="cell"><div class="lbl">Date Completed</div><div class="val">${wo.completed||"&nbsp;"}</div></div>
