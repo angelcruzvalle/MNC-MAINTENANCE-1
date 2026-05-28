@@ -1469,7 +1469,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               <div class="cell"><div class="lbl">Make and Model</div><div class="val">${eq?`${eq.make||""} ${eq.model||""}`.trim():"&nbsp;"}</div></div>
               <div class="cell"><div class="lbl">Serial Number</div><div class="val mn">${eq?.serial||"&nbsp;"}</div></div>
               <div class="cell"><div class="lbl">${usageDisplayLabel}</div><div class="val mn">${usageDisplayValue}</div></div>
-              <div class="cell"><div class="lbl">Equipment Identification List Number</div><div class="val mn">${eq?.eilNumber||"&nbsp;"}</div></div>
+              <div class="cell"><div class="lbl">Equipment EIL #</div><div class="val mn">${eq?.eilNumber||"&nbsp;"}</div></div>
               <div class="cell"><div class="lbl">Priority</div><div class="val">${wo.priority||"&nbsp;"}</div></div>
               <div class="cell"><div class="lbl">Mechanic</div><div class="val">${assignedMechanicName||"&nbsp;"}</div></div>
             </div>
@@ -1478,7 +1478,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         ${(printOpt("showFaultDescription") || printOpt("showDescription") || printOpt("showMechanicNotes")) ? `<div class="block">
           <div class="blockTitle">Work Description and Mechanic Notes</div>
           <div class="descriptionGrid">
-            ${printOpt("showFaultDescription") ? `<div class="textArea short"><div class="textLbl">Customer Complaint or Problem Description</div>${printableDescription}</div>` : ""}
+            ${printOpt("showFaultDescription") ? `<div class="textArea short"><div class="textLbl">Description</div>${printableDescription}</div>` : ""}
             ${printOpt("showDescription") ? `<div class="textArea med"><div class="textLbl">Work Description and Work Performed</div>${wo.description||"&nbsp;"}</div>` : ""}
             ${printOpt("showMechanicNotes") ? `<div class="textArea tall"><div class="textLbl">Mechanic Notes</div>${wo.mechanicNotes||"&nbsp;"}</div>` : ""}
           </div>
@@ -6678,4 +6678,3 @@ function NotifBell({ notifications, dispatch }) {
     </>
   );
 }
- 
