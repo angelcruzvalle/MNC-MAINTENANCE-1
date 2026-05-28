@@ -308,7 +308,7 @@ function printCustomizePanelHtml(layoutType="Report") {
     <div id="printColumnToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button onclick="window.print()" style="padding:8px 18px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer">Print Selected Layout</button><button onclick="localStorage.removeItem(\'ncaPrintLayout_${safeLayoutType}\');location.reload()" style="padding:8px 14px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;font-weight:700;cursor:pointer">Reset Saved Layout</button></div>
   </details>
-  <style>@media print{.print-customize,.pbtn{display:none!important}}</style>
+  <style>*{-webkit-print-color-adjust:exact;print-color-adjust:exact;color-adjust:exact}@media print{*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}.print-customize,.pbtn{display:none!important}}</style>
   <script>
   (function(){
     var layoutKey = 'ncaPrintLayout_${safeLayoutType}';
@@ -1400,7 +1400,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     if(!win){ alert("Please allow pop-ups to print work orders."); return; }
 
     win.document.write(`<!DOCTYPE html><html><head><title>${woTypePrint.label} Work Order ${wo.id}</title><style>
-      *{box-sizing:border-box;margin:0;padding:0}
+      *{box-sizing:border-box;margin:0;padding:0;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}
+      html,body{background:#fff!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
       body{font-family:Arial,sans-serif;background:#fff;color:#111;font-size:13.5px;line-height:1.45}
       :root{--wo-dark:${woTypePrint.dark};--wo-color:${woTypePrint.color};--wo-light:${woTypePrint.light};--wo-border:${woTypePrint.border}}
       .page{width:8.5in;min-height:11in;margin:0 auto;padding:.35in .45in;display:flex;flex-direction:column;gap:8px}
@@ -1408,7 +1409,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .hdr-logo{width:155px;min-width:155px;height:96px;background:#fff;display:flex;align-items:center;justify-content:center;padding:5px;border-right:2px solid var(--wo-dark);overflow:hidden}
       .hdr-logo img{width:100%;height:100%;max-width:145px;max-height:88px;object-fit:contain;object-position:center;display:block}
       .hdr-logo-text{font-size:13px;font-weight:800;color:var(--wo-dark);text-align:center;line-height:1.35;padding:4px;text-transform:uppercase}
-      .hdr-center{flex:1;background:linear-gradient(135deg,var(--wo-dark),var(--wo-color));display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px;text-align:center}
+      .hdr-center{flex:1;background:var(--wo-color);background-image:linear-gradient(135deg,var(--wo-dark),var(--wo-color));display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px;text-align:center;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
       .hdr-company{font-size:18px;font-weight:800;color:#fff;letter-spacing:1px;text-transform:uppercase}
       .hdr-type{font-size:13px;color:#fff;letter-spacing:1.8px;text-transform:uppercase;margin-top:5px;font-weight:900}
       .hdr-sub{font-size:10.5px;color:#e5e7eb;letter-spacing:.5px;text-transform:uppercase;margin-top:3px;font-weight:700}
@@ -1432,7 +1433,11 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#555;margin-bottom:3px}
       .val{font-size:14px;font-weight:600;color:#111;min-height:20px}.val.mn{font-family:monospace}
       .sec{border:1.5px solid #1a1a2e;border-radius:3px;overflow:hidden}
-      .sh{background:var(--wo-dark);color:#fff;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:6px 10px}
+      .print-block{border:2px solid var(--wo-border);border-radius:8px;overflow:hidden;background:#fff;box-shadow:0 3px 12px rgba(15,23,42,.06);break-inside:avoid}
+      .block-title{background:var(--wo-light)!important;color:var(--wo-dark)!important;border-bottom:1.5px solid var(--wo-border);font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:1px;padding:7px 10px;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+      .block-body{display:grid;gap:6px;padding:8px;background:#fff}
+      .block-body .row,.block-body .sec{border-color:#c8d0e0;border-radius:5px}
+      .sh{background:var(--wo-dark)!important;color:#fff!important;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:6px 10px;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
       .sb{padding:10px 12px;font-size:13.5px;color:#111;line-height:1.5;white-space:pre-wrap;min-height:70px}
       .bg{display:grid;grid-template-columns:1fr;gap:6px}
       .pt{width:100%;border-collapse:collapse;font-size:13px}
@@ -1441,7 +1446,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .pt .sub{font-weight:700;background:#f8faff}
       .cs{border-top:2px solid #1a1a2e}
       .cr{display:flex;justify-content:space-between;padding:6px 10px;border-bottom:1px solid #e5e7eb;font-size:13px}
-      .ct{display:flex;justify-content:space-between;padding:7px 10px;background:var(--wo-dark);color:#fff;font-size:14px;font-weight:700}
+      .ct{display:flex;justify-content:space-between;padding:7px 10px;background:var(--wo-dark)!important;color:#fff!important;font-size:14px;font-weight:700;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
       .phi{color:#991b1b;background:#fee2e2;border:1px solid #fca5a5;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
       .pmd{color:#92400e;background:#fef3c7;border:1px solid #fcd34d;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
       .plo{color:#374151;background:#f3f4f6;border:1px solid #d1d5db;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
@@ -1449,11 +1454,11 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .sc{display:flex;flex-direction:column;gap:10px}.sw{display:flex;flex-direction:column;gap:3px}
       .sl{border-bottom:1.5px solid #333;height:24px}
       .slb{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#555}
-      .ftr{background:var(--wo-dark);color:#fff;padding:7px 12px;border-radius:4px;display:flex;justify-content:space-between;font-size:10.5px}
+      .ftr{background:var(--wo-dark)!important;color:#fff!important;padding:7px 12px;border-radius:4px;display:flex;justify-content:space-between;font-size:10.5px;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
       .pbtn{margin-top:14px;display:flex;gap:10px;justify-content:center}
       .pbtn button{padding:9px 24px;font-size:13px;font-weight:700;border:none;border-radius:6px;cursor:pointer}
       .bpr{background:var(--wo-dark);color:#fff}.bpdf{background:#0052cc;color:#fff}
-      @media print{.pbtn{display:none}.page{padding:.35in .45in;gap:8px}body{font-size:13px}}
+      @media print{*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}.pbtn{display:none}.page{padding:.35in .45in;gap:8px}body{font-size:13px}.hdr,.print-block,.sec,.row,.sigs{break-inside:avoid}.hdr-center,.sh,.ct,.ftr,.type-chip{background-color:var(--wo-dark)!important;color:#fff!important}.hdr-right,.type-strip{background-color:var(--wo-light)!important}}
     </style></head><body>
     <div class="page">
       <div class="hdr">
@@ -1463,30 +1468,39 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div class="hdr-status ${statusClass}">${wo.status||"Open"}</div>
         </div>
       </div>
-      ${printOpt("showDates") ? `<div class="row c4">
-        <div class="cell"><div class="lbl">Work Order Type</div><div class="val" style="color:var(--wo-dark);font-weight:900">${woTypePrint.label}</div></div>
-        <div class="cell"><div class="lbl">Date Created</div><div class="val">${wo.created||"&nbsp;"}</div></div>
-        <div class="cell"><div class="lbl">Due Date</div><div class="val">${wo.due||"&nbsp;"}</div></div>
-        <div class="cell"><div class="lbl">Date Completed</div><div class="val">${wo.completed||"&nbsp;"}</div></div>
-      </div>` : ""}
-      ${""}
-      ${printOpt("showEquipment") ? `<div class="sec">
-        <div class="sh">Equipment Information</div>
-        <div class="eq-info-grid">
-          <div class="cell"><div class="lbl">Equipment #</div><div class="val mn" style="font-weight:700">${wo.equipment||"&nbsp;"}</div></div>
-          <div class="cell"><div class="lbl">Nomenclature</div><div class="val">${eq?.name||wo.equipmentLabel||"&nbsp;"}</div></div>
-          <div class="cell"><div class="lbl">Make / Model</div><div class="val">${eq?`${eq.make||""} ${eq.model||""}`.trim():"&nbsp;"}</div></div>
-          <div class="cell"><div class="lbl">Serial #</div><div class="val mn">${eq?.serial||"&nbsp;"}</div></div>
-          <div class="cell"><div class="lbl">EIL Number</div><div class="val mn">${eq?.eilNumber||"&nbsp;"}</div></div>
-          ${printOpt("showUsageReading") ? `<div class="cell"><div class="lbl">${usageDisplayLabel}</div><div class="val mn">${usageDisplayValue}</div></div>` : `<div class="cell"><div class="lbl">Usage Reading</div><div class="val mn">&nbsp;</div></div>`}
+      ${(printOpt("showDates") || printOpt("showEquipment")) ? `<div class="print-block">
+        <div class="block-title">Work Order Type &amp; Equipment Information</div>
+        <div class="block-body">
+          ${printOpt("showDates") ? `<div class="row c4">
+            <div class="cell"><div class="lbl">Work Order Type</div><div class="val" style="color:var(--wo-dark);font-weight:900">${woTypePrint.label}</div></div>
+            <div class="cell"><div class="lbl">Date Created</div><div class="val">${wo.created||"&nbsp;"}</div></div>
+            <div class="cell"><div class="lbl">Due Date</div><div class="val">${wo.due||"&nbsp;"}</div></div>
+            <div class="cell"><div class="lbl">Date Completed</div><div class="val">${wo.completed||"&nbsp;"}</div></div>
+          </div>` : ""}
+          ${printOpt("showEquipment") ? `<div class="sec">
+            <div class="sh">Equipment Information</div>
+            <div class="eq-info-grid">
+              <div class="cell"><div class="lbl">Equipment #</div><div class="val mn" style="font-weight:700">${wo.equipment||"&nbsp;"}</div></div>
+              <div class="cell"><div class="lbl">Nomenclature</div><div class="val">${eq?.name||wo.equipmentLabel||"&nbsp;"}</div></div>
+              <div class="cell"><div class="lbl">Make / Model</div><div class="val">${eq?`${eq.make||""} ${eq.model||""}`.trim():"&nbsp;"}</div></div>
+              <div class="cell"><div class="lbl">Serial #</div><div class="val mn">${eq?.serial||"&nbsp;"}</div></div>
+              <div class="cell"><div class="lbl">EIL Number</div><div class="val mn">${eq?.eilNumber||"&nbsp;"}</div></div>
+              ${printOpt("showUsageReading") ? `<div class="cell"><div class="lbl">${usageDisplayLabel}</div><div class="val mn">${usageDisplayValue}</div></div>` : `<div class="cell"><div class="lbl">Usage Reading</div><div class="val mn">&nbsp;</div></div>`}
+            </div>
+          </div>` : ""}
         </div>
       </div>` : ""}
       ${printOpt("showFaultDescription") ? `<div class="sec"><div class="sh">Description</div><div class="sb" style="min-height:18px;padding:3px 8px;line-height:1.25">${printableDescription}</div></div>` : ""}
-      ${printOpt("showDescription") ? `<div class="sec"><div class="sh">${wo.woType==="Service" ? "Service Description &amp; Work Performed" : "Work Description &amp; Work Performed"}</div><div class="sb">${wo.description||"&nbsp;"}</div></div>` : ""}
+      ${(printOpt("showDescription") || printOpt("showMechanicNotes")) ? `<div class="print-block">
+        <div class="block-title">Work Description &amp; Mechanic Notes</div>
+        <div class="block-body">
+          ${printOpt("showDescription") ? `<div class="sec"><div class="sh">${wo.woType==="Service" ? "Service Description &amp; Work Performed" : "Work Description &amp; Work Performed"}</div><div class="sb">${wo.description||"&nbsp;"}</div></div>` : ""}
+          ${printOpt("showMechanicNotes") ? `<div class="sec"><div class="sh">Mechanic Notes (Write-In)</div><div class="sb" style="min-height:80px">${wo.mechanicNotes||"&nbsp;"}</div></div>` : ""}
+        </div>
+      </div>` : ""}
       ${inspectionChecklistPrint}
       ${typeSpecificPrint}
       <div class="bg">
-        ${printOpt("showMechanicNotes") ? `<div class="sec"><div class="sh">Mechanic Notes (Write-In)</div><div class="sb" style="min-height:80px">${wo.mechanicNotes||"&nbsp;"}</div></div>` : ""}
         ${(printOpt("showParts") || printOpt("showLaborHours") || printOpt("showCosts")) ? `<div class="sec">
           <div class="sh">Parts &amp; Labor Summary</div>
           ${printOpt("showParts") ? `<table class="pt">
