@@ -1402,135 +1402,103 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     win.document.write(`<!DOCTYPE html><html><head><title>${woTypePrint.label} Work Order ${wo.id}</title><style>
       *{box-sizing:border-box;margin:0;padding:0;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}
       html,body{background:#fff!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
-      body{font-family:Arial,sans-serif;background:#fff;color:#111;font-size:13.5px;line-height:1.45}
+      body{font-family:Arial,sans-serif;background:#fff;color:#111;font-size:13px;line-height:1.35}
       :root{--wo-dark:${woTypePrint.dark};--wo-color:${woTypePrint.color};--wo-light:${woTypePrint.light};--wo-border:${woTypePrint.border}}
-      .page{width:8.5in;min-height:11in;margin:0 auto;padding:.35in .45in;display:flex;flex-direction:column;gap:8px}
-      .hdr{display:flex;align-items:stretch;border:2px solid var(--wo-dark);border-radius:8px;overflow:hidden;box-shadow:0 6px 20px rgba(15,23,42,.10)}
-      .hdr-logo{width:155px;min-width:155px;height:96px;background:#fff;display:flex;align-items:center;justify-content:center;padding:5px;border-right:2px solid var(--wo-dark);overflow:hidden}
-      .hdr-logo img{width:100%;height:100%;max-width:145px;max-height:88px;object-fit:contain;object-position:center;display:block}
-      .hdr-logo-text{font-size:13px;font-weight:800;color:var(--wo-dark);text-align:center;line-height:1.35;padding:4px;text-transform:uppercase}
-      .hdr-center{flex:1;background:var(--wo-color);background-image:linear-gradient(135deg,var(--wo-dark),var(--wo-color));display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px;text-align:center;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
-      .hdr-company{font-size:18px;font-weight:800;color:#fff;letter-spacing:1px;text-transform:uppercase}
-      .hdr-type{font-size:13px;color:#fff;letter-spacing:1.8px;text-transform:uppercase;margin-top:5px;font-weight:900}
-      .hdr-sub{font-size:10.5px;color:#e5e7eb;letter-spacing:.5px;text-transform:uppercase;margin-top:3px;font-weight:700}
-      .hdr-right{width:165px;min-width:165px;background:var(--wo-light);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:7px;border-left:2px solid var(--wo-dark);text-align:center}
-      .hdr-wol{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#475569}
-      .hdr-won{font-size:23px;font-weight:900;color:var(--wo-dark);font-family:monospace;letter-spacing:1px}
-      .hdr-status{margin-top:5px;display:inline-block;padding:4px 10px;border-radius:999px;font-size:10.5px;font-weight:900;letter-spacing:.5px;text-transform:uppercase}
-      .type-strip{border:2px solid var(--wo-border);background:var(--wo-light);border-radius:8px;padding:9px 12px;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center}
-      .type-icon{width:38px;height:38px;border-radius:12px;background:#fff;border:1px solid var(--wo-border);display:grid;place-items:center;font-size:21px}
-      .type-title{font-size:18px;font-weight:900;color:var(--wo-dark);letter-spacing:.8px;text-transform:uppercase;line-height:1}
-      .type-sub{font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.4px;margin-top:3px}
-      .type-chip{background:var(--wo-color);color:#fff;font-size:11px;font-weight:900;padding:7px 12px;border-radius:999px;letter-spacing:.6px;text-transform:uppercase;white-space:nowrap}
-      .st-open{background:#dbeafe;color:#1e3a8a}.st-in{background:#fef9c3;color:#713f12}
-      .st-completed{background:#dcfce7;color:#14532d}.st-on{background:#fee2e2;color:#7f1d1d}
-      .row{display:grid;border:1.5px solid #1a1a2e;border-radius:3px;overflow:hidden}
-      .row.c4{grid-template-columns:1fr 1fr 1fr 1fr}.row.c3{grid-template-columns:1fr 1fr 1fr}.row.c2{grid-template-columns:2fr 1fr}.row.c22{grid-template-columns:1fr 1fr}
-      .eq-info-grid{display:grid;grid-template-columns:1fr 1fr 1fr;border:none}
-      .eq-info-grid .cell:nth-child(3n){border-right:none}
-      .eq-info-grid .cell:nth-child(n+4){border-top:1px solid #c8d0e0}
-      .cell{padding:4px 8px;border-right:1px solid #c8d0e0}.cell:last-child{border-right:none}.cell.s2{grid-column:span 2}
-      .lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#555;margin-bottom:3px}
-      .val{font-size:14px;font-weight:600;color:#111;min-height:20px}.val.mn{font-family:monospace}
-      .sec{border:1.5px solid #1a1a2e;border-radius:3px;overflow:hidden}
-      .print-block{border:2px solid var(--wo-border);border-radius:8px;overflow:hidden;background:#fff;box-shadow:0 3px 12px rgba(15,23,42,.06);break-inside:avoid}
-      .block-title{background:var(--wo-light)!important;color:var(--wo-dark)!important;border-bottom:1.5px solid var(--wo-border);font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:1px;padding:7px 10px;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
-      .block-body{display:grid;gap:6px;padding:8px;background:#fff}
-      .block-body .row,.block-body .sec{border-color:#c8d0e0;border-radius:5px}
-      .sh{background:var(--wo-dark)!important;color:#fff!important;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:6px 10px;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
-      .sb{padding:10px 12px;font-size:13.5px;color:#111;line-height:1.5;white-space:pre-wrap;min-height:70px}
-      .bg{display:grid;grid-template-columns:1fr;gap:6px}
-      .pt{width:100%;border-collapse:collapse;font-size:13px}
-      .pt th{background:#f3f4f6;padding:7px 8px;text-align:left;font-size:10.5px;text-transform:uppercase;color:#555;font-weight:700}
-      .pt td{padding:3px 6px;border-bottom:1px solid #e5e7eb}
-      .pt .sub{font-weight:700;background:#f8faff}
-      .cs{border-top:2px solid #1a1a2e}
-      .cr{display:flex;justify-content:space-between;padding:6px 10px;border-bottom:1px solid #e5e7eb;font-size:13px}
-      .ct{display:flex;justify-content:space-between;padding:7px 10px;background:var(--wo-dark)!important;color:#fff!important;font-size:14px;font-weight:700;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
-      .phi{color:#991b1b;background:#fee2e2;border:1px solid #fca5a5;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
-      .pmd{color:#92400e;background:#fef3c7;border:1px solid #fcd34d;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
-      .plo{color:#374151;background:#f3f4f6;border:1px solid #d1d5db;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
-      .sigs{display:grid;grid-template-columns:2fr 1fr;gap:20px;border:1.5px solid #1a1a2e;border-radius:3px;padding:8px 14px;margin-top:4px}
-      .sc{display:flex;flex-direction:column;gap:10px}.sw{display:flex;flex-direction:column;gap:3px}
-      .sl{border-bottom:1.5px solid #333;height:24px}
-      .slb{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#555}
-      .ftr{background:var(--wo-dark)!important;color:#fff!important;padding:7px 12px;border-radius:4px;display:flex;justify-content:space-between;font-size:10.5px;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
-      .pbtn{margin-top:14px;display:flex;gap:10px;justify-content:center}
-      .pbtn button{padding:9px 24px;font-size:13px;font-weight:700;border:none;border-radius:6px;cursor:pointer}
-      .bpr{background:var(--wo-dark);color:#fff}.bpdf{background:#0052cc;color:#fff}
-      @media print{*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}.pbtn{display:none}.page{padding:.35in .45in;gap:8px}body{font-size:13px}.hdr,.print-block,.sec,.row,.sigs{break-inside:avoid}.hdr-center,.sh,.ct,.ftr,.type-chip{background-color:var(--wo-dark)!important;color:#fff!important}.hdr-right,.type-strip{background-color:var(--wo-light)!important}}
+      .page{width:8.5in;min-height:11in;margin:0 auto;padding:.32in .38in;display:flex;flex-direction:column;gap:8px}
+      .form{border:2px solid var(--wo-dark);border-radius:10px;overflow:hidden;background:#fff;box-shadow:0 6px 20px rgba(15,23,42,.08)}
+      .hdr{display:grid;grid-template-columns:1.35in 1fr 1.55in;min-height:.95in;border-bottom:2px solid var(--wo-dark)}
+      .logoBox{border-right:2px solid var(--wo-dark);display:flex;align-items:center;justify-content:center;padding:8px;background:#fff;overflow:hidden}
+      .logoBox img{max-width:100%;max-height:.75in;object-fit:contain}
+      .logoText{font-size:18px;font-weight:900;color:var(--wo-dark);letter-spacing:1px;text-transform:uppercase;text-align:center}
+      .companyBox{display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:8px 12px;background:var(--wo-light)!important}
+      .companyName{font-size:22px;font-weight:900;color:var(--wo-dark);letter-spacing:1px;text-transform:uppercase;line-height:1.1}
+      .companySub{font-size:13px;font-weight:800;color:#334155;margin-top:5px;text-transform:uppercase;letter-spacing:.7px}
+      .woBox{border-left:2px solid var(--wo-dark);display:grid;grid-template-rows:1fr auto;background:#fff}
+      .woNum{padding:10px 8px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+      .woLbl{font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:#334155}
+      .woVal{font-size:24px;font-weight:900;color:var(--wo-dark);font-family:monospace;line-height:1.1;margin-top:2px}
+      .status{border-top:2px solid var(--wo-dark);padding:5px 8px;text-align:center;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.8px;background:var(--wo-dark)!important;color:#fff!important}
+      .dateStrip{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;border-bottom:2px solid var(--wo-dark);background:#fff}
+      .topCell{min-height:.38in;padding:6px 9px;border-right:1.5px solid #94a3b8;display:flex;align-items:center;justify-content:space-between;gap:8px}.topCell:last-child{border-right:none}
+      .lbl{font-size:10.5px;font-weight:900;color:#334155;text-transform:uppercase;letter-spacing:.55px;white-space:nowrap}
+      .val{font-size:13.5px;font-weight:700;color:#111;min-height:18px}.mn{font-family:monospace}
+      .block{border-bottom:2px solid var(--wo-dark);background:#fff}
+      .block:last-child{border-bottom:none}
+      .blockTitle{display:flex;align-items:center;gap:8px;background:var(--wo-light)!important;color:var(--wo-dark)!important;border-bottom:1.5px solid var(--wo-border);padding:7px 10px;font-size:13px;font-weight:900;text-transform:uppercase;letter-spacing:.7px}
+      .blockBody{padding:8px 10px}
+      .equipGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;border:1.5px solid #cbd5e1;border-radius:6px;overflow:hidden}
+      .cell{padding:7px 9px;border-right:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;min-height:.55in}.cell:nth-child(3n){border-right:none}.cell:nth-last-child(-n+3){border-bottom:none}.cell.wide{grid-column:span 2}
+      .descriptionBlock{padding:0}
+      .textArea{border-bottom:1.5px solid #cbd5e1;padding:8px 10px;min-height:1in;white-space:pre-wrap}.textArea:last-child{border-bottom:none}
+      .textArea.short{min-height:.55in}.textArea.med{min-height:1.15in}.textArea.tall{min-height:1.35in}
+      .textLbl{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.55px;color:var(--wo-dark);margin-bottom:5px}
+      table{width:100%;border-collapse:collapse;font-size:12.5px}
+      th{background:var(--wo-light)!important;color:var(--wo-dark);padding:6px;border:1px solid #cbd5e1;text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px}
+      td{padding:6px;border:1px solid #e2e8f0}
+      .totalRow{display:grid;grid-template-columns:1fr 1.65in;border-top:1.5px solid var(--wo-dark);min-height:.45in}
+      .totalLabel{padding:8px 12px;text-align:right;font-weight:900;text-transform:uppercase;color:var(--wo-dark);background:var(--wo-light)!important;border-right:1.5px solid var(--wo-dark)}
+      .totalVal{padding:8px 12px;font-size:17px;font-weight:900;color:#111}
+      .sigs{display:grid;grid-template-columns:2fr 1fr;gap:0;border-top:2px solid var(--wo-dark)}
+      .sigLeft,.sigRight{padding:12px 14px;min-height:.82in}.sigLeft{border-right:1.5px solid #94a3b8}
+      .line{border-bottom:1.5px solid #334155;height:26px;margin-bottom:5px}.line.name{height:34px;padding-top:8px;font-weight:700}
+      .sigLbl{font-size:10.5px;font-weight:900;text-transform:uppercase;color:#334155;letter-spacing:.55px;margin-bottom:8px}
+      .pbtn{margin-top:14px;display:flex;gap:10px;justify-content:center}.pbtn button,.pbtn a{padding:9px 24px;font-size:13px;font-weight:700;border-radius:6px;text-decoration:none;font-family:Arial,sans-serif}.bpr{background:var(--wo-dark);color:#fff;border:none;cursor:pointer}.bpdf{background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;cursor:pointer}
+      @page{size:letter;margin:.25in}
+      @media print{.pbtn,.print-customize{display:none!important}.page{width:auto;min-height:auto;padding:0;gap:0}.form{box-shadow:none}.block,.hdr,.dateStrip,.sigs{break-inside:avoid}body{font-size:12.5px}}
     </style></head><body>
     <div class="page">
-      <div class="hdr">
-        <div class="hdr-logo">${companyLogo?`<img src="${companyLogo}" alt="logo">`:`<div class="hdr-logo-text">${companyName}</div>`}</div>
-        <div class="hdr-center"><div class="hdr-company">${companyName}</div><div class="hdr-type">${woTypeLabel}</div>${headerSubtitleHtml}</div>
-        <div class="hdr-right"><div class="hdr-wol">Work Order No.</div><div class="hdr-won">${wo.id}</div>
-          <div class="hdr-status ${statusClass}">${wo.status||"Open"}</div>
+      <div class="form">
+        <div class="hdr">
+          <div class="logoBox">${companyLogo?`<img src="${companyLogo}" alt="logo">`:`<div class="logoText">LOGO</div>`}</div>
+          <div class="companyBox"><div class="companyName">${companyName}</div><div class="companySub">${woTypePrint.label} Work Order</div></div>
+          <div class="woBox"><div class="woNum"><div class="woLbl">WO #</div><div class="woVal">${wo.id}</div></div><div class="status">${wo.status||"Open"}</div></div>
         </div>
-      </div>
-      ${(printOpt("showDates") || printOpt("showEquipment")) ? `<div class="print-block">
-        <div class="block-title">Work Order Type &amp; Equipment Information</div>
-        <div class="block-body">
-          ${printOpt("showDates") ? `<div class="row c4">
-            <div class="cell"><div class="lbl">Work Order Type</div><div class="val" style="color:var(--wo-dark);font-weight:900">${woTypePrint.label}</div></div>
-            <div class="cell"><div class="lbl">Date Created</div><div class="val">${wo.created||"&nbsp;"}</div></div>
-            <div class="cell"><div class="lbl">Due Date</div><div class="val">${wo.due||"&nbsp;"}</div></div>
-            <div class="cell"><div class="lbl">Date Completed</div><div class="val">${wo.completed||"&nbsp;"}</div></div>
-          </div>` : ""}
-          ${printOpt("showEquipment") ? `<div class="sec">
-            <div class="sh">Equipment Information</div>
-            <div class="eq-info-grid">
-              <div class="cell"><div class="lbl">Equipment #</div><div class="val mn" style="font-weight:700">${wo.equipment||"&nbsp;"}</div></div>
-              <div class="cell"><div class="lbl">Nomenclature</div><div class="val">${eq?.name||wo.equipmentLabel||"&nbsp;"}</div></div>
+        ${printOpt("showDates") ? `<div class="dateStrip">
+          <div class="topCell"><span class="lbl">WO Type</span><span class="val" style="color:var(--wo-dark);font-weight:900">${woTypePrint.label}</span></div>
+          <div class="topCell"><span class="lbl">Date Created</span><span class="val">${wo.created||"&nbsp;"}</span></div>
+          <div class="topCell"><span class="lbl">Due Date</span><span class="val">${wo.due||"&nbsp;"}</span></div>
+          <div class="topCell"><span class="lbl">Date Completed</span><span class="val">${wo.completed||"&nbsp;"}</span></div>
+        </div>` : ""}
+        ${(printOpt("showEquipment") || printOpt("showDates")) ? `<div class="block">
+          <div class="blockTitle">1. Work Order Type &amp; Equipment Information</div>
+          <div class="blockBody">
+            <div class="equipGrid">
+              <div class="cell"><div class="lbl">Work Order Type</div><div class="val" style="color:var(--wo-dark);font-weight:900">${woTypePrint.label}</div></div>
+              <div class="cell"><div class="lbl">Equipment #</div><div class="val mn">${wo.equipment||"&nbsp;"}</div></div>
+              <div class="cell"><div class="lbl">Equipment Name / ID</div><div class="val">${eq?.name||wo.equipmentLabel||"&nbsp;"}</div></div>
               <div class="cell"><div class="lbl">Make / Model</div><div class="val">${eq?`${eq.make||""} ${eq.model||""}`.trim():"&nbsp;"}</div></div>
               <div class="cell"><div class="lbl">Serial #</div><div class="val mn">${eq?.serial||"&nbsp;"}</div></div>
+              <div class="cell"><div class="lbl">${usageDisplayLabel}</div><div class="val mn">${usageDisplayValue}</div></div>
               <div class="cell"><div class="lbl">EIL Number</div><div class="val mn">${eq?.eilNumber||"&nbsp;"}</div></div>
-              ${printOpt("showUsageReading") ? `<div class="cell"><div class="lbl">${usageDisplayLabel}</div><div class="val mn">${usageDisplayValue}</div></div>` : `<div class="cell"><div class="lbl">Usage Reading</div><div class="val mn">&nbsp;</div></div>`}
+              <div class="cell"><div class="lbl">Priority</div><div class="val">${wo.priority||"&nbsp;"}</div></div>
+              <div class="cell"><div class="lbl">Mechanic</div><div class="val">${assignedMechanicName||"&nbsp;"}</div></div>
             </div>
-          </div>` : ""}
-        </div>
-      </div>` : ""}
-      ${printOpt("showFaultDescription") ? `<div class="sec"><div class="sh">Description</div><div class="sb" style="min-height:18px;padding:3px 8px;line-height:1.25">${printableDescription}</div></div>` : ""}
-      ${(printOpt("showDescription") || printOpt("showMechanicNotes")) ? `<div class="print-block">
-        <div class="block-title">Work Description &amp; Mechanic Notes</div>
-        <div class="block-body">
-          ${printOpt("showDescription") ? `<div class="sec"><div class="sh">${wo.woType==="Service" ? "Service Description &amp; Work Performed" : "Work Description &amp; Work Performed"}</div><div class="sb">${wo.description||"&nbsp;"}</div></div>` : ""}
-          ${printOpt("showMechanicNotes") ? `<div class="sec"><div class="sh">Mechanic Notes (Write-In)</div><div class="sb" style="min-height:80px">${wo.mechanicNotes||"&nbsp;"}</div></div>` : ""}
-        </div>
-      </div>` : ""}
-      ${inspectionChecklistPrint}
-      ${typeSpecificPrint}
-      <div class="bg">
-        ${(printOpt("showParts") || printOpt("showLaborHours") || printOpt("showCosts")) ? `<div class="sec">
-          <div class="sh">Parts &amp; Labor Summary</div>
-          ${printOpt("showParts") ? `<table class="pt">
-            <thead><tr><th style="width:40%">Part / Material</th><th style="width:12%;text-align:center">Qty</th><th style="width:22%;text-align:right">Unit $</th><th style="width:26%;text-align:right">Total</th></tr></thead>
-            <tbody>
-              ${partsUsed.length>0
-                ? partsUsed.map(p=>{ const q=+(p.qty||1),u=+(p.unitCost||0); return `<tr><td>${p.name||"&mdash;"}</td><td style="text-align:center">${q}</td><td style="text-align:right">$${u.toFixed(2)}</td><td style="text-align:right">$${(q*u).toFixed(2)}</td></tr>`; }).join("")
-                  +`<tr class="sub"><td colspan="3">Parts Subtotal</td><td style="text-align:right">$${partsTotal.toFixed(2)}</td></tr>`
-                : `<tr><td colspan="4" style="color:#999;font-style:italic;padding:4px 6px">No parts listed</td></tr>`
-              }
-            </tbody>
-          </table>` : ""}
-          ${(printOpt("showLaborHours") || printOpt("showCosts")) ? `<div class="cs">
-            ${printOpt("showLaborHours") ? `<div class="cr"><span>Labor (${wo.laborHours||0} hrs)</span><span>$${laborTotal.toFixed(2)}</span></div>` : ""}
-            ${printOpt("showParts")&&!partsUsed.length&&wo.partsCost?`<div class="cr"><span>Parts Cost</span><span>$${(+wo.partsCost).toFixed(2)}</span></div>`:""}
-            ${printOpt("showCosts") ? `<div class="ct"><span>GRAND TOTAL</span><span>$${grandTotal.toFixed(2)}</span></div>` : ""}
-          </div>` : ""}
+          </div>
+        </div>` : ""}
+        ${(printOpt("showFaultDescription") || printOpt("showDescription") || printOpt("showMechanicNotes")) ? `<div class="block descriptionBlock">
+          <div class="blockTitle">2. Work Description &amp; Mechanic Notes</div>
+          ${printOpt("showFaultDescription") ? `<div class="textArea short"><div class="textLbl">Description</div>${printableDescription}</div>` : ""}
+          ${printOpt("showDescription") ? `<div class="textArea med"><div class="textLbl">Work Description / Work Performed</div>${wo.description||"&nbsp;"}</div>` : ""}
+          ${printOpt("showMechanicNotes") ? `<div class="textArea tall"><div class="textLbl">Mechanic Notes</div>${wo.mechanicNotes||"&nbsp;"}</div>` : ""}
+        </div>` : ""}
+        ${inspectionChecklistPrint ? `<div class="block"><div class="blockTitle">Inspection Checklist</div><div class="blockBody">${inspectionChecklistPrint}</div></div>` : ""}
+        ${(printOpt("showParts") || printOpt("showLaborHours") || printOpt("showCosts")) ? `<div class="block">
+          <div class="blockTitle">3. Parts &amp; Labor Summary</div>
+          ${printOpt("showParts") ? `<table><thead><tr><th style="width:44%">Description</th><th style="width:12%;text-align:center">Qty</th><th style="width:22%;text-align:right">Unit Price</th><th style="width:22%;text-align:right">Total</th></tr></thead><tbody>
+            ${partsUsed.length>0 ? partsUsed.map(p=>{ const q=+(p.qty||1),u=+(p.unitCost||0); return `<tr><td>${p.name||"&mdash;"}</td><td style="text-align:center">${q}</td><td style="text-align:right">$${u.toFixed(2)}</td><td style="text-align:right">$${(q*u).toFixed(2)}</td></tr>`; }).join("") : `<tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr><tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>`}
+          </tbody></table>` : ""}
+          <div class="totalRow"><div class="totalLabel">Grand Total</div><div class="totalVal">$${grandTotal.toFixed(2)}</div></div>
+        </div>` : ""}
+        ${printOpt("showSignature") ? `<div class="sigs">
+          <div class="sigLeft"><div class="line"></div><div class="sigLbl">Signature</div><div class="line name">${assignedMechanicName||"&nbsp;"}</div><div class="sigLbl">Printed Name</div></div>
+          <div class="sigRight"><div class="line name">${printedDate||"&nbsp;"}</div><div class="sigLbl">Date</div></div>
         </div>` : ""}
       </div>
-      ${printOpt("showFooterText") && ws.footerText?`<div class="sec"><div class="sh">Remarks</div><div class="sb" style="min-height:36px;font-size:13px">${ws.footerText}</div></div>`:""}
-      ${printOpt("showSignature") ? `<div class="sigs">
-        <div class="sc"><div class="sw"><div class="sl"></div><div class="slb">Mechanic Signature</div></div><div class="sw"><div class="sl" style="height:auto;min-height:32px;padding:8px 0;font-size:14px;font-weight:700">${assignedMechanicName||"&nbsp;"}</div><div class="slb">Printed Name</div></div></div>
-        <div class="sc"><div class="sw"><div class="sl" style="height:auto;min-height:32px;padding:8px 0;font-size:14px;font-weight:700">${printedDate}</div><div class="slb">Date</div></div></div>
-      </div>` : ""}
-      ${printOpt("showFooterBar") ? `<div class="ftr"><span>${companyName} - Maintenance Dept.</span><span>WO# ${wo.id} | ${printedDate}</span></div>` : ""}
     </div>
     <div class="pbtn">
       <button class="bpr" onclick="window.print()">Print / Save PDF</button>
-      <a href="${woCsv}" download="work-order-${wo.id}.csv" style="padding:9px 24px;font-size:13px;font-weight:700;border-radius:6px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;text-decoration:none;font-family:Arial,sans-serif">Download Excel CSV</a>
-      <button onclick="var blob=new Blob([document.documentElement.outerHTML],{type:'application/msword'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='work-order-${wo.id}.doc';a.click();URL.revokeObjectURL(a.href);" style="padding:9px 24px;font-size:13px;font-weight:700;border-radius:6px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;cursor:pointer">Download Word</button>
+      <a href="${woCsv}" download="work-order-${wo.id}.csv" class="bpdf">Download Excel CSV</a>
+      <button class="bpdf" onclick="var blob=new Blob([document.documentElement.outerHTML],{type:'application/msword'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='work-order-${wo.id}.doc';a.click();URL.revokeObjectURL(a.href);">Download Word</button>
     </div>
     ${printCustomizePanelHtml(wo.woType || "WorkOrder")}
     </body></html>`);
