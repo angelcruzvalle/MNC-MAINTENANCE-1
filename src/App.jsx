@@ -1065,9 +1065,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const [editMode, setEditMode] = useState(false);
 
   const WO_TYPES = [
-    { id:"Repair",     label:"Repair",     longLabel:"Repair Work Order",     icon:"🛠", short:"Fault / Breakdown", desc:"Corrective work, faults, breakdowns, damage, and troubleshooting.", color:"#991b1b", bg:"#fff1f2", soft:"#ffe4e6", border:"#fb7185" },
-    { id:"Service",    label:"Service",    longLabel:"Service Work Order",    icon:"🧰", short:"Preventive Maintenance", desc:"Scheduled PM, services, fluids, filters, adjustments, and recurring maintenance.", color:"#1d4ed8", bg:"#eff6ff", soft:"#dbeafe", border:"#60a5fa" },
-    { id:"Inspection", label:"Inspection", longLabel:"Inspection Work Order", icon:"🔍", short:"Inspection / Check", desc:"Inspection tasks, condition checks, findings, and follow-up verification.", color:"#047857", bg:"#ecfdf5", soft:"#d1fae5", border:"#34d399" },
+    { id:"Repair",     label:"Repair Work Order",     icon:"🛠", desc:"Fault repairs and breakdown response",     color:"#7f1d1d", bg:"#fef2f2" },
+    { id:"Service",    label:"Service Work Order",    icon:"🧰", desc:"Preventive maintenance service generated from PM tasks", color:"#1e40af", bg:"#eff6ff" },
+    { id:"Inspection", label:"Inspection Work Order", icon:"🔍", desc:"Equipment inspection generated from inspection tasks", color:"#065f46", bg:"#ecfdf5" },
   ];
 
   /* Intervals shown for Service and Inspection types */
@@ -1114,19 +1114,11 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     else if(sortBy==="created") cmp = (a.created||"").localeCompare(b.created||"");
     else if(sortBy==="completed") cmp = getCompletedDate(a).localeCompare(getCompletedDate(b));
     else if(sortBy==="status")  cmp = (a.status||"").localeCompare(b.status||"");
-    else if(sortBy==="cost") {
-      const partsA = (a.partsUsed||[]).reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0);
-      const partsB = (b.partsUsed||[]).reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0);
-      cmp = ((+a.laborCost||0)+partsA)-((+b.laborCost||0)+partsB);
-    }
+    else if(sortBy==="cost")    cmp = ((+a.laborCost||0)+(+a.partsCost||0))-((+b.laborCost||0)+(+b.partsCost||0));
     return sortDir==="asc" ? cmp : -cmp;
   });
   const allMechanics = [...new Set(state.workOrders.map(w=>w.tech).filter(Boolean))];
   const technicians = state.technicians || [];
-  const getWOTypeInfo = (woType="Repair") => WO_TYPES.find(t=>t.id===woType) || WO_TYPES[0];
-  const woTypeCounts = WO_TYPES.reduce((acc,t)=>{ acc[t.id] = filtered.filter(w=>w.woType===t.id).length; return acc; },{});
-  const activeWOCount = filtered.filter(w=>w.status!=="Completed").length;
-  const completedWOCount = filtered.filter(w=>w.status==="Completed").length;
 
   /* Smart WO ID. Service WOs are numbered per equipment: EQID SVC 01, EQID SVC 02... */
   const genWOId = (eqId, woType="Repair") => {
@@ -1343,7 +1335,14 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       : usageMode === "both"
         ? [wo.usageMileage ? Number(wo.usageMileage).toLocaleString() : "", wo.usageHours ? `${wo.usageHours} hrs` : ""].filter(Boolean).join(" / ") || "&nbsp;"
         : (wo.usageHours || "&nbsp;"));
-    const woTypeLabel = `${String(wo.woType||"Repair").toUpperCase()} WORK ORDER`;
+    const woTypeRaw = String(wo.woType || "Repair");
+    const woTypeLabel = `${woTypeRaw.toUpperCase()} WORK ORDER`;
+    const woTypePrint = {
+      Repair: { icon:"🛠", label:"REPAIR", subtitle:"Corrective repair / breakdown", color:"#991b1b", light:"#fff1f2", border:"#fb7185", dark:"#7f1d1d" },
+      Service: { icon:"🧰", label:"SERVICE", subtitle:"Preventive maintenance / scheduled service", color:"#1d4ed8", light:"#eff6ff", border:"#60a5fa", dark:"#1e3a8a" },
+      Inspection: { icon:"🔍", label:"INSPECTION", subtitle:"Inspection / condition check", color:"#047857", light:"#ecfdf5", border:"#34d399", dark:"#065f46" },
+    }[woTypeRaw] || { icon:"📋", label:woTypeRaw.toUpperCase(), subtitle:"Work order", color:"#334155", light:"#f8fafc", border:"#94a3b8", dark:"#0f172a" };
+    const statusClass = (wo.status === "Completed") ? "st-completed" : (wo.status === "In Progress") ? "st-in" : (wo.status === "On Hold") ? "st-on" : "st-open";
     const cleanInspectionTaskName = (value) => String(value || "").replace(/^\s*inspection\s*task\s*:\s*/i, "").trim();
     const printableDescription = wo.woType === "Inspection"
       ? (cleanInspectionTaskName(wo.inspectionTaskName || wo.faultDescription || wo.description || wo.title) || "&nbsp;")
@@ -1351,7 +1350,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const partsUsed  = wo.partsUsed || [];
     const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
     const laborTotal = +(wo.laborCost||0);
-    const grandTotal = laborTotal + partsTotal + (+(wo.partsCost||0));
+    const grandTotal = laborTotal + partsTotal;
     const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", Labor:laborTotal.toFixed(2), Parts:partsTotal.toFixed(2), Total:grandTotal.toFixed(2), Problem:wo.problem||wo.description||"", Description:wo.faultEnabled?(wo.faultDescription||""):"", "Repair Complaint":wo.repairComplaint||"", "Repair Cause":wo.repairCause||"", "Corrective Action":wo.correctiveAction||"", "Service Checklist":wo.serviceChecklist||"", "Inspection Findings":wo.inspectionFindings||"", Notes:wo.mechanicNotes||""}];
     const typeSpecificPrint = (() => {
       if(!printOpt("showTypeSpecific")) return "";
@@ -1375,25 +1374,31 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const win = window.open("","_blank","width=900,height=700");
     if(!win){ alert("Please allow pop-ups to print work orders."); return; }
 
-    win.document.write(`<!DOCTYPE html><html><head><title>Work Order ${wo.id}</title><style>
+    win.document.write(`<!DOCTYPE html><html><head><title>${woTypePrint.label} Work Order ${wo.id}</title><style>
       *{box-sizing:border-box;margin:0;padding:0}
       body{font-family:Arial,sans-serif;background:#fff;color:#111;font-size:13.5px;line-height:1.45}
-      .page{width:8.5in;min-height:11in;margin:0 auto;padding:.35in .45in;display:flex;flex-direction:column;gap:6px}
-      .hdr{display:flex;align-items:stretch;border:2px solid #1a1a2e;border-radius:3px;overflow:hidden}
-      .hdr-logo{width:165px;min-width:165px;height:92px;background:#fff;display:flex;align-items:center;justify-content:center;padding:4px;border-right:2px solid #1a1a2e;overflow:hidden}
-      .hdr-logo img{width:100%;height:100%;max-width:155px;max-height:84px;object-fit:contain;object-position:center;display:block}
-      .hdr-logo-text{font-size:14px;font-weight:700;color:#1a1a2e;text-align:center;line-height:1.35;padding:4px}
-      .hdr-center{flex:1;background:#1a1a2e;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px}
-      .hdr-company{font-size:18px;font-weight:700;color:#fff;letter-spacing:1px;text-transform:uppercase}
-      .hdr-type{font-size:12px;color:#cbd5e1;letter-spacing:1.5px;text-transform:uppercase;margin-top:3px}
-      .hdr-right{width:155px;min-width:155px;background:#f0f4ff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px;border-left:2px solid #1a1a2e;text-align:center}
-      .hdr-wol{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#666}
-      .hdr-won{font-size:24px;font-weight:700;color:#1a1a2e;font-family:monospace;letter-spacing:1px}
-      .hdr-status{margin-top:5px;display:inline-block;padding:4px 10px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
+      .page{width:8.5in;min-height:11in;margin:0 auto;padding:.35in .45in;display:flex;flex-direction:column;gap:8px}
+      .hdr{display:flex;align-items:stretch;border:2px solid ${woTypePrint.dark};border-radius:8px;overflow:hidden;box-shadow:0 6px 20px rgba(15,23,42,.10)}
+      .hdr-logo{width:155px;min-width:155px;height:96px;background:#fff;display:flex;align-items:center;justify-content:center;padding:5px;border-right:2px solid ${woTypePrint.dark};overflow:hidden}
+      .hdr-logo img{width:100%;height:100%;max-width:145px;max-height:88px;object-fit:contain;object-position:center;display:block}
+      .hdr-logo-text{font-size:13px;font-weight:800;color:${woTypePrint.dark};text-align:center;line-height:1.35;padding:4px;text-transform:uppercase}
+      .hdr-center{flex:1;background:linear-gradient(135deg,${woTypePrint.dark},${woTypePrint.color});display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px;text-align:center}
+      .hdr-company{font-size:18px;font-weight:800;color:#fff;letter-spacing:1px;text-transform:uppercase}
+      .hdr-type{font-size:13px;color:#fff;letter-spacing:1.8px;text-transform:uppercase;margin-top:5px;font-weight:900}
+      .hdr-sub{font-size:10.5px;color:#e5e7eb;letter-spacing:.5px;text-transform:uppercase;margin-top:3px;font-weight:700}
+      .hdr-right{width:165px;min-width:165px;background:${woTypePrint.light};display:flex;flex-direction:column;align-items:center;justify-content:center;padding:7px;border-left:2px solid ${woTypePrint.dark};text-align:center}
+      .hdr-wol{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#475569}
+      .hdr-won{font-size:23px;font-weight:900;color:${woTypePrint.dark};font-family:monospace;letter-spacing:1px}
+      .hdr-status{margin-top:5px;display:inline-block;padding:4px 10px;border-radius:999px;font-size:10.5px;font-weight:900;letter-spacing:.5px;text-transform:uppercase}
+      .type-strip{border:2px solid ${woTypePrint.border};background:${woTypePrint.light};border-radius:8px;padding:9px 12px;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center}
+      .type-icon{width:38px;height:38px;border-radius:12px;background:#fff;border:1px solid ${woTypePrint.border};display:grid;place-items:center;font-size:21px}
+      .type-title{font-size:18px;font-weight:900;color:${woTypePrint.dark};letter-spacing:.8px;text-transform:uppercase;line-height:1}
+      .type-sub{font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.4px;margin-top:3px}
+      .type-chip{background:${woTypePrint.color};color:#fff;font-size:11px;font-weight:900;padding:7px 12px;border-radius:999px;letter-spacing:.6px;text-transform:uppercase;white-space:nowrap}
       .st-open{background:#dbeafe;color:#1e3a8a}.st-in{background:#fef9c3;color:#713f12}
       .st-completed{background:#dcfce7;color:#14532d}.st-on{background:#fee2e2;color:#7f1d1d}
       .row{display:grid;border:1.5px solid #1a1a2e;border-radius:3px;overflow:hidden}
-      .row.c3{grid-template-columns:1fr 1fr 1fr}.row.c2{grid-template-columns:2fr 1fr}.row.c22{grid-template-columns:1fr 1fr}
+      .row.c4{grid-template-columns:1fr 1fr 1fr 1fr}.row.c3{grid-template-columns:1fr 1fr 1fr}.row.c2{grid-template-columns:2fr 1fr}.row.c22{grid-template-columns:1fr 1fr}
       .eq-info-grid{display:grid;grid-template-columns:1fr 1fr 1fr;border:none}
       .eq-info-grid .cell:nth-child(3n){border-right:none}
       .eq-info-grid .cell:nth-child(n+4){border-top:1px solid #c8d0e0}
@@ -1401,7 +1406,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#555;margin-bottom:3px}
       .val{font-size:14px;font-weight:600;color:#111;min-height:20px}.val.mn{font-family:monospace}
       .sec{border:1.5px solid #1a1a2e;border-radius:3px;overflow:hidden}
-      .sh{background:#1a1a2e;color:#fff;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:6px 10px}
+      .sh{background:${woTypePrint.dark};color:#fff;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:6px 10px}
       .sb{padding:10px 12px;font-size:13.5px;color:#111;line-height:1.5;white-space:pre-wrap;min-height:70px}
       .bg{display:grid;grid-template-columns:1fr;gap:6px}
       .pt{width:100%;border-collapse:collapse;font-size:13px}
@@ -1410,7 +1415,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .pt .sub{font-weight:700;background:#f8faff}
       .cs{border-top:2px solid #1a1a2e}
       .cr{display:flex;justify-content:space-between;padding:6px 10px;border-bottom:1px solid #e5e7eb;font-size:13px}
-      .ct{display:flex;justify-content:space-between;padding:7px 10px;background:#1a1a2e;color:#fff;font-size:14px;font-weight:700}
+      .ct{display:flex;justify-content:space-between;padding:7px 10px;background:${woTypePrint.dark};color:#fff;font-size:14px;font-weight:700}
       .phi{color:#991b1b;background:#fee2e2;border:1px solid #fca5a5;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
       .pmd{color:#92400e;background:#fef3c7;border:1px solid #fcd34d;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
       .plo{color:#374151;background:#f3f4f6;border:1px solid #d1d5db;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
@@ -1418,21 +1423,27 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .sc{display:flex;flex-direction:column;gap:10px}.sw{display:flex;flex-direction:column;gap:3px}
       .sl{border-bottom:1.5px solid #333;height:24px}
       .slb{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#555}
-      .ftr{background:#1a1a2e;color:#fff;padding:7px 12px;border-radius:4px;display:flex;justify-content:space-between;font-size:10.5px}
+      .ftr{background:${woTypePrint.dark};color:#fff;padding:7px 12px;border-radius:4px;display:flex;justify-content:space-between;font-size:10.5px}
       .pbtn{margin-top:14px;display:flex;gap:10px;justify-content:center}
       .pbtn button{padding:9px 24px;font-size:13px;font-weight:700;border:none;border-radius:6px;cursor:pointer}
-      .bpr{background:#1a1a2e;color:#fff}.bpdf{background:#0052cc;color:#fff}
+      .bpr{background:${woTypePrint.dark};color:#fff}.bpdf{background:#0052cc;color:#fff}
       @media print{.pbtn{display:none}.page{padding:.35in .45in;gap:8px}body{font-size:13px}}
     </style></head><body>
     <div class="page">
       <div class="hdr">
         <div class="hdr-logo">${companyLogo?`<img src="${companyLogo}" alt="logo">`:`<div class="hdr-logo-text">${companyName}</div>`}</div>
-        <div class="hdr-center"><div class="hdr-company">${companyName}</div><div class="hdr-type">${woTypeLabel}</div></div>
+        <div class="hdr-center"><div class="hdr-company">${companyName}</div><div class="hdr-type">${woTypeLabel}</div><div class="hdr-sub">${woTypePrint.subtitle}</div></div>
         <div class="hdr-right"><div class="hdr-wol">Work Order No.</div><div class="hdr-won">${wo.id}</div>
-          <div class="hdr-status st-${(wo.status||"open").toLowerCase().slice(0,2)}">${wo.status||"Open"}</div>
+          <div class="hdr-status ${statusClass}">${wo.status||"Open"}</div>
         </div>
       </div>
-      ${printOpt("showDates") ? `<div class="row c3">
+      <div class="type-strip">
+        <div class="type-icon">${woTypePrint.icon}</div>
+        <div><div class="type-title">${woTypePrint.label} WORK ORDER</div><div class="type-sub">${woTypePrint.subtitle}</div></div>
+        <div class="type-chip">${wo.status||"Open"}</div>
+      </div>
+      ${printOpt("showDates") ? `<div class="row c4">
+        <div class="cell"><div class="lbl">Work Order Type</div><div class="val" style="color:${woTypePrint.dark};font-weight:900">${woTypePrint.label}</div></div>
         <div class="cell"><div class="lbl">Date Created</div><div class="val">${wo.created||"&nbsp;"}</div></div>
         <div class="cell"><div class="lbl">Due Date</div><div class="val">${wo.due||"&nbsp;"}</div></div>
         <div class="cell"><div class="lbl">Date Completed</div><div class="val">${wo.completed||"&nbsp;"}</div></div>
@@ -1710,10 +1721,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const renderWODetail = (wo) => {
     if(!wo) return null;
     const eq = state.equipment.find(e=>e.id===wo.equipment);
-    const typeInfo = getWOTypeInfo(wo.woType);
+    const typeInfo = WO_TYPES.find(t=>t.id===wo.woType);
     const partsUsed = wo.partsUsed||[];
     const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
-    const total = (+wo.laborCost||0)+partsTotal;
+    const total = (+wo.laborCost||0)+partsTotal+(+wo.partsCost||0);
     const isCompleted = wo.status==="Completed";
 
     const completeWO = () => {
@@ -1872,66 +1883,40 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   return (
     <div>
-      {/* Work Order Command Center */}
-      <div style={{ marginBottom:16, borderRadius:22, overflow:"hidden", border:`1px solid ${T.border}`, background:"linear-gradient(135deg,#0f172a 0%,#1e293b 48%,#111827 100%)", boxShadow:"0 18px 40px rgba(15,23,42,.16)" }}>
-        <div style={{ padding:18, display:"grid", gridTemplateColumns:"minmax(260px,1.1fr) repeat(3,minmax(150px,.75fr))", gap:12, alignItems:"stretch" }}>
-          <div style={{ color:"#fff", display:"flex", flexDirection:"column", justifyContent:"space-between", minHeight:118 }}>
-            <div>
-              <div style={{ fontFamily:T.sans, fontSize:11, letterSpacing:.8, textTransform:"uppercase", color:"#93c5fd", fontWeight:800 }}>Work Order Command Center</div>
-              <div style={{ fontFamily:T.sans, fontSize:24, fontWeight:900, marginTop:5 }}>Repair, Service, and Inspection separated at a glance</div>
-              <div style={{ fontFamily:T.sans, fontSize:12, color:"#cbd5e1", marginTop:6, maxWidth:520 }}>Color-coded cards, bold type badges, and status controls help you identify the WO type before opening it.</div>
-            </div>
-            <div style={{ display:"flex", gap:8, marginTop:14, flexWrap:"wrap" }}>
-              <Btn onClick={openAdd}>+ New Work Order</Btn>
-              <Btn variant="secondary" onClick={onWOSettings}>⚙ WO Settings</Btn>
-            </div>
-          </div>
-          {WO_TYPES.map(t=>(
-            <button key={t.id} onClick={()=>setTypeFilter(typeFilter===t.id?"All":t.id)} style={{ textAlign:"left", border:`1px solid ${typeFilter===t.id?t.border:"rgba(255,255,255,.14)"}`, borderRadius:18, padding:14, cursor:"pointer", background:typeFilter===t.id?t.bg:"rgba(255,255,255,.08)", boxShadow:typeFilter===t.id?`0 0 0 3px ${t.soft}`:"none", transition:"transform .12s, box-shadow .12s", color:typeFilter===t.id?T.text:"#fff" }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10 }}>
-                <span style={{ width:38, height:38, borderRadius:14, display:"grid", placeItems:"center", background:typeFilter===t.id?t.soft:"rgba(255,255,255,.12)", fontSize:20 }}>{t.icon}</span>
-                <span style={{ fontFamily:T.mono, fontSize:24, fontWeight:900, color:typeFilter===t.id?t.color:"#fff" }}>{woTypeCounts[t.id]||0}</span>
-              </div>
-              <div style={{ fontFamily:T.sans, fontSize:15, fontWeight:900, marginTop:10, color:typeFilter===t.id?t.color:"#fff" }}>{t.longLabel}</div>
-              <div style={{ fontFamily:T.sans, fontSize:11, color:typeFilter===t.id?T.subtext:"#cbd5e1", marginTop:3 }}>{t.short}</div>
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* Toolbar */}
-      <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:16, background:"#fff", border:`1px solid ${T.border}`, borderRadius:16, padding:12, boxShadow:"0 10px 24px rgba(15,23,42,.06)" }}>
-        {/* Row 1: Status tabs */}
+      <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:16 }}>
+        {/* Row 1: Status tabs + New WO */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
-          <div style={{ display:"flex", gap:0, background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:12, overflow:"hidden", flexWrap:"wrap" }}>
+          <div style={{ display:"flex", gap:0, background:"#fff", border:`1px solid ${T.border}`, borderRadius:7, overflow:"hidden", flexWrap:"wrap" }}>
             {STATUS_TABS.map((s,i)=>(
-              <button key={s} onClick={()=>setFilter(s)} style={{ padding:"9px 13px", border:"none", borderLeft:i>0?`1px solid ${T.border}`:"none", background:filter===s?T.accent:"transparent", color:filter===s?"#fff":T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:filter===s?800:600 }}>{s}</button>
+              <button key={s} onClick={()=>setFilter(s)} style={{ padding:"7px 12px", border:"none", borderLeft:i>0?`1px solid ${T.border}`:"none", background:filter===s?T.accent:"#fff", color:filter===s?"#fff":T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:filter===s?600:400 }}>{s}</button>
             ))}
           </div>
-          <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
-            <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}><b style={{ color:T.text }}>{filtered.length}</b> shown</span>
-            <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}><b style={{ color:T.red }}>{activeWOCount}</b> active</span>
-            <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}><b style={{ color:T.green }}>{completedWOCount}</b> completed</span>
-          </div>
+          <Btn onClick={openAdd}>+ New Work Order</Btn>
+          <Btn variant="secondary" onClick={onWOSettings}>⚙ WO Settings</Btn>
         </div>
 
         {/* Row 2: Filters + Sort */}
         <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
-          <select style={{ ...sel, width:160 }} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
-            <option value="All">All WO Types</option>
-            {WO_TYPES.map(t=><option key={t.id} value={t.id}>{t.icon} {t.longLabel}</option>)}
+          {/* Type */}
+          <select style={{ ...sel, width:140 }} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
+            <option value="All">All Types</option>
+            {["Repair","Service","Inspection"].map(t=><option key={t}>{t}</option>)}
           </select>
+          {/* Priority */}
           <select style={{ ...sel, width:130 }} value={priorityFilter} onChange={e=>setPriorityFilter(e.target.value)}>
             <option value="All">All Priorities</option>
             {["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}
           </select>
+          {/* Mechanic */}
           <select style={{ ...sel, width:150 }} value={mechFilter} onChange={e=>setMechFilter(e.target.value)}>
             <option value="All">All Mechanics</option>
             {allMechanics.map(m=><option key={m}>{m}</option>)}
           </select>
+          {/* Date range — only when viewing Completed */}
           {filter==="Completed" && (
-            <select style={{ ...sel, width:170 }} value={completedDateFilter} onChange={e=>setCompletedDateFilter(e.target.value)}>
-              <option value="all">All Completed Dates</option>
+            <select style={{ ...sel, width:150 }} value={completedDateFilter} onChange={e=>setCompletedDateFilter(e.target.value)}>
+              <option value="all">All Time</option>
               <option value="today">Today</option>
               <option value="thisweek">This Week</option>
               <option value="lastweek">Previous Week</option>
@@ -1939,8 +1924,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               <option value="lastmonth">Previous Month</option>
             </select>
           )}
-          <div style={{ display:"flex", gap:0, border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden" }}>
-            <select style={{ ...sel, border:"none", borderRadius:0, width:150 }} value={sortBy} onChange={e=>setSortBy(e.target.value)}>
+          {/* Sort by */}
+          <div style={{ display:"flex", gap:0, border:`1px solid ${T.border}`, borderRadius:6, overflow:"hidden" }}>
+            <select style={{ ...sel, border:"none", borderRadius:0, width:120 }} value={sortBy} onChange={e=>setSortBy(e.target.value)}>
               <option value="created">Date Created</option>
               <option value="due">Due Date</option>
               <option value="completed">Completed Date</option>
@@ -1948,22 +1934,27 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               <option value="status">Status</option>
               <option value="cost">Cost</option>
             </select>
-            <button onClick={()=>setSortDir(d=>d==="asc"?"desc":"asc")} style={{ padding:"0 12px", border:"none", borderLeft:`1px solid ${T.border}`, background:T.grayLt, cursor:"pointer", fontFamily:T.mono, fontSize:13, color:T.subtext }}>
+            <button onClick={()=>setSortDir(d=>d==="asc"?"desc":"asc")} style={{ padding:"0 10px", border:"none", borderLeft:`1px solid ${T.border}`, background:T.grayLt, cursor:"pointer", fontFamily:T.mono, fontSize:13, color:T.subtext }}>
               {sortDir==="asc"?"↑":"↓"}
             </button>
           </div>
+          {/* Clear filters */}
           {(typeFilter!=="All"||priorityFilter!=="All"||mechFilter!=="All") && (
-            <button onClick={()=>{ setTypeFilter("All"); setPriorityFilter("All"); setMechFilter("All"); }} style={{ background:"none", border:"none", color:T.accent, fontFamily:T.sans, fontSize:12, fontWeight:700, cursor:"pointer" }}>✕ Clear filters</button>
+            <button onClick={()=>{ setTypeFilter("All"); setPriorityFilter("All"); setMechFilter("All"); }} style={{ background:"none", border:"none", color:T.accent, fontFamily:T.sans, fontSize:12, fontWeight:600, cursor:"pointer" }}>✕ Clear</button>
           )}
+          <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginLeft:"auto" }}>
+            {filtered.length} work order{filtered.length!==1?"s":""}
+          </span>
         </div>
       </div>
+
       {/* WO Table — click anywhere on row to edit */}
-      <Card style={{ padding:0, overflow:"hidden", borderRadius:18, boxShadow:"0 12px 30px rgba(15,23,42,.08)" }}>
+      <Card style={{ padding:0, overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
-            <tr style={{ background:"#0f172a", borderBottom:`1px solid ${T.border}` }}>
+            <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
               {(filter==="Completed" ? ["Equipment #","Equipment Name","Description","Type of Work Order","Priority","Status","Created","Due","Completed Date","Cost","Actions"] : ["Equipment #","Equipment Name","Description","Type of Work Order","Priority","Status","Created","Due","Cost","Actions"]).map(h=>(
-                <th key={h} style={{ padding:"12px 14px", textAlign:"left", fontWeight:800, fontSize:11, color:"#e2e8f0", textTransform:"uppercase", letterSpacing:.5, whiteSpace:"nowrap" }}>{h}</th>
+                <th key={h} style={{ padding:"10px 14px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4, whiteSpace:"nowrap" }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -1972,16 +1963,16 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               const eq = state.equipment.find(e=>e.id===wo.equipment);
               const eqLabel = eq?.name || wo.equipmentLabel || wo.equipment || "—";
               const partsTotal = (wo.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
-              const total = (+wo.laborCost||0)+partsTotal;
-              const typeInfo = getWOTypeInfo(wo.woType);
+              const total = (+wo.laborCost||0)+partsTotal+(+wo.partsCost||0);
+              const typeInfo = WO_TYPES.find(t=>t.id===wo.woType);
               const rowStatus = wo.status==="Completed" ? "Fully Operational" : (wo.equipmentStatus || eq?.status || "Fully Operational");
               const isOpenInspection = wo.woType==="Inspection" && wo.status!=="Completed";
-              const rowBg = typeInfo.bg;
-              const rowHover = typeInfo.soft;
-              const rowBorder = `6px solid ${typeInfo.border}`;
+              const rowBg = isOpenInspection ? "#dbeafe" : rowStatus==="Out of Service / Deadline" ? "#fff5f5" : rowStatus==="Operational with Deficiencies" ? "#fffbeb" : (i%2===0?"#fff":T.grayLt);
+              const rowHover = isOpenInspection ? "#bfdbfe" : rowStatus==="Out of Service / Deadline" ? "#fee2e2" : rowStatus==="Operational with Deficiencies" ? "#fef3c7" : T.accentLt;
+              const rowBorder = isOpenInspection ? "4px solid #7dd3fc" : rowStatus==="Out of Service / Deadline" ? "4px solid #ef4444" : rowStatus==="Operational with Deficiencies" ? "4px solid #f59e0b" : "4px solid transparent";
               const completedDate = wo.completed || wo.completedDate || wo.dateCompleted || wo.closedDate || wo.closedAt || wo.completedAt || "";
               return (
-                <tr key={wo.id} onClick={()=>openEdit(wo)} style={{ borderBottom:`8px solid #fff`, borderLeft:rowBorder, background:rowBg, cursor:"pointer", transition:"background .12s, transform .12s", boxShadow:"inset 0 0 0 1px rgba(15,23,42,.04)" }}
+                <tr key={wo.id} onClick={()=>openEdit(wo)} style={{ borderBottom:`1px solid ${T.border}`, borderLeft:rowBorder, background:rowBg, cursor:"pointer", transition:"background .12s" }}
                   onMouseEnter={e=>e.currentTarget.style.background=rowHover}
                   onMouseLeave={e=>e.currentTarget.style.background=rowBg}>
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:T.subtext, whiteSpace:"nowrap" }}>{wo.equipment || "—"}</td>
@@ -1994,10 +1985,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                     {wo.serviceInterval && <div style={{ fontSize:11, color:T.accent, marginTop:1 }}>{wo.serviceInterval}</div>}
                   </td>
                   <td style={{ padding:"11px 14px" }}>
-                    <div style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"7px 11px", borderRadius:999, background:"#fff", color:typeInfo.color, fontSize:12, fontWeight:900, border:`1px solid ${typeInfo.border}`, boxShadow:"0 4px 10px rgba(15,23,42,.06)", whiteSpace:"nowrap" }}>
-                      <span style={{ fontSize:16 }}>{typeInfo.icon}</span>
-                      <span>{typeInfo.longLabel}</span>
-                    </div>
+                    {typeInfo ? <span style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"2px 8px", borderRadius:4, background:typeInfo.bg, color:typeInfo.color, fontSize:11, fontWeight:600 }}>{typeInfo.icon} {typeInfo.label || typeInfo.id}</span> : <span style={{ color:T.muted }}>Repair Work Order</span>}
                   </td>
                   <td style={{ padding:"11px 14px" }}><Badge label={wo.priority} type="priority" /></td>
                   <td style={{ padding:"11px 14px" }}><Badge label={wo.status} /></td>
@@ -2440,7 +2428,12 @@ function Equipment({ state, dispatch }) {
     const serviceHistory = completedHistory.filter(isServiceHistoryWO);
     const repairHistory = completedHistory.filter(isRepairHistoryWO);
     const inspectionHistory = completedHistory.filter(isInspectionHistoryWO);
-    const historyCost = (wo) => (+wo.laborCost||0)+(+wo.partsCost||0);
+    const historyCost = (wo) => {
+      const parts = Array.isArray(wo.partsUsed) && wo.partsUsed.length
+        ? wo.partsUsed.reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0)
+        : (+wo.partsCost||0);
+      return (+wo.laborCost||0)+parts;
+    };
     const historyUsage = (wo) => {
       if (wo.usageNA) return "N/A";
       if (wo.usageType==="mileage") return wo.usageMileage ? `${wo.usageMileage} mi` : "—";
@@ -2507,7 +2500,10 @@ function Equipment({ state, dispatch }) {
                     <div style={{ fontFamily:T.mono, fontSize:12, color:T.muted }}>{historyWO.woType || historyWO.type || "Work Order"}</div>
                     <div style={{ fontSize:18, fontWeight:800 }}>{historyWO.id || "Work Order"}</div>
                   </div>
-                  <Btn small onClick={()=>setHistoryEdit(true)}>✏ Edit</Btn>
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end" }}>
+                    <Btn small variant="secondary" onClick={()=>printWO(historyWO)}>🖨 Print</Btn>
+                    <Btn small onClick={()=>setHistoryEdit(true)}>✏ Edit</Btn>
+                  </div>
                 </div>
                 <div style={{ border:`2px solid ${T.text}`, borderRadius:8, overflow:"hidden", background:"#fff" }}>
                   <div style={{ background:T.text, color:"#fff", padding:"10px 14px", display:"flex", justifyContent:"space-between", gap:12, alignItems:"center" }}>
@@ -3107,7 +3103,7 @@ function Parts({ state, dispatch }) {
         </Card>
       )}
 
-      <Card style={{ padding:0, overflow:"hidden", borderRadius:18, boxShadow:"0 12px 30px rgba(15,23,42,.08)" }}>
+      <Card style={{ padding:0, overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
@@ -5014,7 +5010,7 @@ function EquipmentInventory({ state, dispatch }) {
       </div>
 
       {/* Inventory Table */}
-      <Card style={{ padding:0, overflow:"hidden", borderRadius:18, boxShadow:"0 12px 30px rgba(15,23,42,.08)" }}>
+      <Card style={{ padding:0, overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
@@ -5186,7 +5182,7 @@ function ReportPartsInv({ state }) {
         ))}
       </div>
       <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginBottom:12 }}><Btn onClick={print}>Print / PDF</Btn><Btn variant="secondary" onClick={()=>downloadCSV("parts-inventory-report.csv", exportRows)}>Excel CSV</Btn></div>
-      <Card style={{ padding:0, overflow:"hidden", borderRadius:18, boxShadow:"0 12px 30px rgba(15,23,42,.08)" }}>
+      <Card style={{ padding:0, overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead><tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
             {["Part #","Name","Category","Location","Equipment / Model","Unit $","Qty","Total $"].map(h=>(
