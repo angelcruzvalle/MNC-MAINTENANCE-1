@@ -1435,9 +1435,13 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       table{width:100%;border-collapse:collapse;font-size:11.6px;table-layout:fixed}
       th{background:var(--wo-light)!important;color:#0f172a;padding:6px;border:1px solid #cbd5e1;text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.45px;line-height:1.15}
       td{padding:6px;border:1px solid #e2e8f0;overflow-wrap:anywhere;word-break:break-word;vertical-align:top;line-height:1.22}
-      .totalRow{display:grid;grid-template-columns:1fr 1.7in;border-top:1.2px solid #0f172a;min-height:.4in}
-      .totalLabel{padding:7px 12px;text-align:right;font-weight:900;text-transform:uppercase;color:#0f172a;background:var(--wo-light)!important;border-right:1.2px solid #0f172a}
-      .totalVal{padding:7px 12px;font-size:15px;font-weight:900;color:#0f172a}
+      .summaryRows{border-top:1.2px solid #0f172a;background:#fff}
+      .summaryRow{display:grid;grid-template-columns:1fr 1.7in;min-height:.34in;border-bottom:1px solid #cbd5e1}
+      .summaryRow:last-child{border-bottom:none}
+      .summaryLabel{padding:7px 12px;text-align:right;font-weight:900;text-transform:uppercase;color:#0f172a;background:var(--wo-light)!important;border-right:1.2px solid #0f172a}
+      .summaryValue{padding:7px 12px;font-size:13px;font-weight:900;color:#0f172a;text-align:right}
+      .summaryRow.grand .summaryLabel{background:var(--wo-dark)!important;color:#fff!important}
+      .summaryRow.grand .summaryValue{font-size:15px;background:#fff;color:#0f172a}
       .sigs{display:grid;grid-template-columns:2fr 1fr;border-top:1.5px solid #0f172a;background:#fff}
       .sigLeft,.sigRight{padding:10px 14px;min-height:.72in}.sigLeft{border-right:0}
       .signatureGrid{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:end}.dateOnly{display:flex;flex-direction:column;justify-content:end;height:100%}
@@ -1489,7 +1493,11 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           ${printOpt("showParts") ? `<table><thead><tr><th style="width:46%">Description</th><th style="width:14%;text-align:center">Quantity</th><th style="width:20%;text-align:right">Unit Price</th><th style="width:20%;text-align:right">Total</th></tr></thead><tbody>
             ${partsUsed.length>0 ? partsUsed.map(p=>{ const q=+(p.qty||1),u=+(p.unitCost||0); return `<tr><td>${p.name||"&mdash;"}</td><td style="text-align:center">${q}</td><td style="text-align:right">$${u.toFixed(2)}</td><td style="text-align:right">$${(q*u).toFixed(2)}</td></tr>`; }).join("") : `<tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr><tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>`}
           </tbody></table>` : ""}
-          <div class="totalRow"><div class="totalLabel">Grand Total</div><div class="totalVal">$${grandTotal.toFixed(2)}</div></div>
+          <div class="summaryRows">
+            <div class="summaryRow"><div class="summaryLabel">Parts Subtotal</div><div class="summaryValue">$${partsTotal.toFixed(2)}</div></div>
+            <div class="summaryRow"><div class="summaryLabel">Labor</div><div class="summaryValue">$${laborTotal.toFixed(2)}</div></div>
+            <div class="summaryRow grand"><div class="summaryLabel">Grand Total</div><div class="summaryValue">$${grandTotal.toFixed(2)}</div></div>
+          </div>
         </div>` : ""}
         ${printOpt("showSignature") ? `<div class="sigs">
           <div class="sigLeft"><div class="signatureGrid"><div><div class="line"></div><div class="sigLbl">Signature</div></div><div><div class="line name">${assignedMechanicName||"&nbsp;"}</div><div class="sigLbl">Printed Name</div></div></div></div>
