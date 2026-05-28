@@ -1401,97 +1401,99 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
     win.document.write(`<!DOCTYPE html><html><head><title>${woTypePrint.label} Work Order ${wo.id}</title><style>
       *{box-sizing:border-box;margin:0;padding:0;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}
-      html,body{background:#fff!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
-      body{font-family:Arial,sans-serif;background:#fff;color:#111;font-size:13px;line-height:1.35}
+      html,body{background:#eef2f7!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+      body{font-family:Arial,Helvetica,sans-serif;color:#0f172a;font-size:12.25px;line-height:1.28}
       :root{--wo-dark:${woTypePrint.dark};--wo-color:${woTypePrint.color};--wo-light:${woTypePrint.light};--wo-border:${woTypePrint.border}}
-      .page{width:8.5in;min-height:11in;margin:0 auto;padding:.32in .38in;display:flex;flex-direction:column;gap:8px}
-      .form{border:2px solid var(--wo-dark);border-radius:10px;overflow:hidden;background:#fff;box-shadow:0 6px 20px rgba(15,23,42,.08)}
-      .hdr{display:grid;grid-template-columns:1.35in 1fr 1.55in;min-height:.95in;border-bottom:2px solid var(--wo-dark)}
-      .logoBox{border-right:2px solid var(--wo-dark);display:flex;align-items:center;justify-content:center;padding:8px;background:#fff;overflow:hidden}
-      .logoBox img{max-width:100%;max-height:.75in;object-fit:contain}
-      .logoText{font-size:18px;font-weight:900;color:var(--wo-dark);letter-spacing:1px;text-transform:uppercase;text-align:center}
-      .companyBox{display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:8px 12px;background:var(--wo-light)!important}
-      .companyName{font-size:22px;font-weight:900;color:var(--wo-dark);letter-spacing:1px;text-transform:uppercase;line-height:1.1}
-      .companySub{font-size:13px;font-weight:800;color:#334155;margin-top:5px;text-transform:uppercase;letter-spacing:.7px}
-      .woBox{border-left:2px solid var(--wo-dark);display:grid;grid-template-rows:1fr auto;background:#fff}
-      .woNum{padding:10px 8px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
-      .woLbl{font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.6px;color:#334155;line-height:1.15}
-      .woVal{font-size:22px;font-weight:900;color:var(--wo-dark);font-family:monospace;line-height:1.1;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-      .status{border-top:2px solid var(--wo-dark);padding:5px 8px;text-align:center;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.8px;background:var(--wo-dark)!important;color:#fff!important}
-      .dateStrip{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;border-bottom:2px solid var(--wo-dark);background:#fff}
-      .topCell{min-height:.38in;padding:6px 9px;border-right:1.5px solid #94a3b8;display:grid;grid-template-columns:auto 1fr;align-items:center;gap:8px;min-width:0}.topCell:last-child{border-right:none}
-      .lbl{font-size:10px;font-weight:900;color:#334155;text-transform:uppercase;letter-spacing:.45px;white-space:nowrap}
-      .val{font-size:12.5px;font-weight:700;color:#111;min-height:18px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mn{font-family:monospace}
-      .block{border-bottom:2px solid var(--wo-dark);background:#fff}
-      .block:last-child{border-bottom:none}
-      .blockTitle{display:flex;align-items:center;gap:8px;background:var(--wo-light)!important;color:var(--wo-dark)!important;border-bottom:1.5px solid var(--wo-border);padding:7px 10px;font-size:13px;font-weight:900;text-transform:uppercase;letter-spacing:.7px}
+      .page{width:8.5in;min-height:11in;margin:0 auto;padding:.28in;background:#eef2f7;display:flex;flex-direction:column}
+      .form{background:#fff;border:1.8px solid #0f172a;border-radius:14px;overflow:hidden;box-shadow:0 10px 28px rgba(15,23,42,.12)}
+      .hdr{display:grid;grid-template-columns:1.35in 1fr 1.7in;min-height:.9in;border-bottom:1.8px solid #0f172a;background:#fff}
+      .logoBox{border-right:1.5px solid #0f172a;display:flex;align-items:center;justify-content:center;padding:8px;background:#fff;overflow:hidden}
+      .logoBox img{max-width:100%;max-height:.72in;object-fit:contain}
+      .logoText{font-size:16px;font-weight:900;color:var(--wo-dark);letter-spacing:1px;text-transform:uppercase;text-align:center}
+      .companyBox{display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:8px 14px;background:linear-gradient(135deg,var(--wo-light),#fff)!important;min-width:0}
+      .companyName{font-size:20px;font-weight:900;color:#0f172a;letter-spacing:.5px;text-transform:uppercase;line-height:1.08;max-width:100%;overflow-wrap:anywhere}
+      .companySub{font-size:12px;font-weight:900;color:var(--wo-dark);margin-top:6px;text-transform:uppercase;letter-spacing:.75px}
+      .typeBadge{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:5px 12px;border:1.4px solid var(--wo-border);border-radius:999px;background:var(--wo-light)!important;color:var(--wo-dark)!important;font-size:11px;font-weight:900;letter-spacing:.6px;text-transform:uppercase;margin-top:6px;white-space:nowrap}
+      .woBox{border-left:1.5px solid #0f172a;display:grid;grid-template-rows:1fr auto;background:#fff;min-width:0}
+      .woNum{padding:9px 8px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-width:0}
+      .woLbl{font-size:9.5px;font-weight:900;text-transform:uppercase;letter-spacing:.55px;color:#475569;line-height:1.15}
+      .woVal{font-size:19px;font-weight:900;color:var(--wo-dark);font-family:monospace;line-height:1.1;margin-top:3px;max-width:100%;overflow-wrap:anywhere;word-break:break-word}
+      .status{border-top:1.5px solid #0f172a;padding:5px 8px;text-align:center;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.7px;background:var(--wo-dark)!important;color:#fff!important;overflow-wrap:anywhere}
+      .dateStrip{display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1.5px solid #0f172a;background:#fff}
+      .topCell{min-height:.36in;padding:6px 8px;border-right:1px solid #cbd5e1;display:grid;grid-template-columns:1fr 1.15fr;align-items:center;gap:7px;min-width:0}.topCell:last-child{border-right:none}
+      .lbl{font-size:9.1px;font-weight:900;color:#475569;text-transform:uppercase;letter-spacing:.42px;line-height:1.15;min-width:0;overflow-wrap:anywhere}
+      .val{font-size:11.6px;font-weight:800;color:#0f172a;min-width:0;overflow-wrap:anywhere;word-break:break-word;line-height:1.2}.mn{font-family:monospace}
+      .block{border-bottom:1.5px solid #0f172a;background:#fff}.block:last-child{border-bottom:none}
+      .blockTitle{display:flex;align-items:center;gap:8px;background:var(--wo-light)!important;color:var(--wo-dark)!important;border-bottom:1.2px solid var(--wo-border);padding:6px 10px;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.7px}
       .blockBody{padding:0}
-      .equipGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;border:none;border-radius:0;overflow:hidden}
-      .cell{padding:7px 9px;border-right:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;min-height:.42in;display:grid;grid-template-columns:auto 1fr;align-items:center;gap:8px;min-width:0}.cell:nth-child(3n){border-right:none}.cell:nth-last-child(-n+3){border-bottom:none}.cell.wide{grid-column:span 2}
-      .descriptionBlock{padding:0}
-      .textArea{border-bottom:1.5px solid #cbd5e1;padding:8px 10px;min-height:1in;white-space:pre-wrap}.textArea:last-child{border-bottom:none}
-      .textArea.short{min-height:.55in}.textArea.med{min-height:1.15in}.textArea.tall{min-height:1.35in}
-      .textLbl{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.55px;color:var(--wo-dark);margin-bottom:5px}
-      table{width:100%;border-collapse:collapse;font-size:12.5px}
-      th{background:var(--wo-light)!important;color:var(--wo-dark);padding:6px;border:1px solid #cbd5e1;text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px}
-      td{padding:6px;border:1px solid #e2e8f0}
-      .totalRow{display:grid;grid-template-columns:1fr 1.65in;border-top:1.5px solid var(--wo-dark);min-height:.45in}
-      .totalLabel{padding:8px 12px;text-align:right;font-weight:900;text-transform:uppercase;color:var(--wo-dark);background:var(--wo-light)!important;border-right:1.5px solid var(--wo-dark)}
-      .totalVal{padding:8px 12px;font-size:17px;font-weight:900;color:#111}
-      .sigs{display:grid;grid-template-columns:2fr 1fr;gap:0;border-top:2px solid var(--wo-dark)}
-      .sigLeft,.sigRight{padding:12px 14px;min-height:.82in}.sigLeft{border-right:1.5px solid #94a3b8}
-      .line{border-bottom:1.5px solid #334155;height:26px;margin-bottom:5px}.line.name{height:34px;padding-top:8px;font-weight:700}
-      .sigLbl{font-size:10.5px;font-weight:900;text-transform:uppercase;color:#334155;letter-spacing:.55px;margin-bottom:8px}
+      .infoGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:0;border:0}
+      .cell{padding:6px 8px;border-right:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;min-height:.39in;display:grid;grid-template-columns:.92in 1fr;align-items:center;gap:7px;min-width:0}.cell:nth-child(3n){border-right:none}.cell:nth-last-child(-n+3){border-bottom:none}.cell.full{grid-column:1/-1}.cell.full .lbl{max-width:1.3in}.cell.full{grid-template-columns:1.3in 1fr}
+      .descriptionGrid{display:grid;grid-template-columns:1fr;gap:0}
+      .textArea{border-bottom:1px solid #cbd5e1;padding:7px 10px;min-height:.72in;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;line-height:1.28}.textArea:last-child{border-bottom:none}
+      .textArea.short{min-height:.55in}.textArea.med{min-height:1.02in}.textArea.tall{min-height:1.05in}
+      .textLbl{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.55px;color:var(--wo-dark);margin-bottom:4px}
+      table{width:100%;border-collapse:collapse;font-size:11.6px;table-layout:fixed}
+      th{background:var(--wo-light)!important;color:var(--wo-dark);padding:6px;border:1px solid #cbd5e1;text-align:left;font-size:9.5px;text-transform:uppercase;letter-spacing:.45px;line-height:1.15}
+      td{padding:6px;border:1px solid #e2e8f0;overflow-wrap:anywhere;word-break:break-word;vertical-align:top;line-height:1.22}
+      .totalRow{display:grid;grid-template-columns:1fr 1.7in;border-top:1.2px solid #0f172a;min-height:.4in}
+      .totalLabel{padding:7px 12px;text-align:right;font-weight:900;text-transform:uppercase;color:var(--wo-dark);background:var(--wo-light)!important;border-right:1.2px solid #0f172a}
+      .totalVal{padding:7px 12px;font-size:15px;font-weight:900;color:#0f172a}
+      .sigs{display:grid;grid-template-columns:2fr 1fr;border-top:1.5px solid #0f172a;background:#fff}
+      .sigLeft,.sigRight{padding:10px 14px;min-height:.72in}.sigLeft{border-right:0}
+      .signatureGrid{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:end}.dateOnly{display:flex;flex-direction:column;justify-content:end;height:100%}
+      .line{border-bottom:1.4px solid #334155;height:23px;margin-bottom:4px;overflow-wrap:anywhere}.line.name{height:28px;padding-top:7px;font-weight:800}
+      .sigLbl{font-size:9.5px;font-weight:900;text-transform:uppercase;color:#475569;letter-spacing:.5px;margin-bottom:7px}
       .pbtn{margin-top:14px;display:flex;gap:10px;justify-content:center}.pbtn button,.pbtn a{padding:9px 24px;font-size:13px;font-weight:700;border-radius:6px;text-decoration:none;font-family:Arial,sans-serif}.bpr{background:var(--wo-dark);color:#fff;border:none;cursor:pointer}.bpdf{background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;cursor:pointer}
-      @page{size:letter;margin:.25in}
-      @media print{.pbtn,.print-customize{display:none!important}.page{width:auto;min-height:auto;padding:0;gap:0}.form{box-shadow:none}.block,.hdr,.dateStrip,.sigs{break-inside:avoid}body{font-size:12.5px}}
+      @page{size:letter;margin:.22in}
+      @media print{html,body{background:#fff!important}.pbtn,.print-customize{display:none!important}.page{width:auto;min-height:auto;padding:0;background:#fff}.form{box-shadow:none;border-radius:10px}.block,.hdr,.dateStrip,.sigs{break-inside:avoid}body{font-size:11.8px}}
     </style></head><body>
     <div class="page">
       <div class="form">
         <div class="hdr">
           <div class="logoBox">${companyLogo?`<img src="${companyLogo}" alt="Company Logo">`:`<div class="logoText">Logo</div>`}</div>
-          <div class="companyBox"><div class="companyName">${companyName}</div><div class="companySub">${woTypePrint.label} Work Order</div></div>
+          <div class="companyBox"><div class="companyName">${companyName}</div><div class="companySub">Professional Work Order</div><div class="typeBadge">${woTypePrint.icon} ${woTypePrint.label}</div></div>
           <div class="woBox"><div class="woNum"><div class="woLbl">Work Order Number</div><div class="woVal">${wo.id}</div></div><div class="status">${wo.status||"Open"}</div></div>
         </div>
         ${printOpt("showDates") ? `<div class="dateStrip">
-          <div class="topCell"><span class="lbl">Work Order Type</span><span class="val" style="color:var(--wo-dark);font-weight:900">${woTypePrint.label}</span></div>
           <div class="topCell"><span class="lbl">Date Created</span><span class="val">${wo.created||"&nbsp;"}</span></div>
           <div class="topCell"><span class="lbl">Due Date</span><span class="val">${wo.due||"&nbsp;"}</span></div>
           <div class="topCell"><span class="lbl">Date Completed</span><span class="val">${wo.completed||"&nbsp;"}</span></div>
         </div>` : ""}
         ${(printOpt("showEquipment") || printOpt("showDates")) ? `<div class="block">
-          <div class="blockTitle">Work Order Type &amp; Equipment Information</div>
+          <div class="blockTitle">Work Order Type and Equipment Information</div>
           <div class="blockBody">
-            <div class="equipGrid">
+            <div class="infoGrid">
               <div class="cell"><div class="lbl">Work Order Type</div><div class="val" style="color:var(--wo-dark);font-weight:900">${woTypePrint.label}</div></div>
-              <div class="cell"><div class="lbl">Equipment #</div><div class="val mn">${wo.equipment||"&nbsp;"}</div></div>
-              <div class="cell"><div class="lbl">Equipment Name / ID</div><div class="val">${eq?.name||wo.equipmentLabel||"&nbsp;"}</div></div>
-              <div class="cell"><div class="lbl">Make / Model</div><div class="val">${eq?`${eq.make||""} ${eq.model||""}`.trim():"&nbsp;"}</div></div>
-              <div class="cell"><div class="lbl">Serial #</div><div class="val mn">${eq?.serial||"&nbsp;"}</div></div>
+              <div class="cell"><div class="lbl">Equipment Number</div><div class="val mn">${wo.equipment||"&nbsp;"}</div></div>
+              <div class="cell"><div class="lbl">Equipment Name</div><div class="val">${eq?.name||wo.equipmentLabel||"&nbsp;"}</div></div>
+              <div class="cell"><div class="lbl">Make and Model</div><div class="val">${eq?`${eq.make||""} ${eq.model||""}`.trim():"&nbsp;"}</div></div>
+              <div class="cell"><div class="lbl">Serial Number</div><div class="val mn">${eq?.serial||"&nbsp;"}</div></div>
               <div class="cell"><div class="lbl">${usageDisplayLabel}</div><div class="val mn">${usageDisplayValue}</div></div>
-              <div class="cell"><div class="lbl">EIL Number</div><div class="val mn">${eq?.eilNumber||"&nbsp;"}</div></div>
+              <div class="cell"><div class="lbl">Equipment Identification List Number</div><div class="val mn">${eq?.eilNumber||"&nbsp;"}</div></div>
               <div class="cell"><div class="lbl">Priority</div><div class="val">${wo.priority||"&nbsp;"}</div></div>
               <div class="cell"><div class="lbl">Mechanic</div><div class="val">${assignedMechanicName||"&nbsp;"}</div></div>
             </div>
           </div>
         </div>` : ""}
-        ${(printOpt("showFaultDescription") || printOpt("showDescription") || printOpt("showMechanicNotes")) ? `<div class="block descriptionBlock">
-          <div class="blockTitle">Work Description &amp; Mechanic Notes</div>
-          ${printOpt("showFaultDescription") ? `<div class="textArea short"><div class="textLbl">Description</div>${printableDescription}</div>` : ""}
-          ${printOpt("showDescription") ? `<div class="textArea med"><div class="textLbl">Work Description / Work Performed</div>${wo.description||"&nbsp;"}</div>` : ""}
-          ${printOpt("showMechanicNotes") ? `<div class="textArea tall"><div class="textLbl">Mechanic Notes</div>${wo.mechanicNotes||"&nbsp;"}</div>` : ""}
+        ${(printOpt("showFaultDescription") || printOpt("showDescription") || printOpt("showMechanicNotes")) ? `<div class="block">
+          <div class="blockTitle">Work Description and Mechanic Notes</div>
+          <div class="descriptionGrid">
+            ${printOpt("showFaultDescription") ? `<div class="textArea short"><div class="textLbl">Customer Complaint or Problem Description</div>${printableDescription}</div>` : ""}
+            ${printOpt("showDescription") ? `<div class="textArea med"><div class="textLbl">Work Description and Work Performed</div>${wo.description||"&nbsp;"}</div>` : ""}
+            ${printOpt("showMechanicNotes") ? `<div class="textArea tall"><div class="textLbl">Mechanic Notes</div>${wo.mechanicNotes||"&nbsp;"}</div>` : ""}
+          </div>
         </div>` : ""}
         ${inspectionChecklistPrint ? `<div class="block"><div class="blockTitle">Inspection Checklist</div><div class="blockBody">${inspectionChecklistPrint}</div></div>` : ""}
         ${(printOpt("showParts") || printOpt("showLaborHours") || printOpt("showCosts")) ? `<div class="block">
-          <div class="blockTitle">Parts &amp; Labor Summary</div>
-          ${printOpt("showParts") ? `<table><thead><tr><th style="width:44%">Description</th><th style="width:12%;text-align:center">Quantity</th><th style="width:22%;text-align:right">Unit Price</th><th style="width:22%;text-align:right">Total</th></tr></thead><tbody>
+          <div class="blockTitle">Parts and Labor Summary</div>
+          ${printOpt("showParts") ? `<table><thead><tr><th style="width:46%">Description</th><th style="width:14%;text-align:center">Quantity</th><th style="width:20%;text-align:right">Unit Price</th><th style="width:20%;text-align:right">Total</th></tr></thead><tbody>
             ${partsUsed.length>0 ? partsUsed.map(p=>{ const q=+(p.qty||1),u=+(p.unitCost||0); return `<tr><td>${p.name||"&mdash;"}</td><td style="text-align:center">${q}</td><td style="text-align:right">$${u.toFixed(2)}</td><td style="text-align:right">$${(q*u).toFixed(2)}</td></tr>`; }).join("") : `<tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr><tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>`}
           </tbody></table>` : ""}
           <div class="totalRow"><div class="totalLabel">Grand Total</div><div class="totalVal">$${grandTotal.toFixed(2)}</div></div>
         </div>` : ""}
         ${printOpt("showSignature") ? `<div class="sigs">
-          <div class="sigLeft"><div class="line"></div><div class="sigLbl">Signature</div><div class="line name">${assignedMechanicName||"&nbsp;"}</div><div class="sigLbl">Printed Name</div></div>
-          <div class="sigRight"><div class="line name">${printedDate||"&nbsp;"}</div><div class="sigLbl">Date</div></div>
+          <div class="sigLeft"><div class="signatureGrid"><div><div class="line"></div><div class="sigLbl">Signature</div></div><div><div class="line name">${assignedMechanicName||"&nbsp;"}</div><div class="sigLbl">Printed Name</div></div></div></div>
+          <div class="sigRight"><div class="dateOnly"><div class="line name">${printedDate||"&nbsp;"}</div><div class="sigLbl">Date</div></div></div>
         </div>` : ""}
       </div>
     </div>
