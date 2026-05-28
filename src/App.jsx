@@ -257,6 +257,16 @@ const equipmentLabel = (state={}, id="") => {
   const eq = (state.equipment || []).find(e => String(e.id) === String(id));
   return eq ? `${eq.name || eq.nomenclature || "Equipment"} (${eq.id})` : (id || "—");
 };
+const equipmentNumber = (item={}, fallback="") => firstText(item.id, item.equipment, item.equipmentId, item.eqId, fallback, "—");
+const equipmentNameById = (state={}, id="") => {
+  const eq = (state.equipment || []).find(e => String(e.id) === String(id));
+  return eq ? (eq.name || eq.nomenclature || "") : "";
+};
+const equipmentReportLabel = (state={}, id="") => {
+  const num = firstText(id, "—");
+  const name = equipmentNameById(state, num);
+  return name ? `${num} - ${name}` : num;
+};
 const htmlEscape = v => String(v ?? "").replace(/[&<>\"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
 
 
@@ -1290,7 +1300,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       ...wo,
       ...changes,
       equipmentStatus: nextStatus === "Completed" ? "Fully Operational" : (changes.equipmentStatus || wo.equipmentStatus || "Fully Operational"),
-      completed: nextStatus === "Completed" ? (wo.completed || today()) : (changes.status && changes.status !== "Completed" ? "" : wo.completed),
+      completed: nextStatus === "Completed" ? (wo.completed || wo.completedDate || wo.dateCompleted || wo.closedDate || today()) : (changes.status && changes.status !== "Completed" ? "" : wo.completed),
+      completedDate: nextStatus === "Completed" ? (wo.completedDate || wo.completed || wo.dateCompleted || wo.closedDate || today()) : (changes.status && changes.status !== "Completed" ? "" : wo.completedDate),
     };
     dispatch({ type:"UPDATE_WO", payload:next });
     if(changes.status && (wo.status || "Open") !== "Completed" && nextStatus === "Completed") {
@@ -1697,7 +1708,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const completeWO = () => {
       if(!confirmWOStatusChange(wo, "Completed")) return;
       const completedDate = today();
-      const updated = { ...wo, status:"Completed", equipmentStatus:"Fully Operational", completed:completedDate };
+      const updated = { ...wo, status:"Completed", equipmentStatus:"Fully Operational", completed:completedDate, completedDate:completedDate };
       dispatch({ type:"UPDATE_WO", payload:updated });
       setModal(null); setDetailWO(null);
       if(confirm("Work order completed. Would you like to print it?")) printWO(updated);
@@ -1896,6 +1907,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             <select style={{ ...sel, border:"none", borderRadius:0, width:120 }} value={sortBy} onChange={e=>setSortBy(e.target.value)}>
               <option value="created">Date Created</option>
               <option value="due">Due Date</option>
+              <option value="completed">Completed Date</option>
               <option value="priority">Priority</option>
               <option value="status">Status</option>
               <option value="cost">Cost</option>
@@ -1919,7 +1931,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-              {["Equipment #","Equipment Name","Description","Type of Work Order","Priority","Status","Created","Due","Cost","Actions"].map(h=>(
+              {["Equipment #","Equipment Name","Description","Type of Work Order","Priority","Status","Created","Due","Completed Date","Cost","Actions"].map(h=>(
                 <th key={h} style={{ padding:"10px 14px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4, whiteSpace:"nowrap" }}>{h}</th>
               ))}
             </tr>
@@ -1936,6 +1948,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               const rowBg = isOpenInspection ? "#dbeafe" : rowStatus==="Out of Service / Deadline" ? "#fff5f5" : rowStatus==="Operational with Deficiencies" ? "#fffbeb" : (i%2===0?"#fff":T.grayLt);
               const rowHover = isOpenInspection ? "#bfdbfe" : rowStatus==="Out of Service / Deadline" ? "#fee2e2" : rowStatus==="Operational with Deficiencies" ? "#fef3c7" : T.accentLt;
               const rowBorder = isOpenInspection ? "4px solid #7dd3fc" : rowStatus==="Out of Service / Deadline" ? "4px solid #ef4444" : rowStatus==="Operational with Deficiencies" ? "4px solid #f59e0b" : "4px solid transparent";
+              const completedDate = wo.completed || wo.completedDate || wo.dateCompleted || wo.closedDate || wo.closedAt || wo.completedAt || "";
               return (
                 <tr key={wo.id} onClick={()=>openEdit(wo)} style={{ borderBottom:`1px solid ${T.border}`, borderLeft:rowBorder, background:rowBg, cursor:"pointer", transition:"background .12s" }}
                   onMouseEnter={e=>e.currentTarget.style.background=rowHover}
@@ -1956,6 +1969,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                   <td style={{ padding:"11px 14px" }}><Badge label={wo.status} /></td>
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:T.subtext, whiteSpace:"nowrap" }}>{wo.created||"—"}</td>
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:wo.due&&wo.due<today()&&wo.status!=="Completed"?T.red:T.subtext, whiteSpace:"nowrap" }}>{wo.due}</td>
+                  <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:wo.status==="Completed"?T.green:T.muted, fontWeight:wo.status==="Completed"?700:400, whiteSpace:"nowrap" }}>{wo.status==="Completed" ? (completedDate || "—") : "—"}</td>
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:T.subtext, whiteSpace:"nowrap" }}>{total>0?`$${total.toFixed(0)}`:"—"}</td>
                   <td style={{ padding:"4px 10px", whiteSpace:"nowrap", display:"flex", gap:6, alignItems:"center" }} onClick={e=>e.stopPropagation()}>
                     <select title="Change Work Order Status" value={wo.status||"Open"} onChange={e=>quickUpdateWO(wo,{status:e.target.value})} style={{ ...sel, width:145, minWidth:145, padding:"7px 10px", fontSize:12 }}>
@@ -2972,7 +2986,7 @@ function Parts({ state, dispatch }) {
         <tr><th>Part #</th><th>Nomenclature</th><th>Category</th><th>Location</th><th>Equipment / Model</th><th style="text-align:right">Unit $</th><th style="text-align:right">Qty</th><th style="text-align:right">Total $</th><th>New Count</th></tr>
         ${state.parts.sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||"")).map(p=>{
           const eq = p.equipmentId ? state.equipment.find(e=>e.id===p.equipmentId) : null;
-          return `<tr class="${p.qty<=(p.minQty||0)?"low":""}"><td>${p.partNumber||"—"}</td><td>${p.name}</td><td>${p.category||"—"}</td><td>${p.location||"—"}</td><td>${eq?`${eq.name} (${eq.id})`:p.modelFit||"—"}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td style="text-align:right">${p.qty}</td><td style="text-align:right">$${(p.qty*(+p.unitCost||0)).toFixed(2)}</td><td style="border-bottom:1px solid #bbb;min-width:80px">&nbsp;</td></tr>`;
+          return `<tr class="${p.qty<=(p.minQty||0)?"low":""}"><td>${p.partNumber||"—"}</td><td>${p.name}</td><td>${p.category||"—"}</td><td>${p.location||"—"}</td><td>${eq?`${eq.id} - ${eq.name}`:p.modelFit||"—"}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td style="text-align:right">${p.qty}</td><td style="text-align:right">$${(p.qty*(+p.unitCost||0)).toFixed(2)}</td><td style="border-bottom:1px solid #bbb;min-width:80px">&nbsp;</td></tr>`;
         }).join("")}
         <tr class="total-row"><td colspan="7" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">$${totalVal.toFixed(2)}</td><td></td></tr>
       </table>
@@ -5099,7 +5113,7 @@ function ReportPartsInv({ state }) {
   const totalVal = state.parts.reduce((s,p)=>s+(+p.qty*(+p.unitCost||0)),0);
   const lowParts = state.parts.filter(p=>p.lowStockAlert!==false&&p.qty<=(p.minQty||0));
   const sorted = [...state.parts].sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||""));
-  const exportRows = sorted.map(p=>{ const eq = p.equipmentId?state.equipment.find(e=>e.id===p.equipmentId):null; return {"Part #":p.partNumber||"", Name:p.name||"", Category:p.category||"", Location:p.location||"", "Equipment / Model":eq?`${eq.name} (${eq.id})`:(p.modelFit||""), "Unit $":(+p.unitCost||0).toFixed(2), Qty:p.qty||0, "Total $":(p.qty*(+p.unitCost||0)).toFixed(2)}; });
+  const exportRows = sorted.map(p=>{ const eq = p.equipmentId?state.equipment.find(e=>e.id===p.equipmentId):null; return {"Part #":p.partNumber||"", Name:p.name||"", Category:p.category||"", Location:p.location||"", "Equipment / Model":eq?`${eq.id} - ${eq.name}`:(p.modelFit||""), "Unit $":(+p.unitCost||0).toFixed(2), Qty:p.qty||0, "Total $":(p.qty*(+p.unitCost||0)).toFixed(2)}; });
 
   const print = () => {
     const win = window.open("","_blank","width=900,height=700");
@@ -5114,7 +5128,7 @@ function ReportPartsInv({ state }) {
         ${sorted.map(p=>{
           const eq = p.equipmentId?state.equipment.find(e=>e.id===p.equipmentId):null;
           const low = p.qty<=(p.minQty||0)&&p.lowStockAlert!==false;
-          return `<tr class="${low?"low":""}"><td>${p.partNumber||"—"}</td><td>${p.name}${low?" &#9888;":""}</td><td>${p.category||"—"}</td><td>${p.location||"—"}</td><td>${eq?`${eq.name} (${eq.id})`:p.modelFit||"—"}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td style="text-align:right">${p.qty}</td><td style="text-align:right">$${(p.qty*(+p.unitCost||0)).toFixed(2)}</td><td style="border-bottom:1px solid #999;min-width:80px">&nbsp;</td></tr>`;
+          return `<tr class="${low?"low":""}"><td>${p.partNumber||"—"}</td><td>${p.name}${low?" &#9888;":""}</td><td>${p.category||"—"}</td><td>${p.location||"—"}</td><td>${eq?`${eq.id} - ${eq.name}`:p.modelFit||"—"}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td style="text-align:right">${p.qty}</td><td style="text-align:right">$${(p.qty*(+p.unitCost||0)).toFixed(2)}</td><td style="border-bottom:1px solid #999;min-width:80px">&nbsp;</td></tr>`;
         }).join("")}
         <tr class="total-row"><td colspan="7" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">$${totalVal.toFixed(2)}</td><td></td></tr>
       </table>
@@ -5148,7 +5162,7 @@ function ReportPartsInv({ state }) {
                   <td style={{ padding:"9px 12px", fontWeight:500 }}>{p.name}{isLow&&<span style={{ color:T.red, marginLeft:6, fontSize:11 }}>⚠</span>}</td>
                   <td style={{ padding:"9px 12px", color:T.subtext }}>{p.category||"—"}</td>
                   <td style={{ padding:"9px 12px", color:T.muted }}>{p.location||"—"}</td>
-                  <td style={{ padding:"9px 12px", color:T.subtext }}>{eq?`${eq.name} (${eq.id})`:p.modelFit||"—"}</td>
+                  <td style={{ padding:"9px 12px", color:T.subtext }}>{eq?`${eq.id} - ${eq.name}`:p.modelFit||"—"}</td>
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12 }}>${(+p.unitCost||0).toFixed(2)}</td>
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:13, fontWeight:700, color:isLow?T.red:T.green }}>{p.qty}</td>
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12 }}>${(p.qty*(+p.unitCost||0)).toFixed(2)}</td>
@@ -5194,18 +5208,18 @@ function ReportUsage({ state }) {
   const isMileageEq = (eq) => (eq.usageType||"hours") === "mileage";
   const primaryField = (eq) => isMileageEq(eq) ? "mileage" : "hours";
   const primaryLabel = (eq) => isMileageEq(eq) ? "Miles" : "Hours";
-  const exportRows = eqList.map(eq=>{ const field=primaryField(eq); const st=statsFor(eq, field); return {"Equipment #":eq.id, Equipment:eq.name||"", Type:primaryLabel(eq), Current:st.current, "New This Month":st.month, "This FY":st.fy, "Last Entry":st.lastDate, Entries:st.entries}; });
+  const exportRows = eqList.map(eq=>{ const field=primaryField(eq); const st=statsFor(eq, field); return {"Equipment #":eq.id, Nomenclature:eq.name||eq.nomenclature||"", Type:primaryLabel(eq), Current:st.current, "New This Month":st.month, "This FY":st.fy, "Last Entry":st.lastDate, Entries:st.entries}; });
 
   const printUsageReport = () => {
     const win = window.open("","_blank","width=1000,height=760");
     if(!win) return;
     const cards = eqList.map(eq=>{
       const field=primaryField(eq), label=primaryLabel(eq), st=statsFor(eq, field);
-      return `<tr><td><b>${eq.name||""}</b><br><small>${eq.id} • ${eq.category||""}</small></td><td>${label}</td><td><b>${fmt(st.current)}</b></td><td><b>${fmt(st.month)}</b></td><td><b>${fmt(st.fy)}</b></td><td>${st.lastDate}</td><td>${st.entries}</td></tr>`;
+      return `<tr><td><b>${eq.id||"—"}</b></td><td><b>${eq.name||eq.nomenclature||""}</b><br><small>${eq.category||""}</small></td><td>${label}</td><td><b>${fmt(st.current)}</b></td><td><b>${fmt(st.month)}</b></td><td><b>${fmt(st.fy)}</b></td><td>${st.lastDate}</td><td>${st.entries}</td></tr>`;
     }).join("");
     win.document.write(`<!DOCTYPE html><html><head><title>Usage Report</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111827}h1{margin:0 0 4px}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0}.box{border:1px solid #dbeafe;background:#eff6ff;border-radius:12px;padding:12px}.box small{color:#64748b;text-transform:uppercase;font-weight:700}.box div{font-size:22px;font-weight:800;color:#1d4ed8;margin-top:4px}table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}th{background:#1e3a8a;color:white;padding:8px 10px;text-align:left;font-size:11px;text-transform:uppercase}td{padding:9px 10px;border-bottom:1px solid #e5e7eb}tr:nth-child(even){background:#f8fafc}@media print{button{display:none}}</style></head><body>${reportHeaderHTML(state,"Equipment Usage Report")}
       <p style="color:#64748b;font-size:12px;margin-top:4px">Shows current reading, new usage this month, and usage this fiscal year for monthly and annual reporting.</p>
-      <table><thead><tr><th>Equipment</th><th>Meter</th><th>Current</th><th>New This Month</th><th>This FY</th><th>Last Entry</th><th>Entries</th></tr></thead><tbody>${cards || `<tr><td colspan="7">No tracked equipment found.</td></tr>`}</tbody></table>${reportButtonsHtml(exportRows)}</body></html>`);
+      <table><thead><tr><th>Equipment #</th><th>Nomenclature</th><th>Meter</th><th>Current</th><th>New This Month</th><th>This FY</th><th>Last Entry</th><th>Entries</th></tr></thead><tbody>${cards || `<tr><td colspan="8">No tracked equipment found.</td></tr>`}</tbody></table>${reportButtonsHtml(exportRows)}</body></html>`);
     win.document.close();
   };
 
@@ -5324,20 +5338,21 @@ function ReportPM({ state }) {
     return d >= m;
   });
   const eqName = (id) => state.equipment.find(e=>e.id===id)?.name||id;
-  const exportRows = [...overdue.map(p=>({Group:"Overdue", Equipment:eqName(p.equipment), Task:p.task, Interval:p.interval, "Last Done":p.lastDone||"", "Next Due":p.nextDue||"", Status:p.status})), ...dueSoon.map(p=>({Group:"Due Soon", Equipment:eqName(p.equipment), Task:p.task, Interval:p.interval, "Last Done":p.lastDone||"", "Next Due":p.nextDue||"", Status:p.status})), ...completed.map(p=>({Group:"Completed This Month", Equipment:eqName(p.equipment), Task:p.task, Interval:p.interval, "Last Done":p.lastDone||"", "Next Due":p.nextDue||"", Status:p.status}))];
+  const exportPM = (group, p) => ({Group:group, "Equipment #":p.equipment||"", Nomenclature:eqName(p.equipment), Task:p.task, Interval:p.interval, "Last Done":p.lastDone||"", "Next Due":p.nextDue||"", Status:p.status});
+  const exportRows = [...overdue.map(p=>exportPM("Overdue", p)), ...dueSoon.map(p=>exportPM("Due Soon", p)), ...completed.map(p=>exportPM("Completed This Month", p))];
 
   const printPMReport = () => {
     const win = window.open("","_blank","width=900,height=700");
     if(!win) return;
-    const pmRows = (list) => list.map(p=>`<tr><td>${eqName(p.equipment)}</td><td>${p.task}</td><td>${p.interval}</td><td>${p.lastDone||"—"}</td><td>${p.nextDue||"—"}</td><td>${p.status}</td></tr>`).join("");
+    const pmRows = (list) => list.map(p=>`<tr><td><b>${p.equipment||"—"}</b></td><td>${eqName(p.equipment)}</td><td>${p.task}</td><td>${p.interval}</td><td>${p.lastDone||"—"}</td><td>${p.nextDue||"—"}</td><td>${p.status}</td></tr>`).join("");
     win.document.write(`<!DOCTYPE html><html><head><title>PM Report</title>
       <style>body{font-family:Arial,sans-serif;padding:24px}h2{font-size:14px;margin:16px 0 6px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px;text-transform:uppercase}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}@media print{button{display:none}}</style>
       </head><body>
       ${reportHeaderHTML(state, "Preventive Maintenance Report")}
       <p style="color:#666;font-size:12px">Look-ahead: ${lookAheadDays} days</p>
-      ${overdue.length?`<h2 style="color:#dc2626">OVERDUE (${overdue.length})</h2><table><tr><th>Equipment</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(overdue)}</table>`:""}
-      ${dueSoon.length?`<h2 style="color:#d97706">DUE WITHIN ${lookAheadDays} DAYS (${dueSoon.length})</h2><table><tr><th>Equipment</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(dueSoon)}</table>`:""}
-      ${completed.length?`<h2 style="color:#059669">COMPLETED THIS MONTH (${completed.length})</h2><table><tr><th>Equipment</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(completed)}</table>`:""}
+      ${overdue.length?`<h2 style="color:#dc2626">OVERDUE (${overdue.length})</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(overdue)}</table>`:""}
+      ${dueSoon.length?`<h2 style="color:#d97706">DUE WITHIN ${lookAheadDays} DAYS (${dueSoon.length})</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(dueSoon)}</table>`:""}
+      ${completed.length?`<h2 style="color:#059669">COMPLETED THIS MONTH (${completed.length})</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(completed)}</table>`:""}
       <br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
       </body></html>`);
     win.document.close();
@@ -5365,13 +5380,14 @@ function ReportPM({ state }) {
           <Card style={{ padding:0, overflow:"hidden" }}>
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
               <thead><tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-                {["Equipment","Task","Interval","Last Done","Next Due","Status"].map(h=><th key={h} style={{ padding:"8px 12px", textAlign:"left", fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</th>)}
+                {["Equipment #","Nomenclature","Task","Interval","Last Done","Next Due","Status"].map(h=><th key={h} style={{ padding:"8px 12px", textAlign:"left", fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {list.map((p,i)=>{
                   const eq = state.equipment.find(e=>e.id===p.equipment);
                   return <tr key={p.id} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
-                    <td style={{ padding:"9px 12px", fontWeight:500 }}>{eq?.name||p.equipment}</td>
+                    <td style={{ padding:"9px 12px", fontFamily:T.mono, fontWeight:800, color:T.accent }}>{p.equipment||"—"}</td>
+                    <td style={{ padding:"9px 12px", fontWeight:500 }}>{eq?.name||"—"}</td>
                     <td style={{ padding:"9px 12px" }}>{p.task}</td>
                     <td style={{ padding:"9px 12px", color:T.muted }}>{p.interval}</td>
                     <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12 }}>{p.lastDone||"—"}</td>
@@ -5379,7 +5395,7 @@ function ReportPM({ state }) {
                     <td style={{ padding:"9px 12px" }}><Badge label={p.status} /></td>
                   </tr>;
                 })}
-                {list.length===0&&<tr><td colSpan={6} style={{ padding:20, textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13 }}>None</td></tr>}
+                {list.length===0&&<tr><td colSpan={7} style={{ padding:20, textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13 }}>None</td></tr>}
               </tbody>
             </table>
           </Card>
@@ -5402,7 +5418,7 @@ function ReportSpending({ state }) {
   const monthTotal = monthly.reduce((s,w)=>s+totalCost(w),0);
   const fyTotal    = annual.reduce((s,w)=>s+totalCost(w),0);
 
-  const spendingRows = (list) => list.map(w=>({"WO #":w.id, Title:w.title||"", Equipment:state.equipment.find(e=>e.id===w.equipment)?.name||w.equipment, Mechanic:w.tech||"", Date:w.completed||w.created||"", Labor:(+w.laborCost||0).toFixed(2), Parts:(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0)).toFixed(2), Total:totalCost(w).toFixed(2)}));
+  const spendingRows = (list) => list.map(w=>({"Equipment #":w.equipment||"", Nomenclature:state.equipment.find(e=>e.id===w.equipment)?.name||"", "WO #":w.id, Title:w.title||"", Mechanic:w.tech||"", Date:w.completed||w.created||"", Labor:(+w.laborCost||0).toFixed(2), Parts:(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0)).toFixed(2), Total:totalCost(w).toFixed(2)}));
   const printSpending = (list, title) => {
     const rows = spendingRows(list);
     const win = window.open("","_blank","width=900,height=700");
@@ -5410,9 +5426,9 @@ function ReportSpending({ state }) {
     win.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
       <style>body{font-family:Arial,sans-serif;padding:24px}h1{font-size:18px;margin:0}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px;text-transform:uppercase}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}@media print{button{display:none}}</style>
       </head><body>${reportHeaderHTML(state, title)}
-      <table><tr><th>WO #</th><th>Title</th><th>Equipment</th><th>Mechanic</th><th>Date</th><th>Labor</th><th>Parts</th><th>Total</th></tr>
-      ${list.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${state.equipment.find(e=>e.id===w.equipment)?.name||w.equipment}</td><td>${w.tech||"—"}</td><td>${w.completed||w.created||"—"}</td><td>$${(+w.laborCost||0).toFixed(2)}</td><td>$${(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0)).toFixed(2)}</td><td><b>$${totalCost(w).toFixed(2)}</b></td></tr>`).join("")}
-      <tr style="font-weight:700;background:#f3f4f6"><td colspan="7">TOTAL</td><td>$${list.reduce((s,w)=>s+totalCost(w),0).toFixed(2)}</td></tr>
+      <table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO #</th><th>Title</th><th>Mechanic</th><th>Date</th><th>Labor</th><th>Parts</th><th>Total</th></tr>
+      ${list.map(w=>`<tr><td><b>${w.equipment||"—"}</b></td><td>${state.equipment.find(e=>e.id===w.equipment)?.name||"—"}</td><td>${w.id}</td><td>${w.title}</td><td>${w.tech||"—"}</td><td>${w.completed||w.created||"—"}</td><td>$${(+w.laborCost||0).toFixed(2)}</td><td>$${(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0)).toFixed(2)}</td><td><b>$${totalCost(w).toFixed(2)}</b></td></tr>`).join("")}
+      <tr style="font-weight:700;background:#f3f4f6"><td colspan="8">TOTAL</td><td>$${list.reduce((s,w)=>s+totalCost(w),0).toFixed(2)}</td></tr>
       </table>${reportButtonsHtml(rows)}</body></html>`);
     win.document.close();
   };
@@ -5460,12 +5476,12 @@ function ReportCombined({ state }) {
     }
     if(selected.pm) {
       const pmBad = state.preventiveMaintenance.filter(p=>p.status==="Overdue"||p.status==="Due Soon");
-      body += `<h2>PM Overdue / Due Soon (${pmBad.length})</h2><table><tr><th>Equipment</th><th>Task</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmBad.map(p=>`<tr><td>${eqName(p.equipment)}</td><td>${p.task}</td><td>${p.lastDone||"—"}</td><td>${p.nextDue||"—"}</td><td>${p.status}</td></tr>`).join("")}</table>`;
+      body += `<h2>PM Overdue / Due Soon (${pmBad.length})</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>Task</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmBad.map(p=>`<tr><td><b>${p.equipment||"—"}</b></td><td>${eqName(p.equipment)}</td><td>${p.task}</td><td>${p.lastDone||"—"}</td><td>${p.nextDue||"—"}</td><td>${p.status}</td></tr>`).join("")}</table>`;
     }
     if(selected.spending) {
       const wos = state.workOrders.filter(w=>w.completed);
       const total = wos.reduce((s,w)=>s+totalCost(w),0);
-      body += `<h2>Completed Work Orders — Total $${total.toFixed(2)}</h2><table><tr><th>WO#</th><th>Title</th><th>Equipment</th><th>Description</th><th>Mechanic</th><th>Completed</th><th>Total</th></tr>${wos.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${eqName(w.equipment)}</td><td>${htmlEscape(workOrderDescription(w)||"—")}</td><td>${w.tech||"—"}</td><td>${w.completed||"—"}</td><td>$${totalCost(w).toFixed(2)}</td></tr>`).join("")}</table>`;
+      body += `<h2>Completed Work Orders — Total $${total.toFixed(2)}</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO#</th><th>Title</th><th>Description</th><th>Mechanic</th><th>Completed</th><th>Total</th></tr>${wos.map(w=>`<tr><td><b>${w.equipment||"—"}</b></td><td>${eqName(w.equipment)}</td><td>${w.id}</td><td>${w.title}</td><td>${htmlEscape(workOrderDescription(w)||"—")}</td><td>${w.tech||"—"}</td><td>${w.completed||"—"}</td><td>$${totalCost(w).toFixed(2)}</td></tr>`).join("")}</table>`;
     }
     if(selected.parts) {
       const lowStock = state.parts.filter(p=>p.lowStockAlert!==false&&(+(p.qty||0))<=(+(p.minQty||0)));
@@ -5483,7 +5499,7 @@ function ReportCombined({ state }) {
     }
     if(selected.workorders) {
       const active = state.workOrders.filter(w=>w.status!=="Completed");
-      body += `<h2>Active Work Orders (${active.length})</h2><table><tr><th>WO#</th><th>Title</th><th>Equipment</th><th>Description</th><th>Mechanic</th><th>Priority</th><th>Status</th><th>Due</th></tr>${active.map(w=>`<tr><td>${w.id}</td><td>${w.title}</td><td>${eqName(w.equipment)}</td><td>${htmlEscape(workOrderDescription(w)||"—")}</td><td>${w.tech||"—"}</td><td>${w.priority}</td><td>${w.status}</td><td>${w.due||"—"}</td></tr>`).join("")}</table>`;
+      body += `<h2>Active Work Orders (${active.length})</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO#</th><th>Title</th><th>Description</th><th>Mechanic</th><th>Priority</th><th>Status</th><th>Due</th></tr>${active.map(w=>`<tr><td><b>${w.equipment||"—"}</b></td><td>${eqName(w.equipment)}</td><td>${w.id}</td><td>${w.title}</td><td>${htmlEscape(workOrderDescription(w)||"—")}</td><td>${w.tech||"—"}</td><td>${w.priority}</td><td>${w.status}</td><td>${w.due||"—"}</td></tr>`).join("")}</table>`;
     }
     body += `<br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button></body></html>`;
     win.document.write(body);
