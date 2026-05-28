@@ -1343,7 +1343,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const partsUsed  = wo.partsUsed || [];
     const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
     const laborTotal = +(wo.laborCost||0);
-    const grandTotal = laborTotal + partsTotal + (+(wo.partsCost||0));
+    const grandTotal = laborTotal + partsTotal;
     const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", Labor:laborTotal.toFixed(2), Parts:partsTotal.toFixed(2), Total:grandTotal.toFixed(2), Problem:wo.problem||wo.description||"", Description:wo.faultEnabled?(wo.faultDescription||""):"", "Repair Complaint":wo.repairComplaint||"", "Repair Cause":wo.repairCause||"", "Corrective Action":wo.correctiveAction||"", "Service Checklist":wo.serviceChecklist||"", "Inspection Findings":wo.inspectionFindings||"", Notes:wo.mechanicNotes||""}];
     const typeSpecificPrint = (() => {
       if(!printOpt("showTypeSpecific")) return "";
@@ -1705,7 +1705,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const typeInfo = WO_TYPES.find(t=>t.id===wo.woType);
     const partsUsed = wo.partsUsed||[];
     const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
-    const total = (+wo.laborCost||0)+partsTotal+(+wo.partsCost||0);
+    const total = (+wo.laborCost||0)+partsTotal;
     const isCompleted = wo.status==="Completed";
 
     const completeWO = () => {
@@ -1944,7 +1944,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               const eq = state.equipment.find(e=>e.id===wo.equipment);
               const eqLabel = eq?.name || wo.equipmentLabel || wo.equipment || "—";
               const partsTotal = (wo.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
-              const total = (+wo.laborCost||0)+partsTotal+(+wo.partsCost||0);
+              const total = (+wo.laborCost||0)+partsTotal;
               const typeInfo = WO_TYPES.find(t=>t.id===wo.woType);
               const rowStatus = wo.status==="Completed" ? "Fully Operational" : (wo.equipmentStatus || eq?.status || "Fully Operational");
               const isOpenInspection = wo.woType==="Inspection" && wo.status!=="Completed";
@@ -2404,7 +2404,7 @@ function Equipment({ state, dispatch }) {
     const serviceHistory = completedHistory.filter(isServiceHistoryWO);
     const repairHistory = completedHistory.filter(w => String(w.woType||w.type||"").toLowerCase()==="repair" || (!isServiceHistoryWO(w) && String(w.woType||w.type||"").toLowerCase()!=="inspection"));
     const inspectionHistory = completedHistory.filter(w => String(w.woType||w.type||"").toLowerCase()==="inspection");
-    const historyCost = (wo) => (+wo.laborCost||0)+(+wo.partsCost||0);
+    const historyCost = (wo) => (+wo.laborCost||0) + ((wo.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0));
     const historyUsage = (wo) => {
       if (wo.usageNA) return "N/A";
       if (wo.usageType==="mileage") return wo.usageMileage ? `${wo.usageMileage} mi` : "—";
