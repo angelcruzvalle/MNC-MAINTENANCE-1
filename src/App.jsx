@@ -1078,12 +1078,14 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const STATUS_TABS = ["Active","Open","In Progress","Awaiting Parts","On Hold","Completed","All"];
   const PRIO_ORDER  = {"High":0,"Medium":1,"Low":2};
+  const getCompletedDate = (w) => w?.completed || w?.completedDate || w?.dateCompleted || w?.closedDate || w?.closedAt || w?.completedAt || "";
 
   /* Date range filter for completed WOs */
   const matchCompletedDate = (w) => {
     if(filter!=="Completed" || completedDateFilter==="all") return true;
-    if(!w.completed) return false;
-    const d = new Date(w.completed);
+    const completedDate = getCompletedDate(w);
+    if(!completedDate) return false;
+    const d = new Date(completedDate);
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const startOfWeek  = new Date(startOfToday); startOfWeek.setDate(startOfToday.getDate() - startOfToday.getDay());
@@ -1110,6 +1112,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     if(sortBy==="priority") cmp = (PRIO_ORDER[a.priority]??9)-(PRIO_ORDER[b.priority]??9);
     else if(sortBy==="due")     cmp = (a.due||"").localeCompare(b.due||"");
     else if(sortBy==="created") cmp = (a.created||"").localeCompare(b.created||"");
+    else if(sortBy==="completed") cmp = getCompletedDate(a).localeCompare(getCompletedDate(b));
     else if(sortBy==="status")  cmp = (a.status||"").localeCompare(b.status||"");
     else if(sortBy==="cost")    cmp = ((+a.laborCost||0)+(+a.partsCost||0))-((+b.laborCost||0)+(+b.partsCost||0));
     return sortDir==="asc" ? cmp : -cmp;
