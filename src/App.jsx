@@ -1415,19 +1415,19 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .companySub{font-size:13px;font-weight:800;color:#334155;margin-top:5px;text-transform:uppercase;letter-spacing:.7px}
       .woBox{border-left:2px solid var(--wo-dark);display:grid;grid-template-rows:1fr auto;background:#fff}
       .woNum{padding:10px 8px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
-      .woLbl{font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:1px;color:#334155}
-      .woVal{font-size:24px;font-weight:900;color:var(--wo-dark);font-family:monospace;line-height:1.1;margin-top:2px}
+      .woLbl{font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.6px;color:#334155;line-height:1.15}
+      .woVal{font-size:22px;font-weight:900;color:var(--wo-dark);font-family:monospace;line-height:1.1;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
       .status{border-top:2px solid var(--wo-dark);padding:5px 8px;text-align:center;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.8px;background:var(--wo-dark)!important;color:#fff!important}
       .dateStrip{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;border-bottom:2px solid var(--wo-dark);background:#fff}
-      .topCell{min-height:.38in;padding:6px 9px;border-right:1.5px solid #94a3b8;display:flex;align-items:center;justify-content:space-between;gap:8px}.topCell:last-child{border-right:none}
-      .lbl{font-size:10.5px;font-weight:900;color:#334155;text-transform:uppercase;letter-spacing:.55px;white-space:nowrap}
-      .val{font-size:13.5px;font-weight:700;color:#111;min-height:18px}.mn{font-family:monospace}
+      .topCell{min-height:.38in;padding:6px 9px;border-right:1.5px solid #94a3b8;display:grid;grid-template-columns:auto 1fr;align-items:center;gap:8px;min-width:0}.topCell:last-child{border-right:none}
+      .lbl{font-size:10px;font-weight:900;color:#334155;text-transform:uppercase;letter-spacing:.45px;white-space:nowrap}
+      .val{font-size:12.5px;font-weight:700;color:#111;min-height:18px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mn{font-family:monospace}
       .block{border-bottom:2px solid var(--wo-dark);background:#fff}
       .block:last-child{border-bottom:none}
       .blockTitle{display:flex;align-items:center;gap:8px;background:var(--wo-light)!important;color:var(--wo-dark)!important;border-bottom:1.5px solid var(--wo-border);padding:7px 10px;font-size:13px;font-weight:900;text-transform:uppercase;letter-spacing:.7px}
-      .blockBody{padding:8px 10px}
-      .equipGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;border:1.5px solid #cbd5e1;border-radius:6px;overflow:hidden}
-      .cell{padding:7px 9px;border-right:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;min-height:.55in}.cell:nth-child(3n){border-right:none}.cell:nth-last-child(-n+3){border-bottom:none}.cell.wide{grid-column:span 2}
+      .blockBody{padding:0}
+      .equipGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;border:none;border-radius:0;overflow:hidden}
+      .cell{padding:7px 9px;border-right:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;min-height:.42in;display:grid;grid-template-columns:auto 1fr;align-items:center;gap:8px;min-width:0}.cell:nth-child(3n){border-right:none}.cell:nth-last-child(-n+3){border-bottom:none}.cell.wide{grid-column:span 2}
       .descriptionBlock{padding:0}
       .textArea{border-bottom:1.5px solid #cbd5e1;padding:8px 10px;min-height:1in;white-space:pre-wrap}.textArea:last-child{border-bottom:none}
       .textArea.short{min-height:.55in}.textArea.med{min-height:1.15in}.textArea.tall{min-height:1.35in}
@@ -1449,18 +1449,18 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     <div class="page">
       <div class="form">
         <div class="hdr">
-          <div class="logoBox">${companyLogo?`<img src="${companyLogo}" alt="logo">`:`<div class="logoText">LOGO</div>`}</div>
+          <div class="logoBox">${companyLogo?`<img src="${companyLogo}" alt="Company Logo">`:`<div class="logoText">Logo</div>`}</div>
           <div class="companyBox"><div class="companyName">${companyName}</div><div class="companySub">${woTypePrint.label} Work Order</div></div>
-          <div class="woBox"><div class="woNum"><div class="woLbl">WO #</div><div class="woVal">${wo.id}</div></div><div class="status">${wo.status||"Open"}</div></div>
+          <div class="woBox"><div class="woNum"><div class="woLbl">Work Order Number</div><div class="woVal">${wo.id}</div></div><div class="status">${wo.status||"Open"}</div></div>
         </div>
         ${printOpt("showDates") ? `<div class="dateStrip">
-          <div class="topCell"><span class="lbl">WO Type</span><span class="val" style="color:var(--wo-dark);font-weight:900">${woTypePrint.label}</span></div>
+          <div class="topCell"><span class="lbl">Work Order Type</span><span class="val" style="color:var(--wo-dark);font-weight:900">${woTypePrint.label}</span></div>
           <div class="topCell"><span class="lbl">Date Created</span><span class="val">${wo.created||"&nbsp;"}</span></div>
           <div class="topCell"><span class="lbl">Due Date</span><span class="val">${wo.due||"&nbsp;"}</span></div>
           <div class="topCell"><span class="lbl">Date Completed</span><span class="val">${wo.completed||"&nbsp;"}</span></div>
         </div>` : ""}
         ${(printOpt("showEquipment") || printOpt("showDates")) ? `<div class="block">
-          <div class="blockTitle">1. Work Order Type &amp; Equipment Information</div>
+          <div class="blockTitle">Work Order Type &amp; Equipment Information</div>
           <div class="blockBody">
             <div class="equipGrid">
               <div class="cell"><div class="lbl">Work Order Type</div><div class="val" style="color:var(--wo-dark);font-weight:900">${woTypePrint.label}</div></div>
@@ -1476,15 +1476,15 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           </div>
         </div>` : ""}
         ${(printOpt("showFaultDescription") || printOpt("showDescription") || printOpt("showMechanicNotes")) ? `<div class="block descriptionBlock">
-          <div class="blockTitle">2. Work Description &amp; Mechanic Notes</div>
+          <div class="blockTitle">Work Description &amp; Mechanic Notes</div>
           ${printOpt("showFaultDescription") ? `<div class="textArea short"><div class="textLbl">Description</div>${printableDescription}</div>` : ""}
           ${printOpt("showDescription") ? `<div class="textArea med"><div class="textLbl">Work Description / Work Performed</div>${wo.description||"&nbsp;"}</div>` : ""}
           ${printOpt("showMechanicNotes") ? `<div class="textArea tall"><div class="textLbl">Mechanic Notes</div>${wo.mechanicNotes||"&nbsp;"}</div>` : ""}
         </div>` : ""}
         ${inspectionChecklistPrint ? `<div class="block"><div class="blockTitle">Inspection Checklist</div><div class="blockBody">${inspectionChecklistPrint}</div></div>` : ""}
         ${(printOpt("showParts") || printOpt("showLaborHours") || printOpt("showCosts")) ? `<div class="block">
-          <div class="blockTitle">3. Parts &amp; Labor Summary</div>
-          ${printOpt("showParts") ? `<table><thead><tr><th style="width:44%">Description</th><th style="width:12%;text-align:center">Qty</th><th style="width:22%;text-align:right">Unit Price</th><th style="width:22%;text-align:right">Total</th></tr></thead><tbody>
+          <div class="blockTitle">Parts &amp; Labor Summary</div>
+          ${printOpt("showParts") ? `<table><thead><tr><th style="width:44%">Description</th><th style="width:12%;text-align:center">Quantity</th><th style="width:22%;text-align:right">Unit Price</th><th style="width:22%;text-align:right">Total</th></tr></thead><tbody>
             ${partsUsed.length>0 ? partsUsed.map(p=>{ const q=+(p.qty||1),u=+(p.unitCost||0); return `<tr><td>${p.name||"&mdash;"}</td><td style="text-align:center">${q}</td><td style="text-align:right">$${u.toFixed(2)}</td><td style="text-align:right">$${(q*u).toFixed(2)}</td></tr>`; }).join("") : `<tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr><tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>`}
           </tbody></table>` : ""}
           <div class="totalRow"><div class="totalLabel">Grand Total</div><div class="totalVal">$${grandTotal.toFixed(2)}</div></div>
@@ -5136,7 +5136,7 @@ function reportHeaderHTML(state, title) {
   const dept = s.department || "Maintenance Department";
   const logo = s.logo || "";
   return `<div style="display:flex;align-items:center;gap:16px;border-bottom:3px solid #1a1a2e;padding-bottom:14px;margin-bottom:16px">
-    ${logo?`<img src="${logo}" style="height:60px;max-width:120px;object-fit:contain" alt="logo">`:""}
+    ${logo?`<img src="${logo}" style="height:60px;max-width:120px;object-fit:contain" alt="Company Logo">`:""}
     <div>
       <div style="font-size:18px;font-weight:700;color:#1a1a2e">${companyName}</div>
       <div style="font-size:12px;color:#666;margin-top:2px">${dept}</div>
@@ -5656,7 +5656,7 @@ function SystemSettings({ state, dispatch, onClose }) {
           <div style={{ marginBottom:14 }}>
             <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:6 }}>Organization Logo</label>
             <div style={{ display:"flex", gap:12, alignItems:"center" }}>
-              {form.logo && <img src={form.logo} alt="logo" style={{ height:48, objectFit:"contain", border:`1px solid ${T.border}`, borderRadius:6, padding:4, background:"#fff" }} />}
+              {form.logo && <img src={form.logo} alt="Company Logo" style={{ height:48, objectFit:"contain", border:`1px solid ${T.border}`, borderRadius:6, padding:4, background:"#fff" }} />}
               <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.accent, cursor:"pointer", padding:"7px 14px", border:`1px solid ${T.accent}`, borderRadius:6 }}>
                 Upload Logo
                 <input type="file" accept="image/*" onChange={handleLogo} style={{ display:"none" }} />
@@ -5890,7 +5890,7 @@ function SetupWizard({ onComplete }) {
             <div style={{ marginBottom:14 }}>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:6 }}>Organization Logo (optional)</label>
               <div style={{ display:"flex", gap:12, alignItems:"center" }}>
-                {data.logo && <img src={data.logo} alt="logo" style={{ height:64, maxWidth:120, objectFit:"contain", border:`1px solid ${T.border}`, borderRadius:6, padding:4, background:"#fff" }} />}
+                {data.logo && <img src={data.logo} alt="Company Logo" style={{ height:64, maxWidth:120, objectFit:"contain", border:`1px solid ${T.border}`, borderRadius:6, padding:4, background:"#fff" }} />}
                 <label style={{ fontFamily:T.sans, fontSize:13, fontWeight:600, color:T.accent, cursor:"pointer", padding:"8px 16px", border:`2px solid ${T.accent}`, borderRadius:7 }}>
                   {data.logo?"Change Logo":"Upload Logo"}
                   <input type="file" accept="image/*" onChange={handleLogo} style={{ display:"none" }} />
@@ -6610,7 +6610,7 @@ export default function App() {
           </button>
           <div style={{ width:1, height:28, background:T.border }} />
           {settings?.logo && (
-            <img src={settings.logo} alt="logo" style={{ height:36, maxWidth:80, objectFit:"contain", borderRadius:4 }} />
+            <img src={settings.logo} alt="Company Logo" style={{ height:36, maxWidth:80, objectFit:"contain", borderRadius:4 }} />
           )}
           <button onClick={()=>setTab("dashboard")} title="Go to dashboard" style={{ background:"none", border:"none", padding:0, textAlign:"left", cursor:"pointer" }}>
             <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, letterSpacing:-.3, lineHeight:1.2 }}>{companyName}</div>
