@@ -1469,7 +1469,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               <div class="cell"><div class="lbl">Make and Model</div><div class="val">${eq?`${eq.make||""} ${eq.model||""}`.trim():"&nbsp;"}</div></div>
               <div class="cell"><div class="lbl">Serial Number</div><div class="val mn">${eq?.serial||"&nbsp;"}</div></div>
               <div class="cell"><div class="lbl">${usageDisplayLabel}</div><div class="val mn">${usageDisplayValue}</div></div>
-              <div class="cell"><div class="lbl">Equipment EIL #</div><div class="val mn">${eq?.eilNumber||"&nbsp;"}</div></div>
+              <div class="cell"><div class="lbl">EIL #</div><div class="val mn">${eq?.eilNumber||"&nbsp;"}</div></div>
               <div class="cell"><div class="lbl">Priority</div><div class="val">${wo.priority||"&nbsp;"}</div></div>
               <div class="cell"><div class="lbl">Mechanic</div><div class="val">${assignedMechanicName||"&nbsp;"}</div></div>
             </div>
