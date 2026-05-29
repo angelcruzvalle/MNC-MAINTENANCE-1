@@ -2282,6 +2282,137 @@ function Equipment({ state, dispatch }) {
   const [newCat, setNewCat]     = useState("");
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
 
+
+  const printHistoryWO = (wo) => {
+    const eq = state.equipment.find(e => e.id === wo.equipment) || {};
+    const gs = state.settings || {};
+    const h = (value) => String(value ?? "").replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[ch]));
+    const money = (value) => `$${(+value || 0).toFixed(2)}`;
+    const partsUsed = Array.isArray(wo.partsUsed) ? wo.partsUsed : [];
+    const partsTotal = partsUsed.reduce((sum, part) => {
+      const qty = +(part.qty || 1);
+      const unitCost = +(part.unitCost || 0);
+      return sum + (qty * unitCost);
+    }, 0);
+    const laborHoursTotal = +(wo.laborHours || 0);
+    const laborTotal = +(wo.laborCost || 0);
+    const grandTotal = partsTotal + laborTotal;
+    const type = String(wo.woType || wo.type || "Repair");
+    const typeLower = type.toLowerCase();
+    const colorMap = {
+      repair: { accent:"#dbeafe", border:"#1e3a8a", soft:"#eff6ff" },
+      inspection: { accent:"#dcfce7", border:"#166534", soft:"#f0fdf4" },
+      service: { accent:"#fef3c7", border:"#92400e", soft:"#fffbeb" }
+    };
+    const C = typeLower.includes("inspection") ? colorMap.inspection : (typeLower.includes("service") || typeLower.includes("prevent")) ? colorMap.service : colorMap.repair;
+    const usageValue = wo.usageNA ? "N/A" : [wo.usageHours ? `${wo.usageHours} Hours` : "", wo.usageMileage ? `${wo.usageMileage} Miles` : ""].filter(Boolean).join(" / ");
+    const desc = typeLower.includes("inspection")
+      ? String(wo.inspectionTaskName || wo.faultDescription || wo.description || wo.title || "")
+      : String(wo.faultDescription || wo.description || wo.title || "");
+    const win = window.open("", "_blank", "width=900,height=700");
+    if (!win) { alert("Please allow pop-ups to print work orders."); return; }
+    win.document.write(`<!DOCTYPE html><html><head><title>Work Order ${h(wo.id)}</title><style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      html,body{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+      body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#111827;font-size:12px;line-height:1.35}
+      .page{width:8.5in;min-height:11in;margin:0 auto;padding:.38in .45in}
+      .outer{border:1.5px solid #111827;border-radius:8px;overflow:hidden;background:white}
+      .top{display:grid;grid-template-columns:1.15in 1fr 1.85in;border-bottom:1.5px solid #111827;min-height:.95in}
+      .logoBox{display:flex;align-items:center;justify-content:center;border-right:1.5px solid #111827;padding:6px;background:white;overflow:hidden}
+      .logoBox img{max-width:100%;max-height:.78in;object-fit:contain;display:block}
+      .logoText{font-weight:900;text-align:center;color:#111827;font-size:13px;line-height:1.2}
+      .companyBox{display:flex;flex-direction:column;align-items:center;justify-content:center;background:${C.soft};padding:8px 10px;text-align:center}
+      .company{font-size:22px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#111827;line-height:1.1}
+      .typePill{margin-top:8px;border:1.5px solid ${C.border};background:${C.accent};color:#111827;border-radius:999px;padding:4px 18px;font-size:12px;font-weight:900;letter-spacing:.8px;text-transform:uppercase}
+      .numberBox{border-left:1.5px solid #111827;display:grid;grid-template-rows:1fr .32in;text-align:center;background:white}
+      .woNumber{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px}
+      .woNumber .label{font-size:10px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#111827}
+      .woNumber .number{font-size:18px;font-weight:900;color:#111827;margin-top:4px;word-break:break-word}
+      .status{display:flex;align-items:center;justify-content:center;background:${C.border};color:white;font-size:11px;font-weight:900;letter-spacing:1.3px;text-transform:uppercase;border-top:1.5px solid #111827}
+      .dateGrid,.infoGrid{display:grid;grid-template-columns:1fr 1fr 1fr;border-bottom:1.5px solid #111827}
+      .cell{min-height:.38in;padding:6px 8px;border-right:1px solid #9ca3af;border-bottom:1px solid #cbd5e1;display:grid;grid-template-columns:.95fr 1.35fr;align-items:center;gap:8px;overflow:hidden}
+      .cell:nth-child(3n){border-right:none}
+      .fieldLabel{font-size:9.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;color:#111827;line-height:1.1}
+      .fieldValue{font-size:12.5px;font-weight:800;color:#111827;line-height:1.15;white-space:normal;overflow-wrap:anywhere}
+      .section{border-top:1.5px solid #111827;break-inside:avoid}
+      .section-title,.summaryTitle{background:${C.accent};color:#111827;border-bottom:1px solid #94a3b8;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
+      .textBlock{padding:8px 10px;min-height:.52in;white-space:pre-wrap;overflow-wrap:anywhere;color:#111827;font-size:12px}
+      .textBlock.tall{min-height:1.05in}
+      .miniTitle{padding:6px 10px 4px;font-weight:900;text-transform:uppercase;font-size:11px;color:#111827;background:#fff}
+      .data-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px}
+      .data-table th{background:#e5e7eb;color:#111827;text-transform:uppercase;letter-spacing:.45px;font-size:10px;font-weight:900;padding:6px 8px;border-top:1px solid #9ca3af;border-bottom:1px solid #9ca3af;border-right:1px solid #cbd5e1;text-align:left}
+      .data-table td{padding:6px 8px;border-bottom:1px solid #cbd5e1;border-right:1px solid #e5e7eb;vertical-align:top;overflow-wrap:anywhere;color:#111827}
+      .data-table th:last-child,.data-table td:last-child{border-right:none}
+      .right{text-align:right}.center{text-align:center}
+      .subRow td{background:#f8fafc;font-weight:900;border-top:1.5px solid #111827}
+      .grandTotal{display:grid;grid-template-columns:1fr 1.7in;border-top:1.5px solid #111827;background:${C.accent};font-weight:900;font-size:16px;color:#111827}
+      .grandTotal div{padding:9px 12px}.grandTotal div:last-child{text-align:right;border-left:1.5px solid #111827}
+      .signatureGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;padding:12px 14px;border-top:1.5px solid #111827;min-height:.65in;align-items:end}
+      .sigLine{border-top:1.5px solid #111827;padding-top:5px;min-height:32px}
+      .sigValue{font-size:12px;font-weight:800;margin-bottom:4px;min-height:14px;overflow-wrap:anywhere;color:#111827}
+      .sigLabel{font-size:9.5px;font-weight:900;text-transform:uppercase;letter-spacing:.6px;color:#111827}
+      .pbtn{margin:14px auto 0;display:flex;gap:10px;justify-content:center}
+      .pbtn button{padding:9px 24px;font-size:13px;font-weight:800;border-radius:6px;cursor:pointer;background:${C.border};color:white;border:none}
+      @page{size:letter;margin:0}
+      @media print{.pbtn{display:none!important}.page{padding:.38in .45in}.outer{break-inside:avoid}body{font-size:12px}}
+    </style></head><body>
+      <div class="page"><div class="outer">
+        <header class="top">
+          <div class="logoBox">${gs.logo ? `<img src="${gs.logo}" alt="Logo">` : `<div class="logoText">LOGO</div>`}</div>
+          <div class="companyBox"><div class="company">${h(gs.companyName || "Maintenance Department")}</div><div class="typePill">${h(type.toUpperCase())}</div></div>
+          <div class="numberBox"><div class="woNumber"><div class="label">Work Order Number</div><div class="number">${h(wo.id || "")}</div></div><div class="status">${h(wo.status || "Open")}</div></div>
+        </header>
+        <div class="dateGrid">
+          <div class="cell"><div class="fieldLabel">Date Created</div><div class="fieldValue">${h(wo.created)||"&nbsp;"}</div></div>
+          <div class="cell"><div class="fieldLabel">Due Date</div><div class="fieldValue">${h(wo.due)||"&nbsp;"}</div></div>
+          <div class="cell"><div class="fieldLabel">Date Completed</div><div class="fieldValue">${h(wo.completed||wo.closedDate)||"&nbsp;"}</div></div>
+        </div>
+        <section class="section" style="border-top:none">
+          <div class="section-title">Work Order Type and Equipment Information</div>
+          <div class="infoGrid">
+            <div class="cell"><div class="fieldLabel">Work Order Type</div><div class="fieldValue">${h(type.toUpperCase())}</div></div>
+            <div class="cell"><div class="fieldLabel">Equipment Number</div><div class="fieldValue">${h(wo.equipment)||"&nbsp;"}</div></div>
+            <div class="cell"><div class="fieldLabel">Equipment Name</div><div class="fieldValue">${h(eq.name || wo.equipmentLabel)||"&nbsp;"}</div></div>
+            <div class="cell"><div class="fieldLabel">Make and Model</div><div class="fieldValue">${h([eq.make,eq.model].filter(Boolean).join(" "))||"&nbsp;"}</div></div>
+            <div class="cell"><div class="fieldLabel">Serial Number</div><div class="fieldValue">${h(eq.serial)||"&nbsp;"}</div></div>
+            <div class="cell"><div class="fieldLabel">Usage</div><div class="fieldValue">${h(usageValue)||"&nbsp;"}</div></div>
+            <div class="cell"><div class="fieldLabel">EIL #</div><div class="fieldValue">${h(eq.eilNumber)||"&nbsp;"}</div></div>
+            <div class="cell"><div class="fieldLabel">Priority</div><div class="fieldValue">${h(wo.priority)||"&nbsp;"}</div></div>
+            <div class="cell"><div class="fieldLabel">Mechanic</div><div class="fieldValue">${h(wo.tech)||"&nbsp;"}</div></div>
+          </div>
+        </section>
+        <section class="section"><div class="section-title">Description</div><div class="textBlock">${h(desc)||"&nbsp;"}</div></section>
+        <section class="section"><div class="section-title">Work Description and Work Performed</div><div class="textBlock tall">${h(wo.description)||"&nbsp;"}</div></section>
+        <section class="section"><div class="section-title">Mechanic Notes</div><div class="textBlock tall">${h(wo.mechanicNotes)||"&nbsp;"}</div></section>
+        <section class="section">
+          <div class="summaryTitle">Parts and Labor Summary</div>
+          <div class="miniTitle">Parts Used</div>
+          <table class="data-table">
+            <thead><tr><th style="width:50%">Description</th><th style="width:13%" class="center">Quantity</th><th style="width:18%" class="right">Unit Price</th><th style="width:19%" class="right">Total</th></tr></thead>
+            <tbody>
+              ${partsUsed.length ? partsUsed.map(part => { const q=+(part.qty||1); const u=+(part.unitCost||0); return `<tr><td>${h(part.name || part.description || "—")}</td><td class="center">${h(q)}</td><td class="right">${money(u)}</td><td class="right">${money(q*u)}</td></tr>`; }).join("") : `<tr><td colspan="4" style="color:#64748b;font-style:italic">No parts listed</td></tr>`}
+              <tr class="subRow"><td colspan="3">Parts Subtotal</td><td class="right">${money(partsTotal)}</td></tr>
+            </tbody>
+          </table>
+          <div class="miniTitle">Labor</div>
+          <table class="data-table">
+            <thead><tr><th style="width:63%">Work Performed</th><th style="width:15%" class="center">Hours</th><th style="width:22%" class="right">Total</th></tr></thead>
+            <tbody><tr><td>${h(wo.laborDescription || wo.laborTask || "Diagnosis and Repair")}</td><td class="center">${laborHoursTotal.toFixed(1)}</td><td class="right">${money(laborTotal)}</td></tr></tbody>
+          </table>
+          <div class="grandTotal"><div>Grand Total</div><div>${money(grandTotal)}</div></div>
+        </section>
+        <div class="signatureGrid">
+          <div><div class="sigValue">&nbsp;</div><div class="sigLine"><div class="sigLabel">Signature</div></div></div>
+          <div><div class="sigValue">${h(wo.tech)||"&nbsp;"}</div><div class="sigLine"><div class="sigLabel">Printed Name</div></div></div>
+          <div><div class="sigValue">${h(wo.completed||wo.closedDate)||"&nbsp;"}</div><div class="sigLine"><div class="sigLabel">Date</div></div></div>
+        </div>
+      </div></div>
+      <div class="pbtn"><button onclick="window.print()">Print / Save PDF</button></div>
+    </body></html>`);
+    win.document.close();
+    win.focus();
+  };
+
   const toggleAttachments = (eqId, e) => {
     e.stopPropagation();
     setExpandedAt(prev=>({...prev,[eqId]:!prev[eqId]}));
@@ -2486,7 +2617,7 @@ function Equipment({ state, dispatch }) {
             </thead>
             <tbody>
               {rows.map((wo,i)=>(
-                <tr key={wo.id} onClick={()=>printWO(wo)} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer" }} title="Click to open the printable work order">
+                <tr key={wo.id} onClick={()=>printHistoryWO(wo)} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer" }} title="Click to open the printable work order">
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:T.accent, fontWeight:700 }}>{wo.id}</td>
                   <td style={{ padding:"9px 12px", fontWeight:500, color:T.text }}>{historyLabel(wo, fallbackTitle)}</td>
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{wo.completed||wo.closedDate||"—"}</td>
@@ -2495,7 +2626,7 @@ function Equipment({ state, dispatch }) {
                   <td style={{ padding:"6px 12px" }}>
                     <button
                       type="button"
-                      onClick={(e)=>{ e.stopPropagation(); printWO(wo); }}
+                      onClick={(e)=>{ e.stopPropagation(); printHistoryWO(wo); }}
                       title="Print this work order"
                       style={{ border:`1px solid ${T.accent}`, background:T.accent, color:"#fff", borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:12, fontWeight:700, lineHeight:1 }}
                     >
@@ -2534,7 +2665,7 @@ function Equipment({ state, dispatch }) {
                     <div style={{ fontSize:18, fontWeight:800 }}>{historyWO.id || "Work Order"}</div>
                   </div>
                   <div style={{ display:"flex", gap:8 }}>
-                    <Btn small variant="secondary" onClick={()=>printWO(historyWO)}>Print</Btn>
+                    <Btn small variant="secondary" onClick={()=>printHistoryWO(historyWO)}>Print</Btn>
                     <Btn small onClick={()=>setHistoryEdit(true)}>✏ Edit</Btn>
                   </div>
                 </div>
