@@ -2437,14 +2437,16 @@ function Equipment({ state, dispatch }) {
     if(!eq){ setDetail(null); return null; }
     const wos    = woForEq(eq);
     const completedHistory = wos.filter(w => (w.status||"").toLowerCase()==="completed").sort((a,b)=>String(b.completed||b.closedDate||b.created||"").localeCompare(String(a.completed||a.closedDate||a.created||"")));
+    const historyType = (w) => String(w.woType || w.type || "").trim().toLowerCase();
+    const isRepairHistoryWO = (w) => historyType(w) === "repair";
+    const isInspectionHistoryWO = (w) => historyType(w) === "inspection";
     const isServiceHistoryWO = (w) => {
-      const type = String(w.woType||w.type||"").toLowerCase();
-      const title = String(w.title||w.faultDescription||w.description||"").toLowerCase();
-      return type==="service" || type==="preventive" || type==="preventative" || title.includes("preventive") || title.includes("preventative") || title.includes("pm");
+      const type = historyType(w);
+      return type === "service" || type === "preventive" || type === "preventative" || type === "preventive maintenance" || type === "preventative maintenance";
     };
     const serviceHistory = completedHistory.filter(isServiceHistoryWO);
-    const repairHistory = completedHistory.filter(w => String(w.woType||w.type||"").toLowerCase()==="repair" || (!isServiceHistoryWO(w) && String(w.woType||w.type||"").toLowerCase()!=="inspection"));
-    const inspectionHistory = completedHistory.filter(w => String(w.woType||w.type||"").toLowerCase()==="inspection");
+    const repairHistory = completedHistory.filter(isRepairHistoryWO);
+    const inspectionHistory = completedHistory.filter(isInspectionHistoryWO);
     const historyCost = (wo) => (+wo.laborCost||0)+(+(wo.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0));
     const historyUsage = (wo) => {
       if (wo.usageNA) return "N/A";
@@ -2477,20 +2479,30 @@ function Equipment({ state, dispatch }) {
         : <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans, marginBottom:18 }}>
             <thead>
               <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-                {["WO #","Description","Completed","Usage","Cost","View"].map(h=>(
+                {["WO #","Description","Completed","Usage","Cost","Print","Edit"].map(h=>(
                   <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rows.map((wo,i)=>(
-                <tr key={wo.id} onClick={()=>{ setHistoryWO(wo); setHistoryEdit(false); }} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer" }} title="Click to view this archived work order">
+                <tr key={wo.id} onClick={()=>printWO(wo)} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer" }} title="Click to open the printable work order">
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:T.accent, fontWeight:700 }}>{wo.id}</td>
                   <td style={{ padding:"9px 12px", fontWeight:500, color:T.text }}>{historyLabel(wo, fallbackTitle)}</td>
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{wo.completed||wo.closedDate||"—"}</td>
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{historyUsage(wo)}</td>
-                  <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>${historyCost(wo)}</td>
-                  <td style={{ padding:"9px 12px", color:T.accent, fontSize:12, fontWeight:700 }}>Open</td>
+                  <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>${historyCost(wo).toFixed(2)}</td>
+                  <td style={{ padding:"9px 12px", color:T.accent, fontSize:12, fontWeight:700 }}>Print</td>
+                  <td style={{ padding:"6px 12px" }}>
+                    <button
+                      type="button"
+                      onClick={(e)=>{ e.stopPropagation(); setHistoryWO(wo); setHistoryEdit(true); }}
+                      title="Edit this archived work order"
+                      style={{ border:`1px solid ${T.border}`, background:"#fff", borderRadius:7, padding:"5px 8px", cursor:"pointer", fontSize:14, lineHeight:1 }}
+                    >
+                      ✏️
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
