@@ -171,7 +171,21 @@ function reducer(state, { type, payload }) {
     }
     case "DELETE_WO":     return { ...state, workOrders: state.workOrders.filter(w => w.id!==payload) };
     case "ADD_EQ":        return { ...state, equipment: [payload,...state.equipment] };
-    case "UPDATE_EQ":     return { ...state, equipment: state.equipment.map(e => e.id===payload.id ? payload : e) };
+    case "UPDATE_EQ": {
+      const originalId = payload._originalId || payload.id;
+      const cleanPayload = { ...payload };
+      delete cleanPayload._originalId;
+      const newId = cleanPayload.id || originalId;
+      return {
+        ...state,
+        equipment: state.equipment.map(e => e.id===originalId ? cleanPayload : e),
+        workOrders: (state.workOrders||[]).map(w => String(w.equipment)===String(originalId) ? { ...w, equipment:newId } : w),
+        usageLogs: (state.usageLogs||[]).map(l => String(l.equipmentId)===String(originalId) ? { ...l, equipmentId:newId } : l),
+        pmSchedules: (state.pmSchedules||[]).map(s => String(s.equipmentId)===String(originalId) ? { ...s, equipmentId:newId } : s),
+        inspectionSchedules: (state.inspectionSchedules||[]).map(s => String(s.equipmentId)===String(originalId) ? { ...s, equipmentId:newId } : s),
+        inventoryItems: (state.inventoryItems||[]).map(i => String(i.equipmentId)===String(originalId) ? { ...i, equipmentId:newId } : i),
+      };
+    }
     case "DELETE_EQ":     return { ...state, equipment: state.equipment.filter(e => e.id!==payload) };
     case "ADD_PART":      return { ...state, parts: [payload,...state.parts] };
     case "UPDATE_PART":   return { ...state, parts: state.parts.map(p => p.id===payload.id ? payload : p) };
@@ -1103,13 +1117,22 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     return true;
   };
 
+  const equipmentStatusRank = (status) => ({
+    "Fully Operational": 1,
+    "Operational with Deficiencies": 2,
+    "Out of Service / Deadline": 3,
+  }[status] || 99);
+  const getWOEquipmentStatus = (w) => {
+    const eq = (state.equipment||[]).find(e=>String(e.id)===String(workOrderEquipmentId(w)));
+    return w.status==="Completed" ? "Fully Operational" : (w.equipmentStatus || eq?.status || "Fully Operational");
+  };
+
   const filtered = state.workOrders.filter(w=>{
     const matchStatus   = filter==="Active"?(w.status!=="Completed"):filter==="All"?true:w.status===filter;
     const matchType     = typeFilter==="All"     || w.woType===typeFilter;
     const matchPriority = priorityFilter==="All" || w.priority===priorityFilter;
     const matchMech     = mechFilter==="All"     || w.tech===mechFilter;
-    const eq = (state.equipment||[]).find(e=>String(e.id)===String(workOrderEquipmentId(w)));
-    const woEqStatus = w.status==="Completed" ? "Fully Operational" : (w.equipmentStatus || eq?.status || "Fully Operational");
+    const woEqStatus = getWOEquipmentStatus(w);
     const matchEquipmentStatus = equipmentStatusFilter==="All" || woEqStatus===equipmentStatusFilter;
     return matchStatus && matchType && matchPriority && matchMech && matchEquipmentStatus && matchCompletedDate(w);
   }).sort((a,b)=>{
@@ -1119,6 +1142,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     else if(sortBy==="created") cmp = (a.created||"").localeCompare(b.created||"");
     else if(sortBy==="completed") cmp = getCompletedDate(a).localeCompare(getCompletedDate(b));
     else if(sortBy==="status")  cmp = (a.status||"").localeCompare(b.status||"");
+    else if(sortBy==="equipmentStatus") cmp = equipmentStatusRank(getWOEquipmentStatus(a)) - equipmentStatusRank(getWOEquipmentStatus(b));
     else if(sortBy==="cost") {
       const aParts = Array.isArray(a.partsUsed)&&a.partsUsed.length ? a.partsUsed.reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+a.partsCost||0);
       const bParts = Array.isArray(b.partsUsed)&&b.partsUsed.length ? b.partsUsed.reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+b.partsCost||0);
@@ -1953,7 +1977,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               <option value="due">Due Date</option>
               <option value="completed">Completed Date</option>
               <option value="priority">Priority</option>
-              <option value="status">Status</option>
+              <option value="status">Work Order Status</option>
+              <option value="equipmentStatus">Equipment Status</option>
               <option value="cost">Cost</option>
             </select>
             <button onClick={()=>setSortDir(d=>d==="asc"?"desc":"asc")} style={{ padding:"0 10px", border:"none", borderLeft:`1px solid ${T.border}`, background:T.grayLt, cursor:"pointer", fontFamily:T.mono, fontSize:13, color:T.subtext }}>
@@ -2439,14 +2464,18 @@ function Equipment({ state, dispatch }) {
 
   const woForEq  = eq => state.workOrders.filter(w=>w.equipment===eq.id);
   const openAdd  = () => { setForm({ status:"Fully Operational" }); setModal("add"); };
-  const openEdit = eq => { setForm({...eq}); setModal("editing"); };
+  const openEdit = eq => { setForm({...eq, _originalId:eq.id}); setModal("editing"); };
   const save = () => {
     if(!form.name) return alert("Nomenclature required.");
     if(modal==="add") {
       const newId = form.id && form.id.trim() ? form.id.trim() : genId("EQ");
       dispatch({type:"ADD_EQ", payload:{...form, id:newId}});
     } else {
-      dispatch({type:"UPDATE_EQ", payload:form});
+      const updatedEquipment = {
+        ...form,
+        id: form.id && String(form.id).trim() ? String(form.id).trim() : form._originalId
+      };
+      dispatch({type:"UPDATE_EQ", payload:updatedEquipment});
     }
     setModal(null);
   };
