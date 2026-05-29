@@ -825,7 +825,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   const pmOverdue = pms.filter(p=>p.status==="Overdue").length;
   const pmDueSoon = pms.filter(p=>p.status==="Due Soon").length;
   const lowStock = parts.filter(p=>p.lowStockAlert!==false && (+p.qty||0)<=(+p.minQty||0)).length;
-  const totalCost = w => (+w.laborCost||0)+(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0));
+  const totalCost = w => (+w.laborCost||0)+(Array.isArray(w.partsUsed)&&w.partsUsed.length ? w.partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+w.partsCost||0));
   const spendMo = wos.filter(w=>w.status==="Completed" && (w.completed||"").slice(0,7)===monthKey).reduce((s,w)=>s+totalCost(w),0);
   const urgentWOs = wos.filter(w=>w.status!=="Completed").sort((a,b)=>({High:0,Medium:1,Low:2}[a.priority]??3)-({High:0,Medium:1,Low:2}[b.priority]??3)).slice(0,5);
   const servicesDue = pms.filter(p=>p.status==="Overdue"||p.status==="Due Soon").map(pm=>({...pm, eqName:eqs.find(e=>e.id===pm.equipment)?.name||pm.equipment})).sort((a,b)=>(a.nextDue||"").localeCompare(b.nextDue||"")).slice(0,5);
@@ -1114,9 +1114,11 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     else if(sortBy==="created") cmp = (a.created||"").localeCompare(b.created||"");
     else if(sortBy==="completed") cmp = getCompletedDate(a).localeCompare(getCompletedDate(b));
     else if(sortBy==="status")  cmp = (a.status||"").localeCompare(b.status||"");
-    else if(sortBy==="cost")    const aParts = +(a.partsUsed||[]).reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0);
-      const bParts = +(b.partsUsed||[]).reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0);
+    else if(sortBy==="cost") {
+      const aParts = Array.isArray(a.partsUsed)&&a.partsUsed.length ? a.partsUsed.reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+a.partsCost||0);
+      const bParts = Array.isArray(b.partsUsed)&&b.partsUsed.length ? b.partsUsed.reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+b.partsCost||0);
       cmp = ((+a.laborCost||0)+aParts)-((+b.laborCost||0)+bParts);
+    }
     return sortDir==="asc" ? cmp : -cmp;
   });
   const allMechanics = [...new Set(state.workOrders.map(w=>w.tech).filter(Boolean))];
@@ -1404,7 +1406,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .pt .sub{font-weight:700;background:#f8faff}
       .cs{border-top:2px solid #1a1a2e}
       .cr{display:flex;justify-content:space-between;padding:6px 10px;border-bottom:1px solid #e5e7eb;font-size:13px}
-      .ct{display:flex;justify-content:space-between;padding:7px 10px;background:#1a1a2e;color:#fff;font-size:14px;font-weight:700}
+      .ct{display:flex;justify-content:space-between;padding:8px 10px;background:#1a1a2e;color:#fff;font-size:14px;font-weight:700;margin-top:10px}.miniHead{background:#e0f2fe;color:#0f172a;border:1px solid #1a1a2e;border-bottom:0;padding:6px 8px;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.45px}
       .phi{color:#991b1b;background:#fee2e2;border:1px solid #fca5a5;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
       .pmd{color:#92400e;background:#fef3c7;border:1px solid #fcd34d;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
       .plo{color:#374151;background:#f3f4f6;border:1px solid #d1d5db;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
@@ -1439,7 +1441,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div class="cell"><div class="lbl">Nomenclature</div><div class="val">${eq?.name||wo.equipmentLabel||"&nbsp;"}</div></div>
           <div class="cell"><div class="lbl">Make / Model</div><div class="val">${eq?`${eq.make||""} ${eq.model||""}`.trim():"&nbsp;"}</div></div>
           <div class="cell"><div class="lbl">Serial #</div><div class="val mn">${eq?.serial||"&nbsp;"}</div></div>
-          <div class="cell"><div class="lbl">EIL Number</div><div class="val mn">${eq?.eilNumber||"&nbsp;"}</div></div>
+          <div class="cell"><div class="lbl">EIL #</div><div class="val mn">${eq?.eilNumber||"&nbsp;"}</div></div>
           ${printOpt("showUsageReading") ? `<div class="cell"><div class="lbl">${usageDisplayLabel}</div><div class="val mn">${usageDisplayValue}</div></div>` : `<div class="cell"><div class="lbl">Usage Reading</div><div class="val mn">&nbsp;</div></div>`}
         </div>
       </div>` : ""}
@@ -1451,21 +1453,23 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         ${printOpt("showMechanicNotes") ? `<div class="sec"><div class="sh">Mechanic Notes (Write-In)</div><div class="sb" style="min-height:80px">${wo.mechanicNotes||"&nbsp;"}</div></div>` : ""}
         ${(printOpt("showParts") || printOpt("showLaborHours") || printOpt("showCosts")) ? `<div class="sec">
           <div class="sh">Parts &amp; Labor Summary</div>
-          ${printOpt("showParts") ? `<table class="pt">
-            <thead><tr><th style="width:40%">Part / Material</th><th style="width:12%;text-align:center">Qty</th><th style="width:22%;text-align:right">Unit $</th><th style="width:26%;text-align:right">Total</th></tr></thead>
+          ${printOpt("showParts") ? `<div class="miniHead">Parts Used</div><table class="pt">
+            <thead><tr><th style="width:46%">Description</th><th style="width:14%;text-align:center">Quantity</th><th style="width:20%;text-align:right">Unit Price</th><th style="width:20%;text-align:right">Total</th></tr></thead>
             <tbody>
               ${partsUsed.length>0
                 ? partsUsed.map(p=>{ const q=+(p.qty||1),u=+(p.unitCost||0); return `<tr><td>${p.name||"&mdash;"}</td><td style="text-align:center">${q}</td><td style="text-align:right">$${u.toFixed(2)}</td><td style="text-align:right">$${(q*u).toFixed(2)}</td></tr>`; }).join("")
-                  +`<tr class="sub"><td colspan="3">Parts Subtotal</td><td style="text-align:right">$${partsTotal.toFixed(2)}</td></tr>`
-                : `<tr><td colspan="4" style="color:#999;font-style:italic;padding:4px 6px">No parts listed</td></tr>`
+                : `<tr><td colspan="4" style="color:#64748b;font-style:italic;padding:6px 8px">No parts listed</td></tr>`
               }
+              <tr class="sub"><td colspan="3">Parts Subtotal</td><td style="text-align:right">$${partsTotal.toFixed(2)}</td></tr>
             </tbody>
           </table>` : ""}
-          ${(printOpt("showLaborHours") || printOpt("showCosts")) ? `<div class="cs">
-            ${printOpt("showLaborHours") ? `<div class="cr"><span>Labor (${wo.laborHours||0} hrs)</span><span>$${laborTotal.toFixed(2)}</span></div>` : ""}
-            ${printOpt("showParts")&&!partsUsed.length&&wo.partsCost?`<div class="cr"><span>Parts Cost</span><span>$${(+wo.partsCost).toFixed(2)}</span></div>`:""}
-            ${printOpt("showCosts") ? `<div class="ct"><span>GRAND TOTAL</span><span>$${grandTotal.toFixed(2)}</span></div>` : ""}
-          </div>` : ""}
+          ${(printOpt("showLaborHours") || printOpt("showCosts")) ? `<div class="miniHead" style="margin-top:10px">Labor</div><table class="pt">
+            <thead><tr><th style="width:56%">Work Performed</th><th style="width:18%;text-align:center">Hours</th><th style="width:26%;text-align:right">Total</th></tr></thead>
+            <tbody>
+              <tr><td>${wo.laborDescription || wo.laborTask || wo.workPerformed || "Diagnosis and Repair"}</td><td style="text-align:center">${laborHoursTotal.toFixed(1)}</td><td style="text-align:right">$${laborTotal.toFixed(2)}</td></tr>
+            </tbody>
+          </table>
+          ${printOpt("showCosts") ? `<div class="ct"><span>GRAND TOTAL</span><span>$${grandTotal.toFixed(2)}</span></div>` : ""}` : ""}
         </div>` : ""}
       </div>
       ${printOpt("showFooterText") && ws.footerText?`<div class="sec"><div class="sh">Remarks</div><div class="sb" style="min-height:36px;font-size:13px">${ws.footerText}</div></div>`:""}
@@ -4343,7 +4347,7 @@ function Spending({ state }) {
   const PERIODS = [["all","All Time"],["monthly","This Month"],["biannual","Last 6 Months"],["fy","Fiscal Year"],["annual","Last 12 Months"]];
 
   const wos = state.workOrders.filter(filterByPeriod);
-  const totalCost = w => (+w.laborCost||0)+(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0));
+  const totalCost = w => (+w.laborCost||0)+(Array.isArray(w.partsUsed)&&w.partsUsed.length ? w.partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+w.partsCost||0));
   const totLabor  = wos.reduce((s,w)=>s+(+w.laborCost||0),0);
   const totParts  = wos.reduce((s,w)=>s+totalCost(w)-(+w.laborCost||0),0);
   const grand     = totLabor+totParts;
@@ -5419,7 +5423,7 @@ function ReportSpending({ state }) {
   const fy_end = new Date(fyYear + 1, 9, 1); // exclusive
   const month_start = new Date(now.getFullYear(), now.getMonth(), 1);
   const wos = state.workOrders;
-  const totalCost = (w) => (+w.laborCost||0)+(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0));
+  const totalCost = (w) => (+w.laborCost||0)+(Array.isArray(w.partsUsed)&&w.partsUsed.length ? w.partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+w.partsCost||0));
   const monthly = wos.filter(w=>w.completed&&new Date(w.completed)>=month_start);
   const annual  = wos.filter(w=>w.completed&&new Date(w.completed)>=fy_start&&new Date(w.completed)<fy_end);
   const monthTotal = monthly.reduce((s,w)=>s+totalCost(w),0);
@@ -5469,7 +5473,7 @@ function ReportCombined({ state }) {
     const win = window.open("","_blank","width=900,height=700");
     if(!win) return;
     const eqName = id => state.equipment.find(e=>e.id===id)?.name||id;
-    const totalCost = w => (+w.laborCost||0)+(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0));
+    const totalCost = w => (+w.laborCost||0)+(Array.isArray(w.partsUsed)&&w.partsUsed.length ? w.partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+w.partsCost||0));
     const allLogs = state.usageLogs || [];
     const currentReading = (eqId, field) => { const l = allLogs.filter(x=>x.equipmentId===eqId&&x[field]).sort((a,b)=>b.date.localeCompare(a.date))[0]; return l?+(l[field]||0):0; };
 
