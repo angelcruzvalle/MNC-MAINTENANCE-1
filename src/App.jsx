@@ -1344,9 +1344,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const printableDescription = wo.woType === "Inspection"
       ? (cleanInspectionTaskName(wo.inspectionTaskName || wo.faultDescription || wo.description || wo.title) || "&nbsp;")
       : (wo.faultDescription || "&nbsp;");
-    const partsUsed  = wo.partsUsed || [];
-    const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
-    const laborTotal = +(wo.laborCost||0);
+    const partsUsed  = Array.isArray(wo.partsUsed) ? wo.partsUsed : [];
+    const partsTotal = partsUsed.reduce((s,p)=>s+(Number(p.qty ?? 1)||0)*(Number(p.unitCost ?? 0)||0),0);
+    const laborHoursTotal = Number(wo.laborHours ?? wo.hoursWorked ?? 0) || 0;
+    const laborTotal = Number(wo.laborCost ?? 0) || 0;
     const grandTotal = laborTotal + partsTotal;
     const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", Labor:laborTotal.toFixed(2), Parts:partsTotal.toFixed(2), Total:grandTotal.toFixed(2), Problem:wo.problem||wo.description||"", Description:wo.faultEnabled?(wo.faultDescription||""):"", "Repair Complaint":wo.repairComplaint||"", "Repair Cause":wo.repairCause||"", "Corrective Action":wo.correctiveAction||"", "Service Checklist":wo.serviceChecklist||"", "Inspection Findings":wo.inspectionFindings||"", Notes:wo.mechanicNotes||""}];
     const typeSpecificPrint = (() => {
