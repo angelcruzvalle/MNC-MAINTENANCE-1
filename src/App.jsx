@@ -1055,6 +1055,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const [sortDir, setSortDir]       = useState("desc");
   const [priorityFilter, setPriorityFilter] = useState("All");
   const [mechFilter, setMechFilter] = useState("All");
+  const [equipmentStatusFilter, setEquipmentStatusFilter] = useState("All");
   const [completedDateFilter, setCompletedDateFilter] = useState("all");
   const [eqSearch, setEqSearch] = useState("");
   const [showNewTech, setShowNewTech] = useState(false);
@@ -1078,6 +1079,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const STATUS_TABS = ["Active","Open","In Progress","Awaiting Parts","On Hold","Completed","All"];
   const PRIO_ORDER  = {"High":0,"Medium":1,"Low":2};
+  const EQUIPMENT_STATUS_FILTERS = ["Fully Operational", "Operational with Deficiencies", "Out of Service / Deadline"];
   const getCompletedDate = (w) => w?.completed || w?.completedDate || w?.dateCompleted || w?.closedDate || w?.closedAt || w?.completedAt || "";
 
   /* Date range filter for completed WOs */
@@ -1106,7 +1108,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const matchType     = typeFilter==="All"     || w.woType===typeFilter;
     const matchPriority = priorityFilter==="All" || w.priority===priorityFilter;
     const matchMech     = mechFilter==="All"     || w.tech===mechFilter;
-    return matchStatus && matchType && matchPriority && matchMech && matchCompletedDate(w);
+    const eq = (state.equipment||[]).find(e=>String(e.id)===String(workOrderEquipmentId(w)));
+    const woEqStatus = w.status==="Completed" ? "Fully Operational" : (w.equipmentStatus || eq?.status || "Fully Operational");
+    const matchEquipmentStatus = equipmentStatusFilter==="All" || woEqStatus===equipmentStatusFilter;
+    return matchStatus && matchType && matchPriority && matchMech && matchEquipmentStatus && matchCompletedDate(w);
   }).sort((a,b)=>{
     let cmp = 0;
     if(sortBy==="priority") cmp = (PRIO_ORDER[a.priority]??9)-(PRIO_ORDER[b.priority]??9);
@@ -1359,14 +1364,21 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const printedDate = wo.completed || "";
     const assignedMechanicName = wo.tech || "";
 
-    const colorKey = ws.printColor || ws.accentColor || gs.printColor || "blue";
+    const printTypeKey = (() => {
+      const type = String(wo.woType || "Repair").toLowerCase();
+      if (type.includes("inspection")) return "inspection";
+      if (type.includes("service") || type.includes("prevent")) return "service";
+      return "repair";
+    })();
+    const defaultTypeColors = { repair:"blue", inspection:"mint", service:"yellow" };
+    const colorKey = ws[`${printTypeKey}PrintColor`] || defaultTypeColors[printTypeKey] || "blue";
     const colorMap = {
       blue:   { accent:"#dbeafe", border:"#1e3a8a", dark:"#1e3a8a", soft:"#eff6ff" },
       yellow: { accent:"#fef3c7", border:"#92400e", dark:"#78350f", soft:"#fffbeb" },
       mint:   { accent:"#dcfce7", border:"#166534", dark:"#14532d", soft:"#f0fdf4" },
       slate:  { accent:"#e2e8f0", border:"#334155", dark:"#1e293b", soft:"#f8fafc" }
     };
-    const C = colorMap[colorKey] || colorMap.blue;
+    const C = colorMap[colorKey] || colorMap[defaultTypeColors[printTypeKey]] || colorMap.blue;
 
     const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", "Labor Hours":laborHoursTotal.toFixed(1), Labor:laborTotal.toFixed(2), Parts:partsTotal.toFixed(2), Total:grandTotal.toFixed(2), Description:printableDescription, "Work Performed":wo.description||"", Notes:wo.mechanicNotes||""}];
     const woCsv = rowsToDataUri(woRows);
@@ -1918,6 +1930,11 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             <option value="All">All Mechanics</option>
             {allMechanics.map(m=><option key={m}>{m}</option>)}
           </select>
+          {/* Equipment Status */}
+          <select style={{ ...sel, width:230 }} value={equipmentStatusFilter} onChange={e=>setEquipmentStatusFilter(e.target.value)}>
+            <option value="All">All Equipment Statuses</option>
+            {EQUIPMENT_STATUS_FILTERS.map(s=><option key={s} value={s}>{s}</option>)}
+          </select>
           {/* Date range — only when viewing Completed */}
           {filter==="Completed" && (
             <select style={{ ...sel, width:150 }} value={completedDateFilter} onChange={e=>setCompletedDateFilter(e.target.value)}>
@@ -1944,8 +1961,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             </button>
           </div>
           {/* Clear filters */}
-          {(typeFilter!=="All"||priorityFilter!=="All"||mechFilter!=="All") && (
-            <button onClick={()=>{ setTypeFilter("All"); setPriorityFilter("All"); setMechFilter("All"); }} style={{ background:"none", border:"none", color:T.accent, fontFamily:T.sans, fontSize:12, fontWeight:600, cursor:"pointer" }}>✕ Clear</button>
+          {(typeFilter!=="All"||priorityFilter!=="All"||mechFilter!=="All"||equipmentStatusFilter!=="All") && (
+            <button onClick={()=>{ setTypeFilter("All"); setPriorityFilter("All"); setMechFilter("All"); setEquipmentStatusFilter("All"); }} style={{ background:"none", border:"none", color:T.accent, fontFamily:T.sans, fontSize:12, fontWeight:600, cursor:"pointer" }}>✕ Clear</button>
           )}
           <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginLeft:"auto" }}>
             {filtered.length} work order{filtered.length!==1?"s":""}
@@ -4574,6 +4591,9 @@ function WOSettings({ state, dispatch, onClose }) {
     showSignature: s.showSignature!==false,
     showFooterText: s.showFooterText!==false,
     showFooterBar: s.showFooterBar!==false,
+    repairPrintColor: s.repairPrintColor || "blue",
+    inspectionPrintColor: s.inspectionPrintColor || "mint",
+    servicePrintColor: s.servicePrintColor || "yellow",
     footerText:  s.footerText||"",
   });
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
@@ -4584,6 +4604,19 @@ function WOSettings({ state, dispatch, onClose }) {
         <span style={{ position:"absolute", top:2, left:form[k]?18:2, width:18, height:18, borderRadius:"50%", background:"#fff", transition:"left .2s", display:"block" }}/>
       </button>
     </div>
+  );
+  const printColorOptions = [
+    ["blue", "Blue"],
+    ["mint", "Green"],
+    ["yellow", "Yellow"],
+    ["slate", "Slate"]
+  ];
+  const ColorSelect = ({ label, k }) => (
+    <Field label={label}>
+      <select style={inp} value={form[k]} onChange={F(k)}>
+        {printColorOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </select>
+    </Field>
   );
 
   const handleLogo = e => {
@@ -4607,6 +4640,12 @@ function WOSettings({ state, dispatch, onClose }) {
         <Field label="Footer / Notes Text">
           <textarea style={{ ...inp, minHeight:56, resize:"vertical" }} value={form.footerText} onChange={F("footerText")} placeholder="e.g. Authorized signatures required…" />
         </Field>
+        <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginTop:4 }}>Printable Work Order Colors</div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:10 }}>
+          <ColorSelect label="Repair Work Orders" k="repairPrintColor" />
+          <ColorSelect label="Inspection Work Orders" k="inspectionPrintColor" />
+          <ColorSelect label="Preventive / Service Work Orders" k="servicePrintColor" />
+        </div>
       </div>
       <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:8 }}>Fields to show on printed Work Order</div>
       <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginBottom:8 }}>Assigned mechanic and priority are kept inside the system but are no longer printed on the work order.</div>
