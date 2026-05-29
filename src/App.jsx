@@ -1375,6 +1375,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const partsUsed  = wo.partsUsed || [];
     const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
     const laborTotal = +(wo.laborCost||0);
+    const laborHoursTotal = +(wo.laborHours||0);
     const grandTotal = laborTotal + partsTotal;
     const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", Labor:laborTotal.toFixed(2), Parts:partsTotal.toFixed(2), Total:grandTotal.toFixed(2), Problem:wo.problem||wo.description||"", Description:wo.faultEnabled?(wo.faultDescription||""):"", "Repair Complaint":wo.repairComplaint||"", "Repair Cause":wo.repairCause||"", "Corrective Action":wo.correctiveAction||"", "Service Checklist":wo.serviceChecklist||"", "Inspection Findings":wo.inspectionFindings||"", Notes:wo.mechanicNotes||""}];
     const typeSpecificPrint = (() => {
@@ -1495,7 +1496,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           </tbody></table>` : ""}
           <div class="summaryRows">
             <div class="summaryRow"><div class="summaryLabel">Parts Subtotal</div><div class="summaryValue">$${partsTotal.toFixed(2)}</div></div>
-            <div class="summaryRow"><div class="summaryLabel">Labor</div><div class="summaryValue">$${laborTotal.toFixed(2)}</div></div>
+            <div class="summaryRow"><div class="summaryLabel">Labor Hours Actually Worked</div><div class="summaryValue">${laborHoursTotal.toFixed(1)} hrs</div></div>
+            <div class="summaryRow"><div class="summaryLabel">Labor Cost</div><div class="summaryValue">$${laborTotal.toFixed(2)}</div></div>
             <div class="summaryRow grand"><div class="summaryLabel">Grand Total</div><div class="summaryValue">$${grandTotal.toFixed(2)}</div></div>
           </div>
         </div>` : ""}
