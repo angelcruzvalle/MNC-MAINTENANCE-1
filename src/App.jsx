@@ -825,7 +825,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   const pmOverdue = pms.filter(p=>p.status==="Overdue").length;
   const pmDueSoon = pms.filter(p=>p.status==="Due Soon").length;
   const lowStock = parts.filter(p=>p.lowStockAlert!==false && (+p.qty||0)<=(+p.minQty||0)).length;
-  const totalCost = w => (+w.laborCost||0)+(Array.isArray(w.partsUsed)&&w.partsUsed.length ? w.partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+w.partsCost||0));
+  const totalCost = w => (+w.laborCost||0)+(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0))+(+w.partsCost||0);
   const spendMo = wos.filter(w=>w.status==="Completed" && (w.completed||"").slice(0,7)===monthKey).reduce((s,w)=>s+totalCost(w),0);
   const urgentWOs = wos.filter(w=>w.status!=="Completed").sort((a,b)=>({High:0,Medium:1,Low:2}[a.priority]??3)-({High:0,Medium:1,Low:2}[b.priority]??3)).slice(0,5);
   const servicesDue = pms.filter(p=>p.status==="Overdue"||p.status==="Due Soon").map(pm=>({...pm, eqName:eqs.find(e=>e.id===pm.equipment)?.name||pm.equipment})).sort((a,b)=>(a.nextDue||"").localeCompare(b.nextDue||"")).slice(0,5);
@@ -1114,11 +1114,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     else if(sortBy==="created") cmp = (a.created||"").localeCompare(b.created||"");
     else if(sortBy==="completed") cmp = getCompletedDate(a).localeCompare(getCompletedDate(b));
     else if(sortBy==="status")  cmp = (a.status||"").localeCompare(b.status||"");
-    else if(sortBy==="cost") {
-      const aParts = Array.isArray(a.partsUsed)&&a.partsUsed.length ? a.partsUsed.reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+a.partsCost||0);
-      const bParts = Array.isArray(b.partsUsed)&&b.partsUsed.length ? b.partsUsed.reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+b.partsCost||0);
-      cmp = ((+a.laborCost||0)+aParts)-((+b.laborCost||0)+bParts);
-    }
+    else if(sortBy==="cost")    cmp = ((+a.laborCost||0)+(+a.partsCost||0))-((+b.laborCost||0)+(+b.partsCost||0));
     return sortDir==="asc" ? cmp : -cmp;
   });
   const allMechanics = [...new Set(state.workOrders.map(w=>w.tech).filter(Boolean))];
@@ -1324,187 +1320,167 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const printOpt = (key) => ws[key] !== false;
     const gs = state.settings || {};
     const eq = state.equipment.find(e=>e.id===wo.equipment);
-
-    const h = (value) => String(value ?? "").replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[ch]));
-    const money = (value) => `$${(+value || 0).toFixed(2)}`;
-
+    /* Pull company info from WO settings first, then global settings */
     const companyName = gs.companyName || "Maintenance Department";
     const companyLogo = gs.logo || "";
+    const companyDept = ws.department || gs.department || "";
+    const companyPhone = ws.phone || gs.phone || "";
+    const companyEmail = ws.email || gs.email || "";
+    const companyAddr  = `${gs.address||""} ${gs.cityState||""}`.trim();
+    const usageLabel = [wo.usageHours ? `Hours: ${wo.usageHours}` : "", wo.usageMileage ? `Mileage: ${Number(wo.usageMileage).toLocaleString()}` : ""].filter(Boolean).join(" / ");
     const usageMode = (eq?.usageType || wo.usageType || "hours").toLowerCase();
     const usageDisplayLabel = usageMode === "mileage" ? "Mileage" : usageMode === "both" ? "Mileage / Hours" : "Hours";
     const usageDisplayValue = wo.usageNA ? "N/A" : (usageMode === "mileage"
-      ? (wo.usageMileage ? Number(wo.usageMileage).toLocaleString() : "")
+      ? (wo.usageMileage ? Number(wo.usageMileage).toLocaleString() : "&nbsp;")
       : usageMode === "both"
-        ? [wo.usageMileage ? Number(wo.usageMileage).toLocaleString() : "", wo.usageHours ? `${wo.usageHours} Hours` : ""].filter(Boolean).join(" / ")
-        : (wo.usageHours || ""));
-
+        ? [wo.usageMileage ? Number(wo.usageMileage).toLocaleString() : "", wo.usageHours ? `${wo.usageHours} hrs` : ""].filter(Boolean).join(" / ") || "&nbsp;"
+        : (wo.usageHours || "&nbsp;"));
+    const woTypeLabel = `${String(wo.woType||"Repair").toUpperCase()} WORK ORDER`;
     const cleanInspectionTaskName = (value) => String(value || "").replace(/^\s*inspection\s*task\s*:\s*/i, "").trim();
     const printableDescription = wo.woType === "Inspection"
-      ? (cleanInspectionTaskName(wo.inspectionTaskName || wo.faultDescription || wo.description || wo.title) || "")
-      : (wo.faultDescription || "");
-
-    const partsUsed = Array.isArray(wo.partsUsed) ? wo.partsUsed : [];
-    const partsTotal = partsUsed.reduce((sum, part) => {
-      const qty = +(part.qty || 1);
-      const unitCost = +(part.unitCost || 0);
-      return sum + (qty * unitCost);
-    }, 0);
-    const laborHoursTotal = +(wo.laborHours || 0);
-    const laborTotal = +(wo.laborCost || 0);
-    const grandTotal = partsTotal + laborTotal;
-
-    const statusClass = String(wo.status || "Open").toLowerCase().includes("complete") ? "completed" : String(wo.status || "Open").toLowerCase().replace(/[^a-z0-9]+/g,"-");
-    const workType = String(wo.woType || "Repair").toUpperCase();
-    const typeIcon = wo.woType === "Service" ? "⚙" : wo.woType === "Inspection" ? "☑" : "⚒";
-    const printedDate = wo.completed || "";
-    const assignedMechanicName = wo.tech || "";
-
-    const colorKey = ws.printColor || ws.accentColor || gs.printColor || "blue";
-    const colorMap = {
-      blue:   { accent:"#dbeafe", border:"#1e3a8a", dark:"#1e3a8a", soft:"#eff6ff" },
-      yellow: { accent:"#fef3c7", border:"#92400e", dark:"#78350f", soft:"#fffbeb" },
-      mint:   { accent:"#dcfce7", border:"#166534", dark:"#14532d", soft:"#f0fdf4" },
-      slate:  { accent:"#e2e8f0", border:"#334155", dark:"#1e293b", soft:"#f8fafc" }
-    };
-    const C = colorMap[colorKey] || colorMap.blue;
-
-    const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", "Labor Hours":laborHoursTotal.toFixed(1), Labor:laborTotal.toFixed(2), Parts:partsTotal.toFixed(2), Total:grandTotal.toFixed(2), Description:printableDescription, "Work Performed":wo.description||"", Notes:wo.mechanicNotes||""}];
-    const woCsv = rowsToDataUri(woRows);
-
+      ? (cleanInspectionTaskName(wo.inspectionTaskName || wo.faultDescription || wo.description || wo.title) || "&nbsp;")
+      : (wo.faultDescription || "&nbsp;");
+    const partsUsed  = wo.partsUsed || [];
+    const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
+    const laborTotal = +(wo.laborCost||0);
+    const grandTotal = laborTotal + partsTotal + (+(wo.partsCost||0));
+    const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", Labor:laborTotal.toFixed(2), Parts:partsTotal.toFixed(2), Total:grandTotal.toFixed(2), Problem:wo.problem||wo.description||"", Description:wo.faultEnabled?(wo.faultDescription||""):"", "Repair Complaint":wo.repairComplaint||"", "Repair Cause":wo.repairCause||"", "Corrective Action":wo.correctiveAction||"", "Service Checklist":wo.serviceChecklist||"", "Inspection Findings":wo.inspectionFindings||"", Notes:wo.mechanicNotes||""}];
+    const typeSpecificPrint = (() => {
+      if(!printOpt("showTypeSpecific")) return "";
+      if(wo.woType==="Repair") return "";
+      if(wo.woType==="Service") return ``;
+      if(wo.woType==="Inspection") return ``;
+      return "";
+    })();
     const inspectionChecklistPrint = (() => {
       if(wo.woType!=="Inspection") return "";
       const results = Array.isArray(wo.inspectionStepResults) && wo.inspectionStepResults.length
         ? wo.inspectionStepResults
         : String(wo.inspectionSteps||wo.workPerformed||"").split(/\n+/).map((step,i)=>({ id:`step-${i}`, step:step.trim(), result:"", comment:"" })).filter(x=>x.step);
       if(!results.length) return "";
-      return `<section class="section"><div class="section-title">Inspection Checklist</div><table class="data-table"><thead><tr><th style="width:55%">Step</th><th style="width:15%">Pass / Fail</th><th style="width:30%">Comment</th></tr></thead><tbody>${results.map((r,i)=>`<tr><td>${i+1}. ${h(r.step)||"&nbsp;"}</td><td><b>${h(r.result)||"&nbsp;"}</b></td><td>${h(r.comment)||"&nbsp;"}</td></tr>`).join("")}</tbody></table></section>`;
+      return `<div class="sec"><div class="sh">Inspection Checklist</div><table class="pt"><thead><tr><th style="width:55%">Step</th><th style="width:15%">Pass / Fail</th><th style="width:30%">Comment</th></tr></thead><tbody>${results.map((r,i)=>`<tr><td>${i+1}. ${r.step||"&nbsp;"}</td><td style="font-weight:700">${r.result||"&nbsp;"}</td><td>${r.comment||"&nbsp;"}</td></tr>`).join("")}</tbody></table></div>`;
     })();
+    const woCsv = rowsToDataUri(woRows);
+    const printedDate = wo.completed || "";
+    const assignedMechanicName = wo.tech || "";
 
     const win = window.open("","_blank","width=900,height=700");
     if(!win){ alert("Please allow pop-ups to print work orders."); return; }
 
-    win.document.write(`<!DOCTYPE html><html><head><title>Work Order ${h(wo.id)}</title><style>
+    win.document.write(`<!DOCTYPE html><html><head><title>Work Order ${wo.id}</title><style>
       *{box-sizing:border-box;margin:0;padding:0}
-      html,body{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
-      body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#111827;font-size:12px;line-height:1.35}
-      .page{width:8.5in;min-height:11in;margin:0 auto;padding:.38in .45in;display:flex;flex-direction:column;gap:6px}
-      .outer{border:1.5px solid #111827;border-radius:8px;overflow:hidden;background:white}
-      .top{display:grid;grid-template-columns:1.15in 1fr 1.85in;border-bottom:1.5px solid #111827;min-height:.95in}
-      .logoBox{display:flex;align-items:center;justify-content:center;border-right:1.5px solid #111827;padding:6px;background:white;overflow:hidden}
-      .logoBox img{max-width:100%;max-height:.78in;object-fit:contain;display:block}
-      .logoText{font-weight:900;text-align:center;color:#111827;font-size:13px;line-height:1.2}
-      .companyBox{display:flex;flex-direction:column;align-items:center;justify-content:center;background:${C.soft};padding:8px 10px;text-align:center}
-      .company{font-size:22px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#111827;line-height:1.1}
-      .typePill{margin-top:8px;border:1.5px solid ${C.border};background:${C.accent};color:#111827;border-radius:999px;padding:4px 18px;font-size:12px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;display:inline-flex;gap:6px;align-items:center}
-      .numberBox{border-left:1.5px solid #111827;display:grid;grid-template-rows:1fr .32in;text-align:center;background:white}
-      .woNumber{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px}
-      .woNumber .label{font-size:10px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#111827}
-      .woNumber .number{font-family:Arial,Helvetica,sans-serif;font-size:18px;font-weight:900;color:#111827;margin-top:4px;word-break:break-word}
-      .status{display:flex;align-items:center;justify-content:center;background:${C.border};color:white;font-size:11px;font-weight:900;letter-spacing:1.3px;text-transform:uppercase;border-top:1.5px solid #111827}
-      .completed{background:${C.border}!important;color:white!important}
-      .dateGrid{display:grid;grid-template-columns:1fr 1fr 1fr;border-bottom:1.5px solid #111827}
-      .infoGrid{display:grid;grid-template-columns:1fr 1fr 1fr}
-      .cell{min-height:.38in;padding:6px 8px;border-right:1px solid #9ca3af;border-bottom:1px solid #cbd5e1;display:grid;grid-template-columns:.95fr 1.35fr;align-items:center;gap:8px;overflow:hidden}
-      .cell:nth-child(3n){border-right:none}
-      .dateGrid .cell{border-bottom:none;grid-template-columns:1fr 1fr;min-height:.34in}
-      .fieldLabel{font-size:9.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;color:#111827;line-height:1.1}
-      .fieldValue{font-size:12.5px;font-weight:800;color:#111827;line-height:1.15;white-space:normal;overflow-wrap:anywhere}
-      .mono{font-family:Arial,Helvetica,sans-serif}
-      .section{border-top:1.5px solid #111827;break-inside:avoid}
-      .section-title{background:${C.accent};color:#111827;border-bottom:1px solid #94a3b8;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
-      .textBlock{padding:8px 10px;min-height:.52in;white-space:pre-wrap;overflow-wrap:anywhere;color:#111827;font-size:12px}
-      .textBlock.tall{min-height:1.05in}
-      .summaryTitle{background:${C.accent};color:#111827;border-bottom:1px solid #94a3b8;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
-      .miniTitle{padding:6px 10px 4px;font-weight:900;text-transform:uppercase;font-size:11px;color:#111827;background:#fff}
-      .data-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px}
-      .data-table th{background:#e5e7eb;color:#111827;text-transform:uppercase;letter-spacing:.45px;font-size:10px;font-weight:900;padding:6px 8px;border-top:1px solid #9ca3af;border-bottom:1px solid #9ca3af;border-right:1px solid #cbd5e1;text-align:left}
-      .data-table td{padding:6px 8px;border-bottom:1px solid #cbd5e1;border-right:1px solid #e5e7eb;vertical-align:top;overflow-wrap:anywhere;color:#111827}
-      .data-table th:last-child,.data-table td:last-child{border-right:none}
-      .right{text-align:right}.center{text-align:center}
-      .subRow td{background:#f8fafc;font-weight:900;border-top:1.5px solid #111827}
-      .grandTotal{display:grid;grid-template-columns:1fr 1.7in;border-top:1.5px solid #111827;background:${C.accent};font-weight:900;font-size:16px;color:#111827}
-      .grandTotal div{padding:9px 12px}.grandTotal div:last-child{text-align:right;border-left:1.5px solid #111827}
-      .signatureGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;padding:12px 14px;border-top:1.5px solid #111827;min-height:.65in;align-items:end}
-      .sigLine{border-top:1.5px solid #111827;padding-top:5px;min-height:32px}
-      .sigValue{font-size:12px;font-weight:800;margin-bottom:4px;min-height:14px;overflow-wrap:anywhere;color:#111827}
-      .sigLabel{font-size:9.5px;font-weight:900;text-transform:uppercase;letter-spacing:.6px;color:#111827}
-      .pbtn{margin:14px auto 0;display:flex;gap:10px;justify-content:center}
-      .pbtn button,.pbtn a{padding:9px 24px;font-size:13px;font-weight:800;border-radius:6px;cursor:pointer;text-decoration:none;font-family:Arial,Helvetica,sans-serif}
-      .printBtn{background:${C.border};color:white;border:none}.fileBtn{background:#fff;color:#111827;border:1px solid #111827}
-      @page{size:letter;margin:0}
-      @media print{.pbtn,.print-customize{display:none!important}.page{padding:.38in .45in}.outer{break-inside:avoid}body{font-size:12px}}
+      body{font-family:Arial,sans-serif;background:#fff;color:#111;font-size:13.5px;line-height:1.45}
+      .page{width:8.5in;min-height:11in;margin:0 auto;padding:.35in .45in;display:flex;flex-direction:column;gap:6px}
+      .hdr{display:flex;align-items:stretch;border:2px solid #1a1a2e;border-radius:3px;overflow:hidden}
+      .hdr-logo{width:165px;min-width:165px;height:92px;background:#fff;display:flex;align-items:center;justify-content:center;padding:4px;border-right:2px solid #1a1a2e;overflow:hidden}
+      .hdr-logo img{width:100%;height:100%;max-width:155px;max-height:84px;object-fit:contain;object-position:center;display:block}
+      .hdr-logo-text{font-size:14px;font-weight:700;color:#1a1a2e;text-align:center;line-height:1.35;padding:4px}
+      .hdr-center{flex:1;background:#1a1a2e;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px}
+      .hdr-company{font-size:18px;font-weight:700;color:#fff;letter-spacing:1px;text-transform:uppercase}
+      .hdr-type{font-size:12px;color:#cbd5e1;letter-spacing:1.5px;text-transform:uppercase;margin-top:3px}
+      .hdr-right{width:155px;min-width:155px;background:#f0f4ff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px;border-left:2px solid #1a1a2e;text-align:center}
+      .hdr-wol{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#666}
+      .hdr-won{font-size:24px;font-weight:700;color:#1a1a2e;font-family:monospace;letter-spacing:1px}
+      .hdr-status{margin-top:5px;display:inline-block;padding:4px 10px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
+      .st-open{background:#dbeafe;color:#1e3a8a}.st-in{background:#fef9c3;color:#713f12}
+      .st-completed{background:#dcfce7;color:#14532d}.st-on{background:#fee2e2;color:#7f1d1d}
+      .row{display:grid;border:1.5px solid #1a1a2e;border-radius:3px;overflow:hidden}
+      .row.c3{grid-template-columns:1fr 1fr 1fr}.row.c2{grid-template-columns:2fr 1fr}.row.c22{grid-template-columns:1fr 1fr}
+      .eq-info-grid{display:grid;grid-template-columns:1fr 1fr 1fr;border:none}
+      .eq-info-grid .cell:nth-child(3n){border-right:none}
+      .eq-info-grid .cell:nth-child(n+4){border-top:1px solid #c8d0e0}
+      .cell{padding:4px 8px;border-right:1px solid #c8d0e0}.cell:last-child{border-right:none}.cell.s2{grid-column:span 2}
+      .lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#555;margin-bottom:3px}
+      .val{font-size:14px;font-weight:600;color:#111;min-height:20px}.val.mn{font-family:monospace}
+      .sec{border:1.5px solid #1a1a2e;border-radius:3px;overflow:hidden}
+      .sh{background:#1a1a2e;color:#fff;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:6px 10px}
+      .sb{padding:10px 12px;font-size:13.5px;color:#111;line-height:1.5;white-space:pre-wrap;min-height:70px}
+      .bg{display:grid;grid-template-columns:1fr;gap:6px}
+      .pt{width:100%;border-collapse:collapse;font-size:13px}
+      .pt th{background:#f3f4f6;padding:7px 8px;text-align:left;font-size:10.5px;text-transform:uppercase;color:#555;font-weight:700}
+      .pt td{padding:3px 6px;border-bottom:1px solid #e5e7eb}
+      .pt .sub{font-weight:700;background:#f8faff}
+      .cs{border-top:2px solid #1a1a2e}
+      .cr{display:flex;justify-content:space-between;padding:6px 10px;border-bottom:1px solid #e5e7eb;font-size:13px}
+      .ct{display:flex;justify-content:space-between;padding:7px 10px;background:#1a1a2e;color:#fff;font-size:14px;font-weight:700}
+      .phi{color:#991b1b;background:#fee2e2;border:1px solid #fca5a5;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
+      .pmd{color:#92400e;background:#fef3c7;border:1px solid #fcd34d;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
+      .plo{color:#374151;background:#f3f4f6;border:1px solid #d1d5db;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
+      .sigs{display:grid;grid-template-columns:2fr 1fr;gap:20px;border:1.5px solid #1a1a2e;border-radius:3px;padding:8px 14px;margin-top:4px}
+      .sc{display:flex;flex-direction:column;gap:10px}.sw{display:flex;flex-direction:column;gap:3px}
+      .sl{border-bottom:1.5px solid #333;height:24px}
+      .slb{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#555}
+      .ftr{background:#1a1a2e;color:#fff;padding:7px 12px;border-radius:4px;display:flex;justify-content:space-between;font-size:10.5px}
+      .pbtn{margin-top:14px;display:flex;gap:10px;justify-content:center}
+      .pbtn button{padding:9px 24px;font-size:13px;font-weight:700;border:none;border-radius:6px;cursor:pointer}
+      .bpr{background:#1a1a2e;color:#fff}.bpdf{background:#0052cc;color:#fff}
+      @media print{.pbtn{display:none}.page{padding:.35in .45in;gap:8px}body{font-size:13px}}
     </style></head><body>
     <div class="page">
-      <div class="outer">
-        <header class="top">
-          <div class="logoBox">${companyLogo?`<img src="${companyLogo}" alt="Logo">`:`<div class="logoText">LOGO</div>`}</div>
-          <div class="companyBox"><div class="company">${h(companyName)}</div><div class="typePill"><span>${typeIcon}</span><span>${h(workType)}</span></div></div>
-          <div class="numberBox"><div class="woNumber"><div class="label">Work Order Number</div><div class="number">${h(wo.id || "")}</div></div><div class="status ${statusClass}">${h(wo.status || "Open")}</div></div>
-        </header>
-
-        ${printOpt("showDates") ? `<div class="dateGrid">
-          <div class="cell"><div class="fieldLabel">Date Created</div><div class="fieldValue">${h(wo.created)||"&nbsp;"}</div></div>
-          <div class="cell"><div class="fieldLabel">Due Date</div><div class="fieldValue">${h(wo.due)||"&nbsp;"}</div></div>
-          <div class="cell"><div class="fieldLabel">Date Completed</div><div class="fieldValue">${h(wo.completed)||"&nbsp;"}</div></div>
-        </div>` : ""}
-
-        ${printOpt("showEquipment") ? `<section class="section" style="border-top:none">
-          <div class="section-title">Work Order Type and Equipment Information</div>
-          <div class="infoGrid">
-            <div class="cell"><div class="fieldLabel">Work Order Type</div><div class="fieldValue">${h(workType)}</div></div>
-            <div class="cell"><div class="fieldLabel">Equipment Number</div><div class="fieldValue mono">${h(wo.equipment)||"&nbsp;"}</div></div>
-            <div class="cell"><div class="fieldLabel">Equipment Name</div><div class="fieldValue">${h(eq?.name || wo.equipmentLabel)||"&nbsp;"}</div></div>
-            <div class="cell"><div class="fieldLabel">Make and Model</div><div class="fieldValue">${h(eq ? `${eq.make||""} ${eq.model||""}`.trim() : "")||"&nbsp;"}</div></div>
-            <div class="cell"><div class="fieldLabel">Serial Number</div><div class="fieldValue mono">${h(eq?.serial)||"&nbsp;"}</div></div>
-            <div class="cell"><div class="fieldLabel">${h(usageDisplayLabel)}</div><div class="fieldValue mono">${h(usageDisplayValue)||"&nbsp;"}</div></div>
-            <div class="cell"><div class="fieldLabel">EIL #</div><div class="fieldValue mono">${h(eq?.eilNumber)||"&nbsp;"}</div></div>
-            <div class="cell"><div class="fieldLabel">Priority</div><div class="fieldValue">${h(wo.priority)||"&nbsp;"}</div></div>
-            <div class="cell"><div class="fieldLabel">Mechanic</div><div class="fieldValue">${h(wo.tech)||"&nbsp;"}</div></div>
-          </div>
-        </section>` : ""}
-
-        ${printOpt("showFaultDescription") ? `<section class="section"><div class="section-title">Description</div><div class="textBlock">${h(printableDescription)||"&nbsp;"}</div></section>` : ""}
-        ${printOpt("showDescription") ? `<section class="section"><div class="section-title">Work Description and Work Performed</div><div class="textBlock tall">${h(wo.description)||"&nbsp;"}</div></section>` : ""}
-        ${inspectionChecklistPrint}
-        ${printOpt("showMechanicNotes") ? `<section class="section"><div class="section-title">Mechanic Notes</div><div class="textBlock tall">${h(wo.mechanicNotes)||"&nbsp;"}</div></section>` : ""}
-
-        ${(printOpt("showParts") || printOpt("showLaborHours") || printOpt("showCosts")) ? `<section class="section">
-          <div class="summaryTitle">Parts and Labor Summary</div>
-          ${printOpt("showParts") ? `<div class="miniTitle">Parts Used</div>
-          <table class="data-table">
-            <thead><tr><th style="width:50%">Description</th><th style="width:13%" class="center">Quantity</th><th style="width:18%" class="right">Unit Price</th><th style="width:19%" class="right">Total</th></tr></thead>
+      <div class="hdr">
+        <div class="hdr-logo">${companyLogo?`<img src="${companyLogo}" alt="logo">`:`<div class="hdr-logo-text">${companyName}</div>`}</div>
+        <div class="hdr-center"><div class="hdr-company">${companyName}</div><div class="hdr-type">${woTypeLabel}</div></div>
+        <div class="hdr-right"><div class="hdr-wol">Work Order No.</div><div class="hdr-won">${wo.id}</div>
+          <div class="hdr-status st-${(wo.status||"open").toLowerCase().slice(0,2)}">${wo.status||"Open"}</div>
+        </div>
+      </div>
+      ${printOpt("showDates") ? `<div class="row c3">
+        <div class="cell"><div class="lbl">Date Created</div><div class="val">${wo.created||"&nbsp;"}</div></div>
+        <div class="cell"><div class="lbl">Due Date</div><div class="val">${wo.due||"&nbsp;"}</div></div>
+        <div class="cell"><div class="lbl">Date Completed</div><div class="val">${wo.completed||"&nbsp;"}</div></div>
+      </div>` : ""}
+      ${""}
+      ${printOpt("showEquipment") ? `<div class="sec">
+        <div class="sh">Equipment Information</div>
+        <div class="eq-info-grid">
+          <div class="cell"><div class="lbl">Equipment #</div><div class="val mn" style="font-weight:700">${wo.equipment||"&nbsp;"}</div></div>
+          <div class="cell"><div class="lbl">Nomenclature</div><div class="val">${eq?.name||wo.equipmentLabel||"&nbsp;"}</div></div>
+          <div class="cell"><div class="lbl">Make / Model</div><div class="val">${eq?`${eq.make||""} ${eq.model||""}`.trim():"&nbsp;"}</div></div>
+          <div class="cell"><div class="lbl">Serial #</div><div class="val mn">${eq?.serial||"&nbsp;"}</div></div>
+          <div class="cell"><div class="lbl">EIL Number</div><div class="val mn">${eq?.eilNumber||"&nbsp;"}</div></div>
+          ${printOpt("showUsageReading") ? `<div class="cell"><div class="lbl">${usageDisplayLabel}</div><div class="val mn">${usageDisplayValue}</div></div>` : `<div class="cell"><div class="lbl">Usage Reading</div><div class="val mn">&nbsp;</div></div>`}
+        </div>
+      </div>` : ""}
+      ${printOpt("showFaultDescription") ? `<div class="sec"><div class="sh">Description</div><div class="sb" style="min-height:18px;padding:3px 8px;line-height:1.25">${printableDescription}</div></div>` : ""}
+      ${printOpt("showDescription") ? `<div class="sec"><div class="sh">${wo.woType==="Service" ? "Service Description &amp; Work Performed" : "Work Description &amp; Work Performed"}</div><div class="sb">${wo.description||"&nbsp;"}</div></div>` : ""}
+      ${inspectionChecklistPrint}
+      ${typeSpecificPrint}
+      <div class="bg">
+        ${printOpt("showMechanicNotes") ? `<div class="sec"><div class="sh">Mechanic Notes (Write-In)</div><div class="sb" style="min-height:80px">${wo.mechanicNotes||"&nbsp;"}</div></div>` : ""}
+        ${(printOpt("showParts") || printOpt("showLaborHours") || printOpt("showCosts")) ? `<div class="sec">
+          <div class="sh">Parts &amp; Labor Summary</div>
+          ${printOpt("showParts") ? `<table class="pt">
+            <thead><tr><th style="width:40%">Part / Material</th><th style="width:12%;text-align:center">Qty</th><th style="width:22%;text-align:right">Unit $</th><th style="width:26%;text-align:right">Total</th></tr></thead>
             <tbody>
-              ${partsUsed.length>0 ? partsUsed.map(part=>{ const q=+(part.qty||1); const u=+(part.unitCost||0); return `<tr><td>${h(part.name || part.description || "—")}</td><td class="center">${h(q)}</td><td class="right">${money(u)}</td><td class="right">${money(q*u)}</td></tr>`; }).join("") : `<tr><td colspan="4" style="color:#64748b;font-style:italic">No parts listed</td></tr>`}
-              <tr class="subRow"><td colspan="3">Parts Subtotal</td><td class="right">${money(partsTotal)}</td></tr>
+              ${partsUsed.length>0
+                ? partsUsed.map(p=>{ const q=+(p.qty||1),u=+(p.unitCost||0); return `<tr><td>${p.name||"&mdash;"}</td><td style="text-align:center">${q}</td><td style="text-align:right">$${u.toFixed(2)}</td><td style="text-align:right">$${(q*u).toFixed(2)}</td></tr>`; }).join("")
+                  +`<tr class="sub"><td colspan="3">Parts Subtotal</td><td style="text-align:right">$${partsTotal.toFixed(2)}</td></tr>`
+                : `<tr><td colspan="4" style="color:#999;font-style:italic;padding:4px 6px">No parts listed</td></tr>`
+              }
             </tbody>
           </table>` : ""}
-
-          ${(printOpt("showLaborHours") || printOpt("showCosts")) ? `<div class="miniTitle">Labor</div>
-          <table class="data-table">
-            <thead><tr><th style="width:63%">Work Performed</th><th style="width:15%" class="center">Hours</th><th style="width:22%" class="right">Total</th></tr></thead>
-            <tbody><tr><td>${h(wo.laborDescription || wo.laborTask || "Diagnosis and Repair")}</td><td class="center">${laborHoursTotal.toFixed(1)}</td><td class="right">${money(laborTotal)}</td></tr></tbody>
-          </table>` : ""}
-          ${printOpt("showCosts") ? `<div class="grandTotal"><div>Grand Total</div><div>${money(grandTotal)}</div></div>` : ""}
-        </section>` : ""}
-
-        ${printOpt("showFooterText") && ws.footerText ? `<section class="section"><div class="section-title">Remarks</div><div class="textBlock">${h(ws.footerText)}</div></section>` : ""}
-        ${printOpt("showSignature") ? `<div class="signatureGrid">
-          <div><div class="sigValue">&nbsp;</div><div class="sigLine"><div class="sigLabel">Signature</div></div></div>
-          <div><div class="sigValue">${h(assignedMechanicName)||"&nbsp;"}</div><div class="sigLine"><div class="sigLabel">Printed Name</div></div></div>
-          <div><div class="sigValue">${h(printedDate)||"&nbsp;"}</div><div class="sigLine"><div class="sigLabel">Date</div></div></div>
+          ${(printOpt("showLaborHours") || printOpt("showCosts")) ? `<div class="cs">
+            ${printOpt("showLaborHours") ? `<div class="cr"><span>Labor (${wo.laborHours||0} hrs)</span><span>$${laborTotal.toFixed(2)}</span></div>` : ""}
+            ${printOpt("showParts")&&!partsUsed.length&&wo.partsCost?`<div class="cr"><span>Parts Cost</span><span>$${(+wo.partsCost).toFixed(2)}</span></div>`:""}
+            ${printOpt("showCosts") ? `<div class="ct"><span>GRAND TOTAL</span><span>$${grandTotal.toFixed(2)}</span></div>` : ""}
+          </div>` : ""}
         </div>` : ""}
       </div>
+      ${printOpt("showFooterText") && ws.footerText?`<div class="sec"><div class="sh">Remarks</div><div class="sb" style="min-height:36px;font-size:13px">${ws.footerText}</div></div>`:""}
+      ${printOpt("showSignature") ? `<div class="sigs">
+        <div class="sc"><div class="sw"><div class="sl"></div><div class="slb">Mechanic Signature</div></div><div class="sw"><div class="sl" style="height:auto;min-height:32px;padding:8px 0;font-size:14px;font-weight:700">${assignedMechanicName||"&nbsp;"}</div><div class="slb">Printed Name</div></div></div>
+        <div class="sc"><div class="sw"><div class="sl" style="height:auto;min-height:32px;padding:8px 0;font-size:14px;font-weight:700">${printedDate}</div><div class="slb">Date</div></div></div>
+      </div>` : ""}
+      ${printOpt("showFooterBar") ? `<div class="ftr"><span>${companyName} - Maintenance Dept.</span><span>WO# ${wo.id} | ${printedDate}</span></div>` : ""}
     </div>
-
     <div class="pbtn">
-      <button class="printBtn" onclick="window.print()">Print / Save PDF</button>
-      <a class="fileBtn" href="${woCsv}" download="work-order-${h(wo.id)}.csv">Download Excel CSV</a>
-      <button class="fileBtn" onclick="var blob=new Blob([document.documentElement.outerHTML],{type:'application/msword'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='work-order-${h(wo.id)}.doc';a.click();URL.revokeObjectURL(a.href);">Download Word</button>
+      <button class="bpr" onclick="window.print()">Print / Save PDF</button>
+      <a href="${woCsv}" download="work-order-${wo.id}.csv" style="padding:9px 24px;font-size:13px;font-weight:700;border-radius:6px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;text-decoration:none;font-family:Arial,sans-serif">Download Excel CSV</a>
+      <button onclick="var blob=new Blob([document.documentElement.outerHTML],{type:'application/msword'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='work-order-${wo.id}.doc';a.click();URL.revokeObjectURL(a.href);" style="padding:9px 24px;font-size:13px;font-weight:700;border-radius:6px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;cursor:pointer">Download Word</button>
     </div>
     ${printCustomizePanelHtml(wo.woType || "WorkOrder")}
     </body></html>`);
     win.document.close();
-    win.focus();
   };
 
   /* ---- Tech dropdown ---- */
@@ -1729,7 +1705,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const typeInfo = WO_TYPES.find(t=>t.id===wo.woType);
     const partsUsed = wo.partsUsed||[];
     const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
-    const total = (+wo.laborCost||0)+partsTotal;
+    const total = (+wo.laborCost||0)+partsTotal+(+wo.partsCost||0);
     const isCompleted = wo.status==="Completed";
 
     const completeWO = () => {
@@ -1968,7 +1944,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               const eq = state.equipment.find(e=>e.id===wo.equipment);
               const eqLabel = eq?.name || wo.equipmentLabel || wo.equipment || "—";
               const partsTotal = (wo.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
-              const total = (+wo.laborCost||0)+partsTotal;
+              const total = (+wo.laborCost||0)+partsTotal+(+wo.partsCost||0);
               const typeInfo = WO_TYPES.find(t=>t.id===wo.woType);
               const rowStatus = wo.status==="Completed" ? "Fully Operational" : (wo.equipmentStatus || eq?.status || "Fully Operational");
               const isOpenInspection = wo.woType==="Inspection" && wo.status!=="Completed";
@@ -2420,15 +2396,21 @@ function Equipment({ state, dispatch }) {
     if(!eq){ setDetail(null); return null; }
     const wos    = woForEq(eq);
     const completedHistory = wos.filter(w => (w.status||"").toLowerCase()==="completed").sort((a,b)=>String(b.completed||b.closedDate||b.created||"").localeCompare(String(a.completed||a.closedDate||a.created||"")));
+    const getHistoryWOType = (w) => String(w.woType || w.type || w.category || "").toLowerCase().trim();
     const isServiceHistoryWO = (w) => {
-      const type = String(w.woType||w.type||"").toLowerCase();
-      const title = String(w.title||w.faultDescription||w.description||"").toLowerCase();
-      return type==="service" || type==="preventive" || type==="preventative" || title.includes("preventive") || title.includes("preventative") || title.includes("pm");
+      const type = getHistoryWOType(w);
+      return type === "service" || type === "preventive" || type === "preventative" || type === "preventive maintenance" || type === "pm";
     };
+    const isRepairHistoryWO = (w) => {
+      const type = getHistoryWOType(w);
+      return type === "repair" || type === "corrective" || type === "corrective repair" || type === "breakdown";
+    };
+    const isInspectionHistoryWO = (w) => getHistoryWOType(w) === "inspection";
     const serviceHistory = completedHistory.filter(isServiceHistoryWO);
-    const repairHistory = completedHistory.filter(w => String(w.woType||w.type||"").toLowerCase()==="repair" || (!isServiceHistoryWO(w) && String(w.woType||w.type||"").toLowerCase()!=="inspection"));
-    const inspectionHistory = completedHistory.filter(w => String(w.woType||w.type||"").toLowerCase()==="inspection");
-    const historyCost = (wo) => (+wo.laborCost||0)+(+(wo.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0));
+    const repairHistory = completedHistory.filter(isRepairHistoryWO);
+    const inspectionHistory = completedHistory.filter(isInspectionHistoryWO);
+    const historyPartsTotal = (wo) => +(wo.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
+    const historyCost = (wo) => (+wo.laborCost||0)+historyPartsTotal(wo);
     const historyUsage = (wo) => {
       if (wo.usageNA) return "N/A";
       if (wo.usageType==="mileage") return wo.usageMileage ? `${wo.usageMileage} mi` : "—";
@@ -2436,6 +2418,58 @@ function Equipment({ state, dispatch }) {
       return wo.usageHours ? `${wo.usageHours} hrs` : (wo.usageMileage ? `${wo.usageMileage} mi` : "—");
     };
     const historyLabel = (wo, fallback) => wo.title || wo.faultDescription || wo.description || wo.problem || fallback;
+    const printHistoryWO = (wo, fallbackTitle="Work Order") => {
+      const esc = htmlEscape;
+      const typeText = wo.woType || wo.type || fallbackTitle || "Work Order";
+      const type = getHistoryWOType(wo);
+      const theme = type.includes("inspection")
+        ? { bg:"#dcfce7", border:"#16a34a", dark:"#166534" }
+        : isServiceHistoryWO(wo)
+          ? { bg:"#fef3c7", border:"#f59e0b", dark:"#92400e" }
+          : { bg:"#dbeafe", border:"#2563eb", dark:"#1e40af" };
+      const parts = wo.partsUsed || [];
+      const partsRows = parts.length
+        ? parts.map(p=>`<tr><td>${esc(p.name||p.partName||p.description||"Part")}</td><td>${esc(p.qty||1)}</td><td>$${Number(p.unitCost||0).toFixed(2)}</td><td>$${(Number(p.qty||1)*Number(p.unitCost||0)).toFixed(2)}</td></tr>`).join("")
+        : `<tr><td colspan="4" class="muted">No parts used</td></tr>`;
+      const laborHours = Number(wo.laborHours || 0);
+      const laborCost = Number(wo.laborCost || 0);
+      const partsTotal = historyPartsTotal(wo);
+      const grandTotal = partsTotal + laborCost;
+      const workDescription = wo.description || wo.faultDescription || wo.problem || historyLabel(wo, fallbackTitle);
+      const workPerformed = wo.mechanicNotes || wo.workPerformed || wo.correctiveAction || "";
+      const win = window.open("", "_blank");
+      if(!win){ alert("Please allow pop-ups to open printable work orders."); return; }
+      win.document.write(`<!doctype html><html><head><title>${esc(wo.id||"Work Order")}</title><style>
+        *{box-sizing:border-box} body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#f3f4f6;color:#111827;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+        .toolbar{max-width:8.5in;margin:14px auto 0;display:flex;justify-content:flex-end;gap:8px}.toolbar button{padding:8px 16px;border-radius:8px;border:1px solid #111827;background:#111827;color:white;font-weight:700;cursor:pointer}
+        .page{max-width:8.5in;margin:14px auto;background:white;padding:.45in;border:1px solid #d1d5db;box-shadow:0 8px 24px rgba(0,0,0,.08)}
+        .top{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:start;border:2px solid ${theme.border};border-radius:14px;overflow:hidden;margin-bottom:14px}.brand{padding:16px 18px}.company{font-size:24px;font-weight:900;letter-spacing:.2px}.subtitle{margin-top:5px;font-size:12px;color:#6b7280}.badge{height:100%;min-width:190px;background:${theme.bg};border-left:2px solid ${theme.border};padding:16px 18px;text-align:right}.badge .type{font-size:18px;font-weight:900;color:${theme.dark};text-transform:uppercase}.badge .num{font-family:monospace;font-size:13px;margin-top:6px;color:#374151}
+        .section{border:1.5px solid #cbd5e1;border-radius:12px;overflow:hidden;margin-bottom:12px}.sectionTitle{background:${theme.bg};color:#111827;font-weight:900;text-transform:uppercase;font-size:12px;letter-spacing:.5px;padding:8px 11px;border-bottom:1.5px solid #cbd5e1}.grid{display:grid;grid-template-columns:repeat(4,1fr)}.cell{padding:8px 10px;border-right:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;min-height:48px}.cell:nth-child(4n){border-right:none}.label{font-size:9px;color:#6b7280;text-transform:uppercase;font-weight:800;letter-spacing:.35px}.value{font-size:12px;margin-top:4px;white-space:normal;overflow-wrap:anywhere}.textBox{padding:10px 12px;min-height:58px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12.5px;line-height:1.45}
+        table{width:100%;border-collapse:collapse;font-size:12px}th{background:#f8fafc;color:#475569;text-transform:uppercase;font-size:10px;letter-spacing:.35px;text-align:left;padding:8px;border-bottom:1px solid #cbd5e1}td{padding:8px;border-bottom:1px solid #e5e7eb;vertical-align:top}td:nth-child(n+2),th:nth-child(n+2){text-align:right}.miniTitle{font-weight:900;font-size:11px;letter-spacing:.4px;text-transform:uppercase;padding:8px 10px;background:#f8fafc;border-top:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1}.subtotal{display:flex;justify-content:space-between;padding:9px 10px;font-weight:800;border-top:1px solid #cbd5e1}.grand{display:flex;justify-content:space-between;align-items:center;margin:12px 0 0;padding:12px 14px;border:2px solid ${theme.border};background:${theme.bg};border-radius:10px;font-size:16px;font-weight:900}.muted{color:#6b7280;text-align:left!important}.sign{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px}.sigLine{border-top:1.5px solid #111827;padding-top:5px;font-size:10px;text-transform:uppercase;color:#6b7280;font-weight:800}
+        @media print{.toolbar{display:none}.page{margin:0;box-shadow:none;border:none;max-width:none;padding:.38in}.section{break-inside:avoid}body{background:white}}
+      </style></head><body>
+        <div class="toolbar"><button onclick="window.print()">Print / Save PDF</button></div>
+        <div class="page">
+          <div class="top"><div class="brand"><div class="company">${esc(state.settings?.companyName || "NCA Maintenance")}</div><div class="subtitle">Equipment Maintenance Work Order</div></div><div class="badge"><div class="type">${esc(typeText)}</div><div class="num">${esc(wo.id||"—")}</div></div></div>
+          <div class="section"><div class="sectionTitle">Work Order Type and Equipment Information</div><div class="grid">
+            <div class="cell"><div class="label">Work Order Number</div><div class="value">${esc(wo.id||"—")}</div></div>
+            <div class="cell"><div class="label">Type</div><div class="value">${esc(typeText)}</div></div>
+            <div class="cell"><div class="label">Status</div><div class="value">${esc(wo.status||"—")}</div></div>
+            <div class="cell"><div class="label">Priority</div><div class="value">${esc(wo.priority||"—")}</div></div>
+            <div class="cell"><div class="label">Equipment</div><div class="value">${esc(eq?.name || wo.equipment || "—")}</div></div>
+            <div class="cell"><div class="label">Equipment Number</div><div class="value">${esc(eq?.id || wo.equipmentId || "—")}</div></div>
+            <div class="cell"><div class="label">EIL #</div><div class="value">${esc(eq?.eilNumber || wo.eilNumber || "—")}</div></div>
+            <div class="cell"><div class="label">Completed Date</div><div class="value">${esc(wo.completed || wo.closedDate || "—")}</div></div>
+          </div></div>
+          <div class="section"><div class="sectionTitle">Description</div><div class="textBox">${esc(workDescription || "—")}</div></div>
+          <div class="section"><div class="sectionTitle">Work Description and Mechanic Notes</div><div class="textBox">${esc(workPerformed || "—")}</div></div>
+          <div class="section"><div class="sectionTitle">Parts and Labor Summary</div><div class="miniTitle">Parts Used</div><table><thead><tr><th>Description</th><th>Qty</th><th>Unit Price</th><th>Total</th></tr></thead><tbody>${partsRows}</tbody></table><div class="subtotal"><span>Parts Subtotal</span><span>$${partsTotal.toFixed(2)}</span></div><div class="miniTitle">Labor</div><table><thead><tr><th>Work Performed</th><th>Hours</th><th>Total</th></tr></thead><tbody><tr><td>${esc(workPerformed || "Labor")}</td><td>${laborHours.toFixed(1)}</td><td>$${laborCost.toFixed(2)}</td></tr></tbody></table><div class="grand"><span>Grand Total</span><span>$${grandTotal.toFixed(2)}</span></div></div>
+          <div class="sign"><div><div class="sigLine">Mechanic Signature</div></div><div><div class="sigLine">Date</div></div></div>
+        </div>
+      </body></html>`);
+      win.document.close();
+      win.focus();
+    };
     const getInspectionRowsForWO = (wo) => {
       const raw = Array.isArray(wo.inspectionStepResults) && wo.inspectionStepResults.length
         ? wo.inspectionStepResults
@@ -2467,13 +2501,16 @@ function Equipment({ state, dispatch }) {
             </thead>
             <tbody>
               {rows.map((wo,i)=>(
-                <tr key={wo.id} onClick={()=>{ setHistoryWO(wo); setHistoryEdit(false); }} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer" }} title="Click to view this archived work order">
+                <tr key={wo.id} onClick={()=>printHistoryWO(wo, fallbackTitle)} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer" }} title="Click to open the printable work order">
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:T.accent, fontWeight:700 }}>{wo.id}</td>
                   <td style={{ padding:"9px 12px", fontWeight:500, color:T.text }}>{historyLabel(wo, fallbackTitle)}</td>
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{wo.completed||wo.closedDate||"—"}</td>
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{historyUsage(wo)}</td>
-                  <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>${historyCost(wo)}</td>
-                  <td style={{ padding:"9px 12px", color:T.accent, fontSize:12, fontWeight:700 }}>Open</td>
+                  <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>${historyCost(wo).toFixed(2)}</td>
+                  <td style={{ padding:"9px 12px", color:T.accent, fontSize:12, fontWeight:700, whiteSpace:"nowrap" }} onClick={e=>e.stopPropagation()}>
+                    <button onClick={()=>printHistoryWO(wo, fallbackTitle)} title="Open printable work order" style={{ border:`1px solid ${T.border}`, background:"#fff", color:T.accent, borderRadius:6, padding:"4px 7px", marginRight:6, cursor:"pointer", fontWeight:800 }}>🖨</button>
+                    <button onClick={()=>{ setHistoryWO(wo); setHistoryEdit(true); }} title="Edit work order" style={{ border:`1px solid ${T.border}`, background:"#fff", color:T.accent, borderRadius:6, padding:"4px 7px", cursor:"pointer", fontWeight:800 }}>✏️</button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -2645,7 +2682,7 @@ function Equipment({ state, dispatch }) {
               {[
                 ["Total WOs",    wos.length, T.text],
                 ["Open WOs",     wos.filter(w=>w.status==="Open").length, T.amber],
-                ["Total Spent",  "$"+wos.reduce((s,w)=>s+(+w.laborCost||0)+(+(w.partsUsed||[]).reduce((ps,p)=>ps+(+(p.qty||1))*(+(p.unitCost||0)),0)),0).toLocaleString(), T.accent],
+                ["Total Spent",  "$"+wos.reduce((s,w)=>s+(+w.laborCost||0)+(+w.partsCost||0),0).toLocaleString(), T.accent],
                 ["Labor Hours",  wos.reduce((s,w)=>s+(+w.laborHours||0),0)+"h", T.text],
               ].map(([k,v,c])=>(
                 <div key={k} style={{ background:T.grayLt, borderRadius:7, padding:"12px 14px", border:`1px solid ${T.border}` }}>
@@ -4365,7 +4402,7 @@ function Spending({ state }) {
   const PERIODS = [["all","All Time"],["monthly","This Month"],["biannual","Last 6 Months"],["fy","Fiscal Year"],["annual","Last 12 Months"]];
 
   const wos = state.workOrders.filter(filterByPeriod);
-  const totalCost = w => (+w.laborCost||0)+(Array.isArray(w.partsUsed)&&w.partsUsed.length ? w.partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+w.partsCost||0));
+  const totalCost = w => (+w.laborCost||0)+(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0))+(+w.partsCost||0);
   const totLabor  = wos.reduce((s,w)=>s+(+w.laborCost||0),0);
   const totParts  = wos.reduce((s,w)=>s+totalCost(w)-(+w.laborCost||0),0);
   const grand     = totLabor+totParts;
@@ -5441,7 +5478,7 @@ function ReportSpending({ state }) {
   const fy_end = new Date(fyYear + 1, 9, 1); // exclusive
   const month_start = new Date(now.getFullYear(), now.getMonth(), 1);
   const wos = state.workOrders;
-  const totalCost = (w) => (+w.laborCost||0)+(Array.isArray(w.partsUsed)&&w.partsUsed.length ? w.partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+w.partsCost||0));
+  const totalCost = (w) => (+w.laborCost||0)+(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0))+(+w.partsCost||0);
   const monthly = wos.filter(w=>w.completed&&new Date(w.completed)>=month_start);
   const annual  = wos.filter(w=>w.completed&&new Date(w.completed)>=fy_start&&new Date(w.completed)<fy_end);
   const monthTotal = monthly.reduce((s,w)=>s+totalCost(w),0);
@@ -5491,7 +5528,7 @@ function ReportCombined({ state }) {
     const win = window.open("","_blank","width=900,height=700");
     if(!win) return;
     const eqName = id => state.equipment.find(e=>e.id===id)?.name||id;
-    const totalCost = w => (+w.laborCost||0)+(Array.isArray(w.partsUsed)&&w.partsUsed.length ? w.partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+w.partsCost||0));
+    const totalCost = w => (+w.laborCost||0)+(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0))+(+w.partsCost||0);
     const allLogs = state.usageLogs || [];
     const currentReading = (eqId, field) => { const l = allLogs.filter(x=>x.equipmentId===eqId&&x[field]).sort((a,b)=>b.date.localeCompare(a.date))[0]; return l?+(l[field]||0):0; };
 
