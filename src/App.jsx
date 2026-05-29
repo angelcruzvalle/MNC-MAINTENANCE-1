@@ -297,6 +297,16 @@ function printCustomizePanelHtml(layoutType="Report") {
   return `<details class="print-customize" open style="margin:14px auto;max-width:900px;border:1px solid #cbd5e1;border-radius:10px;padding:10px 12px;background:#f8fafc;font-family:Arial,sans-serif">
     <summary style="cursor:pointer;font-weight:800;color:#111827">Customize what prints</summary>
     <div style="font-size:12px;color:#475569;margin:6px 0 10px">Turn sections or table columns on/off before printing or saving as PDF. This layout is saved for ${safeLayoutType} work orders.</div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 12px;padding:8px 9px;background:#fff;border:1px solid #e2e8f0;border-radius:8px">
+      <label for="printAccentSelect" style="font-size:12px;font-weight:800;color:#111827">Print color</label>
+      <select id="printAccentSelect" style="padding:7px 10px;border:1px solid #cbd5e1;border-radius:7px;font-size:12px;font-weight:700;background:#fff;color:#111827">
+        <option value="#dbeafe" data-border="#93c5fd">Baby Blue</option>
+        <option value="#fef3c7" data-border="#facc15">Soft Yellow</option>
+        <option value="#dcfce7" data-border="#86efac">Mint</option>
+        <option value="#e2e8f0" data-border="#94a3b8">Slate</option>
+      </select>
+      <span style="font-size:11px;color:#64748b">Changes the form accents only. Text stays dark for readability.</span>
+    </div>
     <div id="printSectionToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px;margin-bottom:10px"></div>
     <div id="printColumnToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button onclick="window.print()" style="padding:8px 18px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer">Print Selected Layout</button><button onclick="localStorage.removeItem(\'ncaPrintLayout_${safeLayoutType}\');location.reload()" style="padding:8px 14px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;font-weight:700;cursor:pointer">Reset Saved Layout</button></div>
@@ -309,6 +319,12 @@ function printCustomizePanelHtml(layoutType="Report") {
     try { savedLayout = JSON.parse(localStorage.getItem(layoutKey) || '{}') || {}; } catch(e) { savedLayout = {}; }
     function saveLayout(){ try { localStorage.setItem(layoutKey, JSON.stringify(savedLayout)); } catch(e) {} }
     function clean(txt){ return (txt||'').replace(/\s+/g,' ').trim(); }
+    function applyPrintAccent(color, border){
+      color = color || '#dbeafe';
+      border = border || '#93c5fd';
+      document.documentElement.style.setProperty('--print-accent', color);
+      document.documentElement.style.setProperty('--print-accent-border', border);
+    }
     function addToggle(container, label, checked, onChange, key){
       if(!container || !label) return;
       key = key || label;
@@ -330,6 +346,20 @@ function printCustomizePanelHtml(layoutType="Report") {
       return clean(h && h.textContent) || ('Section '+(i+1));
     }
     function setup(){
+      var colorSelect=document.getElementById('printAccentSelect');
+      if(colorSelect){
+        var savedColor = savedLayout.printAccent || '#dbeafe';
+        colorSelect.value = savedColor;
+        var selected = colorSelect.options[colorSelect.selectedIndex] || colorSelect.options[0];
+        applyPrintAccent(colorSelect.value, selected && selected.getAttribute('data-border'));
+        colorSelect.onchange=function(){
+          var opt = colorSelect.options[colorSelect.selectedIndex] || colorSelect.options[0];
+          savedLayout.printAccent = colorSelect.value;
+          savedLayout.printAccentBorder = opt && opt.getAttribute('data-border');
+          saveLayout();
+          applyPrintAccent(savedLayout.printAccent, savedLayout.printAccentBorder);
+        };
+      }
       var secBox=document.getElementById('printSectionToggles');
       var colBox=document.getElementById('printColumnToggles');
       var sections=Array.from(document.querySelectorAll('.page .hdr,.page .row,.page .sec,.page .sigs,.page .ftr, body > h1, body > h2')).filter(function(el){ return !el.closest('.print-customize,.pbtn'); });
@@ -1374,16 +1404,17 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
     win.document.write(`<!DOCTYPE html><html><head><title>Work Order ${wo.id}</title><style>
       *{box-sizing:border-box;margin:0;padding:0}
+      :root{--print-accent:#dbeafe;--print-accent-border:#93c5fd}
       body{font-family:Arial,sans-serif;background:#fff;color:#111;font-size:13.5px;line-height:1.45}
       .page{width:8.5in;min-height:11in;margin:0 auto;padding:.35in .45in;display:flex;flex-direction:column;gap:6px}
       .hdr{display:flex;align-items:stretch;border:2px solid #1a1a2e;border-radius:3px;overflow:hidden}
       .hdr-logo{width:165px;min-width:165px;height:92px;background:#fff;display:flex;align-items:center;justify-content:center;padding:4px;border-right:2px solid #1a1a2e;overflow:hidden}
       .hdr-logo img{width:100%;height:100%;max-width:155px;max-height:84px;object-fit:contain;object-position:center;display:block}
       .hdr-logo-text{font-size:14px;font-weight:700;color:#1a1a2e;text-align:center;line-height:1.35;padding:4px}
-      .hdr-center{flex:1;background:#1a1a2e;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px}
-      .hdr-company{font-size:18px;font-weight:700;color:#fff;letter-spacing:1px;text-transform:uppercase}
-      .hdr-type{font-size:12px;color:#cbd5e1;letter-spacing:1.5px;text-transform:uppercase;margin-top:3px}
-      .hdr-right{width:155px;min-width:155px;background:#f0f4ff;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px;border-left:2px solid #1a1a2e;text-align:center}
+      .hdr-center{flex:1;background:var(--print-accent);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px;border-left:1px solid var(--print-accent-border);border-right:1px solid var(--print-accent-border)}
+      .hdr-company{font-size:18px;font-weight:700;color:#111827;letter-spacing:1px;text-transform:uppercase}
+      .hdr-type{font-size:12px;color:#334155;letter-spacing:1.5px;text-transform:uppercase;margin-top:3px}
+      .hdr-right{width:155px;min-width:155px;background:#f8fafc;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px;border-left:2px solid #1a1a2e;text-align:center}
       .hdr-wol{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#666}
       .hdr-won{font-size:24px;font-weight:700;color:#1a1a2e;font-family:monospace;letter-spacing:1px}
       .hdr-status{margin-top:5px;display:inline-block;padding:4px 10px;border-radius:4px;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
@@ -1398,7 +1429,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#555;margin-bottom:3px}
       .val{font-size:14px;font-weight:600;color:#111;min-height:20px}.val.mn{font-family:monospace}
       .sec{border:1.5px solid #1a1a2e;border-radius:3px;overflow:hidden}
-      .sh{background:#1a1a2e;color:#fff;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:6px 10px}
+      .sh{background:var(--print-accent);color:#111827;border-bottom:1px solid var(--print-accent-border);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;padding:6px 10px}
       .sb{padding:10px 12px;font-size:13.5px;color:#111;line-height:1.5;white-space:pre-wrap;min-height:70px}
       .bg{display:grid;grid-template-columns:1fr;gap:6px}
       .pt{width:100%;border-collapse:collapse;font-size:13px}
@@ -1407,7 +1438,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .pt .sub{font-weight:700;background:#f8faff}
       .cs{border-top:2px solid #1a1a2e}
       .cr{display:flex;justify-content:space-between;padding:6px 10px;border-bottom:1px solid #e5e7eb;font-size:13px}
-      .ct{display:flex;justify-content:space-between;padding:8px 10px;background:#1a1a2e;color:#fff;font-size:14px;font-weight:700;margin-top:10px}.miniHead{background:#e0f2fe;color:#0f172a;border:1px solid #1a1a2e;border-bottom:0;padding:6px 8px;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.45px}
+      .ct{display:flex;justify-content:space-between;padding:8px 10px;background:var(--print-accent);color:#111827;border-top:2px solid #1a1a2e;font-size:14px;font-weight:800;margin-top:10px}.miniHead{background:#e0f2fe;color:#0f172a;border:1px solid #1a1a2e;border-bottom:0;padding:6px 8px;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.45px}
       .phi{color:#991b1b;background:#fee2e2;border:1px solid #fca5a5;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
       .pmd{color:#92400e;background:#fef3c7;border:1px solid #fcd34d;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
       .plo{color:#374151;background:#f3f4f6;border:1px solid #d1d5db;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase}
@@ -1415,11 +1446,11 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .sc{display:flex;flex-direction:column;gap:10px}.sw{display:flex;flex-direction:column;gap:3px}
       .sl{border-bottom:1.5px solid #333;height:24px}
       .slb{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#555}
-      .ftr{background:#1a1a2e;color:#fff;padding:7px 12px;border-radius:4px;display:flex;justify-content:space-between;font-size:10.5px}
+      .ftr{background:var(--print-accent);color:#111827;border:1px solid var(--print-accent-border);padding:7px 12px;border-radius:4px;display:flex;justify-content:space-between;font-size:10.5px;font-weight:700}
       .pbtn{margin-top:14px;display:flex;gap:10px;justify-content:center}
       .pbtn button{padding:9px 24px;font-size:13px;font-weight:700;border:none;border-radius:6px;cursor:pointer}
       .bpr{background:#1a1a2e;color:#fff}.bpdf{background:#0052cc;color:#fff}
-      @media print{.pbtn{display:none}.page{padding:.35in .45in;gap:8px}body{font-size:13px}}
+      @media print{.pbtn{display:none}.page{padding:.35in .45in;gap:8px}body{font-size:13px}*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}}
     </style></head><body>
     <div class="page">
       <div class="hdr">
@@ -1488,6 +1519,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     ${printCustomizePanelHtml(wo.woType || "WorkOrder")}
     </body></html>`);
     win.document.close();
+    win.focus();
   };
 
   /* ---- Tech dropdown ---- */
@@ -3005,6 +3037,7 @@ function Parts({ state, dispatch }) {
       ${reportButtonsHtml(exportRows)}
       </body></html>`);
     win.document.close();
+    win.focus();
   };
 
   const savePO = () => {
@@ -5147,6 +5180,7 @@ function ReportPartsInv({ state }) {
       ${reportButtonsHtml(exportRows)}
       </body></html>`);
     win.document.close();
+    win.focus();
   };
 
   return (
@@ -5233,6 +5267,7 @@ function ReportUsage({ state }) {
       <p style="color:#64748b;font-size:12px;margin-top:4px">Shows current reading, new usage this month, and usage this fiscal year for monthly and annual reporting.</p>
       <table><thead><tr><th>Equipment #</th><th>Nomenclature</th><th>Meter</th><th>Current</th><th>New This Month</th><th>This FY</th><th>Last Entry</th><th>Entries</th></tr></thead><tbody>${cards || `<tr><td colspan="8">No tracked equipment found.</td></tr>`}</tbody></table>${reportButtonsHtml(exportRows)}</body></html>`);
     win.document.close();
+    win.focus();
   };
 
   return (
@@ -5307,6 +5342,7 @@ function ReportDeadline({ state }) {
       ${reportButtonsHtml(exportRows, "deadline-deficiency-report")}
       </body></html>`);
     win.document.close();
+    win.focus();
   };
   return <Card>
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginBottom:16, flexWrap:"wrap" }}>
@@ -5368,6 +5404,7 @@ function ReportPM({ state }) {
       <br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
       </body></html>`);
     win.document.close();
+    win.focus();
   };
 
   return (
@@ -5443,6 +5480,7 @@ function ReportSpending({ state }) {
       <tr style="font-weight:700;background:#f3f4f6"><td colspan="8">TOTAL</td><td>$${list.reduce((s,w)=>s+totalCost(w),0).toFixed(2)}</td></tr>
       </table>${reportButtonsHtml(rows)}</body></html>`);
     win.document.close();
+    win.focus();
   };
 
   return (
@@ -5516,6 +5554,7 @@ function ReportCombined({ state }) {
     body += `<br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button></body></html>`;
     win.document.write(body);
     win.document.close();
+    win.focus();
   };
 
   const sections = [
