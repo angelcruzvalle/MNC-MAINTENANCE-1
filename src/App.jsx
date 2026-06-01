@@ -2312,6 +2312,27 @@ function Equipment({ state, dispatch }) {
     const eq = state.equipment.find(e => e.id === wo.equipment) || {};
     const gs = state.settings || {};
     const h = (value) => String(value ?? "").replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[ch]));
+    const inspectionRowsForPrint = (() => {
+      const linkedTask = (state.inspectionTasks || []).find(t => String(t.id || "") === String(wo.inspectionTaskId || ""));
+      const source = Array.isArray(wo.inspectionStepResults) && wo.inspectionStepResults.length
+        ? wo.inspectionStepResults
+        : Array.isArray(wo.inspectionSteps) && wo.inspectionSteps.length
+          ? wo.inspectionSteps
+          : Array.isArray(wo.steps) && wo.steps.length
+            ? wo.steps
+            : Array.isArray(linkedTask?.stepLines) && linkedTask.stepLines.length
+              ? linkedTask.stepLines
+              : String(wo.inspectionSteps || wo.steps || wo.workPerformed || linkedTask?.steps || "")
+                  .split(/\n+/)
+                  .map((step,i)=>({ id:`step-${i}`, step:step.trim(), result:"", comment:"" }))
+                  .filter(x=>x.step);
+      return source.map((r,i)=>({
+        id: r?.id || `step-${i}`,
+        step: r?.step || r?.text || r?.name || String(r || ""),
+        result: r?.result || r?.status || "",
+        comment: r?.comment || r?.notes || ""
+      })).filter(r=>String(r.step||"").trim());
+    })();
     const money = (value) => `$${(+value || 0).toFixed(2)}`;
     const partsUsed = Array.isArray(wo.partsUsed) ? wo.partsUsed : [];
     const partsTotal = partsUsed.reduce((sum, part) => {
@@ -2409,6 +2430,7 @@ function Equipment({ state, dispatch }) {
         <section class="section"><div class="section-title">Description</div><div class="textBlock">${h(desc)||"&nbsp;"}</div></section>
         <section class="section"><div class="section-title">Work Description and Work Performed</div><div class="textBlock tall">${h(wo.description)||"&nbsp;"}</div></section>
         <section class="section"><div class="section-title">Mechanic Notes</div><div class="textBlock tall">${h(wo.mechanicNotes)||"&nbsp;"}</div></section>
+        ${typeLower.includes("inspection") && inspectionRowsForPrint.length ? `<section class="section"><div class="section-title">Inspection Checklist</div><table class="data-table"><thead><tr><th style="width:55%">Step</th><th style="width:15%">Pass / Fail</th><th style="width:30%">Comment</th></tr></thead><tbody>${inspectionRowsForPrint.map((r,i)=>`<tr><td>${i+1}. ${h(r.step)||"&nbsp;"}</td><td><b>${h(r.result)||"—"}</b></td><td>${h(r.comment)||"—"}</td></tr>`).join("")}</tbody></table></section>` : ""}
         <section class="section">
           <div class="summaryTitle">Parts and Labor Summary</div>
           <div class="miniTitle">Parts Used</div>
@@ -2616,16 +2638,19 @@ function Equipment({ state, dispatch }) {
     };
     const historyLabel = (wo, fallback) => wo.title || wo.faultDescription || wo.description || wo.problem || fallback;
     const getInspectionRowsForWO = (wo) => {
+      const linkedTask = (state.inspectionTasks || []).find(t => String(t.id || "") === String(wo.inspectionTaskId || ""));
       const raw = Array.isArray(wo.inspectionStepResults) && wo.inspectionStepResults.length
         ? wo.inspectionStepResults
-        : Array.isArray(wo.inspectionSteps)
+        : Array.isArray(wo.inspectionSteps) && wo.inspectionSteps.length
           ? wo.inspectionSteps
-          : Array.isArray(wo.steps)
+          : Array.isArray(wo.steps) && wo.steps.length
             ? wo.steps
-            : String(wo.inspectionSteps || wo.steps || wo.workPerformed || "")
-                .split(/\n+/)
-                .map((step,i)=>({ id:`step-${i}`, step:step.trim(), result:"", comment:"" }))
-                .filter(x=>x.step);
+            : Array.isArray(linkedTask?.stepLines) && linkedTask.stepLines.length
+              ? linkedTask.stepLines
+              : String(wo.inspectionSteps || wo.steps || wo.workPerformed || linkedTask?.steps || "")
+                  .split(/\n+/)
+                  .map((step,i)=>({ id:`step-${i}`, step:step.trim(), result:"", comment:"" }))
+                  .filter(x=>x.step);
       return raw.map((r,i)=>({
         id: r.id || `step-${i}`,
         step: r.step || r.text || r.name || String(r || ""),
@@ -2646,7 +2671,7 @@ function Equipment({ state, dispatch }) {
             </thead>
             <tbody>
               {rows.map((wo,i)=>(
-                <tr key={wo.id} onClick={()=>printHistoryWO(wo)} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer" }} title="Click to open the printable work order">
+                <tr key={wo.id} onClick={()=>{ setHistoryWO(wo); setHistoryEdit(false); }} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer" }} title="Click to open this work order">
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:T.accent, fontWeight:700 }}>{wo.id}</td>
                   <td style={{ padding:"9px 12px", fontWeight:500, color:T.text }}>{historyLabel(wo, fallbackTitle)}</td>
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{wo.completed||wo.closedDate||"—"}</td>
@@ -3451,12 +3476,7 @@ function Inspections({ state, dispatch }) {
 
   const taskById = id => tasks.find(t=>t.id===id) || null;
   const eqById = id => equipment.find(e=>e.id===id) || null;
-  const editableStepLines = (txt="") => {
-    if(Array.isArray(txt)) return txt.length ? txt : [""];
-    const lines = String(txt ?? "").split(/\n/);
-    return lines.length ? lines : [""];
-  };
-  const stepLines = (txt="") => editableStepLines(txt).map(x=>String(x||"")).filter(x=>x.trim());
+  const stepLines = (txt="") => String(txt||"").split(/\n/).filter((x,i,arr)=>x.trim() || arr.length===1);
 
   const openTask = (task=null) => {
     const base = task || { id:null, name:"", frequency:"Monthly", steps:"", notes:"", attachments:[] };
@@ -3473,7 +3493,7 @@ function Inspections({ state, dispatch }) {
 
   const saveTask = () => {
     if(!taskForm.name?.trim()) { alert("Add an inspection task name."); return; }
-    const payload = { ...taskForm, id:taskForm.id || genId("IT"), name:taskForm.name.trim(), steps:stepLines(taskForm.steps).join("\n"), attachments:Array.isArray(taskForm.attachments)?taskForm.attachments:[] };
+    const payload = { ...taskForm, id:taskForm.id || genId("IT"), name:taskForm.name.trim(), attachments:Array.isArray(taskForm.attachments)?taskForm.attachments:[] };
     dispatch({ type: taskForm.id ? "UPDATE_INSPECTION_TASK" : "ADD_INSPECTION_TASK", payload });
     setSelectedTask(payload);
     setShowInspectionLibrary(true);
@@ -3537,11 +3557,11 @@ function Inspections({ state, dispatch }) {
       String(w.equipment || w.equipmentId || "") === base
     );
     const usedNums = related.map(w => {
-      const match = String(w.id || "").match(/-IWO(\d+)$/i);
+      const match = String(w.id || "").match(/-I(?:WO)?(\d+)$/i);
       return match ? parseInt(match[1], 10) : (+w.inspectionSequence || 0);
     }).filter(n => Number.isFinite(n) && n > 0);
     const next = usedNums.length ? Math.max(...usedNums) + 1 : related.length + 1;
-    return { id:`${base}-IWO${String(next).padStart(2,"0")}`, sequence:next };
+    return { id:`${base}-I${String(next).padStart(2,"0")}`, sequence:next };
   };
 
   const genInspectionWOId = (eqId) => genInspectionWOInfo(eqId).id;
@@ -3626,18 +3646,18 @@ function Inspections({ state, dispatch }) {
   };
 
   const updateStep = (idx, value) => {
-    const lines = editableStepLines(taskForm.steps);
+    const lines = stepLines(taskForm.steps);
     lines[idx] = value;
     setTaskForm(f=>({ ...f, steps:lines.join("\n") }));
   };
-  const addStep = () => setTaskForm(f=>({ ...f, steps:[...editableStepLines(f.steps), ""].join("\n") }));
+  const addStep = () => setTaskForm(f=>({ ...f, steps:[...stepLines(f.steps), ""].join("\n") }));
   const copyInspectionTask = (task) => {
     const clone = { ...task, id:null, name:`Copy of ${task.name||"Inspection Task"}`, created:today() };
     setTaskForm({ ...clone, attachments:Array.isArray(clone.attachments)?clone.attachments:[] });
     setSelectedTask(null);
     setModal("task");
   };
-  const removeStep = (idx) => setTaskForm(f=>{ const next = editableStepLines(f.steps).filter((_,i)=>i!==idx); return { ...f, steps:(next.length ? next : [""]).join("\n") }; });
+  const removeStep = (idx) => setTaskForm(f=>({ ...f, steps:stepLines(f.steps).filter((_,i)=>i!==idx).join("\n") }));
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
@@ -3735,7 +3755,7 @@ function Inspections({ state, dispatch }) {
             <Field label="Upload Existing Inspection Sheet"><input style={inp} type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,image/*" onChange={e=>addTaskFiles(e.target.files)} /></Field>
             {(taskForm.attachments||[]).length>0 && <div style={{ display:"grid", gap:6 }}>{taskForm.attachments.map(a=><div key={a.id||a.name} style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center", padding:8, border:`1px solid ${T.border}`, borderRadius:10 }}><span style={{ fontSize:13 }}>{a.name}</span><Btn variant="danger" onClick={()=>removeTaskFile(a.id)}>Remove</Btn></div>)}</div>}
             <Field label="Inspection Steps / Checklist"><div style={{ display:"grid", gap:8 }}>
-              {editableStepLines(taskForm.steps).map((step,i,arr)=><div key={`step-${i}`} style={{ display:"grid", gridTemplateColumns:"40px 1fr auto", gap:8, alignItems:"center" }}>
+              {stepLines(taskForm.steps).map((step,i,arr)=><div key={`step-${i}`} style={{ display:"grid", gridTemplateColumns:"40px 1fr auto", gap:8, alignItems:"center" }}>
                 <b>{i+1}</b><input style={inp} value={step} autoFocus={i===arr.length-1 && step===""} onClick={e=>e.stopPropagation()} onKeyDown={e=>e.stopPropagation()} onChange={e=>updateStep(i,e.target.value)} placeholder="Start typing inspection step..." />
                 <Btn variant="danger" onClick={()=>removeStep(i)}>X</Btn>
               </div>)}
@@ -6397,11 +6417,11 @@ export default function App() {
         String(w.equipment || w.equipmentId || "") === base
       );
       const usedNums = related.map(w => {
-        const match = String(w.id || "").match(/-IWO(\d+)$/i);
+        const match = String(w.id || "").match(/-I(?:WO)?(\d+)$/i);
         return match ? parseInt(match[1], 10) : (+w.inspectionSequence || 0);
       }).filter(n => Number.isFinite(n) && n > 0);
       const next = usedNums.length ? Math.max(...usedNums) + 1 : related.length + 1;
-      return { id:`${base}-IWO${String(next).padStart(2,"0")}`, sequence:next };
+      return { id:`${base}-I${String(next).padStart(2,"0")}`, sequence:next };
     };
     inspections.forEach(schedule => {
       if(!schedule?.nextDueDate || schedule.nextDueDate > todayStr) return;
