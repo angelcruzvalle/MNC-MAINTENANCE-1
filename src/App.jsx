@@ -3451,7 +3451,12 @@ function Inspections({ state, dispatch }) {
 
   const taskById = id => tasks.find(t=>t.id===id) || null;
   const eqById = id => equipment.find(e=>e.id===id) || null;
-  const stepLines = (txt="") => String(txt||"").split(/\n/).filter((x,i,arr)=>x.trim() || arr.length===1);
+  const editableStepLines = (txt="") => {
+    if(Array.isArray(txt)) return txt.length ? txt : [""];
+    const lines = String(txt ?? "").split(/\n/);
+    return lines.length ? lines : [""];
+  };
+  const stepLines = (txt="") => editableStepLines(txt).map(x=>String(x||"")).filter(x=>x.trim());
 
   const openTask = (task=null) => {
     const base = task || { id:null, name:"", frequency:"Monthly", steps:"", notes:"", attachments:[] };
@@ -3468,7 +3473,7 @@ function Inspections({ state, dispatch }) {
 
   const saveTask = () => {
     if(!taskForm.name?.trim()) { alert("Add an inspection task name."); return; }
-    const payload = { ...taskForm, id:taskForm.id || genId("IT"), name:taskForm.name.trim(), attachments:Array.isArray(taskForm.attachments)?taskForm.attachments:[] };
+    const payload = { ...taskForm, id:taskForm.id || genId("IT"), name:taskForm.name.trim(), steps:stepLines(taskForm.steps).join("\n"), attachments:Array.isArray(taskForm.attachments)?taskForm.attachments:[] };
     dispatch({ type: taskForm.id ? "UPDATE_INSPECTION_TASK" : "ADD_INSPECTION_TASK", payload });
     setSelectedTask(payload);
     setShowInspectionLibrary(true);
@@ -3621,18 +3626,18 @@ function Inspections({ state, dispatch }) {
   };
 
   const updateStep = (idx, value) => {
-    const lines = stepLines(taskForm.steps);
+    const lines = editableStepLines(taskForm.steps);
     lines[idx] = value;
     setTaskForm(f=>({ ...f, steps:lines.join("\n") }));
   };
-  const addStep = () => setTaskForm(f=>({ ...f, steps:[...stepLines(f.steps), ""].join("\n") }));
+  const addStep = () => setTaskForm(f=>({ ...f, steps:[...editableStepLines(f.steps), ""].join("\n") }));
   const copyInspectionTask = (task) => {
     const clone = { ...task, id:null, name:`Copy of ${task.name||"Inspection Task"}`, created:today() };
     setTaskForm({ ...clone, attachments:Array.isArray(clone.attachments)?clone.attachments:[] });
     setSelectedTask(null);
     setModal("task");
   };
-  const removeStep = (idx) => setTaskForm(f=>({ ...f, steps:stepLines(f.steps).filter((_,i)=>i!==idx).join("\n") }));
+  const removeStep = (idx) => setTaskForm(f=>{ const next = editableStepLines(f.steps).filter((_,i)=>i!==idx); return { ...f, steps:(next.length ? next : [""]).join("\n") }; });
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
@@ -3730,7 +3735,7 @@ function Inspections({ state, dispatch }) {
             <Field label="Upload Existing Inspection Sheet"><input style={inp} type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,image/*" onChange={e=>addTaskFiles(e.target.files)} /></Field>
             {(taskForm.attachments||[]).length>0 && <div style={{ display:"grid", gap:6 }}>{taskForm.attachments.map(a=><div key={a.id||a.name} style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center", padding:8, border:`1px solid ${T.border}`, borderRadius:10 }}><span style={{ fontSize:13 }}>{a.name}</span><Btn variant="danger" onClick={()=>removeTaskFile(a.id)}>Remove</Btn></div>)}</div>}
             <Field label="Inspection Steps / Checklist"><div style={{ display:"grid", gap:8 }}>
-              {stepLines(taskForm.steps).map((step,i,arr)=><div key={`step-${i}`} style={{ display:"grid", gridTemplateColumns:"40px 1fr auto", gap:8, alignItems:"center" }}>
+              {editableStepLines(taskForm.steps).map((step,i,arr)=><div key={`step-${i}`} style={{ display:"grid", gridTemplateColumns:"40px 1fr auto", gap:8, alignItems:"center" }}>
                 <b>{i+1}</b><input style={inp} value={step} autoFocus={i===arr.length-1 && step===""} onClick={e=>e.stopPropagation()} onKeyDown={e=>e.stopPropagation()} onChange={e=>updateStep(i,e.target.value)} placeholder="Start typing inspection step..." />
                 <Btn variant="danger" onClick={()=>removeStep(i)}>X</Btn>
               </div>)}
