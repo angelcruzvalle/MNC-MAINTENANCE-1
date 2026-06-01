@@ -479,7 +479,7 @@ const SectionHeading = ({ children, sub, action }) => (
 const inp = { width:"100%", background:"#fff", border:`1px solid ${T.border}`, borderRadius:6, padding:"8px 11px", color:T.text, fontSize:13, fontFamily:T.sans, boxSizing:"border-box", outline:"none", transition:"border-color .15s" };
 const sel = { ...inp };
 
-const Btn = ({ children, onClick, variant="primary", small, style={} }) => {
+const Btn = ({ children, onClick, variant="primary", small, style={}, type="button" }) => {
   const styles = {
     primary: { background:T.accent, color:"#fff", border:"none" },
     secondary: { background:"#fff", color:T.text, border:`1px solid ${T.border}` },
@@ -487,7 +487,7 @@ const Btn = ({ children, onClick, variant="primary", small, style={} }) => {
     ghost: { background:"transparent", color:T.subtext, border:"none" },
   };
   return (
-    <button onClick={onClick} style={{ ...styles[variant], padding:small?"5px 12px":"8px 16px", borderRadius:6, cursor:"pointer", fontSize:small?12:13, fontWeight:600, fontFamily:T.sans, display:"inline-flex", alignItems:"center", gap:5, ...style }}>
+    <button type={type} onClick={onClick} style={{ ...styles[variant], padding:small?"5px 12px":"8px 16px", borderRadius:6, cursor:"pointer", fontSize:small?12:13, fontWeight:600, fontFamily:T.sans, display:"inline-flex", alignItems:"center", gap:5, ...style }}>
       {children}
     </button>
   );
@@ -1189,12 +1189,22 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   };
 
   const pickType = (typeId) => { setForm(f=>({...f, woType:typeId, title:buildTitle(typeId,"")})); setModal("pick"); };
+  const latestUsageForEquipment = (equipmentId) => {
+    const logs = (state.usageLogs||[])
+      .filter(l=>String(l.equipmentId)===String(equipmentId))
+      .sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")) || String(b.id||"").localeCompare(String(a.id||"")));
+    const latestHoursLog = logs.find(l=>String(l.hours ?? "").trim());
+    const latestMileageLog = logs.find(l=>String(l.mileage ?? "").trim());
+    return {
+      hours: latestHoursLog ? String(latestHoursLog.hours) : "",
+      mileage: latestMileageLog ? String(latestMileageLog.mileage) : "",
+    };
+  };
+
   const pickEquipment = (item) => {
     const eq = state.equipment.find(e=>e.id===item.id);
-    const logs = (state.usageLogs||[]).filter(l=>l.equipmentId===item.id);
-    const latestHours = Math.max(...logs.map(l=>+(l.hours||0)), 0) || "";
-    const latestMileage = Math.max(...logs.map(l=>+(l.mileage||0)), 0) || "";
-    setForm(f=>({...f, woType:f.woType||"Repair", equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||null, parentId:item.parentId||null, equipmentStatus:eq?.status||"Fully Operational", usageType:eq?.usageType||"hours", usageNA: eq?.trackUsage ? false : (f.usageNA||false), usageHours:f.usageHours||latestHours, usageMileage:f.usageMileage||latestMileage}));
+    const latestUsage = latestUsageForEquipment(item.id);
+    setForm(f=>({...f, woType:f.woType||"Repair", equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||null, parentId:item.parentId||null, equipmentStatus:eq?.status||"Fully Operational", usageType:eq?.usageType||"hours", usageNA: eq?.trackUsage ? false : (f.usageNA||false), usageHours:latestUsage.hours, usageMileage:latestUsage.mileage}));
     setModal("form");
   };
 
@@ -1285,20 +1295,26 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     if(!(form.faultDescription||"").trim()) return alert("Description required.");
     const usageModeReq = String(form.usageType||"hours").toLowerCase();
     const selectedEquipment = state.equipment.find(e=>e.id===form.equipment);
-    const hoursEntered = !!String(form.usageHours||"").trim();
-    const mileageEntered = !!String(form.usageMileage||"").trim();
-    const hasUsageReading = form.usageNA || (usageModeReq==="mileage" ? mileageEntered : usageModeReq==="both" ? (hoursEntered || mileageEntered) : hoursEntered);
+    const latestUsage = latestUsageForEquipment(form.equipment);
+    const formWithLatestUsage = form.usageNA ? form : {
+      ...form,
+      usageHours: String(form.usageHours ?? "").trim() || latestUsage.hours,
+      usageMileage: String(form.usageMileage ?? "").trim() || latestUsage.mileage,
+    };
+    const hoursEntered = !!String(formWithLatestUsage.usageHours||"").trim();
+    const mileageEntered = !!String(formWithLatestUsage.usageMileage||"").trim();
+    const hasUsageReading = formWithLatestUsage.usageNA || (usageModeReq==="mileage" ? mileageEntered : usageModeReq==="both" ? (hoursEntered || mileageEntered) : hoursEntered);
     if(!hasUsageReading) return alert("Enter the current usage reading or select N/A.");
-    if(form.woType === "Inspection" && selectedEquipment && !selectedEquipment.trackUsage && !form.usageNA && !hoursEntered && !mileageEntered) {
+    if(formWithLatestUsage.woType === "Inspection" && selectedEquipment && !selectedEquipment.trackUsage && !formWithLatestUsage.usageNA && !hoursEntered && !mileageEntered) {
       return alert("This equipment has no usage tracking selected. Enter the current usage for this inspection work order, or select N/A.");
     }
-    const prevWO = isEdit ? state.workOrders.find(w=>w.id===form.id) : null;
+    const prevWO = isEdit ? state.workOrders.find(w=>w.id===formWithLatestUsage.id) : null;
 
-    const newParts  = (form.partsUsed||[]);
+    const newParts  = (formWithLatestUsage.partsUsed||[]);
     const partsTotal = newParts.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
     if(promptMissingPartInventory()) return;
     if(isEdit) {
-      const payload = {...form, woType:form.woType||"Repair", title:form.faultDescription||form.woType||"Work Order", faultEnabled:true, partsCost:partsTotal};
+      const payload = {...formWithLatestUsage, woType:formWithLatestUsage.woType||"Repair", title:formWithLatestUsage.faultDescription||formWithLatestUsage.woType||"Work Order", faultEnabled:true, partsCost:partsTotal};
       if(prevWO && payload.status !== prevWO.status && !confirmWOStatusChange(prevWO, payload.status)) return;
       dispatch({type:"UPDATE_WO", payload});
       if(prevWO && prevWO.status !== "Completed" && payload.status === "Completed") {
@@ -1307,9 +1323,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         }, 0);
       }
     } else {
-      const nextType = form.woType || "Repair";
-      const nextId = genWOId(form.equipment, nextType);
-      dispatch({type:"ADD_WO", payload:{...form, woType:nextType, title:form.faultDescription||nextType, faultEnabled:true, id:nextId, woNumber:nextId, partsCost:partsTotal}});
+      const nextType = formWithLatestUsage.woType || "Repair";
+      const nextId = genWOId(formWithLatestUsage.equipment, nextType);
+      dispatch({type:"ADD_WO", payload:{...formWithLatestUsage, woType:nextType, title:formWithLatestUsage.faultDescription||nextType, faultEnabled:true, id:nextId, woNumber:nextId, partsCost:partsTotal}});
     }
     setModal(null);
     setDetailWO(null);
@@ -4893,7 +4909,7 @@ function UsageTracking({ state, dispatch }) {
   const trackableEq = state.equipment.filter(e=>e.trackUsage);
   const allLogs     = state.usageLogs || [];
 
-  const logsFor  = (eqId) => allLogs.filter(l=>l.equipmentId===eqId).sort((a,b)=>b.date.localeCompare(a.date));
+  const logsFor  = (eqId) => allLogs.filter(l=>String(l.equipmentId)===String(eqId)).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")));
   const latestLogFor = (eqId) => logsFor(eqId)[0] || null;
   /* Current reading = most recent log entry value (not cumulative) */
   const currentOf = (eqId, field) => {
@@ -4904,14 +4920,31 @@ function UsageTracking({ state, dispatch }) {
   /* Fuel IS cumulative (gallons added each fill-up) */
   const totalFuelOf = (eqId) => logsFor(eqId).reduce((s,l)=>s+(+(l.fuel||0)),0);
 
-  const eqEntry  = (eqId) => entry[eqId] || { date:today(), hours:"", mileage:"", fuel:"", notes:"" };
-  const setEqEntry = (eqId, k, v) => setEntry(prev=>({...prev,[eqId]:{...eqEntry(eqId),[k]:v}}));
+  const eqEntry  = (eqId) => entry[String(eqId)] || { date:today(), hours:"", mileage:"", fuel:"", notes:"" };
+  const setEqEntry = (eqId, k, v) => setEntry(prev=>({...prev,[String(eqId)]:{...(prev[String(eqId)] || eqEntry(eqId)),[k]:v}}));
 
   const save = (eq) => {
+    if(!eq) return;
     const e = eqEntry(eq.id);
-    if(!e.hours && !e.mileage && !e.fuel) { alert("Enter at least one value."); return; }
-    dispatch({ type:"ADD_USAGE_LOG", payload:{ ...e, equipmentId:eq.id, id:genId("UL") }});
-    setEntry(prev=>({...prev,[eq.id]:{ date:today(), hours:"", mileage:"", fuel:"", notes:"" }}));
+    const cleaned = {
+      ...e,
+      date: e.date || today(),
+      hours: String(e.hours ?? "").trim(),
+      mileage: String(e.mileage ?? "").trim(),
+      fuel: String(e.fuel ?? "").trim(),
+      notes: String(e.notes ?? "").trim(),
+    };
+    if(!cleaned.hours && !cleaned.mileage && !cleaned.fuel) { alert("Enter at least one value."); return; }
+    dispatch({ type:"ADD_USAGE_LOG", payload:{ ...cleaned, equipmentId:eq.id, id:genId("UL") }});
+    setEntry(prev=>({...prev,[String(eq.id)]:{ date:today(), hours:"", mileage:"", fuel:"", notes:"" }}));
+  };
+
+  const saveOnEnter = (ev, eq) => {
+    if(ev.key === "Enter") {
+      ev.preventDefault();
+      ev.stopPropagation();
+      save(eq);
+    }
   };
 
   const del = id => { if(confirm("Delete this entry?")) dispatch({type:"DELETE_USAGE_LOG", payload:id}); };
@@ -5077,7 +5110,7 @@ function UsageTracking({ state, dispatch }) {
                 <div style={{ fontFamily:T.sans, fontSize:18, fontWeight:700, color:"#7c3aed" }}>{totF.toFixed(1)} <span style={{ fontSize:11, fontWeight:400 }}>gal</span></div>
 
                 {/* Notes input */}
-                <input style={{ ...inp, fontSize:12 }} placeholder="Notes..." value={e.notes} onChange={ev=>setEqEntry(eq.id,"notes",ev.target.value)} onKeyDown={ev=>ev.key==="Enter"&&save(eq)} />
+                <input style={{ ...inp, fontSize:12 }} placeholder="Notes..." value={e.notes} onChange={ev=>setEqEntry(eq.id,"notes",ev.target.value)} onKeyDown={ev=>saveOnEnter(ev, eq)} />
 
                 {/* Date input */}
                 <input style={{ ...inp, fontSize:12 }} type="date" value={e.date} onChange={ev=>setEqEntry(eq.id,"date",ev.target.value)} />
@@ -5108,7 +5141,7 @@ function UsageTracking({ state, dispatch }) {
                   disabled={!showH}
                   value={e.hours}
                   onChange={ev=>setEqEntry(eq.id,"hours",ev.target.value)}
-                  onKeyDown={ev=>ev.key==="Enter"&&save(eq)}
+                  onKeyDown={ev=>saveOnEnter(ev, eq)}
                 />
                 {/* Mileage input */}
                 <input
@@ -5118,7 +5151,7 @@ function UsageTracking({ state, dispatch }) {
                   disabled={!showM}
                   value={e.mileage}
                   onChange={ev=>setEqEntry(eq.id,"mileage",ev.target.value)}
-                  onKeyDown={ev=>ev.key==="Enter"&&save(eq)}
+                  onKeyDown={ev=>saveOnEnter(ev, eq)}
                 />
                 {/* Fuel input */}
                 <input
@@ -5127,12 +5160,12 @@ function UsageTracking({ state, dispatch }) {
                   placeholder="e.g. 18.5"
                   value={e.fuel}
                   onChange={ev=>setEqEntry(eq.id,"fuel",ev.target.value)}
-                  onKeyDown={ev=>ev.key==="Enter"&&save(eq)}
+                  onKeyDown={ev=>saveOnEnter(ev, eq)}
                 />
                 <div/><div/>
                 {/* Save button */}
                 <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-                  <Btn small onClick={()=>save(eq)} style={{ whiteSpace:"nowrap" }}>+ Log</Btn>
+                  <Btn small type="button" onClick={()=>save(eq)} style={{ whiteSpace:"nowrap" }}>+ Log</Btn>
                   <span style={{ fontFamily:T.sans, fontSize:9, color:T.muted }}>or Enter</span>
                 </div>
                 <div/>
