@@ -4021,11 +4021,14 @@ function PM({ state, dispatch }) {
     const nextTriggers = buildScheduleTriggers(schedulePayload.triggers, schedulePayload.lastDoneDate, schedulePayload.lastDoneUsage);
     const nextDate  = nextTriggers.find(t=>t.type==="time")?.nextDueDate || "";
     const nextUsage = nextTriggers.find(t=>t.type==="hours"||t.type==="mileage")?.nextDueUsage || "";
-    dispatch({type:"ADD_PM_SCHEDULE", payload:{
-      ...schedulePayload, id:genId("SCH"),
+    const isEditingSchedule = !!schForm.id;
+    dispatch({type:isEditingSchedule ? "UPDATE_PM_SCHEDULE" : "ADD_PM_SCHEDULE", payload:{
+      ...schedulePayload,
+      id:isEditingSchedule ? schForm.id : genId("SCH"),
       triggers:nextTriggers,
       nextDueDate:nextDate, nextDueUsage:nextUsage,
-      created:today(),
+      created:schForm.created || today(),
+      updated:today(),
     }});
     setModal(null);
     setSchForm({equipmentId:"",taskId:"",task:"",triggerType:"time",timeInterval:"",timeUnit:"months",usageInterval:"",usageType:"hours",lastDoneDate:today(),lastDoneUsage:""});
@@ -4522,7 +4525,7 @@ function PM({ state, dispatch }) {
 
       {/* Create Maintenance Schedule */}
       {modal==="schedule"&&(
-        <Modal title="Task-to-Equipment" onClose={()=>setModal(null)}>
+        <Modal title={schForm.id?"Edit Assigned Preventive Maintenance":"Task-to-Equipment"} onClose={()=>setModal(null)}>
           <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.subtext }}>
             Assign a PM task to equipment. The trigger comes from the task itself; this screen only links the task to the equipment.
           </p>
