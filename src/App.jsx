@@ -4164,6 +4164,38 @@ function PM({ state, dispatch }) {
   const delTrigger   = i => setTaskForm(f=>{ const tr=[...(f.triggers||[])]; tr.splice(i,1); return {...f,triggers:tr}; });
   const addTaskStep  = () => setTaskForm(f=>({...f,steps:[...(f.steps||[]),""] }));
   const setStep      = (i,v) => setTaskForm(f=>{ const s=[...(f.steps||[])]; s[i]=v; return {...f,steps:s}; });
+  const pasteTaskStep = (i) => (e) => {
+    let text = e.clipboardData?.getData("text/plain") || "";
+    if(!text && e.clipboardData?.getData("text/html")) {
+      text = e.clipboardData.getData("text/html")
+        .replace(/<br\s*\/?\s*>/gi, "\n")
+        .replace(/<\/p>|<\/div>|<\/li>/gi, "\n")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&nbsp;/gi, " ");
+    }
+    if(!text) return;
+    e.preventDefault();
+    text = String(text)
+      .replace(/\r\n?/g, "\n")
+      .replace(/\u00a0/g, " ")
+      .replace(/[ \t]{2,}/g, " ")
+      .trimEnd();
+    const pastedLines = text.split(/\n+/).map(x=>x.replace(/^\s*(?:[-*•]+|\d+[.)])\s*/, "").trim()).filter(Boolean);
+    setTaskForm(f=>{
+      const s=[...(f.steps||[])];
+      const current=String(s[i]||"");
+      const el=e.currentTarget;
+      const start=el.selectionStart ?? current.length;
+      const end=el.selectionEnd ?? start;
+      if(pastedLines.length > 1){
+        const first=current.slice(0,start)+pastedLines[0]+current.slice(end);
+        s.splice(i,1,first,...pastedLines.slice(1));
+      } else {
+        s[i]=current.slice(0,start)+text.trim()+current.slice(end);
+      }
+      return {...f,steps:s};
+    });
+  };
   const delStep      = i => setTaskForm(f=>{ const s=[...(f.steps||[])]; s.splice(i,1); return {...f,steps:s}; });
   const addTaskPart  = () => setTaskForm(f=>({...f,parts:[...(f.parts||[]),{name:"",qty:"",unit:"ea"}]}));
   const setTaskPart  = (i,k,v) => setTaskForm(f=>{ const p=[...(f.parts||[])]; p[i]={...p[i],[k]:v}; return {...f,parts:p}; });
@@ -4416,7 +4448,7 @@ function PM({ state, dispatch }) {
               {(taskForm.steps||[""]).map((step,i)=>(
                 <div key={i} style={{ display:"flex", gap:6, marginBottom:6, alignItems:"center" }}>
                   <span style={{ fontFamily:T.mono, fontSize:11, color:T.muted, minWidth:20 }}>{i+1}.</span>
-                  <input style={{ ...inp, flex:1 }} value={step} autoFocus={i===(taskForm.steps||[]).length-1 && step===""} onPaste={pasteIntoText(v=>setStep(i,v))} onChange={e=>setStep(i,e.target.value)} placeholder={`Step ${i+1}...`} />
+                  <input style={{ ...inp, flex:1 }} value={step} autoFocus={i===(taskForm.steps||[]).length-1 && step===""} onPaste={pasteTaskStep(i)} onChange={e=>setStep(i,e.target.value)} placeholder={`Step ${i+1}...`} />
                   {(taskForm.steps||[]).length>1&&<button onClick={()=>delStep(i)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
                 </div>
               ))}
