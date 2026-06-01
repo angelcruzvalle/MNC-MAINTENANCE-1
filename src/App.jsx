@@ -4909,12 +4909,21 @@ function UsageTracking({ state, dispatch }) {
   const trackableEq = state.equipment.filter(e=>e.trackUsage);
   const allLogs     = state.usageLogs || [];
 
-  const logsFor  = (eqId) => allLogs.filter(l=>String(l.equipmentId)===String(eqId)).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")));
+  const logsFor  = (eqId) => allLogs
+    .map((l, idx)=>({...l, _idx:idx}))
+    .filter(l=>String(l.equipmentId)===String(eqId))
+    .sort((a,b)=>{
+      const dateCompare = String(b.date||"").localeCompare(String(a.date||""));
+      if(dateCompare) return dateCompare;
+      const createdCompare = String(b.createdAt||"").localeCompare(String(a.createdAt||""));
+      if(createdCompare) return createdCompare;
+      return (b._idx||0) - (a._idx||0);
+    });
   const latestLogFor = (eqId) => logsFor(eqId)[0] || null;
   /* Current reading = most recent log entry value (not cumulative) */
   const currentOf = (eqId, field) => {
     const logs = logsFor(eqId);
-    const latest = logs.find(l=>l[field]);
+    const latest = logs.find(l=>String(l[field] ?? "").trim());
     return latest ? +(latest[field]||0) : 0;
   };
   /* Fuel IS cumulative (gallons added each fill-up) */
@@ -4935,7 +4944,7 @@ function UsageTracking({ state, dispatch }) {
       notes: String(e.notes ?? "").trim(),
     };
     if(!cleaned.hours && !cleaned.mileage && !cleaned.fuel) { alert("Enter at least one value."); return; }
-    dispatch({ type:"ADD_USAGE_LOG", payload:{ ...cleaned, equipmentId:eq.id, id:genId("UL") }});
+    dispatch({ type:"ADD_USAGE_LOG", payload:{ ...cleaned, equipmentId:eq.id, id:genId("UL"), createdAt:new Date().toISOString() }});
     setEntry(prev=>({...prev,[String(eq.id)]:{ date:today(), hours:"", mileage:"", fuel:"", notes:"" }}));
   };
 
