@@ -1502,7 +1502,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         ${printOpt("showFaultDescription") ? `<section class="section"><div class="section-title">Description</div><div class="textBlock">${h(printableDescription)||"&nbsp;"}</div></section>` : ""}
         ${printOpt("showDescription") ? `<section class="section"><div class="section-title">Work Description and Work Performed</div><div class="textBlock tall">${h(wo.description)||"&nbsp;"}</div></section>` : ""}
         ${inspectionChecklistPrint}
-        ${printOpt("showMechanicNotes") ? `<section class="section"><div class="section-title">Mechanic Notes</div><div class="textBlock tall">${h(wo.mechanicNotes)||"&nbsp;"}</div></section>` : ""}
+        ${wo.woType !== "Inspection" && printOpt("showMechanicNotes") ? `<section class="section"><div class="section-title">Mechanic Notes</div><div class="textBlock tall">${h(wo.mechanicNotes)||"&nbsp;"}</div></section>` : ""}
 
         ${(printOpt("showParts") || printOpt("showLaborHours") || printOpt("showCosts")) ? `<section class="section">
           <div class="summaryTitle">Parts and Labor Summary</div>
@@ -2429,7 +2429,7 @@ function Equipment({ state, dispatch }) {
         </section>
         <section class="section"><div class="section-title">Description</div><div class="textBlock">${h(desc)||"&nbsp;"}</div></section>
         <section class="section"><div class="section-title">Work Description and Work Performed</div><div class="textBlock tall">${h(wo.description)||"&nbsp;"}</div></section>
-        <section class="section"><div class="section-title">Mechanic Notes</div><div class="textBlock tall">${h(wo.mechanicNotes)||"&nbsp;"}</div></section>
+        ${!typeLower.includes("inspection") ? `<section class="section"><div class="section-title">Mechanic Notes</div><div class="textBlock tall">${h(wo.mechanicNotes)||"&nbsp;"}</div></section>` : ""}
         ${typeLower.includes("inspection") && inspectionRowsForPrint.length ? `<section class="section"><div class="section-title">Inspection Checklist</div><table class="data-table"><thead><tr><th style="width:55%">Step</th><th style="width:15%">Pass / Fail</th><th style="width:30%">Comment</th></tr></thead><tbody>${inspectionRowsForPrint.map((r,i)=>`<tr><td>${i+1}. ${h(r.step)||"&nbsp;"}</td><td><b>${h(r.result)||"—"}</b></td><td>${h(r.comment)||"—"}</td></tr>`).join("")}</tbody></table></section>` : ""}
         <section class="section">
           <div class="summaryTitle">Parts and Labor Summary</div>
