@@ -309,8 +309,8 @@ const rowsToDataUri = rows => {
 function printCustomizePanelHtml(layoutType="Report") {
   const safeLayoutType = String(layoutType || "Report").replace(/[^a-z0-9_-]/gi, "_");
   return `<details class="print-customize" open style="margin:14px auto;max-width:900px;border:1px solid #cbd5e1;border-radius:10px;padding:10px 12px;background:#f8fafc;font-family:Arial,sans-serif">
-    <summary style="cursor:pointer;font-weight:800;color:#111827">Customize what prints</summary>
-    <div style="font-size:12px;color:#475569;margin:6px 0 10px">Turn sections or table columns on/off before printing or saving as PDF. This layout is saved for ${safeLayoutType} work orders.</div>
+    <summary style="cursor:pointer;font-weight:800;color:#111827">Choose What To Print</summary>
+    <div style="font-size:12px;color:#475569;margin:6px 0 10px">Turn any section or table column on/off before printing or saving as PDF. This layout is saved for ${safeLayoutType} work orders.</div>
     <div id="printSectionToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px;margin-bottom:10px"></div>
     <div id="printColumnToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button onclick="window.print()" style="padding:8px 18px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer">Print Selected Layout</button><button onclick="localStorage.removeItem(\'ncaPrintLayout_${safeLayoutType}\');location.reload()" style="padding:8px 14px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;font-weight:700;cursor:pointer">Reset Saved Layout</button></div>
@@ -336,17 +336,18 @@ function printCustomizePanelHtml(layoutType="Report") {
       onChange(initial);
     }
     function sectionLabel(el, i){
-      if(el.classList.contains('hdr')) return 'Header';
-      if(el.classList.contains('sigs')) return 'Mechanic Signature Block';
-      if(el.classList.contains('ftr')) return 'Footer Bar';
-      if(el.classList.contains('row')) return 'Dates / Status Row';
-      var h=el.querySelector('.sh,h1,h2,h3');
+      if(el.classList.contains('hdr') || el.classList.contains('top')) return 'Header';
+      if(el.classList.contains('sigs') || el.classList.contains('signatureGrid')) return 'Signature Block';
+      if(el.classList.contains('ftr') || el.classList.contains('footerBar')) return 'Footer Bar';
+      if(el.classList.contains('row') || el.classList.contains('dateGrid')) return 'Dates / Status Row';
+      if(el.classList.contains('infoGrid')) return 'Equipment and Work Order Details';
+      var h=el.querySelector('.sh,.section-title,.summaryTitle,h1,h2,h3');
       return clean(h && h.textContent) || ('Section '+(i+1));
     }
     function setup(){
       var secBox=document.getElementById('printSectionToggles');
       var colBox=document.getElementById('printColumnToggles');
-      var sections=Array.from(document.querySelectorAll('.page .hdr,.page .row,.page .sec,.page .sigs,.page .ftr, body > h1, body > h2')).filter(function(el){ return !el.closest('.print-customize,.pbtn'); });
+      var sections=Array.from(document.querySelectorAll('.page .hdr,.page .top,.page .row,.page .dateGrid,.page .infoGrid,.page .sec,.page .section,.page .sigs,.page .signatureGrid,.page .ftr,.page .footerBar, body > h1, body > h2')).filter(function(el){ return !el.closest('.print-customize,.pbtn'); });
       var seen={};
       sections.forEach(function(el,i){
         var label=sectionLabel(el,i);
@@ -1422,45 +1423,46 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     win.document.write(`<!DOCTYPE html><html><head><title>Work Order ${h(wo.id)}</title><style>
       *{box-sizing:border-box;margin:0;padding:0}
       html,body{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
-      body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#111827;font-size:12px;line-height:1.35}
-      .page{width:8.5in;min-height:11in;margin:0 auto;padding:.38in .45in;display:flex;flex-direction:column;gap:6px}
+      body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#111827;font-size:11px;line-height:1.25}
+      @page{size:Letter;margin:0}
+      .page{width:8.5in;min-height:auto;margin:0 auto;padding:.24in .28in;display:flex;flex-direction:column;gap:4px}
       .outer{border:1.5px solid #111827;border-radius:8px;overflow:hidden;background:white}
-      .top{display:grid;grid-template-columns:1.15in 1fr 1.85in;border-bottom:1.5px solid #111827;min-height:.95in}
+      .top{display:grid;grid-template-columns:1.05in 1fr 1.65in;border-bottom:1.5px solid #111827;min-height:.72in}
       .logoBox{display:flex;align-items:center;justify-content:center;border-right:1.5px solid #111827;padding:6px;background:white;overflow:hidden}
-      .logoBox img{max-width:100%;max-height:.78in;object-fit:contain;display:block}
+      .logoBox img{max-width:100%;max-height:.58in;object-fit:contain;display:block}
       .logoText{font-weight:900;text-align:center;color:#111827;font-size:13px;line-height:1.2}
       .companyBox{display:flex;flex-direction:column;align-items:center;justify-content:center;background:${C.soft};padding:8px 10px;text-align:center}
-      .company{font-size:22px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#111827;line-height:1.1}
-      .typePill{margin-top:8px;border:1.5px solid ${C.border};background:${C.accent};color:#111827;border-radius:999px;padding:4px 18px;font-size:12px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;display:inline-flex;gap:6px;align-items:center}
+      .company{font-size:18px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#111827;line-height:1.1}
+      .typePill{margin-top:4px;border:1.5px solid ${C.border};background:${C.accent};color:#111827;border-radius:999px;padding:4px 18px;font-size:12px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;display:inline-flex;gap:6px;align-items:center}
       .numberBox{border-left:1.5px solid #111827;display:grid;grid-template-rows:1fr .32in;text-align:center;background:white}
       .woNumber{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px}
       .woNumber .label{font-size:10px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#111827}
-      .woNumber .number{font-family:Arial,Helvetica,sans-serif;font-size:18px;font-weight:900;color:#111827;margin-top:4px;word-break:break-word}
+      .woNumber .number{font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:900;color:#111827;margin-top:4px;word-break:break-word}
       .status{display:flex;align-items:center;justify-content:center;background:${C.border};color:white;font-size:11px;font-weight:900;letter-spacing:1.3px;text-transform:uppercase;border-top:1.5px solid #111827}
       .completed{background:${C.border}!important;color:white!important}
       .dateGrid{display:grid;grid-template-columns:1fr 1fr 1fr;border-bottom:1.5px solid #111827}
       .infoGrid{display:grid;grid-template-columns:1fr 1fr 1fr}
-      .cell{min-height:.38in;padding:6px 8px;border-right:1px solid #9ca3af;border-bottom:1px solid #cbd5e1;display:grid;grid-template-columns:.95fr 1.35fr;align-items:center;gap:8px;overflow:hidden}
+      .cell{min-height:.28in;padding:4px 6px;border-right:1px solid #9ca3af;border-bottom:1px solid #cbd5e1;display:grid;grid-template-columns:.95fr 1.35fr;align-items:center;gap:8px;overflow:hidden}
       .cell:nth-child(3n){border-right:none}
-      .dateGrid .cell{border-bottom:none;grid-template-columns:1fr 1fr;min-height:.34in}
-      .fieldLabel{font-size:9.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;color:#111827;line-height:1.1}
-      .fieldValue{font-size:12.5px;font-weight:800;color:#111827;line-height:1.15;white-space:normal;overflow-wrap:anywhere}
+      .dateGrid .cell{border-bottom:none;grid-template-columns:1fr 1fr;min-height:.26in}
+      .fieldLabel{font-size:8.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;color:#111827;line-height:1.1}
+      .fieldValue{font-size:10.5px;font-weight:800;color:#111827;line-height:1.15;white-space:normal;overflow-wrap:anywhere}
       .mono{font-family:Arial,Helvetica,sans-serif}
-      .section{border-top:1.5px solid #111827;break-inside:avoid}
-      .section-title{background:${C.accent};color:#111827;border-bottom:1px solid #94a3b8;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
-      .textBlock{padding:8px 10px;min-height:.52in;white-space:pre-wrap;overflow-wrap:anywhere;color:#111827;font-size:12px}
-      .textBlock.tall{min-height:1.05in}
-      .summaryTitle{background:${C.accent};color:#111827;border-bottom:1px solid #94a3b8;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
-      .miniTitle{padding:6px 10px 4px;font-weight:900;text-transform:uppercase;font-size:11px;color:#111827;background:#fff}
-      .data-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px}
-      .data-table th{background:#e5e7eb;color:#111827;text-transform:uppercase;letter-spacing:.45px;font-size:10px;font-weight:900;padding:6px 8px;border-top:1px solid #9ca3af;border-bottom:1px solid #9ca3af;border-right:1px solid #cbd5e1;text-align:left}
-      .data-table td{padding:6px 8px;border-bottom:1px solid #cbd5e1;border-right:1px solid #e5e7eb;vertical-align:top;overflow-wrap:anywhere;color:#111827}
+      .section{border-top:1.5px solid #111827;break-inside:auto;page-break-inside:auto}
+      .section-title{background:${C.accent};color:#111827;border-bottom:1px solid #94a3b8;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
+      .textBlock{padding:5px 7px;min-height:.28in;white-space:pre-wrap;overflow-wrap:anywhere;color:#111827;font-size:12px}
+      .textBlock.tall{min-height:.45in}
+      .summaryTitle{background:${C.accent};color:#111827;border-bottom:1px solid #94a3b8;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
+      .miniTitle{padding:4px 7px 3px;font-weight:900;text-transform:uppercase;font-size:11px;color:#111827;background:#fff}
+      .data-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:10.5px}
+      .data-table th{background:#e5e7eb;color:#111827;text-transform:uppercase;letter-spacing:.35px;font-size:8.5px;font-weight:900;padding:4px 5px;border-top:1px solid #9ca3af;border-bottom:1px solid #9ca3af;border-right:1px solid #cbd5e1;text-align:left}
+      .data-table td{padding:4px 5px;border-bottom:1px solid #cbd5e1;border-right:1px solid #e5e7eb;vertical-align:top;overflow-wrap:anywhere;color:#111827}
       .data-table th:last-child,.data-table td:last-child{border-right:none}
       .right{text-align:right}.center{text-align:center}
       .subRow td{background:#f8fafc;font-weight:900;border-top:1.5px solid #111827}
-      .grandTotal{display:grid;grid-template-columns:1fr 1.7in;border-top:1.5px solid #111827;background:${C.accent};font-weight:900;font-size:16px;color:#111827}
+      .grandTotal{display:grid;grid-template-columns:1fr 1.5in;border-top:1.5px solid #111827;background:${C.accent};font-weight:900;font-size:13px;color:#111827}
       .grandTotal div{padding:9px 12px}.grandTotal div:last-child{text-align:right;border-left:1.5px solid #111827}
-      .signatureGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;padding:12px 14px;border-top:1.5px solid #111827;min-height:.65in;align-items:end}
+      .signatureGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;padding:8px 10px;border-top:1.5px solid #111827;min-height:.42in;align-items:end}
       .sigLine{border-top:1.5px solid #111827;padding-top:5px;min-height:32px}
       .sigValue{font-size:12px;font-weight:800;margin-bottom:4px;min-height:14px;overflow-wrap:anywhere;color:#111827}
       .sigLabel{font-size:9.5px;font-weight:900;text-transform:uppercase;letter-spacing:.6px;color:#111827}
@@ -1468,7 +1470,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .pbtn button,.pbtn a{padding:9px 24px;font-size:13px;font-weight:800;border-radius:6px;cursor:pointer;text-decoration:none;font-family:Arial,Helvetica,sans-serif}
       .printBtn{background:${C.border};color:white;border:none}.fileBtn{background:#fff;color:#111827;border:1px solid #111827}
       @page{size:letter;margin:0}
-      @media print{.pbtn,.print-customize{display:none!important}.page{padding:.38in .45in}.outer{break-inside:avoid}body{font-size:12px}}
+      @media print{.pbtn,.print-customize{display:none!important}html,body{width:8.5in;margin:0!important;padding:0!important}.page{width:8.5in;padding:.18in .22in}.outer{break-inside:auto;page-break-inside:auto}body{font-size:10px}.section,.data-table tr{break-inside:auto;page-break-inside:auto}}
     </style></head><body>
     <div class="page">
       <div class="outer">
@@ -2363,44 +2365,44 @@ function Equipment({ state, dispatch }) {
       body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#111827;font-size:12px;line-height:1.35}
       .page{width:8.5in;min-height:11in;margin:0 auto;padding:.38in .45in}
       .outer{border:1.5px solid #111827;border-radius:8px;overflow:hidden;background:white}
-      .top{display:grid;grid-template-columns:1.15in 1fr 1.85in;border-bottom:1.5px solid #111827;min-height:.95in}
+      .top{display:grid;grid-template-columns:1.05in 1fr 1.65in;border-bottom:1.5px solid #111827;min-height:.72in}
       .logoBox{display:flex;align-items:center;justify-content:center;border-right:1.5px solid #111827;padding:6px;background:white;overflow:hidden}
-      .logoBox img{max-width:100%;max-height:.78in;object-fit:contain;display:block}
+      .logoBox img{max-width:100%;max-height:.58in;object-fit:contain;display:block}
       .logoText{font-weight:900;text-align:center;color:#111827;font-size:13px;line-height:1.2}
       .companyBox{display:flex;flex-direction:column;align-items:center;justify-content:center;background:${C.soft};padding:8px 10px;text-align:center}
-      .company{font-size:22px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#111827;line-height:1.1}
-      .typePill{margin-top:8px;border:1.5px solid ${C.border};background:${C.accent};color:#111827;border-radius:999px;padding:4px 18px;font-size:12px;font-weight:900;letter-spacing:.8px;text-transform:uppercase}
+      .company{font-size:18px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#111827;line-height:1.1}
+      .typePill{margin-top:4px;border:1.5px solid ${C.border};background:${C.accent};color:#111827;border-radius:999px;padding:4px 18px;font-size:12px;font-weight:900;letter-spacing:.8px;text-transform:uppercase}
       .numberBox{border-left:1.5px solid #111827;display:grid;grid-template-rows:1fr .32in;text-align:center;background:white}
       .woNumber{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px}
       .woNumber .label{font-size:10px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#111827}
       .woNumber .number{font-size:18px;font-weight:900;color:#111827;margin-top:4px;word-break:break-word}
       .status{display:flex;align-items:center;justify-content:center;background:${C.border};color:white;font-size:11px;font-weight:900;letter-spacing:1.3px;text-transform:uppercase;border-top:1.5px solid #111827}
       .dateGrid,.infoGrid{display:grid;grid-template-columns:1fr 1fr 1fr;border-bottom:1.5px solid #111827}
-      .cell{min-height:.38in;padding:6px 8px;border-right:1px solid #9ca3af;border-bottom:1px solid #cbd5e1;display:grid;grid-template-columns:.95fr 1.35fr;align-items:center;gap:8px;overflow:hidden}
+      .cell{min-height:.28in;padding:4px 6px;border-right:1px solid #9ca3af;border-bottom:1px solid #cbd5e1;display:grid;grid-template-columns:.95fr 1.35fr;align-items:center;gap:8px;overflow:hidden}
       .cell:nth-child(3n){border-right:none}
-      .fieldLabel{font-size:9.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;color:#111827;line-height:1.1}
-      .fieldValue{font-size:12.5px;font-weight:800;color:#111827;line-height:1.15;white-space:normal;overflow-wrap:anywhere}
-      .section{border-top:1.5px solid #111827;break-inside:avoid}
-      .section-title,.summaryTitle{background:${C.accent};color:#111827;border-bottom:1px solid #94a3b8;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
-      .textBlock{padding:8px 10px;min-height:.52in;white-space:pre-wrap;overflow-wrap:anywhere;color:#111827;font-size:12px}
-      .textBlock.tall{min-height:1.05in}
-      .miniTitle{padding:6px 10px 4px;font-weight:900;text-transform:uppercase;font-size:11px;color:#111827;background:#fff}
-      .data-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px}
-      .data-table th{background:#e5e7eb;color:#111827;text-transform:uppercase;letter-spacing:.45px;font-size:10px;font-weight:900;padding:6px 8px;border-top:1px solid #9ca3af;border-bottom:1px solid #9ca3af;border-right:1px solid #cbd5e1;text-align:left}
-      .data-table td{padding:6px 8px;border-bottom:1px solid #cbd5e1;border-right:1px solid #e5e7eb;vertical-align:top;overflow-wrap:anywhere;color:#111827}
+      .fieldLabel{font-size:8.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;color:#111827;line-height:1.1}
+      .fieldValue{font-size:10.5px;font-weight:800;color:#111827;line-height:1.15;white-space:normal;overflow-wrap:anywhere}
+      .section{border-top:1.5px solid #111827;break-inside:auto;page-break-inside:auto}
+      .section-title,.summaryTitle{background:${C.accent};color:#111827;border-bottom:1px solid #94a3b8;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
+      .textBlock{padding:5px 7px;min-height:.28in;white-space:pre-wrap;overflow-wrap:anywhere;color:#111827;font-size:12px}
+      .textBlock.tall{min-height:.45in}
+      .miniTitle{padding:4px 7px 3px;font-weight:900;text-transform:uppercase;font-size:11px;color:#111827;background:#fff}
+      .data-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:10.5px}
+      .data-table th{background:#e5e7eb;color:#111827;text-transform:uppercase;letter-spacing:.35px;font-size:8.5px;font-weight:900;padding:4px 5px;border-top:1px solid #9ca3af;border-bottom:1px solid #9ca3af;border-right:1px solid #cbd5e1;text-align:left}
+      .data-table td{padding:4px 5px;border-bottom:1px solid #cbd5e1;border-right:1px solid #e5e7eb;vertical-align:top;overflow-wrap:anywhere;color:#111827}
       .data-table th:last-child,.data-table td:last-child{border-right:none}
       .right{text-align:right}.center{text-align:center}
       .subRow td{background:#f8fafc;font-weight:900;border-top:1.5px solid #111827}
-      .grandTotal{display:grid;grid-template-columns:1fr 1.7in;border-top:1.5px solid #111827;background:${C.accent};font-weight:900;font-size:16px;color:#111827}
+      .grandTotal{display:grid;grid-template-columns:1fr 1.5in;border-top:1.5px solid #111827;background:${C.accent};font-weight:900;font-size:13px;color:#111827}
       .grandTotal div{padding:9px 12px}.grandTotal div:last-child{text-align:right;border-left:1.5px solid #111827}
-      .signatureGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;padding:12px 14px;border-top:1.5px solid #111827;min-height:.65in;align-items:end}
+      .signatureGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;padding:8px 10px;border-top:1.5px solid #111827;min-height:.42in;align-items:end}
       .sigLine{border-top:1.5px solid #111827;padding-top:5px;min-height:32px}
       .sigValue{font-size:12px;font-weight:800;margin-bottom:4px;min-height:14px;overflow-wrap:anywhere;color:#111827}
       .sigLabel{font-size:9.5px;font-weight:900;text-transform:uppercase;letter-spacing:.6px;color:#111827}
       .pbtn{margin:14px auto 0;display:flex;gap:10px;justify-content:center}
       .pbtn button{padding:9px 24px;font-size:13px;font-weight:800;border-radius:6px;cursor:pointer;background:${C.border};color:white;border:none}
       @page{size:letter;margin:0}
-      @media print{.pbtn{display:none!important}.page{padding:.38in .45in}.outer{break-inside:avoid}body{font-size:12px}}
+      @media print{.pbtn,.print-customize{display:none!important}html,body{width:8.5in;margin:0!important;padding:0!important}.page{width:8.5in;padding:.18in .22in}.outer{break-inside:auto;page-break-inside:auto}body{font-size:10px}.section,.data-table tr{break-inside:auto;page-break-inside:auto}}
     </style></head><body>
       <div class="page"><div class="outer">
         <header class="top">
@@ -2455,6 +2457,7 @@ function Equipment({ state, dispatch }) {
         </div>
       </div></div>
       <div class="pbtn"><button onclick="window.print()">Print / Save PDF</button></div>
+    ${printCustomizePanelHtml(wo.woType || "WorkOrder")}
     </body></html>`);
     win.document.close();
     win.focus();
