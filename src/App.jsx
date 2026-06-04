@@ -4164,23 +4164,59 @@ function PM({ state, dispatch }) {
   const delTrigger   = i => setTaskForm(f=>{ const tr=[...(f.triggers||[])]; tr.splice(i,1); return {...f,triggers:tr}; });
   const addTaskStep  = () => setTaskForm(f=>({...f,steps:[...(f.steps||[]),""] }));
   const setStep      = (i,v) => setTaskForm(f=>{ const s=[...(f.steps||[])]; s[i]=v; return {...f,steps:s}; });
+
+  const htmlToPMText = (html="") => String(html)
+    .replace(/<br\s*\/?\s*>/gi, "\n")
+    .replace(/<\/p>|<\/div>|<\/li>|<\/tr>|<\/h[1-6]>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">");
+
+  const whitespaceScore = (v="") => (String(v).match(/\s/g)||[]).length;
+
+  // Some PDF/website clipboard sources provide broken plain text like
+  // "Visuallyinspect thebrakesforwornbrakeshoes.". This helper repairs the
+  // most common PM step words without changing normal pasted sentences.
+  const repairGluedPMWords = (value="") => {
+    const words = [
+      "visually","inspect","inspection","check","verify","test","operate","operation","replace","remove","install","clean","lubricate","grease","adjust","tighten","torque","drain","fill","change","service","record","confirm",
+      "the","and","or","for","with","without","to","from","of","in","on","all","any","proper","properly","loose","missing","damaged","worn","wear","leaks","leak","cracks","cracked","damage",
+      "brake","brakes","shoes","pads","rotor","rotors","drum","drums","fluid","fluids","oil","filter","filters","fuel","air","engine","transmission","hydraulic","coolant","battery","batteries","terminal","terminals","cable","cables","belt","belts","hose","hoses","tire","tires","wheel","wheels","alignment","pressure","lights","light","horn","steering","suspension","blade","blades","deck","pto","safety","switch","switches"
+    ].sort((a,b)=>b.length-a.length);
+    const splitChunk = (chunk) => {
+      const parts = chunk.match(/^([A-Za-z]+)([^A-Za-z]*)$/);
+      if(!parts || parts[1].length < 12) return chunk;
+      let rest = parts[1];
+      const punctuation = parts[2] || "";
+      const out = [];
+      while(rest.length){
+        const lower = rest.toLowerCase();
+        const hit = words.find(w=>lower.startsWith(w));
+        if(!hit) return chunk;
+        const original = rest.slice(0, hit.length);
+        out.push(out.length===0 && /^[A-Z]/.test(rest) ? original.charAt(0).toUpperCase()+original.slice(1).toLowerCase() : original.toLowerCase());
+        rest = rest.slice(hit.length);
+      }
+      return out.length > 1 ? out.join(" ") + punctuation : chunk;
+    };
+    return String(value).split(/(\s+)/).map(part=>/\s+/.test(part) ? part : splitChunk(part)).join("");
+  };
+
   const pasteTaskStep = (i) => (e) => {
-    let text = e.clipboardData?.getData("text/plain") || "";
-    if(!text && e.clipboardData?.getData("text/html")) {
-      text = e.clipboardData.getData("text/html")
-        .replace(/<br\s*\/?\s*>/gi, "\n")
-        .replace(/<\/p>|<\/div>|<\/li>/gi, "\n")
-        .replace(/<[^>]+>/g, " ")
-        .replace(/&nbsp;/gi, " ");
-    }
+    const plainText = e.clipboardData?.getData("text/plain") || "";
+    const htmlText = e.clipboardData?.getData("text/html") || "";
+    const htmlConverted = htmlText ? htmlToPMText(htmlText) : "";
+    let text = whitespaceScore(htmlConverted) > whitespaceScore(plainText) ? htmlConverted : plainText;
     if(!text) return;
     e.preventDefault();
-    text = String(text)
+    text = repairGluedPMWords(String(text)
       .replace(/\r\n?/g, "\n")
       .replace(/\u00a0/g, " ")
       .replace(/[ \t]{2,}/g, " ")
-      .trimEnd();
-    const pastedLines = text.split(/\n+/).map(x=>x.replace(/^\s*(?:[-*•]+|\d+[.)])\s*/, "").trim()).filter(Boolean);
+      .trimEnd());
+    const pastedLines = text.split(/\n+/).map(x=>repairGluedPMWords(x.replace(/^\s*(?:[-*•]+|\d+[.)])\s*/, "").trim())).filter(Boolean);
     setTaskForm(f=>{
       const s=[...(f.steps||[])];
       const current=String(s[i]||"");
@@ -4191,7 +4227,7 @@ function PM({ state, dispatch }) {
         const first=current.slice(0,start)+pastedLines[0]+current.slice(end);
         s.splice(i,1,first,...pastedLines.slice(1));
       } else {
-        s[i]=current.slice(0,start)+text.trim()+current.slice(end);
+        s[i]=current.slice(0,start)+pastedLines[0]+current.slice(end);
       }
       return {...f,steps:s};
     });
