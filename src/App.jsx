@@ -3822,16 +3822,58 @@ function PM({ state, dispatch }) {
   const [showTaskLib, setShowTaskLib] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
   const [autoFired, setAutoFired]     = useState(false);
+  const [expandedPMEquipment, setExpandedPMEquipment] = useState({});
 
   const F  = k => e => setForm(f=>({...f,[k]:e.target.value}));
   const SF = k => e => setSchForm(f=>({...f,[k]:e.target.value}));
 
-  // Keeps pasted text exactly as pasted. This prevents browser/handler issues where spaces
-  // disappear from task descriptions and step lines.
+  // PM paste cleanup: some PDF/manual text pastes into Chrome without spaces.
+  // This repairs common maintenance words while preserving normal pasted text.
+  const pmPasteWords = new Set([
+    "a","about","above","adjust","after","air","all","and","annual","as","axle","battery","belt","blades","bolts","brake","brakes","brakepads","brakeshoes","cable","cap","change","check","clean","condition","conditions","coolant","daily","damage","deck","diesel","dirty","drain","drive","each","engine","equipment","every","filter","filters","fluid","for","front","fuel","grease","hose","hoses","hour","hours","hydraulic","in","inspect","inspection","install","level","levels","lines","lubricate","mower","oil","or","parking","parts","pressure","pump","radiator","rear","replace","required","safety","service","shoe","shoes","steering","system","the","tighten","tire","tires","to","torque","transmission","wear","wheel","wheels","with","worn","visually","water"
+  ]);
+
+  const splitPMRun = (run) => {
+    const lower = String(run || "").toLowerCase();
+    if(lower.length < 12) return run;
+    const memo = {};
+    const solve = (idx) => {
+      if(idx >= lower.length) return [];
+      if(memo[idx] !== undefined) return memo[idx];
+      let best = null;
+      for(let end = Math.min(lower.length, idx + 16); end > idx; end--) {
+        const word = lower.slice(idx, end);
+        if(!pmPasteWords.has(word)) continue;
+        const rest = solve(end);
+        if(rest !== null) {
+          const candidate = [run.slice(idx, end), ...rest];
+          if(!best || candidate.join("").length > best.join("").length) best = candidate;
+        }
+      }
+      memo[idx] = best;
+      return best;
+    };
+    const parts = solve(0);
+    return parts && parts.join("").length === run.length ? parts.join(" ") : run;
+  };
+
+  const cleanPMPasteText = (value="") => String(value || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/([.!?])(?=[A-Za-z])/g, "$1 ")
+    .replace(/([,)])(?=[A-Za-z])/g, "$1 ")
+    .replace(/([A-Za-z]{12,})/g, m => splitPMRun(m))
+    .replace(/\bbrake pads?\b/gi, m => m)
+    .replace(/brake shoes/gi, "brake shoes")
+    .replace(/\bindusty\b/gi, "in dusty")
+    .replace(/\s+/g, " ")
+    .trim();
+
   const pasteIntoText = (setter) => (e) => {
-    const text = e.clipboardData?.getData("text/plain");
-    if(text == null) return;
+    const raw = e.clipboardData?.getData("text/plain");
+    if(raw == null) return;
     e.preventDefault();
+    const text = cleanPMPasteText(raw);
     const el = e.currentTarget;
     const start = el.selectionStart ?? String(el.value||"").length;
     const end = el.selectionEnd ?? start;
@@ -4144,6 +4186,26 @@ function PM({ state, dispatch }) {
   });
 
   const assignedPMRows = getAssignedPMRows();
+  const assignedPMByEquipment = assignedPMRows.reduce((groups, row) => {
+    const key = row.equipmentId || row.eqName || "Unknown";
+    if(!groups[key]) groups[key] = {
+      equipmentId: row.equipmentId || key,
+      eqName: row.eqName || row.equipmentId || "—",
+      currentHours: row.currentHours,
+      currentMileage: row.currentMileage,
+      status: "OK",
+      rows: []
+    };
+    groups[key].rows.push(row);
+    const order = { Overdue:0, "Due Soon":1, OK:2 };
+    if((order[row.status] ?? 3) < (order[groups[key].status] ?? 3)) groups[key].status = row.status;
+    return groups;
+  }, {});
+  const assignedPMEquipmentRows = Object.values(assignedPMByEquipment).sort((a,b)=>{
+    const order = { Overdue:0, "Due Soon":1, OK:2 };
+    return ((order[a.status] ?? 3) - (order[b.status] ?? 3)) || String(a.equipmentId).localeCompare(String(b.equipmentId));
+  });
+  const togglePMEquipment = (equipmentId) => setExpandedPMEquipment(x=>({...x, [equipmentId]: !x[equipmentId]}));
 
   /* Task library */
   const openNewTask = () => { setEditTaskId(null); setTaskForm(blankTaskForm()); setTaskModal(true); };
@@ -4165,24 +4227,10 @@ function PM({ state, dispatch }) {
   const addTaskStep  = () => setTaskForm(f=>({...f,steps:[...(f.steps||[]),""] }));
   const setStep      = (i,v) => setTaskForm(f=>{ const s=[...(f.steps||[])]; s[i]=v; return {...f,steps:s}; });
 
-  // Simple safe paste handler for PM service steps.
-  // This avoids the previous aggressive paste repair code that could crash the page.
-  const repairCommonPMStepSpacing = (value="") => String(value || "")
-    .replace(/\u00a0/g, " ")
-    .replace(/Visuallyinspect/gi, "Visually inspect")
-    .replace(/thebrakes/gi, "the brakes")
-    .replace(/forworn/gi, "for worn")
-    .replace(/brakeshoes/gi, "brake shoes")
-    .replace(/Changethesafetyairfilter/gi, "Change the safety air filter")
-    .replace(/morefrequently/gi, "more frequently")
-    .replace(/industyordirtyconditions/gi, "in dusty or dirty conditions")
-    .replace(/industy/gi, "in dusty")
-    .replace(/ordirtyconditions/gi, "or dirty conditions");
-
   const pasteTaskStep = (i) => (e) => {
     try {
-      const text = e.clipboardData?.getData("text/plain");
-      if(text == null) return;
+      const raw = e.clipboardData?.getData("text/plain");
+      if(raw == null) return;
       e.preventDefault();
 
       const el = e.currentTarget;
@@ -4190,10 +4238,11 @@ function PM({ state, dispatch }) {
       const start = Number.isFinite(el?.selectionStart) ? el.selectionStart : currentValue.length;
       const end = Number.isFinite(el?.selectionEnd) ? el.selectionEnd : start;
 
-      const cleaned = repairCommonPMStepSpacing(text)
+      const cleaned = raw
         .replace(/\r\n?/g, "\n")
+        .replace(/•/g, "\n")
         .split(/\n+/)
-        .map(line => line.replace(/^\s*(?:[-*•]+|\d+[.)])\s*/, "").trim())
+        .map(line => cleanPMPasteText(line.replace(/^\s*(?:[-*]+|\d+[.)])\s*/, "")))
         .filter(Boolean);
 
       if(!cleaned.length) return;
@@ -4306,27 +4355,62 @@ function PM({ state, dispatch }) {
             <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:12, minWidth:900 }}>
               <thead>
                 <tr style={{ background:"#f8fafc", borderBottom:`1px solid ${T.border}` }}>
-                  {["Equipment","PM Task","Triggers","Next Due","Current Usage","Status","Actions"].map(h=>(
+                  {["Equipment #","Equipment","Tasks","Current Usage","Status","Actions"].map(h=>(
                     <th key={h} style={{ padding:"9px 10px", textAlign:"left", fontSize:10, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, whiteSpace:"nowrap" }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {assignedPMRows.map(r=>(
-                  <tr key={r.id} style={{ borderBottom:`1px solid ${T.border}`, background:r.status==="Overdue"?"#fff1f2":r.status==="Due Soon"?"#fffbeb":"#fff" }}>
-                    <td style={{ padding:"10px", fontWeight:800, color:T.text, whiteSpace:"nowrap" }}>{r.eqName}<div style={{ fontFamily:T.mono, fontSize:10, color:T.muted, marginTop:2 }}>{r.equipmentId}</div></td>
-                    <td style={{ padding:"10px", color:T.subtext, minWidth:180 }}><b style={{ color:T.text }}>{r.taskName}</b>{r.taskDescription&&<div style={{ fontSize:11, color:T.muted, marginTop:2 }}>{r.taskDescription}</div>}</td>
-                    <td style={{ padding:"10px", color:T.subtext, minWidth:180 }}>{r.triggerText}</td>
-                    <td style={{ padding:"10px", fontFamily:T.mono, fontSize:11, color:T.text, minWidth:150 }}>{r.nextDueText}</td>
-                    <td style={{ padding:"10px", fontFamily:T.mono, fontSize:11, color:T.subtext, whiteSpace:"nowrap" }}>{r.currentHours} hrs • {r.currentMileage} mi</td>
-                    <td style={{ padding:"10px", whiteSpace:"nowrap" }}><span style={{ borderRadius:999, padding:"3px 9px", fontFamily:T.sans, fontSize:11, fontWeight:800, color:r.status==="Overdue"?T.red:r.status==="Due Soon"?T.amber:T.green, background:r.status==="Overdue"?"#fee2e2":r.status==="Due Soon"?"#fef3c7":"#dcfce7" }}>{r.status}</span></td>
-                    <td style={{ padding:"8px 10px", whiteSpace:"nowrap" }}>
-                      <Btn small onClick={()=>createPMWorkOrderFromSchedule(r, true)}>Create WO</Btn>
-                      <Btn small variant="secondary" onClick={()=>{ setSchForm({...r}); setModal("schedule"); }} style={{ marginLeft:6 }}>Edit</Btn>
-                      <Btn small variant="danger" onClick={()=>delSchedule(r.id)} style={{ marginLeft:6 }}>Del</Btn>
-                    </td>
-                  </tr>
-                ))}
+                {assignedPMEquipmentRows.map(group=>{
+                  const expanded = !!expandedPMEquipment[group.equipmentId];
+                  return (
+                    <React.Fragment key={group.equipmentId}>
+                      <tr
+                        onClick={()=>togglePMEquipment(group.equipmentId)}
+                        style={{ borderBottom:`1px solid ${T.border}`, background:group.status==="Overdue"?"#fff1f2":group.status==="Due Soon"?"#fffbeb":"#fff", cursor:"pointer" }}
+                      >
+                        <td style={{ padding:"10px", fontWeight:900, color:T.text, whiteSpace:"nowrap", fontFamily:T.mono }}>
+                          <span style={{ display:"inline-block", width:18, color:T.accent }}>{expanded?"▾":"▸"}</span>{group.equipmentId}
+                        </td>
+                        <td style={{ padding:"10px", fontWeight:800, color:T.text, whiteSpace:"nowrap" }}>{group.eqName}</td>
+                        <td style={{ padding:"10px", color:T.subtext, whiteSpace:"nowrap" }}>{group.rows.length} task{group.rows.length===1?"":"s"}</td>
+                        <td style={{ padding:"10px", fontFamily:T.mono, fontSize:11, color:T.subtext, whiteSpace:"nowrap" }}>{group.currentHours} hrs • {group.currentMileage} mi</td>
+                        <td style={{ padding:"10px", whiteSpace:"nowrap" }}><span style={{ borderRadius:999, padding:"3px 9px", fontFamily:T.sans, fontSize:11, fontWeight:800, color:group.status==="Overdue"?T.red:group.status==="Due Soon"?T.amber:T.green, background:group.status==="Overdue"?"#fee2e2":group.status==="Due Soon"?"#fef3c7":"#dcfce7" }}>{group.status}</span></td>
+                        <td style={{ padding:"8px 10px", whiteSpace:"nowrap", color:T.muted, fontSize:11 }}>Click to {expanded?"hide":"show"} tasks</td>
+                      </tr>
+                      {expanded && (
+                        <tr style={{ borderBottom:`1px solid ${T.border}`, background:"#f8fafc" }}>
+                          <td colSpan={6} style={{ padding:"0 10px 12px 38px" }}>
+                            <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:12, background:"#fff", border:`1px solid ${T.border}`, borderRadius:10, overflow:"hidden" }}>
+                              <thead>
+                                <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
+                                  {["PM Task","Triggers","Next Due","Status","Actions"].map(h=>(
+                                    <th key={h} style={{ padding:"8px 10px", textAlign:"left", fontSize:10, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, whiteSpace:"nowrap" }}>{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {group.rows.map(r=>(
+                                  <tr key={r.id} style={{ borderBottom:`1px solid ${T.border}` }}>
+                                    <td style={{ padding:"10px", color:T.subtext, minWidth:180 }}><b style={{ color:T.text }}>{r.taskName}</b>{r.taskDescription&&<div style={{ fontSize:11, color:T.muted, marginTop:2 }}>{r.taskDescription}</div>}</td>
+                                    <td style={{ padding:"10px", color:T.subtext, minWidth:180 }}>{r.triggerText}</td>
+                                    <td style={{ padding:"10px", fontFamily:T.mono, fontSize:11, color:T.text, minWidth:150 }}>{r.nextDueText}</td>
+                                    <td style={{ padding:"10px", whiteSpace:"nowrap" }}><span style={{ borderRadius:999, padding:"3px 9px", fontFamily:T.sans, fontSize:11, fontWeight:800, color:r.status==="Overdue"?T.red:r.status==="Due Soon"?T.amber:T.green, background:r.status==="Overdue"?"#fee2e2":r.status==="Due Soon"?"#fef3c7":"#dcfce7" }}>{r.status}</span></td>
+                                    <td style={{ padding:"8px 10px", whiteSpace:"nowrap" }} onClick={e=>e.stopPropagation()}>
+                                      <Btn small onClick={()=>createPMWorkOrderFromSchedule(r, true)}>Create WO</Btn>
+                                      <Btn small variant="secondary" onClick={()=>{ setSchForm({...r}); setModal("schedule"); }} style={{ marginLeft:6 }}>Edit</Btn>
+                                      <Btn small variant="danger" onClick={()=>delSchedule(r.id)} style={{ marginLeft:6 }}>Del</Btn>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
