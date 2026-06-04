@@ -4165,83 +4165,53 @@ function PM({ state, dispatch }) {
   const addTaskStep  = () => setTaskForm(f=>({...f,steps:[...(f.steps||[]),""] }));
   const setStep      = (i,v) => setTaskForm(f=>{ const s=[...(f.steps||[])]; s[i]=v; return {...f,steps:s}; });
 
-  const htmlToPMText = (html="") => String(html)
-    .replace(/<br\s*\/?\s*>/gi, "\n")
-    .replace(/<\/p>|<\/div>|<\/li>|<\/tr>|<\/h[1-6]>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">");
-
-  const whitespaceScore = (v="") => (String(v).match(/\s/g)||[]).length;
-
-  // Some PDF/website clipboard sources provide broken plain text like
-  // "Visuallyinspect thebrakesforwornbrakeshoes.". This helper repairs the
-  // most common PM step words without changing normal pasted sentences.
-  const repairGluedPMWords = (value="") => {
-    let fixedValue = String(value)
-      .replace(/Visuallyinspect/gi, "Visually inspect")
-      .replace(/thebrakes/gi, "the brakes")
-      .replace(/forworn/gi, "for worn")
-      .replace(/brakeshoes/gi, "brake shoes")
-      .replace(/Changethesafetyairfilter/gi, "Change the safety air filter")
-      .replace(/morefrequently/gi, "more frequently")
-      .replace(/industy/gi, "in dusty")
-      .replace(/industyordirtyconditions/gi, "in dusty or dirty conditions")
-      .replace(/ordirtyconditions/gi, "or dirty conditions");
-    const words = [
-      "visually","inspect","inspection","check","verify","test","operate","operation","replace","remove","install","clean","lubricate","grease","adjust","tighten","torque","drain","fill","change","service","record","confirm",
-      "the","and","or","for","with","without","to","from","of","in","on","all","any","proper","properly","loose","missing","damaged","worn","wear","leaks","leak","cracks","cracked","damage",
-      "brake","brakes","shoe","shoes","pad","pads","rotor","rotors","drum","drums","fluid","fluids","oil","filter","filters","fuel","air","engine","transmission","hydraulic","coolant","battery","batteries","terminal","terminals","cable","cables","belt","belts","hose","hoses","tire","tires","wheel","wheels","alignment","pressure","lights","light","horn","steering","suspension","blade","blades","deck","pto","safety","switch","switches",
-      "more","frequent","frequently","dusty","dirty","condition","conditions","element","elements","intake","exhaust","radiator","screen","screens","screening","level","levels","adjustment","adjustments","wear","worn","shoe","shoes","parking","park","pedal","pedals","linkage","linkages","cylinder","cylinders","master","caliper","calipers","bearing","bearings","seal","seals","shaft","shafts","joint","joints","bolts","bolt","nuts","nut","hardware","wheelalignment","visual","visually"
-    ].sort((a,b)=>b.length-a.length);
-    const splitChunk = (chunk) => {
-      const parts = chunk.match(/^([A-Za-z]+)([^A-Za-z]*)$/);
-      if(!parts || parts[1].length < 12) return chunk;
-      let rest = parts[1];
-      const punctuation = parts[2] || "";
-      const out = [];
-      while(rest.length){
-        const lower = rest.toLowerCase();
-        const hit = words.find(w=>lower.startsWith(w));
-        if(!hit) return chunk;
-        const original = rest.slice(0, hit.length);
-        out.push(out.length===0 && /^[A-Z]/.test(rest) ? original.charAt(0).toUpperCase()+original.slice(1).toLowerCase() : original.toLowerCase());
-        rest = rest.slice(hit.length);
-      }
-      return out.length > 1 ? out.join(" ") + punctuation : chunk;
-    };
-    return fixedValue.split(/(\s+)/).map(part=>/\s+/.test(part) ? part : splitChunk(part)).join("");
-  };
+  // Simple safe paste handler for PM service steps.
+  // This avoids the previous aggressive paste repair code that could crash the page.
+  const repairCommonPMStepSpacing = (value="") => String(value || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/Visuallyinspect/gi, "Visually inspect")
+    .replace(/thebrakes/gi, "the brakes")
+    .replace(/forworn/gi, "for worn")
+    .replace(/brakeshoes/gi, "brake shoes")
+    .replace(/Changethesafetyairfilter/gi, "Change the safety air filter")
+    .replace(/morefrequently/gi, "more frequently")
+    .replace(/industyordirtyconditions/gi, "in dusty or dirty conditions")
+    .replace(/industy/gi, "in dusty")
+    .replace(/ordirtyconditions/gi, "or dirty conditions");
 
   const pasteTaskStep = (i) => (e) => {
-    const plainText = e.clipboardData?.getData("text/plain") || "";
-    const htmlText = e.clipboardData?.getData("text/html") || "";
-    const htmlConverted = htmlText ? htmlToPMText(htmlText) : "";
-    let text = whitespaceScore(htmlConverted) > whitespaceScore(plainText) ? htmlConverted : plainText;
-    if(!text) return;
-    e.preventDefault();
-    text = repairGluedPMWords(String(text)
-      .replace(/\r\n?/g, "\n")
-      .replace(/\u00a0/g, " ")
-      .replace(/[ \t]{2,}/g, " ")
-      .trimEnd());
-    const pastedLines = text.split(/\n+/).map(x=>repairGluedPMWords(x.replace(/^\s*(?:[-*•]+|\d+[.)])\s*/, "").trim())).filter(Boolean);
-    setTaskForm(f=>{
-      const s=[...(f.steps||[])];
-      const current=String(s[i]||"");
-      const el=e.currentTarget;
-      const start=el.selectionStart ?? current.length;
-      const end=el.selectionEnd ?? start;
-      if(pastedLines.length > 1){
-        const first=current.slice(0,start)+pastedLines[0]+current.slice(end);
-        s.splice(i,1,first,...pastedLines.slice(1));
-      } else {
-        s[i]=current.slice(0,start)+pastedLines[0]+current.slice(end);
-      }
-      return {...f,steps:s};
-    });
+    try {
+      const text = e.clipboardData?.getData("text/plain");
+      if(text == null) return;
+      e.preventDefault();
+
+      const el = e.currentTarget;
+      const currentValue = String(el?.value ?? "");
+      const start = Number.isFinite(el?.selectionStart) ? el.selectionStart : currentValue.length;
+      const end = Number.isFinite(el?.selectionEnd) ? el.selectionEnd : start;
+
+      const cleaned = repairCommonPMStepSpacing(text)
+        .replace(/\r\n?/g, "\n")
+        .split(/\n+/)
+        .map(line => line.replace(/^\s*(?:[-*•]+|\d+[.)])\s*/, "").trim())
+        .filter(Boolean);
+
+      if(!cleaned.length) return;
+
+      setTaskForm(f => {
+        const steps = Array.isArray(f.steps) && f.steps.length ? [...f.steps] : [""];
+        const existing = String(steps[i] ?? currentValue);
+        const firstLine = existing.slice(0, start) + cleaned[0] + existing.slice(end);
+        if(cleaned.length > 1) {
+          steps.splice(i, 1, firstLine, ...cleaned.slice(1));
+        } else {
+          steps[i] = firstLine;
+        }
+        return { ...f, steps };
+      });
+    } catch(err) {
+      console.error("PM step paste failed", err);
+    }
   };
   const delStep      = i => setTaskForm(f=>{ const s=[...(f.steps||[])]; s.splice(i,1); return {...f,steps:s}; });
   const addTaskPart  = () => setTaskForm(f=>({...f,parts:[...(f.parts||[]),{name:"",qty:"",unit:"ea"}]}));
@@ -4495,7 +4465,7 @@ function PM({ state, dispatch }) {
               {(taskForm.steps||[""]).map((step,i)=>(
                 <div key={i} style={{ display:"flex", gap:6, marginBottom:6, alignItems:"center" }}>
                   <span style={{ fontFamily:T.mono, fontSize:11, color:T.muted, minWidth:20 }}>{i+1}.</span>
-                  <input style={{ ...inp, flex:1 }} value={step} autoFocus={i===(taskForm.steps||[]).length-1 && step===""} onPaste={pasteTaskStep(i)} onChange={e=>setStep(i,repairGluedPMWords(e.target.value))} placeholder={`Step ${i+1}...`} />
+                  <input style={{ ...inp, flex:1 }} value={step} autoFocus={i===(taskForm.steps||[]).length-1 && step===""} onPaste={pasteTaskStep(i)} onChange={e=>setStep(i,e.target.value)} placeholder={`Step ${i+1}...`} />
                   {(taskForm.steps||[]).length>1&&<button onClick={()=>delStep(i)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
                 </div>
               ))}
