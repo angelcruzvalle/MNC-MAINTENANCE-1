@@ -167,6 +167,22 @@ function reducer(state, { type, payload }) {
           return { ...state, parts, equipment, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
         }
       }
+      /* If Inspection WO is completed, advance the linked inspection schedule. */
+      if(payload.status==="Completed" && payload.inspectionScheduleId) {
+        const sch = (state.inspectionSchedules||[]).find(s=>s.id===payload.inspectionScheduleId);
+        if(sch) {
+          const doneDate = payload.completed || new Date().toISOString().split("T")[0];
+          const d = new Date(doneDate);
+          const n = +(sch.timeInterval || 1);
+          const unit = sch.timeUnit || "months";
+          if(unit==="days") d.setDate(d.getDate()+n);
+          if(unit==="weeks") d.setDate(d.getDate()+n*7);
+          if(unit==="months") d.setMonth(d.getMonth()+n);
+          if(unit==="years") d.setFullYear(d.getFullYear()+n);
+          const advancedSch = { ...sch, lastTriggered:doneDate, lastDoneDate:doneDate, nextDueDate:d.toISOString().split("T")[0] };
+          return { ...state, parts, equipment, workOrders:updated, inspectionSchedules:(state.inspectionSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
+        }
+      }
       return { ...state, parts, equipment, workOrders: updated };
     }
     case "DELETE_WO":     return { ...state, workOrders: state.workOrders.filter(w => w.id!==payload) };
@@ -228,6 +244,36 @@ function reducer(state, { type, payload }) {
 
 const genId = p => `${p}-${String(Date.now()).slice(-5)}`;
 const today = () => new Date().toISOString().split("T")[0];
+
+function normalizeStepLines(value) {
+  if(Array.isArray(value)) {
+    return value
+      .map(item => typeof item === "string" ? item : (item?.step || item?.text || item?.name || ""))
+      .map(x => String(x || "").trim())
+      .filter(Boolean);
+  }
+  return String(value || "")
+    .split(/\r?\n|\s*,\s*(?=\S)/)
+    .map(x => x.trim())
+    .filter(Boolean);
+}
+
+function buildNumberedStepsText(value) {
+  return normalizeStepLines(value).map((step, i) => `${i + 1}. ${step}`).join("\n");
+}
+
+function genNextWOId(workOrders, equipmentId, prefix="") {
+  const base = String(equipmentId || "EQ").trim() || "EQ";
+  const escapedBase = base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const tag = prefix ? `${prefix}` : "";
+  const re = new RegExp(`^${escapedBase}-${tag}(\\d+)$`, "i");
+  const used = (workOrders || []).map(w => {
+    const m = String(w.id || "").match(re);
+    return m ? parseInt(m[1], 10) : 0;
+  }).filter(n => Number.isFinite(n) && n > 0);
+  const next = used.length ? Math.max(...used) + 1 : 1;
+  return `${base}-${tag}${String(next).padStart(2, "0")}`;
+}
 
 
 const CLOSED_WO_STATUSES = new Set(["Completed", "Closed", "Cancelled", "Canceled"]);
@@ -3649,18 +3695,18 @@ function Inspections({ state, dispatch }) {
       faultDescription:task.name,
       problem:task.name,
       description:task.name,
-      workPerformed: task.steps || "",
+      workPerformed: buildNumberedStepsText(task.steps),
       mechanicNotes: task.notes || "",
       inspectionTaskId:task.id,
       inspectionScheduleId:schedule.id,
-      inspectionSteps:task.steps || "",
+      inspectionSteps:steps.join("\n"),
+      steps,
       inspectionStepResults:steps.map((step,i)=>({ id:`${genId("STEP")}-${i}`, step, result:"", comment:"" })),
       inspectionAttachments:Array.isArray(task.attachments)?task.attachments:[],
       partsUsed:[], labor:[],
     };
     dispatch({ type:"ADD_WO", payload:wo });
-    const inherited = intervalFromInspectionTask(task);
-    dispatch({ type:"UPDATE_INSPECTION_SCHEDULE", payload:{ ...schedule, ...inherited, frequency:task.frequency || schedule.frequency || "Monthly", lastTriggered:today(), nextDueDate:nextDateFrom(schedule.nextDueDate || today(), inherited.timeInterval, inherited.timeUnit) } });
+    dispatch({ type:"UPDATE_INSPECTION_SCHEDULE", payload:{ ...schedule, lastTriggered:today() } });
     alert(`Inspection Work Order ${wo.id} created.`);
   };
 
@@ -3965,39 +4011,10 @@ function PM({ state, dispatch }) {
 
   const triggered = schedules.filter(shouldTrigger);
 
-  /* Fire auto-WOs once per mount (not on every render) */
+  /* PM auto-generation is handled once at the App level so it works from every tab and does not duplicate WOs. */
   useEffect(()=>{
-    if(autoFired || triggered.length===0) return;
-    setAutoFired(true);
-    triggered.forEach(sch=>{
-      const existing = state.workOrders.filter(w=>w.id.startsWith(sch.equipmentId+"-"));
-      const nums = existing.map(w=>parseInt(w.id.split("-").pop(),10)||0);
-      const next = nums.length>0 ? Math.max(...nums)+1 : 1;
-      const woId = `${sch.equipmentId}-${String(next).padStart(2,"0")}`;
-      const logs    = (state.usageLogs||[]).filter(l=>l.equipmentId===sch.equipmentId);
-      const curUsage = sch.usageType==="mileage"
-        ? logs.reduce((s,l)=>s+(+(l.mileage||0)),0)
-        : logs.reduce((s,l)=>s+(+(l.hours||0)),0);
-      const eq = state.equipment.find(e=>e.id===sch.equipmentId);
-      dispatch({type:"ADD_WO", payload:{
-        id:woId, title:sch.task, equipment:sch.equipmentId,
-        status:"Open", priority:"Medium", woType:"Service",
-        created:today(), due:sch.nextDueDate||today(),
-        tech:"", laborHours:0, laborCost:0, partsCost:0,
-        description:`Auto-generated: ${sch.task}`,
-        mechanicNotes:"", faultEnabled:true, faultDescription:sch.task||"Service", partsUsed:[], scheduleId:sch.id,
-        usageType:sch.usageType||"hours", usageHours:(sch.usageType==="hours"?curUsage:""), usageMileage:(sch.usageType==="mileage"?curUsage:""), usageNA:!(eq?.trackUsage),
-      }});
-      const advancedTriggers = advanceScheduleTriggers(sch, today(), curUsage);
-      dispatch({type:"UPDATE_PM_SCHEDULE", payload:{
-        ...sch,
-        triggers: advancedTriggers,
-        lastDoneDate:today(), lastDoneUsage:curUsage,
-        nextDueDate: advancedTriggers.find(t=>t.type==="time")?.nextDueDate || "",
-        nextDueUsage: advancedTriggers.find(t=>t.type==="hours"||t.type==="mileage")?.nextDueUsage || "",
-      }});
-    });
-  }, []); /* run once on mount only */
+    if(!autoFired && triggered.length>0) setAutoFired(true);
+  }, [autoFired, triggered.length]);
 
   /* PM status buckets */
   const byStatus = { Overdue:[], "Due Soon":[], OK:[] };
@@ -4076,14 +4093,12 @@ function PM({ state, dispatch }) {
     setSchForm({equipmentId:"",taskId:"",task:"",triggerType:"time",timeInterval:"",timeUnit:"months",usageInterval:"",usageType:"hours",lastDoneDate:today(),lastDoneUsage:""});
   };
 
-  const buildTaskStepsText = (task) => (task?.steps||[]).filter(Boolean).map((step,i)=>`${i+1}. ${step}`).join("\n");
+  const buildTaskStepsText = (task) => buildNumberedStepsText(task?.steps);
 
   const createPMWorkOrderFromTask = (equipmentId, task, manual=false, sch=null) => {
     if(!equipmentId || !task) return;
-    const existing = state.workOrders.filter(w=>w.id.startsWith(equipmentId+"-"));
-    const nums = existing.map(w=>parseInt(w.id.split("-").pop(),10)||0);
-    const next = nums.length>0 ? Math.max(...nums)+1 : 1;
-    const woId = `${equipmentId}-${String(next).padStart(2,"0")}`;
+    const woId = genNextWOId(state.workOrders, equipmentId, "SVC");
+    const stepLines = normalizeStepLines(task?.steps);
     const stepsText = buildTaskStepsText(task);
     const taskParts = (task.parts||[]).filter(p=>p.name).map(p=>({ name:p.name, qty:p.qty||1, unit:p.unit||"ea", unitCost:0 }));
     const details = [
@@ -4111,6 +4126,10 @@ function PM({ state, dispatch }) {
       laborCost:0,
       partsCost:0,
       description:details,
+      workPerformed:stepsText,
+      serviceSteps:stepsText,
+      serviceStepLines:stepLines,
+      steps:stepLines,
       serviceChecklist:stepsText,
       mechanicNotes:"",
       faultEnabled:true,
@@ -6577,6 +6596,93 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [state, session, dataLoaded]);
 
+
+  /* Auto-create Preventive Maintenance Service Work Orders when PM schedules are due */
+  useEffect(() => {
+    const schedules = state.pmSchedules || [];
+    if(!schedules.length) return;
+    const todayStr = today();
+    const currentUsageFor = (equipmentId, type="hours") => {
+      const logs = (state.usageLogs || []).filter(l => l.equipmentId === equipmentId);
+      const key = type === "mileage" ? "mileage" : "hours";
+      return Math.max(...logs.map(l => +(l[key] || 0)), 0);
+    };
+    const nextDateFrom = (date, interval, unit) => {
+      const d = new Date(date || todayStr);
+      const n = Number(interval || 1);
+      if(unit === "days") d.setDate(d.getDate() + n);
+      if(unit === "weeks") d.setDate(d.getDate() + (n * 7));
+      if(unit === "months") d.setMonth(d.getMonth() + n);
+      if(unit === "years") d.setFullYear(d.getFullYear() + n);
+      return d.toISOString().split("T")[0];
+    };
+    const scheduleTriggers = (sch) => {
+      if(Array.isArray(sch.triggers) && sch.triggers.length) return sch.triggers;
+      if(sch.triggerType === "usage") return [{ type:sch.usageType || "hours", usageInterval:sch.usageInterval, usageMode:"every", nextDueUsage:sch.nextDueUsage }];
+      return [{ type:"time", timeInterval:sch.timeInterval, timeUnit:sch.timeUnit || "months", nextDueDate:sch.nextDueDate }];
+    };
+    schedules.forEach(schedule => {
+      if(!schedule?.equipmentId) return;
+      const alreadyOpen = (state.workOrders || []).some(w =>
+        w.scheduleId === schedule.id &&
+        w.woType === "Service" &&
+        ["Open", "In Progress", "On Hold"].includes(w.status)
+      );
+      if(alreadyOpen) return;
+      const triggers = scheduleTriggers(schedule);
+      const due = triggers.some(t => {
+        if((t.type || "time") === "time") {
+          const dueDate = t.nextDueDate || schedule.nextDueDate;
+          return !!dueDate && dueDate <= todayStr;
+        }
+        const dueUsage = +(t.nextDueUsage || schedule.nextDueUsage || 0);
+        return !!dueUsage && currentUsageFor(schedule.equipmentId, t.type) >= dueUsage;
+      });
+      if(!due) return;
+      const task = (state.pmTasks || []).find(t => t.id === schedule.taskId) || { id:schedule.taskId, name:schedule.task || "PM Service", description:"", steps:[], parts:[] };
+      const eq = (state.equipment || []).find(e => e.id === schedule.equipmentId);
+      if(!eq) return;
+      const stepLines = normalizeStepLines(task.steps);
+      const stepsText = buildNumberedStepsText(stepLines);
+      const woId = genNextWOId(state.workOrders, schedule.equipmentId, "SVC");
+      const usageType = (eq.usageType || schedule.usageType || triggers.find(t => t.type === "mileage")?.type || "hours").toLowerCase();
+      const curHours = currentUsageFor(schedule.equipmentId, "hours");
+      const curMileage = currentUsageFor(schedule.equipmentId, "mileage");
+      const taskParts = (task.parts || []).filter(p => p.name).map(p => ({ name:p.name, qty:p.qty || 1, unit:p.unit || "ea", unitCost:+(p.unitCost || 0) }));
+      dispatch({ type:"ADD_WO", payload:{
+        id:woId,
+        title:task.name || schedule.task || "PM Service",
+        equipment:schedule.equipmentId,
+        equipmentStatus:"Fully Operational",
+        status:"Open",
+        priority:"Medium",
+        woType:"Service",
+        created:todayStr,
+        due:triggers.find(t => (t.type || "time") === "time")?.nextDueDate || schedule.nextDueDate || todayStr,
+        completed:"",
+        tech:"",
+        usageType,
+        usageHours:usageType === "mileage" ? "" : curHours,
+        usageMileage:usageType === "hours" ? "" : curMileage,
+        usageNA:!(eq?.trackUsage),
+        faultEnabled:true,
+        faultDescription:task.description || task.name || schedule.task || "PM Service",
+        description:[`Auto-generated service: ${task.name || schedule.task || "PM Service"}`, task.description ? `Description: ${task.description}` : "", stepsText ? `Service Steps:\n${stepsText}` : ""].filter(Boolean).join("\n\n"),
+        workPerformed:stepsText,
+        serviceSteps:stepsText,
+        serviceStepLines:stepLines,
+        steps:stepLines,
+        serviceChecklist:stepsText,
+        mechanicNotes:"",
+        partsUsed:taskParts,
+        labor:[],
+        scheduleId:schedule.id,
+        pmTaskId:task.id || schedule.taskId || null,
+      }});
+      dispatch({ type:"ADD_NOTIFICATION", payload:{ id:`N${Date.now()}-${schedule.id}`, type:"pm", msg:`Preventive maintenance due for ${eq.id} — ${eq.name || eq.nomenclature || "equipment"}. Service Work Order ${woId} created with ${stepLines.length} step${stepLines.length===1?"":"s"}.`, read:false } });
+    });
+  }, [state.pmSchedules, state.pmTasks, state.equipment, state.workOrders, state.usageLogs]);
+
   /* Auto-create Inspection Work Orders when inspection schedules are due */
   useEffect(() => {
     const inspections = state.inspectionSchedules || [];
@@ -6615,7 +6721,7 @@ export default function App() {
       const task = (state.inspectionTasks||[]).find(t => t.id === schedule.taskId);
       const eq = (state.equipment||[]).find(e => e.id === schedule.equipmentId);
       if(!task || !eq) return;
-      const steps = String(task.steps||"").split(/\n+/).map(x=>x.trim()).filter(Boolean);
+      const steps = normalizeStepLines(task.steps);
       const iwo = genInspectionWOInfo(eq.id);
       const woId = iwo.id;
       dispatch({ type:"ADD_WO", payload:{
@@ -6639,17 +6745,18 @@ export default function App() {
         faultDescription:task.name,
         problem:task.name,
         description:task.name,
-        workPerformed: task.steps || "",
+        workPerformed: buildNumberedStepsText(task.steps),
         mechanicNotes: task.notes || "",
         inspectionTaskId:task.id,
         inspectionScheduleId:schedule.id,
-        inspectionSteps:task.steps || "",
+        inspectionSteps:steps.join("\n"),
+        steps,
         inspectionStepResults:steps.map((step,i)=>({ id:`${genId("STEP")}-${i}`, step, result:"", comment:"" })),
         inspectionAttachments:Array.isArray(task.attachments)?task.attachments:[],
         partsUsed:[], labor:[],
       }});
-      dispatch({ type:"ADD_NOTIFICATION", payload:{ id:`N${Date.now()}-${schedule.id}`, type:"inspection", msg:`Inspection due for ${eq.id} — ${eq.name || eq.nomenclature || "equipment"}. Inspection Work Order ${woId} created.`, time:"Just now", read:false } });
-      dispatch({ type:"UPDATE_INSPECTION_SCHEDULE", payload:{ ...schedule, lastTriggered:todayStr, nextDueDate:nextDateFrom(schedule.nextDueDate || todayStr, schedule.timeInterval, schedule.timeUnit) } });
+      dispatch({ type:"ADD_NOTIFICATION", payload:{ id:`N${Date.now()}-${schedule.id}`, type:"inspection", msg:`Inspection due for ${eq.id} — ${eq.name || eq.nomenclature || "equipment"}. Inspection Work Order ${woId} created with ${steps.length} step${steps.length===1?"":"s"}.`, time:"Just now", read:false } });
+      dispatch({ type:"UPDATE_INSPECTION_SCHEDULE", payload:{ ...schedule, lastTriggered:todayStr } });
     });
   }, [state.inspectionSchedules, state.inspectionTasks, state.equipment, state.workOrders]);
 
