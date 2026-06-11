@@ -6853,25 +6853,15 @@ function FuelTracking({ state, dispatch }) {
         <Btn onClick={openAdd}>+ Add Fuel Container</Btn>
         <Btn variant="secondary" onClick={()=>printFuelReportWindow(state, period)}>Print</Btn>
       </div>
-      {containers.length === 0 ? <div style={{ padding:16, border:`1px dashed ${T.border}`, borderRadius:12, color:T.muted, background:T.soft }}>No fuel containers added yet. Add a container to start tracking fuel levels.</div> : <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:12 }}>
-        {containers.map((c,idx)=>{ const r=latestFuelReading(state,c.id); const gallons=+(r?.gallons||0); const cap=+c.capacity||0; const pct=cap?fuelPercent(c,gallons):0; const used=fuelConsumedForPeriod(state,c.id,period); const refill=fuelRefilledForPeriod(state,c.id,period); return <div key={c.id} style={{ border:`1px solid ${T.border}`, borderRadius:14, padding:14, background:"#fff", boxShadow:"0 6px 16px rgba(0,0,0,.04)" }}>
-          <div style={{ display:"flex", justifyContent:"space-between", gap:8, alignItems:"flex-start", marginBottom:8 }}>
-            <div>
-              <div style={{ fontSize:12, color:T.muted, fontWeight:800 }}>Container {idx+1}</div>
-              <div style={{ fontSize:16, fontWeight:900 }}>{c.name||"Fuel Container"}</div>
-            </div>
-            <span style={{ fontSize:12, fontWeight:900, padding:"4px 8px", borderRadius:999, background:T.soft, border:`1px solid ${T.border}` }}>{c.fuelType||"Fuel"}</span>
+      {containers.length === 0 ? <div style={{ padding:16, border:`1px dashed ${T.border}`, borderRadius:12, color:T.muted, background:T.soft }}>No fuel containers added yet. Add a container to start tracking fuel levels.</div> : <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:10 }}>
+        {containers.map(c=>{ const r=latestFuelReading(state,c.id); const gallons=+(r?.gallons||0); const cap=+c.capacity||0; const pct=cap?fuelPercent(c,gallons):0; const usedMonth=fuelConsumedForPeriod(state,c.id,"month"); return <div key={c.id} style={{ border:`1px solid ${T.border}`, borderRadius:12, padding:10, background:"#fff", boxShadow:"0 4px 12px rgba(0,0,0,.035)" }}>
+          <div style={{ fontSize:15, fontWeight:900, marginBottom:8, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{c.name||"Fuel Container"}</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:7, fontSize:12 }}>
+            <div><div style={{ color:T.muted, fontSize:10, fontWeight:800, textTransform:"uppercase" }}>Current Level</div><b>{r?`${Math.round(gallons).toLocaleString()} gal`:"—"}</b></div>
+            <div><div style={{ color:T.muted, fontSize:10, fontWeight:800, textTransform:"uppercase" }}>Latest Inches</div><b>{r?(r.inchesText ?? r.inches ?? "—"):"—"}</b></div>
+            <div><div style={{ color:T.muted, fontSize:10, fontWeight:800, textTransform:"uppercase" }}>% Full</div><b>{r?`${pct.toFixed(1)}%`:"—"}</b></div>
+            <div><div style={{ color:T.muted, fontSize:10, fontWeight:800, textTransform:"uppercase" }}>Used This Month</div><b>{Math.round(usedMonth).toLocaleString()} gal</b></div>
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, fontSize:13 }}>
-            <div><div style={{ color:T.muted, fontSize:11 }}>Current</div><b>{Math.round(gallons).toLocaleString()} gal</b></div>
-            <div><div style={{ color:T.muted, fontSize:11 }}>% Full</div><b>{r?`${pct.toFixed(1)}%`:"—"}</b></div>
-            <div><div style={{ color:T.muted, fontSize:11 }}>Latest Inches</div><b>{r?(r.inchesText ?? r.inches ?? "—"):"—"}</b></div>
-            <div><div style={{ color:T.muted, fontSize:11 }}>Capacity</div><b>{cap?`${cap.toLocaleString()} gal`:"—"}</b></div>
-            <div><div style={{ color:T.muted, fontSize:11 }}>Used {periodLabel}</div><b>{Math.round(used).toLocaleString()} gal</b></div>
-            <div><div style={{ color:T.muted, fontSize:11 }}>Refilled {periodLabel}</div><b>{Math.round(refill).toLocaleString()} gal</b></div>
-          </div>
-          <div style={{ marginTop:10, height:8, borderRadius:999, background:T.soft, overflow:"hidden", border:`1px solid ${T.border}` }}><div style={{ height:"100%", width:`${Math.max(0,Math.min(100,pct))}%`, background:"#2563eb" }} /></div>
-          <div style={{ marginTop:8, fontSize:11, color:T.muted }}>Last reading: {r?.date||"No readings yet"}</div>
         </div>})}
       </div>}
     </Card>
@@ -6896,7 +6886,7 @@ function FuelTracking({ state, dispatch }) {
           <td style={fuelCell}>{last?Math.round(last.gallons).toLocaleString():"—"}</td>
           <td style={{ ...fuelCell, fontWeight:800 }}><div>{Math.round(fuelConsumedForPeriod(state,c.id,period)).toLocaleString()} gal</div><div style={{ color:T.muted, fontWeight:600, fontSize:11, marginTop:2 }}>{periodLabel}</div></td>
           <td style={fuelCell}>{Math.round(fuelRefilledForPeriod(state,c.id,period)).toLocaleString()} gal</td>
-          <td style={{ ...fuelCell, minWidth:240 }}><div style={fuelControlBox}><div style={fuelControlRow}><input style={{ ...inp, width:115, height:36 }} type="text" placeholder="30 7/8" value={le.inches||""} onChange={e=>setLevel(c.id,"inches",e.target.value)} /><Btn small onClick={()=>saveLevel(c)}>Log</Btn></div><div style={fuelPreview}>{preview!==null ? `${Math.round(preview).toLocaleString()} gal` : ""}</div><div style={fuelHelp}>Examples: 30, 30.5, 30 1/2, 30 7/8</div><input style={{ ...inp, height:36 }} type="date" value={le.date||today()} onChange={e=>setLevel(c.id,"date",e.target.value)} /></div></td>
+          <td style={{ ...fuelCell, minWidth:240 }}><div style={fuelControlBox}><div style={fuelControlRow}><input style={{ ...inp, width:115, height:36 }} type="text" placeholder="30 7/8" value={le.inches||""} onChange={e=>setLevel(c.id,"inches",e.target.value)} /><Btn small onClick={()=>saveLevel(c)}>Log</Btn></div><div style={fuelPreview}>{preview!==null ? `${Math.round(preview).toLocaleString()} gal` : ""}</div><div style={fuelHelp}>Examples: 30, 30.5, 30 1/2, 30 7/8</div><input style={{ ...inp, width:138, minWidth:138, height:36 }} type="date" value={le.date||today()} onChange={e=>setLevel(c.id,"date",e.target.value)} /></div></td>
           <td style={{ ...fuelCell, minWidth:215 }}><div style={fuelActionRow}><Btn small variant="secondary" onClick={()=>openRefill(c)}>Refill</Btn><Btn small variant="secondary" onClick={()=>openEdit(c)}>Edit</Btn><Btn small variant="danger" onClick={()=>confirm("Delete this fuel container and its history?")&&dispatch({type:"DELETE_FUEL_CONTAINER",payload:c.id})}>Delete</Btn></div></td>
         </tr> })}
         {!containers.length && <tr><td colSpan="8" style={{ padding:24, textAlign:"center", color:T.muted }}>No fuel containers yet. Add a tank/container and enter its inch-to-gallon chart.</td></tr>}
