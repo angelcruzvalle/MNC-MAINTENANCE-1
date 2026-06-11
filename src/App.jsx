@@ -417,7 +417,7 @@ function reducer(state, { type, payload }) {
           if(unit==="weeks") d.setDate(d.getDate()+n*7);
           if(unit==="months") d.setMonth(d.getMonth()+n);
           if(unit==="years") d.setFullYear(d.getFullYear()+n);
-          const advancedSch = { ...sch, lastTriggered:doneDate, lastDoneDate:doneDate, nextDueDate:d.toISOString().split("T")[0] };
+          const advancedSch = { ...sch, lastTriggered:doneDate, lastDoneDate:doneDate, lastInspectionDate:doneDate, nextDueDate:d.toISOString().split("T")[0] };
           return { ...state, parts, equipment, workOrders:updated, inspectionSchedules:(state.inspectionSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
         }
       }
@@ -3837,11 +3837,12 @@ function Inspections({ state, dispatch }) {
   const schedules = state.inspectionSchedules || [];
   const [modal, setModal] = useState(null);
   const [taskForm, setTaskForm] = useState({ id:null, name:"", frequency:"Monthly", steps:"", notes:"", attachments:[] });
-  const [scheduleForm, setScheduleForm] = useState({ id:null, equipmentId:"", taskId:"", timeInterval:1, timeUnit:"months", nextDueDate:today(), notes:"" });
+  const [scheduleForm, setScheduleForm] = useState({ id:null, equipmentId:"", taskId:"", timeInterval:1, timeUnit:"months", lastInspectionDate:"", nextDueDate:today(), notes:"" });
   const [selectedTask, setSelectedTask] = useState(null);
   const [showInspectionLibrary, setShowInspectionLibrary] = useState(false);
   const [inspectionEveryFilter, setInspectionEveryFilter] = useState("All");
   const [inspectionDueSort, setInspectionDueSort] = useState("asc");
+  const [expandedInspectionEquipment, setExpandedInspectionEquipment] = useState({});
 
   const taskById = id => tasks.find(t=>t.id===id) || null;
   const eqById = id => equipment.find(e=>e.id===id) || null;
@@ -3859,8 +3860,8 @@ function Inspections({ state, dispatch }) {
   };
 
   const openSchedule = (schedule=null) => {
-    const base = schedule || { id:null, equipmentId:"", taskId:"", timeInterval:1, timeUnit:"months", nextDueDate:today(), notes:"" };
-    setScheduleForm({ ...base });
+    const base = schedule || { id:null, equipmentId:"", taskId:"", timeInterval:1, timeUnit:"months", lastInspectionDate:"", nextDueDate:today(), notes:"" };
+    setScheduleForm({ ...base, lastInspectionDate:base.lastInspectionDate || base.lastDoneDate || base.lastTriggered || "" });
     setModal("schedule");
   };
 
@@ -3877,13 +3878,18 @@ function Inspections({ state, dispatch }) {
     if(!scheduleForm.equipmentId || !scheduleForm.taskId) { alert("Choose equipment and an inspection task."); return; }
     const selected = taskById(scheduleForm.taskId);
     const inherited = intervalFromInspectionTask(selected);
+    const calculatedNextDue = scheduleForm.lastInspectionDate
+      ? nextDateFrom(scheduleForm.lastInspectionDate, inherited.timeInterval, inherited.timeUnit)
+      : (scheduleForm.nextDueDate || today());
     const payload = {
       ...scheduleForm,
       ...inherited,
       frequency:selected?.frequency || scheduleForm.frequency || "Monthly",
+      nextDueDate:calculatedNextDue,
+      lastDoneDate:scheduleForm.lastInspectionDate || scheduleForm.lastDoneDate || "",
+      lastTriggered:scheduleForm.lastTriggered || scheduleForm.lastInspectionDate || "",
       id:scheduleForm.id || genId("IS"),
-      created:scheduleForm.created || today(),
-      lastTriggered:scheduleForm.lastTriggered || ""
+      created:scheduleForm.created || today()
     };
     dispatch({ type: scheduleForm.id ? "UPDATE_INSPECTION_SCHEDULE" : "ADD_INSPECTION_SCHEDULE", payload });
     setModal(null);
@@ -3911,6 +3917,32 @@ function Inspections({ state, dispatch }) {
     if(unit === "months") d.setMonth(d.getMonth() + n);
     if(unit === "years") d.setFullYear(d.getFullYear() + n);
     return d.toISOString().split("T")[0];
+  };
+
+  const setScheduleTask = (taskId) => {
+    const selected = taskById(taskId);
+    const inherited = intervalFromInspectionTask(selected);
+    setScheduleForm(f=>({
+      ...f,
+      taskId,
+      ...inherited,
+      frequency:selected?.frequency || f.frequency || "Monthly",
+      nextDueDate:f.lastInspectionDate ? nextDateFrom(f.lastInspectionDate, inherited.timeInterval, inherited.timeUnit) : f.nextDueDate
+    }));
+  };
+
+  const setScheduleLastInspectionDate = (date) => {
+    setScheduleForm(f=>{
+      const selected = taskById(f.taskId);
+      const inherited = intervalFromInspectionTask(selected);
+      return {
+        ...f,
+        ...inherited,
+        lastInspectionDate:date,
+        lastDoneDate:date,
+        nextDueDate:date ? nextDateFrom(date, inherited.timeInterval, inherited.timeUnit) : f.nextDueDate
+      };
+    });
   };
 
   const intervalFromInspectionTask = (task) => {
@@ -3976,6 +4008,30 @@ function Inspections({ state, dispatch }) {
       ? String(a.nextDueDate || "9999-12-31").localeCompare(String(b.nextDueDate || "9999-12-31"))
       : String(b.nextDueDate || "").localeCompare(String(a.nextDueDate || ""))
     );
+
+  const groupedInspectionSchedules = filteredSchedules.reduce((groups, schedule) => {
+    const key = String(schedule.equipmentId || "NO-EQUIPMENT");
+    if(!groups[key]) groups[key] = [];
+    groups[key].push(schedule);
+    return groups;
+  }, {});
+
+  const inspectionEquipmentRows = Object.entries(groupedInspectionSchedules)
+    .map(([equipmentId, items]) => {
+      const eq = eqById(equipmentId);
+      const sortedItems = [...items].sort((a,b)=>String(a.nextDueDate || "9999-12-31").localeCompare(String(b.nextDueDate || "9999-12-31")));
+      const nextDue = sortedItems[0]?.nextDueDate || "";
+      const overdueCount = sortedItems.filter(x => x.nextDueDate && x.nextDueDate < today()).length;
+      return { equipmentId, eq, items:sortedItems, nextDue, overdueCount };
+    })
+    .sort((a,b)=> inspectionDueSort === "asc"
+      ? String(a.nextDue || "9999-12-31").localeCompare(String(b.nextDue || "9999-12-31"))
+      : String(b.nextDue || "").localeCompare(String(a.nextDue || ""))
+    );
+
+  const toggleInspectionEquipment = (equipmentId) => {
+    setExpandedInspectionEquipment(prev => ({ ...prev, [equipmentId]: !prev[equipmentId] }));
+  };
 
   const triggerInspection = (schedule) => {
     const task = taskById(schedule.taskId);
@@ -4096,32 +4152,53 @@ function Inspections({ state, dispatch }) {
         </div>}
       </Card>}
 
-      <Card title="Inspection Schedule / Triggers" right={<span style={{ fontFamily:T.mono, color:T.muted }}>{filteredSchedules.length} shown / {schedules.length} assigned</span>}>
+      <Card title="Inspection Schedule / Triggers" right={<span style={{ fontFamily:T.mono, color:T.muted }}>{filteredSchedules.length} inspections / {inspectionEquipmentRows.length} equipment</span>}>
         <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"end", marginBottom:12 }}>
           <Field label="Every"><select style={{...inp, minWidth:190}} value={inspectionEveryFilter} onChange={e=>setInspectionEveryFilter(e.target.value)}>{["All","Daily","Weekly","Monthly","Quarterly","Semi-Annual","Annual"].map(x=><option key={x} value={x}>{x}</option>)}</select></Field>
           <Field label="Next Due"><select style={{...inp, minWidth:210}} value={inspectionDueSort} onChange={e=>setInspectionDueSort(e.target.value)}><option value="asc">Next Due Ascending</option><option value="desc">Next Due Descending</option></select></Field>
         </div>
-        <div style={{ overflowX:"auto" }}>
-          <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:13 }}>
-            <thead><tr style={{ background:T.grayLt }}>
-              {['Equipment #','Nomenclature','Inspection Task','Every','Next Due','Last Triggered','Notes','Actions'].map(h=><th key={h} style={{ textAlign:"left", padding:"10px", borderBottom:`1px solid ${T.border}`, color:T.subtext }}>{h}</th>)}
-            </tr></thead>
-            <tbody>
-              {filteredSchedules.length===0 && <tr><td colSpan="8" style={{ padding:16, color:T.muted }}>No inspection schedules match this filter.</td></tr>}
-              {filteredSchedules.map(s=>{ const eq=eqById(s.equipmentId); const task=taskById(s.taskId); return (
-                <tr key={s.id} style={{ borderBottom:`1px solid ${T.border}` }}>
-                  <td style={{ padding:"10px", fontFamily:T.mono }}>{eq?.id || s.equipmentId}</td>
-                  <td style={{ padding:"10px" }}>{eq?.name || eq?.nomenclature || "—"}</td>
-                  <td style={{ padding:"10px", fontWeight:700 }}>{task?.name || "Missing task"}</td>
-                  <td style={{ padding:"10px" }}>{scheduleFrequencyLabel(s)}</td>
-                  <td style={{ padding:"10px", fontFamily:T.mono }}>{s.nextDueDate || "—"}</td>
-                  <td style={{ padding:"10px", fontFamily:T.mono }}>{s.lastTriggered || "—"}</td>
-                  <td style={{ padding:"10px", maxWidth:180, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{s.notes || "—"}</td>
-                  <td style={{ padding:"10px" }}><div style={{ display:"flex", gap:6, flexWrap:"wrap" }}><Btn variant="secondary" onClick={()=>triggerInspection(s)}>Trigger WO</Btn><Btn variant="secondary" onClick={()=>openSchedule(s)}>Edit</Btn><Btn variant="danger" onClick={()=>{if(confirm("Delete this inspection assignment?")) dispatch({type:"DELETE_INSPECTION_SCHEDULE", payload:s.id});}}>Delete</Btn></div></td>
-                </tr>
-              );})}
-            </tbody>
-          </table>
+        <div style={{ display:"grid", gap:10 }}>
+          {inspectionEquipmentRows.length===0 && <div style={{ padding:16, color:T.muted, border:`1px solid ${T.border}`, borderRadius:12 }}>No inspection schedules match this filter.</div>}
+          {inspectionEquipmentRows.map(row=>{
+            const equipmentTitle = row.eq?.name || row.eq?.nomenclature || "No nomenclature";
+            const isExpanded = !!expandedInspectionEquipment[row.equipmentId];
+            return <div key={row.equipmentId} style={{ border:`1px solid ${T.border}`, borderRadius:14, overflow:"hidden", background:T.card }}>
+              <button type="button" onClick={()=>toggleInspectionEquipment(row.equipmentId)} style={{ width:"100%", border:"none", background:isExpanded?T.grayLt:"transparent", cursor:"pointer", padding:0, textAlign:"left" }}>
+                <div style={{ display:"grid", gridTemplateColumns:"minmax(120px,.7fr) minmax(180px,1fr) 140px 140px 90px", gap:10, alignItems:"center", padding:"12px 14px", color:T.text }}>
+                  <div style={{ fontFamily:T.mono, fontWeight:900 }}>{row.eq?.id || row.equipmentId}</div>
+                  <div>
+                    <div style={{ fontWeight:800 }}>{equipmentTitle}</div>
+                    <div style={{ color:T.muted, fontSize:12 }}>{row.items.length} assigned inspection{row.items.length===1?"":"s"}{row.overdueCount ? ` • ${row.overdueCount} overdue` : ""}</div>
+                  </div>
+                  <div style={{ color:T.subtext, fontSize:12 }}><b style={{ color:T.text }}>Next Due:</b><br/><span style={{ fontFamily:T.mono }}>{row.nextDue || "—"}</span></div>
+                  <div style={{ color:T.subtext, fontSize:12 }}><b style={{ color:T.text }}>Soonest Task:</b><br/>{taskById(row.items[0]?.taskId)?.name || "—"}</div>
+                  <div style={{ justifySelf:"end", fontWeight:900, color:T.blue }}>{isExpanded ? "▲" : "▼"}</div>
+                </div>
+              </button>
+              {isExpanded && <div style={{ padding:12, borderTop:`1px solid ${T.border}`, background:T.card }}>
+                <div style={{ overflowX:"auto" }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:13 }}>
+                    <thead><tr style={{ background:T.grayLt }}>
+                      {["Inspection Task","Every","Last Inspection","Next Inspection","Last Triggered","Notes","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:"10px", borderBottom:`1px solid ${T.border}`, color:T.subtext }}>{h}</th>)}
+                    </tr></thead>
+                    <tbody>
+                      {row.items.map(s=>{ const task=taskById(s.taskId); return (
+                        <tr key={s.id} style={{ borderBottom:`1px solid ${T.border}` }}>
+                          <td style={{ padding:"10px", fontWeight:800, color:T.text }}>{task?.name || "Missing task"}</td>
+                          <td style={{ padding:"10px", color:T.subtext }}>{scheduleFrequencyLabel(s)}</td>
+                          <td style={{ padding:"10px", fontFamily:T.mono, color:T.subtext }}>{s.lastInspectionDate || s.lastDoneDate || "—"}</td>
+                          <td style={{ padding:"10px", fontFamily:T.mono, color:T.text }}>{s.nextDueDate || "—"}</td>
+                          <td style={{ padding:"10px", fontFamily:T.mono, color:T.subtext }}>{s.lastTriggered || "—"}</td>
+                          <td style={{ padding:"10px", maxWidth:220, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", color:T.subtext }}>{s.notes || "—"}</td>
+                          <td style={{ padding:"10px" }}><div style={{ display:"flex", gap:6, flexWrap:"wrap" }}><Btn variant="secondary" onClick={()=>triggerInspection(s)}>Trigger WO</Btn><Btn variant="secondary" onClick={()=>openSchedule(s)}>Edit</Btn><Btn variant="danger" onClick={()=>{if(confirm("Delete this inspection assignment?")) dispatch({type:"DELETE_INSPECTION_SCHEDULE", payload:s.id});}}>Delete</Btn></div></td>
+                        </tr>
+                      );})}
+                    </tbody>
+                  </table>
+                </div>
+              </div>}
+            </div>;
+          })}
         </div>
       </Card>
 
@@ -4152,10 +4229,14 @@ function Inspections({ state, dispatch }) {
         <Modal title={scheduleForm.id?"Edit Inspection Assignment":"Assign Inspection Task to Equipment"} onClose={()=>setModal(null)}>
           <div style={{ display:"grid", gap:12 }}>
             <Field label="Equipment"><select style={inp} value={scheduleForm.equipmentId} onChange={e=>setScheduleForm(f=>({...f,equipmentId:e.target.value}))}><option value="">Choose equipment...</option>{equipment.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name || e.nomenclature}</option>)}</select></Field>
-            <Field label="Inspection Task"><select style={inp} value={scheduleForm.taskId} onChange={e=>setScheduleForm(f=>({...f,taskId:e.target.value}))}><option value="">Choose task...</option>{tasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></Field>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+            <Field label="Inspection Task"><select style={inp} value={scheduleForm.taskId} onChange={e=>setScheduleTask(e.target.value)}><option value="">Choose task...</option>{tasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></Field>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:10 }}>
               <Field label="Frequency From Task"><input style={{...inp, background:T.grayLt}} readOnly value={taskById(scheduleForm.taskId)?.frequency || "Choose task first"} /></Field>
-              <Field label="Next Due Date"><input style={inp} type="date" value={scheduleForm.nextDueDate} onChange={e=>setScheduleForm(f=>({...f,nextDueDate:e.target.value}))} /></Field>
+              <Field label="Last Inspection Date"><input style={inp} type="date" value={scheduleForm.lastInspectionDate || ""} onChange={e=>setScheduleLastInspectionDate(e.target.value)} /></Field>
+              <Field label="Next Inspection Date"><input style={inp} type="date" value={scheduleForm.nextDueDate || ""} onChange={e=>setScheduleForm(f=>({...f,nextDueDate:e.target.value,lastInspectionDate:e.target.value ? f.lastInspectionDate : f.lastInspectionDate}))} /></Field>
+            </div>
+            <div style={{ marginTop:-4, color:T.muted, fontSize:12 }}>
+              Enter the last inspection date to auto-generate the next inspection date from the task frequency, or enter the next inspection date manually.
             </div>
             <Field label="Assignment Notes"><textarea style={{...inp,minHeight:70}} value={scheduleForm.notes||""} onChange={e=>setScheduleForm(f=>({...f,notes:e.target.value}))} placeholder="Optional notes for this equipment assignment" /></Field>
             <div style={{ display:"flex", justifyContent:"space-between", gap:8 }}>
@@ -7070,7 +7151,7 @@ function FuelTracking({ state, dispatch }) {
           <td style={{ ...fuelCell, minWidth:240 }}><div style={fuelControlBox}><div style={fuelControlRow}><input style={{ ...inp, width:115, height:36 }} type="text" placeholder="30 7/8" value={le.inches||""} onChange={e=>setLevel(c.id,"inches",e.target.value)} /><Btn small onClick={()=>saveLevel(c)}>Log</Btn></div><div style={fuelPreview}>{preview!==null ? `${Math.round(preview).toLocaleString()} gal` : ""}</div><div style={fuelHelp}>Examples: 30, 30.5, 30 1/2, 30 7/8</div><input style={{ ...inp, width:138, minWidth:138, height:36 }} type="date" value={le.date||today()} onChange={e=>setLevel(c.id,"date",e.target.value)} /></div></td>
           <td style={{ ...fuelCell, minWidth:215 }}><div style={fuelActionRow}><Btn small variant="secondary" onClick={()=>openRefill(c)}>Refill</Btn><Btn small variant="secondary" onClick={()=>openEdit(c)}>Edit</Btn><Btn small variant="danger" onClick={()=>confirm("Delete this fuel container and its history?")&&dispatch({type:"DELETE_FUEL_CONTAINER",payload:c.id})}>Delete</Btn></div></td>
         </tr> })}
-        {!containers.length && <tr><td colSpan="8" style={{ padding:24, textAlign:"center", color:T.muted }}>No fuel containers yet. Add a tank/container and enter its inch-to-gallon chart.</td></tr>}
+        {!containers.length && <tr><td colSpan="9" style={{ padding:24, textAlign:"center", color:T.muted }}>No fuel containers yet. Add a tank/container and enter its inch-to-gallon chart.</td></tr>}
       </tbody></table></div>
     </Card>
 
