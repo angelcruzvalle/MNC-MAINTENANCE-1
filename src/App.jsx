@@ -7,7 +7,7 @@ fontLink.rel = "stylesheet";
 fontLink.href = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap";
 document.head.appendChild(fontLink);
 
-const T = {
+const LIGHT_THEME = {
   bg:       "#f4f5f7",
   surface:  "#ffffff",
   card:     "#ffffff",
@@ -31,6 +31,42 @@ const T = {
   shadow:   "0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04)",
   shadowMd: "0 4px 6px rgba(0,0,0,0.06), 0 2px 4px rgba(0,0,0,0.04)",
 };
+
+const DARK_THEME = {
+  ...LIGHT_THEME,
+  bg:       "#0f172a",
+  surface:  "#111827",
+  card:     "#1f2937",
+  border:   "#374151",
+  borderHi: "#4b5563",
+  accentLt: "#1e3a5f",
+  red:      "#f87171",
+  redLt:    "#3b1f25",
+  green:    "#34d399",
+  greenLt:  "#103527",
+  amber:    "#fbbf24",
+  amberLt:  "#3b2d12",
+  gray:     "#9ca3af",
+  grayLt:   "#1f2937",
+  text:     "#f9fafb",
+  subtext:  "#d1d5db",
+  muted:    "#9ca3af",
+  shadow:   "0 1px 3px rgba(0,0,0,0.45), 0 1px 2px rgba(0,0,0,0.35)",
+  shadowMd: "0 4px 8px rgba(0,0,0,0.45), 0 2px 4px rgba(0,0,0,0.35)",
+};
+
+const T = { ...LIGHT_THEME };
+
+function applyThemeMode(mode="light") {
+  Object.assign(T, mode === "dark" ? DARK_THEME : LIGHT_THEME);
+}
+
+function getEffectiveThemeMode(theme="light") {
+  if(theme === "system") {
+    try { return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"; } catch(e) { return "light"; }
+  }
+  return theme === "dark" ? "dark" : "light";
+}
 
 
 const DEFAULT_UNIT_TYPES = [
@@ -6265,6 +6301,7 @@ function SystemSettings({ state, dispatch, onClose }) {
     phone:         s.phone         || "",
     email:         s.email         || "",
     accentColor:   s.accentColor   || "#0052cc",
+    theme:         s.theme         || "light",
     dateFormat:    s.dateFormat    || "MM/DD/YYYY",
     currency:      s.currency      || "USD",
     defaultPriority: s.defaultPriority || "Medium",
@@ -6322,7 +6359,7 @@ function SystemSettings({ state, dispatch, onClose }) {
           <div style={{ marginBottom:14 }}>
             <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:6 }}>Organization Logo</label>
             <div style={{ display:"flex", gap:12, alignItems:"center" }}>
-              {form.logo && <img src={form.logo} alt="logo" style={{ height:48, objectFit:"contain", border:`1px solid ${T.border}`, borderRadius:6, padding:4, background:"#fff" }} />}
+              {form.logo && <img src={form.logo} alt="logo" style={{ height:48, objectFit:"contain", border:`1px solid ${T.border}`, borderRadius:6, padding:4, background:T.surface }} />}
               <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.accent, cursor:"pointer", padding:"7px 14px", border:`1px solid ${T.accent}`, borderRadius:6 }}>
                 Upload Logo
                 <input type="file" accept="image/*" onChange={handleLogo} style={{ display:"none" }} />
@@ -6336,6 +6373,13 @@ function SystemSettings({ state, dispatch, onClose }) {
         <div style={{ marginBottom:16 }}>
           <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Preferences</div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
+            <Field label="Appearance / Theme" half>
+              <select style={sel} value={form.theme} onChange={F("theme")}>
+                <option value="light">☀️ Light Mode</option>
+                <option value="dark">🌙 Dark Mode</option>
+                <option value="system">💻 System Default</option>
+              </select>
+            </Field>
             <Field label="Default Work Order Priority" half>
               <select style={sel} value={form.defaultPriority} onChange={F("defaultPriority")}>
                 {["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}
@@ -6556,7 +6600,7 @@ function SetupWizard({ onComplete }) {
             <div style={{ marginBottom:14 }}>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:6 }}>Organization Logo (optional)</label>
               <div style={{ display:"flex", gap:12, alignItems:"center" }}>
-                {data.logo && <img src={data.logo} alt="logo" style={{ height:64, maxWidth:120, objectFit:"contain", border:`1px solid ${T.border}`, borderRadius:6, padding:4, background:"#fff" }} />}
+                {data.logo && <img src={data.logo} alt="logo" style={{ height:64, maxWidth:120, objectFit:"contain", border:`1px solid ${T.border}`, borderRadius:6, padding:4, background:T.surface }} />}
                 <label style={{ fontFamily:T.sans, fontSize:13, fontWeight:600, color:T.accent, cursor:"pointer", padding:"8px 16px", border:`2px solid ${T.accent}`, borderRadius:7 }}>
                   {data.logo?"Change Logo":"Upload Logo"}
                   <input type="file" accept="image/*" onChange={handleLogo} style={{ display:"none" }} />
@@ -7011,6 +7055,7 @@ export default function App() {
 
   const [dataLoaded, setDataLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState("idle"); /* idle | saving | saved | error */
+  const [systemThemeTick, setSystemThemeTick] = useState(0);
 
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -7024,6 +7069,19 @@ export default function App() {
 
   useEffect(() => {
     loadSession(setSession, setAuthLoading);
+  }, []);
+
+  useEffect(() => {
+    let media;
+    try { media = window.matchMedia("(prefers-color-scheme: dark)"); } catch(e) {}
+    if(!media) return;
+    const onChange = () => setSystemThemeTick(t => t + 1);
+    if(media.addEventListener) media.addEventListener("change", onChange);
+    else if(media.addListener) media.addListener(onChange);
+    return () => {
+      if(media.removeEventListener) media.removeEventListener("change", onChange);
+      else if(media.removeListener) media.removeListener(onChange);
+    };
   }, []);
 
   /* Load user data from Supabase after login; migrate local storage if cloud is empty */
@@ -7348,6 +7406,20 @@ export default function App() {
     reports_combined: <ReportCombined   state={state} />,
   };
 
+  const selectedTheme = state.settings?.theme || "light";
+  const effectiveTheme = getEffectiveThemeMode(selectedTheme);
+  applyThemeMode(effectiveTheme);
+
+  const setThemePreference = (theme) => {
+    dispatch({ type:"UPDATE_SETTINGS", payload:{ ...(state.settings || {}), theme } });
+  };
+
+  const cycleThemePreference = () => {
+    const order = ["light", "dark", "system"];
+    const next = order[(order.indexOf(selectedTheme) + 1) % order.length] || "light";
+    setThemePreference(next);
+  };
+
   if (authLoading) {
     return <div style={{ padding:40, fontSize:20, fontFamily:T.sans }}>Loading...</div>;
   }
@@ -7539,15 +7611,21 @@ export default function App() {
   }
 
   return (
-    <div style={{ minHeight:"100vh", background:T.bg, fontFamily:T.sans }}>
+    <div data-theme={effectiveTheme} style={{ minHeight:"100vh", background:T.bg, color:T.text, fontFamily:T.sans }}>
       <style>{`
         * { box-sizing:border-box; }
-        body { margin:0; }
+        body { margin:0; background:${T.bg}; color:${T.text}; }
         #root { width:100%; min-width:0; }
         table { width:100%; }
+        input, select, textarea { background:${T.surface} !important; color:${T.text} !important; border-color:${T.border} !important; }
+        option { background:${T.surface}; color:${T.text}; }
+        [data-theme="dark"] table, [data-theme="dark"] th, [data-theme="dark"] td { border-color:${T.border} !important; }
+        [data-theme="dark"] th { background:${T.grayLt} !important; color:${T.subtext} !important; }
+        [data-theme="dark"] .print-page, [data-theme="dark"] .print-page * { background:#fff !important; color:#111827 !important; }
+        @media print { body { background:#fff !important; color:#111827 !important; } input, select, textarea { background:#fff !important; color:#111827 !important; } }
         ::-webkit-scrollbar { width:6px; height:6px; }
-        ::-webkit-scrollbar-track { background:#f1f1f1; }
-        ::-webkit-scrollbar-thumb { background:#c1c7d0; border-radius:3px; }
+        ::-webkit-scrollbar-track { background:${T.grayLt}; }
+        ::-webkit-scrollbar-thumb { background:${T.borderHi}; border-radius:3px; }
         input:focus, select:focus, textarea:focus { border-color:${T.accent} !important; box-shadow:0 0 0 3px ${T.accentLt}; outline:none; }
         tr:hover { background:${T.accentLt} !important; }
 
@@ -7597,10 +7675,10 @@ export default function App() {
             max-width:220px !important;
             white-space:normal !important;
             overflow-wrap:anywhere !important;
-            background:#fff !important;
+            background:${T.surface} !important;
             box-shadow:2px 0 5px rgba(15,23,42,.12) !important;
           }
-          main th:first-child { z-index:8 !important; background:#f8fafc !important; }
+          main th:first-child { z-index:8 !important; background:${T.grayLt} !important; }
           main tr:hover td:first-child { background:${T.accentLt} !important; }
           main th:last-child, main td:last-child { padding-right:22px !important; }
           main [style*="overflow:hidden"], main [style*="overflow: hidden"] { overflow:visible !important; }
@@ -7630,7 +7708,7 @@ export default function App() {
       <SlideMenu tab={tab} setTab={setTab} open={menuOpen} onClose={()=>setMenuOpen(false)} onSettings={()=>setShowSettings(true)} companyName={companyName} profile={profile} />
 
       {/* Custom header with profile button */}
-      <header className="no-print" style={{ position:"sticky", top:0, zIndex:1000, background:"#fff", borderBottom:`1px solid ${T.border}`, padding:"0 20px", height:56, display:"flex", alignItems:"center", justifyContent:"space-between", boxShadow:"0 1px 0 #e1e4e8" }}>
+      <header className="no-print" style={{ position:"sticky", top:0, zIndex:1000, background:T.surface, borderBottom:`1px solid ${T.border}`, padding:"0 20px", height:56, display:"flex", alignItems:"center", justifyContent:"space-between", boxShadow:`0 1px 0 ${T.border}` }}>
         <div style={{ display:"flex", alignItems:"center", gap:14 }}>
           <button onClick={()=>setMenuOpen(v=>!v)} style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:7, padding:"7px 9px", cursor:"pointer", display:"flex", flexDirection:"column", gap:4, alignItems:"center" }}>
             <span style={{ display:"block", width:18, height:2, background:T.subtext, borderRadius:1 }}/>
@@ -7649,6 +7727,9 @@ export default function App() {
           <span style={{ fontFamily:T.sans, fontSize:13, color:T.subtext, fontWeight:500 }}>{PAGE_TITLES[tab]}</span>
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <button onClick={cycleThemePreference} title={`Theme: ${selectedTheme === "system" ? "System Default" : selectedTheme === "dark" ? "Dark Mode" : "Light Mode"}`} style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:T.surface, color:T.text, cursor:"pointer", fontSize:13, fontFamily:T.sans }}>
+            {effectiveTheme === "dark" ? "🌙" : "☀️"}
+          </button>
           {/* Sync status indicator */}
           {syncStatus !== "idle" && (
             <span style={{
@@ -7663,11 +7744,11 @@ export default function App() {
           )}
           {/* Notification bell */}
           <NotifBell notifications={state.notifications} dispatch={dispatch} />
-          <button onClick={handleLogout} style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:"#fff", cursor:"pointer", fontSize:13 }}>
+          <button onClick={handleLogout} style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:T.surface, color:T.text, cursor:"pointer", fontSize:13 }}>
             Logout
           </button>
           {/* User profile button */}
-          <button onClick={()=>setShowProfile(true)} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:"none", cursor:"pointer" }}>
+          <button onClick={()=>setShowProfile(true)} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:T.surface, cursor:"pointer" }}>
             <div style={{ width:24, height:24, borderRadius:"50%", background:T.accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, color:"#fff", fontWeight:700, fontFamily:T.mono, overflow:"hidden" }}>
               {profile.photo ? <img src={profile.photo} alt="me" style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : initials}
             </div>
