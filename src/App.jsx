@@ -34,31 +34,45 @@ const LIGHT_THEME = {
 
 const DARK_THEME = {
   ...LIGHT_THEME,
-  bg:       "#0f172a",
+  bg:       "#0b1120",
   surface:  "#111827",
-  card:     "#1f2937",
-  border:   "#374151",
-  borderHi: "#4b5563",
-  accentLt: "#1e3a5f",
-  red:      "#f87171",
+  card:     "#182235",
+  border:   "#334155",
+  borderHi: "#64748b",
+  accent:   "#60a5fa",
+  accentLt: "#172554",
+  red:      "#fca5a5",
   redLt:    "#3b1f25",
-  green:    "#34d399",
-  greenLt:  "#103527",
-  amber:    "#fbbf24",
-  amberLt:  "#3b2d12",
-  gray:     "#9ca3af",
-  grayLt:   "#1f2937",
-  text:     "#f9fafb",
-  subtext:  "#d1d5db",
-  muted:    "#9ca3af",
-  shadow:   "0 1px 3px rgba(0,0,0,0.45), 0 1px 2px rgba(0,0,0,0.35)",
-  shadowMd: "0 4px 8px rgba(0,0,0,0.45), 0 2px 4px rgba(0,0,0,0.35)",
+  green:    "#86efac",
+  greenLt:  "#123524",
+  amber:    "#fcd34d",
+  amberLt:  "#3b2f12",
+  gray:     "#cbd5e1",
+  grayLt:   "#1e293b",
+  text:     "#f8fafc",
+  subtext:  "#e2e8f0",
+  muted:    "#cbd5e1",
+  shadow:   "0 1px 3px rgba(0,0,0,0.55), 0 1px 2px rgba(0,0,0,0.45)",
+  shadowMd: "0 8px 20px rgba(0,0,0,0.50), 0 2px 6px rgba(0,0,0,0.45)",
 };
 
 const T = { ...LIGHT_THEME };
 
 function applyThemeMode(mode="light") {
   Object.assign(T, mode === "dark" ? DARK_THEME : LIGHT_THEME);
+}
+
+function themedStatusStyle(style={}) {
+  try {
+    const isDark = T.bg === DARK_THEME.bg;
+    if(!isDark) return style;
+    return {
+      ...style,
+      bg: T.grayLt,
+      border: T.borderHi,
+      color: style.color === "#7f1d1d" ? T.red : style.color === "#065f46" ? T.green : style.color === "#92400e" || style.color === "#78350f" ? T.amber : T.subtext
+    };
+  } catch(e) { return style; }
 }
 
 function getEffectiveThemeMode(theme="light") {
@@ -701,37 +715,39 @@ function SmartInput({ historyKey, value, onChange, onBlur, listId, extraOptions=
 
 /* -- STATUS STYLES -- */
 const statusStyle = {
-  "Open":                          { color:"#1e40af", bg:"#eff6ff",  border:"#bfdbfe" },
-  "In Progress":                   { color:"#92400e", bg:"#fffbeb",  border:"#fcd34d" },
-  "Completed":                     { color:"#065f46", bg:"#ecfdf5",  border:"#6ee7b7" },
+  "Open":                          { color:T.accent, bg:"#eff6ff",  border:"#bfdbfe" },
+  "In Progress":                   { color:T.amber, bg:"#fffbeb",  border:"#fcd34d" },
+  "Completed":                     { color:T.green, bg:"#ecfdf5",  border:"#6ee7b7" },
   "Awaiting Parts":                { color:"#6b21a8", bg:"#faf5ff",  border:"#e9d5ff" },
   "On Hold":                       { color:"#7f1d1d", bg:"#fef2f2",  border:"#fca5a5" },
   "Pending Diagnostic":            { color:"#0f766e", bg:"#f0fdfa",  border:"#99f6e4" },
-  "Fully Operational":             { color:"#065f46", bg:"#ecfdf5",  border:"#6ee7b7" },
-  "Operational with Deficiencies": { color:"#92400e", bg:"#fffbeb",  border:"#fcd34d" },
+  "Fully Operational":             { color:T.green, bg:"#ecfdf5",  border:"#6ee7b7" },
+  "Operational with Deficiencies": { color:T.amber, bg:"#fffbeb",  border:"#fcd34d" },
   "Out of Service / Deadline":     { color:"#7f1d1d", bg:"#fef2f2",  border:"#fca5a5" },
-  "No Status":                     { color:"#374151", bg:"#f3f4f6",  border:"#d1d5db" },
-  "Active":                        { color:"#065f46", bg:"#ecfdf5",  border:"#6ee7b7" },
-  "Inactive":                      { color:"#374151", bg:"#f3f4f6",  border:"#d1d5db" },
+  "No Status":                     { color:T.subtext, bg:"#f3f4f6",  border:"#d1d5db" },
+  "Active":                        { color:T.green, bg:"#ecfdf5",  border:"#6ee7b7" },
+  "Inactive":                      { color:T.subtext, bg:"#f3f4f6",  border:"#d1d5db" },
   "Out of Service":                { color:"#7f1d1d", bg:"#fef2f2",  border:"#fca5a5" },
-  "OK":                            { color:"#065f46", bg:"#ecfdf5",  border:"#6ee7b7" },
-  "Due Soon":                      { color:"#92400e", bg:"#fffbeb",  border:"#fcd34d" },
+  "OK":                            { color:T.green, bg:"#ecfdf5",  border:"#6ee7b7" },
+  "Due Soon":                      { color:T.amber, bg:"#fffbeb",  border:"#fcd34d" },
   "Overdue":                       { color:"#7f1d1d", bg:"#fef2f2",  border:"#fca5a5" },
 };
 const priorityStyle = {
   "High":   { color:"#7f1d1d", bg:"#fef2f2", border:"#fca5a5" },
   "Medium": { color:"#78350f", bg:"#fff7ed", border:"#fdba74" },
-  "Low":    { color:"#374151", bg:"#f3f4f6", border:"#d1d5db" },
+  "Low":    { color:T.subtext, bg:"#f3f4f6", border:"#d1d5db" },
 };
 const notifColor = { wo:"#1e40af", pm:"#92400e", insp:"#065f46", stock:"#7f1d1d" };
 const notifIcon  = { wo:"📋", pm:"🔧", insp:"🔍", stock:"📦" };
 
 /* -- SHARED UI -- */
 const Badge = ({ label, type="status" }) => {
-  const s = type==="priority" ? priorityStyle[label] : statusStyle[label];
+  const raw = type==="priority" ? priorityStyle[label] : statusStyle[label];
+  const isDark = T.bg === DARK_THEME.bg;
+  const s = raw ? themedStatusStyle(raw) : null;
   if(!s) return <span style={{ fontFamily:T.mono, fontSize:11, color:T.muted }}>{label}</span>;
   return (
-    <span style={{ background:"transparent", color:s.color, border:`1.5px solid ${s.color}`, borderRadius:4, padding:"2px 8px", fontSize:11, fontWeight:600, fontFamily:T.mono, whiteSpace:"nowrap" }}>
+    <span style={{ background:isDark ? s.bg : "transparent", color:s.color, border:`1.5px solid ${isDark ? s.border : s.color}`, borderRadius:4, padding:"2px 8px", fontSize:11, fontWeight:700, fontFamily:T.mono, whiteSpace:"nowrap" }}>
       {label}
     </span>
   );
@@ -753,14 +769,14 @@ const SectionHeading = ({ children, sub, action }) => (
   </div>
 );
 
-const inp = { width:"100%", background:"#fff", border:`1px solid ${T.border}`, borderRadius:6, padding:"8px 11px", color:T.text, fontSize:13, fontFamily:T.sans, boxSizing:"border-box", outline:"none", transition:"border-color .15s" };
+const inp = { width:"100%", background:T.card, border:`1px solid ${T.border}`, borderRadius:6, padding:"8px 11px", color:T.text, fontSize:13, fontFamily:T.sans, boxSizing:"border-box", outline:"none", transition:"border-color .15s" };
 const sel = { ...inp };
 
 const Btn = ({ children, onClick, variant="primary", small, style={}, type="button" }) => {
   const styles = {
     primary: { background:T.accent, color:"#fff", border:"none" },
-    secondary: { background:"#fff", color:T.text, border:`1px solid ${T.border}` },
-    danger: { background:"#fff", color:T.red, border:`1px solid #fca5a5` },
+    secondary: { background:T.card, color:T.text, border:`1px solid ${T.border}` },
+    danger: { background:T.card, color:T.red, border:`1px solid #fca5a5` },
     ghost: { background:"transparent", color:T.subtext, border:"none" },
   };
   return (
@@ -780,7 +796,7 @@ const Field = ({ label, children, half }) => (
 function Modal({ title, onClose, children }) {
   return (
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.4)", zIndex:2000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-      <div style={{ background:"#fff", borderRadius:10, border:`1px solid ${T.border}`, width:"100%", maxWidth:560, maxHeight:"92vh", overflowY:"auto", boxShadow:"0 20px 60px rgba(0,0,0,.15)" }}>
+      <div style={{ background:T.card, borderRadius:10, border:`1px solid ${T.border}`, width:"100%", maxWidth:560, maxHeight:"92vh", overflowY:"auto", boxShadow:"0 20px 60px rgba(0,0,0,.15)" }}>
         <div style={{ padding:"18px 22px", borderBottom:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <h3 style={{ margin:0, fontFamily:T.sans, fontSize:16, fontWeight:700, color:T.text }}>{title}</h3>
           <button onClick={onClose} style={{ background:"none", border:"none", color:T.muted, fontSize:22, cursor:"pointer", lineHeight:1, padding:0 }}>×</button>
@@ -859,7 +875,7 @@ function NotifPanel({ notifications, dispatch, onClose }) {
   }, []);
   void nowTick;
   return (
-    <div style={{ position:"fixed", top:56, right:16, width:360, background:"#fff", border:`1px solid ${T.border}`, borderRadius:10, zIndex:1500, boxShadow:T.shadowMd, overflow:"hidden" }}>
+    <div style={{ position:"fixed", top:56, right:16, width:360, background:T.card, border:`1px solid ${T.border}`, borderRadius:10, zIndex:1500, boxShadow:T.shadowMd, overflow:"hidden" }}>
       <div style={{ padding:"12px 16px", borderBottom:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <span style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text }}>Notifications {unread>0 && <span style={{ background:T.accent, color:"#fff", borderRadius:10, padding:"1px 7px", fontSize:11, marginLeft:4 }}>{unread}</span>}</span>
         <div style={{ display:"flex", gap:8 }}>
@@ -890,7 +906,7 @@ function Header({ notifications, dispatch, currentPage, onMenuToggle }) {
   const unread = notifications.filter(n=>!n.read).length;
   return (
     <>
-      <header style={{ position:"sticky", top:0, zIndex:1000, background:"#fff", borderBottom:`1px solid ${T.border}`, padding:"0 20px", height:56, display:"flex", alignItems:"center", justifyContent:"space-between", boxShadow:"0 1px 0 #e1e4e8" }}>
+      <header style={{ position:"sticky", top:0, zIndex:1000, background:T.card, borderBottom:`1px solid ${T.border}`, padding:"0 20px", height:56, display:"flex", alignItems:"center", justifyContent:"space-between", boxShadow:"0 1px 0 #e1e4e8" }}>
         <div style={{ display:"flex", alignItems:"center", gap:14 }}>
           {/* Hamburger */}
           <button onClick={onMenuToggle} style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:7, padding:"7px 9px", cursor:"pointer", display:"flex", flexDirection:"column", gap:4, alignItems:"center", justifyContent:"center" }}>
@@ -1023,8 +1039,8 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
           <span style={{ flex:1 }}>{n.label}</span>
           {editMenu && (
             <span style={{ display:"flex", gap:4 }} onClick={(e)=>e.stopPropagation()}>
-              <span title="Move up" onClick={()=>moveMenuItem(key, -1)} style={{ border:`1px solid ${T.border}`, borderRadius:6, padding:"1px 6px", background:"#fff", cursor:"pointer" }}>↑</span>
-              <span title="Move down" onClick={()=>moveMenuItem(key, 1)} style={{ border:`1px solid ${T.border}`, borderRadius:6, padding:"1px 6px", background:"#fff", cursor:"pointer" }}>↓</span>
+              <span title="Move up" onClick={()=>moveMenuItem(key, -1)} style={{ border:`1px solid ${T.border}`, borderRadius:6, padding:"1px 6px", background:T.card, cursor:"pointer" }}>↑</span>
+              <span title="Move down" onClick={()=>moveMenuItem(key, 1)} style={{ border:`1px solid ${T.border}`, borderRadius:6, padding:"1px 6px", background:T.card, cursor:"pointer" }}>↓</span>
             </span>
           )}
         </button>
@@ -1042,7 +1058,7 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
       {/* Drawer */}
       <div style={{
         position:"fixed", top:0, left:0, bottom:0, width:editMenu?300:260,
-        background:"#fff", boxShadow:"4px 0 24px rgba(0,0,0,.12)",
+        background:T.card, boxShadow:"4px 0 24px rgba(0,0,0,.12)",
         zIndex:1200, display:"flex", flexDirection:"column",
         transform: open?"translateX(0)":"translateX(-100%)",
         transition:"transform .25s cubic-bezier(.4,0,.2,1), width .18s",
@@ -1063,7 +1079,7 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
         {/* Nav items */}
         <div style={{ flex:1, overflowY:"auto", padding:"10px 0" }}>
           {editMenu && (
-            <div style={{ margin:"0 12px 10px", padding:"10px", border:`1px solid ${T.border}`, borderRadius:9, background:"#f8fafc", fontFamily:T.sans, fontSize:12, color:T.subtext, lineHeight:1.35 }}>
+            <div style={{ margin:"0 12px 10px", padding:"10px", border:`1px solid ${T.border}`, borderRadius:9, background:T.grayLt, fontFamily:T.sans, fontSize:12, color:T.subtext, lineHeight:1.35 }}>
               Drag a section up or down, or use the arrow buttons. Your menu order saves automatically.
             </div>
           )}
@@ -1083,7 +1099,7 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
           <button onClick={()=>setEditMenu(v=>!v)} style={{ width:"100%", marginBottom:10, display:"flex", alignItems:"center", justifyContent:"center", gap:8, border:`1px solid ${editMenu?T.accent:T.border}`, background:editMenu?T.accentLt:"#fff", color:editMenu?T.accent:T.subtext, borderRadius:8, padding:"8px 10px", fontFamily:T.sans, fontSize:13, fontWeight:700, cursor:"pointer" }}>
             ✏️ {editMenu?"Done organizing menu":"Organize menu"}
           </button>
-          {editMenu && <button onClick={resetMenuOrder} style={{ width:"100%", marginBottom:10, border:`1px solid ${T.border}`, background:"#fff", color:T.muted, borderRadius:8, padding:"7px 10px", fontFamily:T.sans, fontSize:12, fontWeight:600, cursor:"pointer" }}>Reset default order</button>}
+          {editMenu && <button onClick={resetMenuOrder} style={{ width:"100%", marginBottom:10, border:`1px solid ${T.border}`, background:T.card, color:T.muted, borderRadius:8, padding:"7px 10px", fontFamily:T.sans, fontSize:12, fontWeight:600, cursor:"pointer" }}>Reset default order</button>}
           <div style={{ display:"flex", alignItems:"center", gap:10 }}>
             <div style={{ width:32, height:32, borderRadius:"50%", background:T.accent, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:T.mono, fontSize:12, color:"#fff", fontWeight:700, overflow:"hidden" }}>
               {profile?.photo ? <img src={profile.photo} alt="me" style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : (profile?.firstName?`${profile.firstName[0]}${profile.lastName?.[0]||""}`.toUpperCase():"JM")}
@@ -1187,7 +1203,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   };
 
   const ActionBtn = ({ icon, label, tab, accent=T.accent, onClick }) => (
-    <button onClick={()=>{ if(customize) return; if(onClick) onClick(); else go(tab); }} disabled={customize} style={{ display:"flex", alignItems:"center", gap:10, border:`1px solid ${T.border}`, background:"#fff", borderRadius:16, padding:"13px 14px", cursor:customize?"default":"pointer", opacity:customize ? .85 : 1, textAlign:"left", boxShadow:"0 8px 20px rgba(15,23,42,.06)" }}>
+    <button onClick={()=>{ if(customize) return; if(onClick) onClick(); else go(tab); }} disabled={customize} style={{ display:"flex", alignItems:"center", gap:10, border:`1px solid ${T.border}`, background:T.card, borderRadius:16, padding:"13px 14px", cursor:customize?"default":"pointer", opacity:customize ? .85 : 1, textAlign:"left", boxShadow:"0 8px 20px rgba(15,23,42,.06)" }}>
       <span style={{ width:34, height:34, borderRadius:12, background:accent+"18", color:accent, display:"grid", placeItems:"center", fontSize:17 }}>{icon}</span>
       <span style={{ display:"flex", flexDirection:"column", lineHeight:1.15 }}><b style={{ fontSize:13 }}>{label}</b><small style={{ color:T.muted, marginTop:3 }}>Open</small></span>
     </button>
@@ -1226,14 +1242,14 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   const DashItem = ({ card, item, children }) => {
     if(isItemHidden(card,item)) return null;
     return <div style={{ position:"relative", paddingTop:customize?6:0 }}>
-      {customize && <button data-dash-control="true" title="Remove this item from this card" onClick={()=>setItemHidden(card,item,true)} style={{ position:"absolute", top:-6, right:-6, width:22, height:22, borderRadius:999, border:`1px solid ${T.border}`, background:"#fff", color:T.red, fontWeight:950, cursor:"pointer", lineHeight:"18px", boxShadow:"0 4px 12px rgba(15,23,42,.12)" }}>×</button>}
+      {customize && <button data-dash-control="true" title="Remove this item from this card" onClick={()=>setItemHidden(card,item,true)} style={{ position:"absolute", top:-6, right:-6, width:22, height:22, borderRadius:999, border:`1px solid ${T.border}`, background:T.card, color:T.red, fontWeight:950, cursor:"pointer", lineHeight:"18px", boxShadow:"0 4px 12px rgba(15,23,42,.12)" }}>×</button>}
       {children}
     </div>;
   };
   const Widget = ({ id, title, subtitle, children, accent=T.accent }) => {
     const hiddenItems = cardHidden[id] || [];
     const addable = Object.entries(itemCatalog[id] || {}).filter(([key])=>hiddenItems.includes(key));
-    return <Card style={{ ...sizeStyle(id), padding:0, overflow:"hidden", borderRadius:22, border:`1px solid ${T.border}`, background:"#fff", boxShadow:"0 12px 30px rgba(15,23,42,.08)", position:"relative" }}>
+    return <Card style={{ ...sizeStyle(id), padding:0, overflow:"hidden", borderRadius:22, border:`1px solid ${T.border}`, background:T.card, boxShadow:"0 12px 30px rgba(15,23,42,.08)", position:"relative" }}>
       <div style={{ height:5, background:accent }} />
       <div style={{ padding:18 }}>
         <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:10, marginBottom:14 }}>
@@ -1255,7 +1271,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
       </div>
     </Card>;
   };
-  const smallControl = { height:28, border:`1px solid ${T.border}`, background:"#fff", borderRadius:9, padding:"0 8px", fontSize:11, fontWeight:900, cursor:"pointer" };
+  const smallControl = { height:28, border:`1px solid ${T.border}`, background:T.card, borderRadius:9, padding:"0 8px", fontSize:11, fontWeight:900, cursor:"pointer" };
 
   const quickActions = <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))", gap:10 }}>
     <ActionBtn icon="➕" label="New Work Order" tab="workorders" accent="#2563eb" />
@@ -1278,7 +1294,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     </Widget>,
     today:<Widget id="today" title="Today’s Game Plan" subtitle="Simple order of work for the day" accent="#0f766e">
       <DashItem card="today" item="plan"><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:10 }}>
-        {[{n:"1",t:"Protect uptime",d:`Check ${outOfSvc} deadline assets and ${withDefic} deficiencies.`},{n:"2",t:"Clear PM risk",d:`Handle ${pmOverdue} overdue and ${pmDueSoon} due soon services.`},{n:"3",t:"Unblock repairs",d:`Review ${awaitParts} awaiting-parts work orders.`},{n:"4",t:"Close the loop",d:`Update notes, parts used, labor, and completed jobs.`}].map(x=><div key={x.n} style={{ border:`1px solid ${T.border}`, borderRadius:18, padding:14, background:"#fff" }}><div style={{ display:"flex", gap:10 }}><b style={{ width:28, height:28, borderRadius:10, background:T.accentLt, color:T.accent, display:"grid", placeItems:"center" }}>{x.n}</b><div><b>{x.t}</b><div style={{ color:T.muted, fontSize:12, marginTop:4 }}>{x.d}</div></div></div></div>)}
+        {[{n:"1",t:"Protect uptime",d:`Check ${outOfSvc} deadline assets and ${withDefic} deficiencies.`},{n:"2",t:"Clear PM risk",d:`Handle ${pmOverdue} overdue and ${pmDueSoon} due soon services.`},{n:"3",t:"Unblock repairs",d:`Review ${awaitParts} awaiting-parts work orders.`},{n:"4",t:"Close the loop",d:`Update notes, parts used, labor, and completed jobs.`}].map(x=><div key={x.n} style={{ border:`1px solid ${T.border}`, borderRadius:18, padding:14, background:T.card }}><div style={{ display:"flex", gap:10 }}><b style={{ width:28, height:28, borderRadius:10, background:T.accentLt, color:T.accent, display:"grid", placeItems:"center" }}>{x.n}</b><div><b>{x.t}</b><div style={{ color:T.muted, fontSize:12, marginTop:4 }}>{x.d}</div></div></div></div>)}
       </div></DashItem>
     </Widget>,
     workorders:<Widget id="workorders" title="Work Orders" subtitle="Current workload without digging" accent={highPriority?T.red:T.accent}>
@@ -1310,7 +1326,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap" }}>
       <div><h2 style={{ margin:"0 0 4px", fontSize:30, letterSpacing:-.8 }}>Dashboard</h2><div style={{ color:T.muted, fontSize:13 }}>A clean home base for maintenance work, decisions, and quick actions.</div></div>
       <div data-dash-control="true" style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-        <select value={activePreset} onChange={e=>applyPreset(e.target.value)} style={{ height:38, border:`1px solid ${T.border}`, borderRadius:12, padding:"0 12px", background:"#fff", fontWeight:900 }}>
+        <select value={activePreset} onChange={e=>applyPreset(e.target.value)} style={{ height:38, border:`1px solid ${T.border}`, borderRadius:12, padding:"0 12px", background:T.card, fontWeight:900 }}>
           <option value="calm">Calm Operations</option>
           <option value="mechanic">Mechanic Daily Board</option>
           <option value="manager">Manager Console</option>
@@ -1321,7 +1337,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
       </div>
     </div>
 
-    {customize && <Card style={{ padding:16, border:`2px dashed ${T.accent}`, borderRadius:20, background:"#fff" }}>
+    {customize && <Card style={{ padding:16, border:`2px dashed ${T.accent}`, borderRadius:20, background:T.card }}>
       <div style={{ fontSize:16, fontWeight:950, marginBottom:4 }}>Dashboard edit mode</div>
       <div style={{ fontSize:12, color:T.muted, marginBottom:12 }}>Cards are locked while editing. Pick a preset, move cards, resize them, or hide what you do not use. Your changes save as “My Custom Dashboard.”</div>
       <div data-dash-control="true" style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:12 }}>
@@ -1360,8 +1376,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const WO_TYPES = [
     { id:"Repair",     label:"Repair Work Order",     icon:"🛠", desc:"Fault repairs and breakdown response",     color:"#7f1d1d", bg:"#fef2f2" },
-    { id:"Service",    label:"Service Work Order",    icon:"🧰", desc:"Preventive maintenance service generated from PM tasks", color:"#1e40af", bg:"#eff6ff" },
-    { id:"Inspection", label:"Inspection Work Order", icon:"🔍", desc:"Equipment inspection generated from inspection tasks", color:"#065f46", bg:"#ecfdf5" },
+    { id:"Service",    label:"Service Work Order",    icon:"🧰", desc:"Preventive maintenance service generated from PM tasks", color:T.accent, bg:"#eff6ff" },
+    { id:"Inspection", label:"Inspection Work Order", icon:"🔍", desc:"Equipment inspection generated from inspection tasks", color:T.green, bg:"#ecfdf5" },
   ];
 
   /* Intervals shown for Service and Inspection types */
@@ -1859,7 +1875,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const typeInfo = WO_TYPES.find(t=>t.id===form.woType);
     const techObj = technicians.find(t=>t.id===form.techId);
     const TypeSection = ({ title, subtitle, accent, children }) => (
-      <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${accent||T.border}`, borderRadius:10, padding:14, background:"#fff" }}>
+      <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${accent||T.border}`, borderRadius:10, padding:14, background:T.card }}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, marginBottom:10 }}>
           <div>
             <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:accent||T.text, textTransform:"uppercase", letterSpacing:.5 }}>{title}</div>
@@ -1887,9 +1903,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           </select>
         </Field>
 
-        <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:"#fff" }}>
+        <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.card }}>
           <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:6 }}>Description <span style={{ color:T.red }}>*</span></label>
-          <textarea style={{ ...inp, minHeight:90, resize:"vertical", background:"#fff" }} value={form.faultDescription||""} onChange={e=>setForm(f=>({...f,faultEnabled:true,faultDescription:e.target.value}))} placeholder="Describe the problem, complaint, symptom, or failure..." />
+          <textarea style={{ ...inp, minHeight:90, resize:"vertical", background:T.card }} value={form.faultDescription||""} onChange={e=>setForm(f=>({...f,faultEnabled:true,faultDescription:e.target.value}))} placeholder="Describe the problem, complaint, symptom, or failure..." />
         </div>
 
         <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.grayLt }}>
@@ -1924,7 +1940,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div
             onClick={(e)=>e.stopPropagation()}
             onKeyDown={(e)=>e.stopPropagation()}
-            style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:"#fff" }}
+            style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.card }}
           >
             <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, textTransform:"uppercase", letterSpacing:.5, marginBottom:8 }}>Inspection Checklist Results</div>
             <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginBottom:10 }}>Mark Pass or Fail for each inspection step. Comments are useful when a step fails.</div>
@@ -1970,7 +1986,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                 <button onClick={()=>setShowNewPart(showNewPart===idx?null:idx)} style={{ padding:"6px 8px", border:`1px solid ${T.border}`, borderRadius:6, background:T.grayLt, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.accent, whiteSpace:"nowrap" }}>
                   {showNewPart===idx?"Close":"Inventory"}
                 </button>
-                <button onClick={()=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr.splice(idx,1); return {...f,partsUsed:arr}; })} style={{ padding:"6px 10px", border:"1px solid #fca5a5", borderRadius:6, background:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>
+                <button onClick={()=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr.splice(idx,1); return {...f,partsUsed:arr}; })} style={{ padding:"6px 10px", border:`1px solid ${T.red}`, borderRadius:6, background:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>
               </div>
               {p.partId && (
                 <div style={{ fontFamily:T.sans, fontSize:11, color:(+p.qty||0)>(+p.availableQty||0)?T.red:T.green, margin:"0 0 6px 2px", fontWeight:600 }}>
@@ -2032,7 +2048,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               )}
             </div>
           ))}
-          <button onClick={()=>setForm(f=>({...f,partsUsed:[...(f.partsUsed||[]),{name:"",qty:1,unit:"ea",unitCost:""}]}))} style={{ background:"none", border:"1px dashed #c8d0e0", borderRadius:6, padding:"7px 16px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600, width:"100%" }}>
+          <button onClick={()=>setForm(f=>({...f,partsUsed:[...(f.partsUsed||[]),{name:"",qty:1,unit:"ea",unitCost:""}]}))} style={{ background:"none", border:`1px dashed ${T.borderHi}`, borderRadius:6, padding:"7px 16px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600, width:"100%" }}>
             + Add Part
           </button>
         </div>
@@ -2162,7 +2178,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div
             onClick={(e)=>e.stopPropagation()}
             onKeyDown={(e)=>e.stopPropagation()}
-            style={{ border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden", background:"#fff" }}
+            style={{ border:`1px solid ${T.border}`, borderRadius:8, overflow:"hidden", background:T.card }}
           >
             <div style={{ background:T.text, color:"#fff", padding:"7px 12px", fontFamily:T.sans, fontSize:11, fontWeight:700, textTransform:"uppercase", letterSpacing:.6 }}>Inspection Checklist</div>
             <div style={{ display:"grid", gap:8, padding:10 }}>
@@ -2190,8 +2206,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
 
         {wo.woType==="Service" && (wo.meterReading||wo.nextServiceDue||wo.serviceChecklist) && (
-          <div style={{ background:"#eff6ff", borderRadius:6, padding:"10px 12px", border:"1px solid #bfdbfe" }}>
-            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:"#1e40af", textTransform:"uppercase", letterSpacing:.4, marginBottom:6 }}>Service Block</div>
+          <div style={{ background:T.accentLt, borderRadius:6, padding:"10px 12px", border:`1px solid ${T.borderHi}` }}>
+            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.accent, textTransform:"uppercase", letterSpacing:.4, marginBottom:6 }}>Service Block</div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, fontFamily:T.sans, fontSize:13, color:T.text }}>
               <div><b>Meter / Hours:</b><br />{wo.meterReading||"—"}</div>
               <div><b>Next Service Due:</b><br />{wo.nextServiceDue||"—"}</div>
@@ -2201,8 +2217,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         )}
 
         {wo.woType==="Inspection" && (wo.inspectionResult||wo.followUpRequired||wo.inspectionFindings) && (
-          <div style={{ background:"#ecfdf5", borderRadius:6, padding:"10px 12px", border:"1px solid #bbf7d0" }}>
-            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:"#065f46", textTransform:"uppercase", letterSpacing:.4, marginBottom:6 }}>Inspection Block</div>
+          <div style={{ background:T.greenLt, borderRadius:6, padding:"10px 12px", border:`1px solid ${T.borderHi}` }}>
+            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.green, textTransform:"uppercase", letterSpacing:.4, marginBottom:6 }}>Inspection Block</div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, fontFamily:T.sans, fontSize:13, color:T.text }}>
               <div><b>Result:</b><br />{wo.inspectionResult||"—"}</div>
               <div><b>Follow-Up:</b><br />{wo.followUpRequired||"—"}</div>
@@ -2254,7 +2270,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:16 }}>
         {/* Row 1: Status tabs + New WO */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
-          <div style={{ display:"flex", gap:0, background:"#fff", border:`1px solid ${T.border}`, borderRadius:7, overflow:"hidden", flexWrap:"wrap" }}>
+          <div style={{ display:"flex", gap:0, background:T.card, border:`1px solid ${T.border}`, borderRadius:7, overflow:"hidden", flexWrap:"wrap" }}>
             {STATUS_TABS.map((s,i)=>(
               <button key={s} onClick={()=>setFilter(s)} style={{ padding:"7px 12px", border:"none", borderLeft:i>0?`1px solid ${T.border}`:"none", background:filter===s?T.accent:"#fff", color:filter===s?"#fff":T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:filter===s?600:400 }}>{s}</button>
             ))}
@@ -2392,7 +2408,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                     <button
                       title="Delete Work Order"
                       onClick={e=>{ e.stopPropagation(); del(wo.id); }}
-                      style={{ background:"#fff5f5", border:"1px solid #fca5a5", borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:14, color:T.red, display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
+                      style={{ background:"#fff5f5", border:`1px solid ${T.red}`, borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:14, color:T.red, display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
                       🗑
                     </button>
                   </td>
@@ -2917,7 +2933,7 @@ function Equipment({ state, dispatch }) {
             <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:2 }}>Track hours, mileage, and fuel for this equipment</div>
           </div>
           <button type="button" onClick={()=>setForm(f=>({...f,trackUsage:!f.trackUsage}))} style={{ width:44, height:24, borderRadius:12, border:"none", background:form.trackUsage?T.accent:"#d1d5db", cursor:"pointer", position:"relative", transition:"background .2s", flexShrink:0 }}>
-            <span style={{ position:"absolute", top:3, left:form.trackUsage?22:3, width:18, height:18, borderRadius:"50%", background:"#fff", transition:"left .2s", display:"block", boxShadow:"0 1px 3px rgba(0,0,0,.2)" }}/>
+            <span style={{ position:"absolute", top:3, left:form.trackUsage?22:3, width:18, height:18, borderRadius:"50%", background:T.card, transition:"left .2s", display:"block", boxShadow:"0 1px 3px rgba(0,0,0,.2)" }}/>
           </button>
         </div>
         {form.trackUsage && (
@@ -3021,7 +3037,7 @@ function Equipment({ state, dispatch }) {
                       type="button"
                       onClick={(e)=>{ e.stopPropagation(); setHistoryWO(wo); setHistoryEdit(true); }}
                       title="Edit this archived work order"
-                      style={{ border:`1px solid ${T.border}`, background:"#fff", borderRadius:7, padding:"5px 8px", cursor:"pointer", fontSize:14, lineHeight:1 }}
+                      style={{ border:`1px solid ${T.border}`, background:T.card, borderRadius:7, padding:"5px 8px", cursor:"pointer", fontSize:14, lineHeight:1 }}
                     >
                       ✏️
                     </button>
@@ -3052,7 +3068,7 @@ function Equipment({ state, dispatch }) {
                     <Btn small onClick={()=>setHistoryEdit(true)}>✏ Edit</Btn>
                   </div>
                 </div>
-                <div style={{ border:`2px solid ${T.text}`, borderRadius:8, overflow:"hidden", background:"#fff" }}>
+                <div style={{ border:`2px solid ${T.text}`, borderRadius:8, overflow:"hidden", background:T.card }}>
                   <div style={{ background:T.text, color:"#fff", padding:"10px 14px", display:"flex", justifyContent:"space-between", gap:12, alignItems:"center" }}>
                     <div>
                       <div style={{ fontSize:17, fontWeight:900, textTransform:"uppercase", letterSpacing:.4 }}>{historyWO.woType || historyWO.type || "Work Order"}</div>
@@ -3399,7 +3415,7 @@ function Equipment({ state, dispatch }) {
 
               {/* ── Attachment Sub-Rows (dropdown) ── */}
               {isExpanded && hasAttach && (
-                <div style={{ border:`1px solid ${T.accent}44`, borderTop:"none", borderRadius:"0 0 8px 8px", overflow:"hidden", background:"#f8fbff" }}>
+                <div style={{ border:`1px solid ${T.accent}44`, borderTop:"none", borderRadius:"0 0 8px 8px", overflow:"hidden", background:T.accentLt }}>
                   {/* Header */}
                   <div style={{ padding:"6px 18px 6px 108px", background:T.accentLt, borderBottom:`1px solid ${T.accent}22`, display:"flex", alignItems:"center", gap:8 }}>
                     <span style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.accent, textTransform:"uppercase", letterSpacing:.8 }}>Attachments / Implements</span>
@@ -3453,7 +3469,7 @@ function Equipment({ state, dispatch }) {
           );
         })}
         {filtered.length===0 && (
-          <div style={{ padding:48, textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13, background:"#fff", borderRadius:8, border:`1px solid ${T.border}` }}>
+          <div style={{ padding:48, textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13, background:T.card, borderRadius:8, border:`1px solid ${T.border}` }}>
             No equipment matches your filters.
           </div>
         )}
@@ -3624,7 +3640,7 @@ function Parts({ state, dispatch }) {
             <span style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:"#fff" }}>Inventory Update — Enter current quantities on hand</span>
             <div style={{ display:"flex", gap:8 }}>
               <button onClick={()=>setInvUpdate(null)} style={{ background:"none", border:"1px solid #ffffff66", borderRadius:6, padding:"5px 12px", color:"#fff", cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>Cancel</button>
-              <button onClick={saveInvUpdate} style={{ background:"#fff", border:"none", borderRadius:6, padding:"5px 14px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:700 }}>Save All</button>
+              <button onClick={saveInvUpdate} style={{ background:T.card, border:"none", borderRadius:6, padding:"5px 14px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:700 }}>Save All</button>
             </div>
           </div>
           <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
@@ -3689,7 +3705,7 @@ function Parts({ state, dispatch }) {
                   </tr>
                   {expanded===p.id && (
                     <tr style={{ borderBottom:`1px solid ${T.border}` }}>
-                      <td colSpan={8} style={{ padding:"12px 20px", background:"#f8fbff" }}>
+                      <td colSpan={8} style={{ padding:"12px 20px", background:T.accentLt }}>
                         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:"10px 24px", marginBottom:12 }}>
                           {[["Vendor",p.vendor],["Location",p.location],["Unit Type",p.unit||"ea"],["Stock Status",stockStatus],["Min Qty",p.minQty],["PO Number",p.poNumber],["Date Received",p.dateReceived],["Fits Model",p.modelFit]].filter(([,v])=>v).map(([k,v])=>(
                             <div key={k}><div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div><div style={{ fontFamily:T.sans, fontSize:13, color:T.text, marginTop:3 }}>{v}</div></div>
@@ -3699,7 +3715,7 @@ function Parts({ state, dispatch }) {
                           <span style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext }}>Low Stock Alert:</span>
                           <button type="button" onClick={()=>dispatch({type:"UPDATE_PART",payload:{...p,lowStockAlert:!(p.lowStockAlert!==false)}})}
                             style={{ width:44, height:24, borderRadius:12, border:"none", background:p.lowStockAlert!==false?T.accent:"#d1d5db", cursor:"pointer", position:"relative", transition:"background .2s" }}>
-                            <span style={{ position:"absolute", top:3, left:p.lowStockAlert!==false?22:3, width:18, height:18, borderRadius:"50%", background:"#fff", transition:"left .2s", display:"block" }}/>
+                            <span style={{ position:"absolute", top:3, left:p.lowStockAlert!==false?22:3, width:18, height:18, borderRadius:"50%", background:T.card, transition:"left .2s", display:"block" }}/>
                           </button>
                           <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>{p.lowStockAlert!==false?"On":"Off"}</span>
                         </div>
@@ -3734,7 +3750,7 @@ function Parts({ state, dispatch }) {
               <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext }}>Low Stock Alert:</label>
               <button type="button" onClick={()=>setForm(f=>({...f,lowStockAlert:!(f.lowStockAlert!==false)}))}
                 style={{ width:44, height:24, borderRadius:12, border:"none", background:form.lowStockAlert!==false?T.accent:"#d1d5db", cursor:"pointer", position:"relative", transition:"background .2s" }}>
-                <span style={{ position:"absolute", top:3, left:form.lowStockAlert!==false?22:3, width:18, height:18, borderRadius:"50%", background:"#fff", transition:"left .2s", display:"block" }}/>
+                <span style={{ position:"absolute", top:3, left:form.lowStockAlert!==false?22:3, width:18, height:18, borderRadius:"50%", background:T.card, transition:"left .2s", display:"block" }}/>
               </button>
               <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>{form.lowStockAlert!==false?"Alert ON":"Alert OFF"}</span>
             </div>
@@ -3767,10 +3783,10 @@ function Parts({ state, dispatch }) {
               <input style={inp} placeholder="Location" value={p.location} onChange={e=>setPoRow(i,"location",e.target.value)} />
               <input style={inp} list="po-model-options" placeholder="Fits model" value={p.modelFit||""} onChange={e=>setPoRow(i,"modelFit",e.target.value)} />
               <datalist id="po-model-options">{modelOptions.map(m=><option key={m} value={m} />)}</datalist>
-              {poForm.parts.length>1?<button onClick={()=>delPoRow(i)} style={{ background:"none", border:"1px solid #fca5a5", borderRadius:5, color:T.red, cursor:"pointer", padding:"6px 8px", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>:<div/>}
+              {poForm.parts.length>1?<button onClick={()=>delPoRow(i)} style={{ background:"none", border:`1px solid ${T.red}`, borderRadius:5, color:T.red, cursor:"pointer", padding:"6px 8px", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>:<div/>}
             </div>
           ))}
-          <button onClick={addPoRow} style={{ background:"none", border:"1px dashed #c8d0e0", borderRadius:6, padding:"7px 14px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600, width:"100%", marginBottom:12 }}>+ Add Another Part</button>
+          <button onClick={addPoRow} style={{ background:"none", border:`1px dashed ${T.borderHi}`, borderRadius:6, padding:"7px 14px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600, width:"100%", marginBottom:12 }}>+ Add Another Part</button>
           <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
             <Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn>
             <Btn onClick={savePO}>Save All Parts</Btn>
@@ -4019,7 +4035,7 @@ function Inspections({ state, dispatch }) {
             </tbody>
           </table>
         </div>
-        {selectedTask && <div style={{ marginTop:14, border:`1px solid ${T.border}`, borderRadius:14, padding:14, background:"#fff" }}>
+        {selectedTask && <div style={{ marginTop:14, border:`1px solid ${T.border}`, borderRadius:14, padding:14, background:T.card }}>
           <div style={{ display:"flex", justifyContent:"space-between", gap:10, flexWrap:"wrap", alignItems:"center" }}>
             <div>
               <div style={{ fontWeight:800, color:T.text }}>{selectedTask.name}</div>
@@ -4598,7 +4614,7 @@ function PM({ state, dispatch }) {
     <div>
       {/* Auto-trigger banner */}
       {triggered.length>0 && (
-        <div style={{ background:"#fef2f2", border:"1px solid #fca5a5", borderRadius:8, padding:"12px 16px", marginBottom:16, display:"flex", gap:10, alignItems:"center" }}>
+        <div style={{ background:T.redLt, border:`1px solid ${T.red}`, borderRadius:8, padding:"12px 16px", marginBottom:16, display:"flex", gap:10, alignItems:"center" }}>
           <span style={{ fontSize:20 }}>🚨</span>
           <div style={{ fontFamily:T.sans, fontSize:13, color:T.red, fontWeight:600 }}>
             {triggered.length} PM schedule{triggered.length>1?"s":""} triggered — work orders auto-generated.
@@ -4616,7 +4632,7 @@ function PM({ state, dispatch }) {
       </div>
 
 
-      <div style={{ border:`1px solid ${T.border}`, borderRadius:14, background:"#fff", overflow:"hidden", marginBottom:18, boxShadow:"0 1px 2px rgba(15,23,42,.04)" }}>
+      <div style={{ border:`1px solid ${T.border}`, borderRadius:14, background:T.card, overflow:"hidden", marginBottom:18, boxShadow:"0 1px 2px rgba(15,23,42,.04)" }}>
         <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"center", padding:"12px 14px", background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
           <div>
             <h3 style={{ margin:0, fontFamily:T.sans, fontSize:16, color:T.text }}>Assigned Preventive Maintenance</h3>
@@ -4632,7 +4648,7 @@ function PM({ state, dispatch }) {
           <div style={{ overflow:"auto" }}>
             <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:12, minWidth:900 }}>
               <thead>
-                <tr style={{ background:"#f8fafc", borderBottom:`1px solid ${T.border}` }}>
+                <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
                   {["Equipment #","Equipment","Tasks","Current Usage","Status","Actions"].map(h=>(
                     <th key={h} style={{ padding:"9px 10px", textAlign:"left", fontSize:10, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, whiteSpace:"nowrap" }}>{h}</th>
                   ))}
@@ -4657,9 +4673,9 @@ function PM({ state, dispatch }) {
                         <td style={{ padding:"8px 10px", whiteSpace:"nowrap", color:T.muted, fontSize:11 }}>Click to {expanded?"hide":"show"} tasks</td>
                       </tr>
                       {expanded && (
-                        <tr style={{ borderBottom:`1px solid ${T.border}`, background:"#f8fafc" }}>
+                        <tr style={{ borderBottom:`1px solid ${T.border}`, background:T.grayLt }}>
                           <td colSpan={6} style={{ padding:"0 10px 12px 38px" }}>
-                            <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:12, background:"#fff", border:`1px solid ${T.border}`, borderRadius:10, overflow:"hidden" }}>
+                            <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:12, background:T.card, border:`1px solid ${T.border}`, borderRadius:10, overflow:"hidden" }}>
                               <thead>
                                 <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
                                   {["PM Task","Triggers","Next Due","Status","Actions"].map(h=>(
@@ -4704,7 +4720,7 @@ function PM({ state, dispatch }) {
             </div>
           ) : (
             <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-              <div style={{ border:`1px solid ${T.border}`, borderRadius:12, overflow:"hidden", background:"#fff" }}>
+              <div style={{ border:`1px solid ${T.border}`, borderRadius:12, overflow:"hidden", background:T.card }}>
                 <div style={{ padding:"10px 12px", background:T.grayLt, borderBottom:`1px solid ${T.border}`, fontFamily:T.sans, fontSize:11, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>
                   Tasks Library — Spreadsheet List
                 </div>
@@ -4757,7 +4773,7 @@ function PM({ state, dispatch }) {
                 const steps = (t.steps||[]).filter(Boolean);
                 const parts = (t.parts||[]).filter(p=>p.name);
                 return (
-                  <div style={{ border:`1px solid ${T.border}`, borderRadius:12, padding:16, background:"#fff" }}>
+                  <div style={{ border:`1px solid ${T.border}`, borderRadius:12, padding:16, background:T.card }}>
                     <div style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"flex-start", marginBottom:12 }}>
                       <div>
                         <h3 style={{ margin:"0 0 4px", fontFamily:T.sans, fontSize:18, color:T.text }}>{t.name||"Unnamed Task"}</h3>
@@ -4831,7 +4847,7 @@ function PM({ state, dispatch }) {
                   {(taskForm.steps||[]).length>1&&<button onClick={()=>delStep(i)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
                 </div>
               ))}
-              <button onClick={addTaskStep} style={{ background:"none", border:"1px dashed #c8d0e0", borderRadius:6, padding:"5px 12px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>+ Add Step</button>
+              <button onClick={addTaskStep} style={{ background:"none", border:`1px dashed ${T.borderHi}`, borderRadius:6, padding:"5px 12px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>+ Add Step</button>
             </div>
             <div>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:8 }}>Parts & Lubricants Required</label>
@@ -4849,7 +4865,7 @@ function PM({ state, dispatch }) {
                   {(taskForm.parts||[]).length>1?<button onClick={()=>delTaskPart(i)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>:<div/>}
                 </div>
               ))}
-              <button onClick={addTaskPart} style={{ background:"none", border:"1px dashed #c8d0e0", borderRadius:6, padding:"5px 12px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>+ Add Part / Lubricant</button>
+              <button onClick={addTaskPart} style={{ background:"none", border:`1px dashed ${T.borderHi}`, borderRadius:6, padding:"5px 12px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>+ Add Part / Lubricant</button>
             </div>
 
             {/* Multi-trigger section */}
@@ -4859,7 +4875,7 @@ function PM({ state, dispatch }) {
                 <button onClick={addTrigger} style={{ background:"none", border:`1px solid ${T.accent}`, borderRadius:5, padding:"3px 10px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:600 }}>+ Add Trigger</button>
               </div>
               {(taskForm.triggers||[]).map((tr,i)=>(
-                <div key={i} style={{ background:"#fff", border:`1px solid ${T.border}`, borderRadius:7, padding:"10px 12px", marginBottom:8 }}>
+                <div key={i} style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:7, padding:"10px 12px", marginBottom:8 }}>
                   <div style={{ display:"flex", gap:6, marginBottom:8, alignItems:"center" }}>
                     <span style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted }}>Trigger {i+1}</span>
                     <div style={{ display:"flex", gap:4, marginLeft:4 }}>
@@ -5244,7 +5260,7 @@ function WOSettings({ state, dispatch, onClose }) {
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:`1px solid ${T.border}` }}>
       <span style={{ fontFamily:T.sans, fontSize:13, color:T.text }}>{label}</span>
       <button onClick={()=>setForm(f=>({...f,[k]:!f[k]}))} style={{ width:40, height:22, borderRadius:11, border:"none", background:form[k]?T.accent:"#d1d5db", cursor:"pointer", position:"relative", transition:"background .2s" }}>
-        <span style={{ position:"absolute", top:2, left:form[k]?18:2, width:18, height:18, borderRadius:"50%", background:"#fff", transition:"left .2s", display:"block" }}/>
+        <span style={{ position:"absolute", top:2, left:form[k]?18:2, width:18, height:18, borderRadius:"50%", background:T.card, transition:"left .2s", display:"block" }}/>
       </button>
     </div>
   );
@@ -5418,9 +5434,9 @@ function UsageTracking({ state, dispatch }) {
     return (
       <Modal title={eq.name+" — Usage Report"} onClose={()=>setDetailEq(null)}>
         <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap" }}>
-          {showH&&<div style={{ flex:1, background:"#eff6ff", borderRadius:8, padding:"12px 16px", border:"1px solid #bfdbfe", minWidth:120 }}>
-            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:"#1e40af", textTransform:"uppercase", letterSpacing:.5 }}>Total Hours</div>
-            <div style={{ fontFamily:T.sans, fontSize:28, fontWeight:800, color:"#1e40af" }}>{totH.toFixed(1)}</div>
+          {showH&&<div style={{ flex:1, background:T.accentLt, borderRadius:8, padding:"12px 16px", border:`1px solid ${T.borderHi}`, minWidth:120 }}>
+            <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.accent, textTransform:"uppercase", letterSpacing:.5 }}>Total Hours</div>
+            <div style={{ fontFamily:T.sans, fontSize:28, fontWeight:800, color:T.accent }}>{totH.toFixed(1)}</div>
           </div>}
           {showM&&<div style={{ flex:1, background:"#f0fdf4", borderRadius:8, padding:"12px 16px", border:"1px solid #86efac", minWidth:120 }}>
             <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.green, textTransform:"uppercase", letterSpacing:.5 }}>Total Mileage</div>
@@ -5517,7 +5533,7 @@ function UsageTracking({ state, dispatch }) {
                 {/* Current Hours */}
                 <div>
                   {showH
-                    ? <div style={{ fontFamily:T.sans, fontSize:18, fontWeight:700, color:"#1e40af" }}>{totH.toFixed(1)} <span style={{ fontSize:11, fontWeight:400, color:"#1e40af" }}>hrs</span></div>
+                    ? <div style={{ fontFamily:T.sans, fontSize:18, fontWeight:700, color:T.accent }}>{totH.toFixed(1)} <span style={{ fontSize:11, fontWeight:400, color:T.accent }}>hrs</span></div>
                     : <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>—</div>
                   }
                 </div>
@@ -5548,8 +5564,8 @@ function UsageTracking({ state, dispatch }) {
 
                 {/* Usage actions */}
                 <div style={{ display:"flex", justifyContent:"center", gap:4 }}>
-                  <button title="Edit latest usage entry" onClick={()=>{ const last=latestLogFor(eq.id); if(last) setEditLog({...last}); else alert("No usage history to edit yet."); }} style={{ border:`1px solid ${T.border}`, background:"#fff", borderRadius:6, cursor:"pointer", padding:"4px 6px", fontSize:13 }}>✏️</button>
-                  <button title="Usage history" onClick={()=>setDetailEq(eq.id)} style={{ border:`1px solid ${T.border}`, background:"#fff", borderRadius:6, cursor:"pointer", padding:"4px 6px", fontSize:13 }}>🕘</button>
+                  <button title="Edit latest usage entry" onClick={()=>{ const last=latestLogFor(eq.id); if(last) setEditLog({...last}); else alert("No usage history to edit yet."); }} style={{ border:`1px solid ${T.border}`, background:T.card, borderRadius:6, cursor:"pointer", padding:"4px 6px", fontSize:13 }}>✏️</button>
+                  <button title="Usage history" onClick={()=>setDetailEq(eq.id)} style={{ border:`1px solid ${T.border}`, background:T.card, borderRadius:6, cursor:"pointer", padding:"4px 6px", fontSize:13 }}>🕘</button>
                 </div>
               </div>
 
@@ -5983,15 +5999,15 @@ function ReportUsage({ state }) {
         {eqList.map(eq=>{
           const field=primaryField(eq), label=primaryLabel(eq), st=statsFor(eq, field);
           return <Card key={eq.id} style={{ padding:0, overflow:"hidden", border:`1px solid ${T.border}` }}>
-            <div style={{ padding:"12px 14px", background:"#eff6ff", borderBottom:`1px solid ${T.border}` }}>
+            <div style={{ padding:"12px 14px", background:T.accentLt, borderBottom:`1px solid ${T.border}` }}>
               <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:800, color:T.text }}>{eq.name}</div>
               <div style={{ fontFamily:T.mono, fontSize:11, color:T.muted }}>{eq.id} • {label}</div>
             </div>
             <div style={{ padding:14, display:"grid", gap:10 }}>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
-                <div style={{ background:"#f8fafc", border:`1px solid ${T.border}`, borderRadius:10, padding:10 }}><div style={{ fontSize:10, fontWeight:800, color:T.muted, textTransform:"uppercase" }}>Current</div><div style={{ fontSize:22, fontWeight:900, color:"#1d4ed8" }}>{fmt(st.current)}</div></div>
-                <div style={{ background:"#f8fafc", border:`1px solid ${T.border}`, borderRadius:10, padding:10 }}><div style={{ fontSize:10, fontWeight:800, color:T.muted, textTransform:"uppercase" }}>New This Month</div><div style={{ fontSize:22, fontWeight:900, color:"#047857" }}>{fmt(st.month)}</div></div>
-                <div style={{ background:"#f8fafc", border:`1px solid ${T.border}`, borderRadius:10, padding:10 }}><div style={{ fontSize:10, fontWeight:800, color:T.muted, textTransform:"uppercase" }}>This FY</div><div style={{ fontSize:22, fontWeight:900, color:"#7c3aed" }}>{fmt(st.fy)}</div></div>
+                <div style={{ background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:10, padding:10 }}><div style={{ fontSize:10, fontWeight:800, color:T.muted, textTransform:"uppercase" }}>Current</div><div style={{ fontSize:22, fontWeight:900, color:"#1d4ed8" }}>{fmt(st.current)}</div></div>
+                <div style={{ background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:10, padding:10 }}><div style={{ fontSize:10, fontWeight:800, color:T.muted, textTransform:"uppercase" }}>New This Month</div><div style={{ fontSize:22, fontWeight:900, color:"#047857" }}>{fmt(st.month)}</div></div>
+                <div style={{ background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:10, padding:10 }}><div style={{ fontSize:10, fontWeight:800, color:T.muted, textTransform:"uppercase" }}>This FY</div><div style={{ fontSize:22, fontWeight:900, color:"#7c3aed" }}>{fmt(st.fy)}</div></div>
               </div>
               <div style={{ display:"flex", justifyContent:"space-between", fontFamily:T.sans, fontSize:12, color:T.subtext }}><span>Last entry: <b>{st.lastDate}</b></span><span>{st.entries} log entries</span></div>
             </div>
@@ -6318,7 +6334,7 @@ function SystemSettings({ state, dispatch, onClose }) {
         {sub && <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:2 }}>{sub}</div>}
       </div>
       <button type="button" onClick={()=>setForm(f=>({...f,[k]:!f[k]}))} style={{ width:44, height:24, borderRadius:12, border:"none", background:form[k]?T.accent:"#d1d5db", cursor:"pointer", position:"relative", transition:"background .2s", flexShrink:0 }}>
-        <span style={{ position:"absolute", top:3, left:form[k]?22:3, width:18, height:18, borderRadius:"50%", background:"#fff", transition:"left .2s", display:"block", boxShadow:"0 1px 3px rgba(0,0,0,.2)" }}/>
+        <span style={{ position:"absolute", top:3, left:form[k]?22:3, width:18, height:18, borderRadius:"50%", background:T.card, transition:"left .2s", display:"block", boxShadow:"0 1px 3px rgba(0,0,0,.2)" }}/>
       </button>
     </div>
   );
@@ -6579,7 +6595,7 @@ function SetupWizard({ onComplete }) {
 
   return (
     <div style={{ position:"fixed", inset:0, background:"linear-gradient(135deg, #f8fafc 0%, #e0f2fe 100%)", zIndex:9999, overflow:"auto", padding:"24px 16px" }}>
-      <div style={{ maxWidth:680, margin:"40px auto", background:"#fff", borderRadius:14, boxShadow:"0 10px 40px rgba(0,0,0,.12)", padding:"32px 36px" }}>
+      <div style={{ maxWidth:680, margin:"40px auto", background:T.card, borderRadius:14, boxShadow:"0 10px 40px rgba(0,0,0,.12)", padding:"32px 36px" }}>
         <StepIndicator />
 
         {/* Step 1: Welcome + Company */}
@@ -6652,7 +6668,7 @@ function SetupWizard({ onComplete }) {
             </div>
             <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
               {data.categories.map((cat,i)=>(
-                <span key={i} style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 12px", background:"#fff", border:`1px solid ${T.border}`, borderRadius:7, fontFamily:T.sans, fontSize:13, color:T.text }}>
+                <span key={i} style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 12px", background:T.card, border:`1px solid ${T.border}`, borderRadius:7, fontFamily:T.sans, fontSize:13, color:T.text }}>
                   {cat} <button onClick={()=>removeCategory(i)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:16, lineHeight:1, padding:0 }}>×</button>
                 </span>
               ))}
@@ -6766,7 +6782,7 @@ function printFuelReportWindow(state={}, period="month") {
 
 function FuelMetric({ label, value, sub }) {
   return (
-    <div style={{ border:`1px solid ${T.border}`, borderRadius:10, padding:12, background:"#fff" }}>
+    <div style={{ border:`1px solid ${T.border}`, borderRadius:10, padding:12, background:T.card }}>
       <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, fontWeight:700, textTransform:"uppercase", letterSpacing:.4 }}>{label}</div>
       <div style={{ fontFamily:T.mono, fontSize:22, fontWeight:800, color:T.text, marginTop:4 }}>{value}</div>
       {sub && <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:2 }}>{sub}</div>}
@@ -6914,12 +6930,15 @@ function FuelTracking({ state, dispatch }) {
         <Btn variant="secondary" onClick={()=>printFuelReportWindow(state, period)}>Print</Btn>
       </div>
       {containers.length === 0 ? <div style={{ padding:16, border:`1px dashed ${T.border}`, borderRadius:12, color:T.muted, background:T.soft }}>No fuel containers added yet. Add a container to start tracking fuel levels.</div> : <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:10 }}>
-        {containers.map(c=>{ const r=latestFuelReading(state,c.id); const gallons=+(r?.gallons||0); const cap=+c.capacity||0; const pct=cap?fuelPercent(c,gallons):0; const usedMonth=fuelConsumedForPeriod(state,c.id,"month"); return <div key={c.id} style={{ border:`1px solid ${T.border}`, borderRadius:12, padding:10, background:"#fff", boxShadow:"0 4px 12px rgba(0,0,0,.035)" }}>
+        {containers.map(c=>{ const r=latestFuelReading(state,c.id); const gallons=+(r?.gallons||0); const cap=+c.capacity||0; const pct=cap?fuelPercent(c,gallons):0; const usedMonth=fuelConsumedForPeriod(state,c.id,"month"); const levelColor = pct >= 75 ? "#16a34a" : pct >= 26 ? "#f97316" : "#dc2626"; return <div key={c.id} style={{ border:`1px solid ${r?levelColor:T.border}`, borderRadius:12, padding:10, background:T.card, boxShadow:"0 4px 12px rgba(0,0,0,.035)" }}>
           <div style={{ fontSize:15, fontWeight:900, marginBottom:8, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{c.name||"Fuel Container"}</div>
+          <div style={{ textAlign:"center", padding:"8px 6px 10px", marginBottom:8, borderRadius:10, background:T.soft }}>
+            <div style={{ color:T.muted, fontSize:10, fontWeight:900, textTransform:"uppercase", letterSpacing:.5 }}>Current Level</div>
+            <div style={{ color:r?levelColor:T.text, fontSize:28, fontWeight:950, lineHeight:1.05, marginTop:3 }}>{r?`${Math.round(gallons).toLocaleString()} gal`:"—"}</div>
+            <div style={{ color:r?levelColor:T.muted, fontSize:13, fontWeight:900, marginTop:3 }}>{r?`${pct.toFixed(1)}% Full`:"No reading"}</div>
+          </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:7, fontSize:12 }}>
-            <div><div style={{ color:T.muted, fontSize:10, fontWeight:800, textTransform:"uppercase" }}>Current Level</div><b>{r?`${Math.round(gallons).toLocaleString()} gal`:"—"}</b></div>
             <div><div style={{ color:T.muted, fontSize:10, fontWeight:800, textTransform:"uppercase" }}>Latest Inches</div><b>{r?(r.inchesText ?? r.inches ?? "—"):"—"}</b></div>
-            <div><div style={{ color:T.muted, fontSize:10, fontWeight:800, textTransform:"uppercase" }}>% Full</div><b>{r?`${pct.toFixed(1)}%`:"—"}</b></div>
             <div><div style={{ color:T.muted, fontSize:10, fontWeight:800, textTransform:"uppercase" }}>Used This Month</div><b>{Math.round(usedMonth).toLocaleString()} gal</b></div>
           </div>
         </div>})}
@@ -6969,7 +6988,7 @@ function FuelTracking({ state, dispatch }) {
         {refillForm.mode==="custom" && <Field label="Custom Refill Entry"><div style={{ display:"grid", gridTemplateColumns:"130px 1fr", gap:8 }}><select style={sel} value={refillForm.unit} onChange={e=>setRefillForm({...refillForm,unit:e.target.value,amount:""})}><option value="gallons">Gallons Added</option><option value="inches">Final Inches</option></select><input style={inp} type="text" placeholder={refillForm.unit==="inches"?"30 7/8":"250"} value={refillForm.amount} onChange={e=>setRefillForm({...refillForm,amount:e.target.value})} /></div>{refillForm.unit==="inches" && <div style={{ fontSize:11, color:T.muted, marginTop:3 }}>Enter the tank level after refill. Examples: 30, 30.5, 30 1/2, 30 7/8.</div>}</Field>}
         <Field label="Date"><input style={inp} type="date" value={refillForm.date||today()} onChange={e=>setRefillForm({...refillForm,date:e.target.value})} /></Field>
         <Field label="Notes"><input style={inp} value={refillForm.notes||""} onChange={e=>setRefillForm({...refillForm,notes:e.target.value})} placeholder="Delivery ticket, vendor, notes" /></Field>
-        <div style={{ padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:"#fff", fontWeight:800 }}>Refill to log: {Math.round(preview||0).toLocaleString()} gal{customByInches && postByInches!==null ? ` (final level ${Math.round(postByInches).toLocaleString()} gal)` : ""}</div>
+        <div style={{ padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.card, fontWeight:800 }}>Refill to log: {Math.round(preview||0).toLocaleString()} gal{customByInches && postByInches!==null ? ` (final level ${Math.round(postByInches).toLocaleString()} gal)` : ""}</div>
       </div>
       <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:14 }}><Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn><Btn onClick={saveRefill}>Save Refill</Btn></div>
     </Modal>; })()}
@@ -7617,10 +7636,15 @@ export default function App() {
         body { margin:0; background:${T.bg}; color:${T.text}; }
         #root { width:100%; min-width:0; }
         table { width:100%; }
-        input, select, textarea { background:${T.surface} !important; color:${T.text} !important; border-color:${T.border} !important; }
+        input, select, textarea { background:${T.surface} !important; color:${T.text} !important; border-color:${T.border} !important; caret-color:${T.text}; }
+        input::placeholder, textarea::placeholder { color:${T.muted} !important; opacity:.9; }
         option { background:${T.surface}; color:${T.text}; }
+        button { color:inherit; }
         [data-theme="dark"] table, [data-theme="dark"] th, [data-theme="dark"] td { border-color:${T.border} !important; }
         [data-theme="dark"] th { background:${T.grayLt} !important; color:${T.subtext} !important; }
+        [data-theme="dark"] td { color:${T.text}; }
+        [data-theme="dark"] tr:hover { background:${T.accentLt} !important; }
+        [data-theme="dark"] a { color:${T.accent}; }
         [data-theme="dark"] .print-page, [data-theme="dark"] .print-page * { background:#fff !important; color:#111827 !important; }
         @media print { body { background:#fff !important; color:#111827 !important; } input, select, textarea { background:#fff !important; color:#111827 !important; } }
         ::-webkit-scrollbar { width:6px; height:6px; }
