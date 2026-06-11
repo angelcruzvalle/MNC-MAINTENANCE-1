@@ -6347,6 +6347,12 @@ function SystemSettings({ state, dispatch, onClose }) {
     location:      s.location      || "",
     phone:         s.phone         || "",
     email:         s.email         || "",
+    siteName:      s.siteName      || "",
+    region:        s.region        || "",
+    address:       s.address       || "",
+    cityState:     s.cityState     || "",
+    locations:     Array.isArray(s.locations) ? s.locations : [],
+    _newLoc:       "",
     accentColor:   s.accentColor   || "#0052cc",
     theme:         s.theme         || "light",
     dateFormat:    s.dateFormat    || "MM/DD/YYYY",
@@ -6377,7 +6383,12 @@ function SystemSettings({ state, dispatch, onClose }) {
     reader.readAsDataURL(file);
   };
 
-  const save = () => { dispatch({type:"UPDATE_SETTINGS", payload:form}); onClose(); };
+  const save = () => {
+    const { _newLoc, ...cleanForm } = form;
+    const cleanLocations = [...new Set((cleanForm.locations || []).map(l => String(l || "").trim()).filter(Boolean))];
+    dispatch({ type:"UPDATE_SETTINGS", payload:{ ...cleanForm, locations: cleanLocations } });
+    onClose();
+  };
 
   return (
     <Modal title="System Settings" onClose={onClose}>
@@ -6455,8 +6466,8 @@ function SystemSettings({ state, dispatch, onClose }) {
           <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Foundation — Location Management</div>
           <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginBottom:10 }}>Define available locations that appear in equipment assignment dropdowns.</div>
           <div style={{ display:"flex", gap:8, marginBottom:10 }}>
-            <input style={{ ...inp, flex:1 }} placeholder="Add location (e.g. Main Shop, Motor Pool, Section A)..." value={form._newLoc||""} onChange={e=>setForm(f=>({...f,_newLoc:e.target.value}))} onKeyDown={e=>{ if(e.key==="Enter"&&form._newLoc?.trim()){ setForm(f=>({...f,locations:[...(f.locations||[]),f._newLoc.trim()],_newLoc:""})); }}} />
-            <Btn small onClick={()=>{ if(form._newLoc?.trim()) setForm(f=>({...f,locations:[...(f.locations||[]),f._newLoc.trim()],_newLoc:""})); }}>Add</Btn>
+            <input style={{ ...inp, flex:1 }} placeholder="Add location (e.g. Main Shop, Motor Pool, Section A)..." value={form._newLoc||""} onChange={e=>setForm(f=>({...f,_newLoc:e.target.value}))} onKeyDown={e=>{ if(e.key==="Enter"&&form._newLoc?.trim()){ e.preventDefault(); setForm(f=>{ const next=f._newLoc.trim(); const existing=(f.locations||[]).map(x=>String(x).toLowerCase()); return {...f,locations:existing.includes(next.toLowerCase())?(f.locations||[]):[...(f.locations||[]),next],_newLoc:""}; }); }}} />
+            <Btn small onClick={()=>{ if(form._newLoc?.trim()) setForm(f=>{ const next=f._newLoc.trim(); const existing=(f.locations||[]).map(x=>String(x).toLowerCase()); return {...f,locations:existing.includes(next.toLowerCase())?(f.locations||[]):[...(f.locations||[]),next],_newLoc:""}; }); }}>Add</Btn>
           </div>
           {(form.locations||[]).length===0 ? (
             <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, fontStyle:"italic", padding:"8px 0" }}>No locations defined. Add one above.</div>
