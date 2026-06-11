@@ -754,7 +754,7 @@ const Badge = ({ label, type="status" }) => {
 };
 
 const Card = ({ children, style={} }) => (
-  <div style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:8, padding:"20px 22px", boxShadow:T.shadow, ...style }}>
+  <div style={{ background:T.card, color:T.text, border:`1px solid ${T.border}`, borderRadius:8, padding:"20px 22px", boxShadow:T.shadow, ...style }}>
     {children}
   </div>
 );
@@ -7642,9 +7642,76 @@ export default function App() {
         button { color:inherit; }
         [data-theme="dark"] table, [data-theme="dark"] th, [data-theme="dark"] td { border-color:${T.border} !important; }
         [data-theme="dark"] th { background:${T.grayLt} !important; color:${T.subtext} !important; }
-        [data-theme="dark"] td { color:${T.text}; }
+        [data-theme="dark"] td { color:${T.text} !important; }
         [data-theme="dark"] tr:hover { background:${T.accentLt} !important; }
         [data-theme="dark"] a { color:${T.accent}; }
+
+        /* Dark mode deep cleanup: catch old hard-coded light panels that were left behind */
+        [data-theme="dark"] [style*="background:#fff"],
+        [data-theme="dark"] [style*="background: #fff"],
+        [data-theme="dark"] [style*="background:#ffffff"],
+        [data-theme="dark"] [style*="background: #ffffff"],
+        [data-theme="dark"] [style*="background:white"],
+        [data-theme="dark"] [style*="background: white"] { background:${T.card} !important; color:${T.text} !important; }
+
+        [data-theme="dark"] [style*="background:#f9fafb"],
+        [data-theme="dark"] [style*="background: #f9fafb"],
+        [data-theme="dark"] [style*="background:#f3f4f6"],
+        [data-theme="dark"] [style*="background: #f3f4f6"],
+        [data-theme="dark"] [style*="background:#f8fafc"],
+        [data-theme="dark"] [style*="background: #f8fafc"],
+        [data-theme="dark"] [style*="background:#f0f8ff"],
+        [data-theme="dark"] [style*="background: #f0f8ff"] { background:${T.grayLt} !important; color:${T.text} !important; }
+
+        [data-theme="dark"] [style*="background:#fff5f5"],
+        [data-theme="dark"] [style*="background: #fff5f5"],
+        [data-theme="dark"] [style*="background:#fef2f2"],
+        [data-theme="dark"] [style*="background: #fef2f2"],
+        [data-theme="dark"] [style*="background:#fee2e2"],
+        [data-theme="dark"] [style*="background: #fee2e2"] { background:${T.redLt} !important; color:${T.red} !important; }
+
+        [data-theme="dark"] [style*="background:#fffbeb"],
+        [data-theme="dark"] [style*="background: #fffbeb"],
+        [data-theme="dark"] [style*="background:#fef3c7"],
+        [data-theme="dark"] [style*="background: #fef3c7"],
+        [data-theme="dark"] [style*="background:#fff7ed"],
+        [data-theme="dark"] [style*="background: #fff7ed"] { background:${T.amberLt} !important; color:${T.amber} !important; }
+
+        [data-theme="dark"] [style*="background:#ecfdf5"],
+        [data-theme="dark"] [style*="background: #ecfdf5"],
+        [data-theme="dark"] [style*="background:#f0fdf4"],
+        [data-theme="dark"] [style*="background: #f0fdf4"],
+        [data-theme="dark"] [style*="background:#dcfce7"],
+        [data-theme="dark"] [style*="background: #dcfce7"] { background:${T.greenLt} !important; color:${T.green} !important; }
+
+        [data-theme="dark"] [style*="background:#eff6ff"],
+        [data-theme="dark"] [style*="background: #eff6ff"],
+        [data-theme="dark"] [style*="background:#e8f0fe"],
+        [data-theme="dark"] [style*="background: #e8f0fe"],
+        [data-theme="dark"] [style*="background:#dbeafe"],
+        [data-theme="dark"] [style*="background: #dbeafe"] { background:${T.accentLt} !important; color:${T.accent} !important; }
+
+        [data-theme="dark"] [style*="background:#faf5ff"],
+        [data-theme="dark"] [style*="background: #faf5ff"] { background:#2e1f45 !important; color:#d8b4fe !important; }
+
+        [data-theme="dark"] [style*="color:#111"],
+        [data-theme="dark"] [style*="color: #111"],
+        [data-theme="dark"] [style*="color:#111827"],
+        [data-theme="dark"] [style*="color: #111827"],
+        [data-theme="dark"] [style*="color:#1f2937"],
+        [data-theme="dark"] [style*="color: #1f2937"] { color:${T.text} !important; }
+
+        [data-theme="dark"] [style*="color:#666"],
+        [data-theme="dark"] [style*="color: #666"],
+        [data-theme="dark"] [style*="color:#667085"],
+        [data-theme="dark"] [style*="color: #667085"],
+        [data-theme="dark"] [style*="color:#6b7280"],
+        [data-theme="dark"] [style*="color: #6b7280"] { color:${T.muted} !important; }
+
+        [data-theme="dark"] input[type="date"]::-webkit-calendar-picker-indicator { filter:invert(1); opacity:.85; }
+        [data-theme="dark"] input[type="number"]::-webkit-inner-spin-button,
+        [data-theme="dark"] input[type="number"]::-webkit-outer-spin-button { opacity:.8; }
+
         [data-theme="dark"] .print-page, [data-theme="dark"] .print-page * { background:#fff !important; color:#111827 !important; }
         @media print { body { background:#fff !important; color:#111827 !important; } input, select, textarea { background:#fff !important; color:#111827 !important; } }
         ::-webkit-scrollbar { width:6px; height:6px; }
