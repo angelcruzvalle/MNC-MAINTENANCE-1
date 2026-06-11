@@ -966,7 +966,6 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
             lastGroup = n.group;
             return (
               <React.Fragment key={`${n.group}:${n.id}:wrap`}>
-                {showTitle && <p style={{ margin:idx===0?"0 0 4px":"14px 0 4px", padding:"0 16px", fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.8 }}>{n.groupTitle}</p>}
                 {renderMenuButton(n, idx)}
               </React.Fragment>
             );
@@ -6615,6 +6614,16 @@ function SetupWizard({ onComplete }) {
 }
 
 
+function FuelMetric({ label, value, sub }) {
+  return (
+    <div style={{ border:`1px solid ${T.border}`, borderRadius:10, padding:12, background:"#fff" }}>
+      <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, fontWeight:700, textTransform:"uppercase", letterSpacing:.4 }}>{label}</div>
+      <div style={{ fontFamily:T.mono, fontSize:22, fontWeight:800, color:T.text, marginTop:4 }}>{value}</div>
+      {sub && <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:2 }}>{sub}</div>}
+    </div>
+  );
+}
+
 function FuelTracking({ state, dispatch }) {
   const emptyContainer = { name:"", fuelType:"Diesel", capacity:2000, maxHeight:46.75, gallonsPerInch:43.77, length:122, width:82.88, height:46.75, calibration:CONVAULT_2000_CALIBRATION };
   const [modal, setModal] = useState(null);
@@ -6674,9 +6683,9 @@ function FuelTracking({ state, dispatch }) {
         <Btn variant="secondary" onClick={()=>window.print()}>Print</Btn>
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }}>
-        <Metric label="Containers" value={containers.length} />
-        <Metric label="Fuel On Hand" value={`${Math.round(totalGallons).toLocaleString()} gal`} />
-        <Metric label="Readings" value={readings.length} />
+        <FuelMetric label="Containers" value={containers.length} />
+        <FuelMetric label="Fuel On Hand" value={`${Math.round(totalGallons).toLocaleString()} gal`} />
+        <FuelMetric label="Readings" value={readings.length} />
       </div>
     </Card>
 
@@ -6737,7 +6746,7 @@ function ReportFuel({ state }) {
     win.document.close(); win.print();
   };
   return <div style={{ display:"grid", gap:16 }}>
-    <Card><SectionHeading sub="Fuel levels by container, based on latest inch readings." action={<Btn onClick={printReport}>Print Fuel Report</Btn>}>Fuel Report</SectionHeading><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }}><Metric label="Containers" value={containers.length}/><Metric label="Total Fuel" value={`${Math.round(total).toLocaleString()} gal`}/><Metric label="Readings" value={readings.length}/></div></Card>
+    <Card><SectionHeading sub="Fuel levels by container, based on latest inch readings." action={<Btn onClick={printReport}>Print Fuel Report</Btn>}>Fuel Report</SectionHeading><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }}><FuelMetric label="Containers" value={containers.length}/><FuelMetric label="Total Fuel" value={`${Math.round(total).toLocaleString()} gal`}/><FuelMetric label="Readings" value={readings.length}/></div></Card>
     <Card><div className="mobile-x-scroll"><table style={{ borderCollapse:"collapse", width:"100%" }}><thead><tr>{["Container","Fuel","Capacity","Latest Inches","Gallons","% Full","Last Reading"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, color:T.muted }}>{h}</th>)}</tr></thead><tbody>{containers.map(c=>{const r=latestFuelReading(state,c.id);return <tr key={c.id}><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, fontWeight:700 }}>{c.name}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{c.fuelType}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{(+c.capacity||0).toLocaleString()} gal</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r?r.inches:"—"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r?Math.round(r.gallons).toLocaleString():"—"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r?fuelPercent(c,r.gallons).toFixed(1)+"%":"—"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r?r.date:"—"}</td></tr>})}{!containers.length&&<tr><td colSpan="7" style={{ padding:24, textAlign:"center", color:T.muted }}>No fuel containers to report.</td></tr>}</tbody></table></div></Card>
   </div>;
 }
