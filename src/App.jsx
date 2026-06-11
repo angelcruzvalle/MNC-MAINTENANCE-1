@@ -6853,11 +6853,27 @@ function FuelTracking({ state, dispatch }) {
         <Btn onClick={openAdd}>+ Add Fuel Container</Btn>
         <Btn variant="secondary" onClick={()=>printFuelReportWindow(state, period)}>Print</Btn>
       </div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }}>
-        <FuelMetric label="Containers" value={containers.length} />
-        <FuelMetric label="Fuel On Hand" value={`${Math.round(totalGallons).toLocaleString()} gal`} />
-        <FuelMetric label="Readings / Refills" value={readings.length} />
-      </div>
+      {containers.length === 0 ? <div style={{ padding:16, border:`1px dashed ${T.border}`, borderRadius:12, color:T.muted, background:T.soft }}>No fuel containers added yet. Add a container to start tracking fuel levels.</div> : <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:12 }}>
+        {containers.map((c,idx)=>{ const r=latestFuelReading(state,c.id); const gallons=+(r?.gallons||0); const cap=+c.capacity||0; const pct=cap?fuelPercent(c,gallons):0; const used=fuelConsumedForPeriod(state,c.id,period); const refill=fuelRefilledForPeriod(state,c.id,period); return <div key={c.id} style={{ border:`1px solid ${T.border}`, borderRadius:14, padding:14, background:"#fff", boxShadow:"0 6px 16px rgba(0,0,0,.04)" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", gap:8, alignItems:"flex-start", marginBottom:8 }}>
+            <div>
+              <div style={{ fontSize:12, color:T.muted, fontWeight:800 }}>Container {idx+1}</div>
+              <div style={{ fontSize:16, fontWeight:900 }}>{c.name||"Fuel Container"}</div>
+            </div>
+            <span style={{ fontSize:12, fontWeight:900, padding:"4px 8px", borderRadius:999, background:T.soft, border:`1px solid ${T.border}` }}>{c.fuelType||"Fuel"}</span>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, fontSize:13 }}>
+            <div><div style={{ color:T.muted, fontSize:11 }}>Current</div><b>{Math.round(gallons).toLocaleString()} gal</b></div>
+            <div><div style={{ color:T.muted, fontSize:11 }}>% Full</div><b>{r?`${pct.toFixed(1)}%`:"—"}</b></div>
+            <div><div style={{ color:T.muted, fontSize:11 }}>Latest Inches</div><b>{r?(r.inchesText ?? r.inches ?? "—"):"—"}</b></div>
+            <div><div style={{ color:T.muted, fontSize:11 }}>Capacity</div><b>{cap?`${cap.toLocaleString()} gal`:"—"}</b></div>
+            <div><div style={{ color:T.muted, fontSize:11 }}>Used {periodLabel}</div><b>{Math.round(used).toLocaleString()} gal</b></div>
+            <div><div style={{ color:T.muted, fontSize:11 }}>Refilled {periodLabel}</div><b>{Math.round(refill).toLocaleString()} gal</b></div>
+          </div>
+          <div style={{ marginTop:10, height:8, borderRadius:999, background:T.soft, overflow:"hidden", border:`1px solid ${T.border}` }}><div style={{ height:"100%", width:`${Math.max(0,Math.min(100,pct))}%`, background:"#2563eb" }} /></div>
+          <div style={{ marginTop:8, fontSize:11, color:T.muted }}>Last reading: {r?.date||"No readings yet"}</div>
+        </div>})}
+      </div>}
     </Card>
 
     <Card>
