@@ -161,7 +161,7 @@ function calculateFuelGallons(container={}, inchesInput=0) {
 
 function latestFuelReading(state={}, containerId) {
   return (state.fuelReadings || [])
-    .filter(r=>r.containerId===containerId)
+    .filter(r=>r.containerId===containerId && (r.kind||"reading")==="reading")
     .sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")) || String(b.id||"").localeCompare(String(a.id||"")))[0] || null;
 }
 
@@ -6139,7 +6139,7 @@ function ReportSpending({ state }) {
 }
 
 function ReportCombined({ state }) {
-  const [selected, setSelected] = useState({ deadline:true, pm:true, spending:false, parts:false, usage:false, equipment:false, workorders:false });
+  const [selected, setSelected] = useState({ deadline:true, pm:true, spending:false, parts:false, usage:false, fuel:false, equipment:false, workorders:false });
   const [lookAhead, setLookAhead] = useState(30);
   const toggle = k => setSelected(s=>({...s,[k]:!s[k]}));
 
@@ -6179,6 +6179,10 @@ function ReportCombined({ state }) {
       const trackable = state.equipment.filter(e=>e.trackUsage);
       body += `<h2>Current Usage Readings (${trackable.length} tracked units)</h2><table><tr><th>Equip #</th><th>Nomenclature</th><th>Hours</th><th>Mileage</th><th>Last Entry</th></tr>${trackable.map(e=>{ const logs = allLogs.filter(l=>l.equipmentId===e.id); const last = logs.sort((a,b)=>b.date.localeCompare(a.date))[0]; return `<tr><td>${e.id}</td><td>${e.name}</td><td>${currentReading(e.id,"hours").toFixed(1)}</td><td>${currentReading(e.id,"mileage").toLocaleString()}</td><td>${last?.date||"—"}</td></tr>`; }).join("")}</table>`;
     }
+    if(selected.fuel) {
+      const containers = state.fuelContainers || [];
+      body += `<h2>Fuel Report (${containers.length} containers)</h2><table><tr><th>Container</th><th>Fuel</th><th>Capacity</th><th>Latest Inches</th><th>Gallons</th><th>% Full</th><th>Consumed This Month</th><th>Refilled This Month</th><th>Last Reading</th></tr>${containers.map(c=>{ const r=latestFuelReading(state,c.id); return `<tr><td>${htmlEscape(c.name||"")}</td><td>${htmlEscape(c.fuelType||"")}</td><td>${(+c.capacity||0).toLocaleString()} gal</td><td>${r?htmlEscape(r.inchesText ?? r.inches):"—"}</td><td>${r?Math.round(r.gallons).toLocaleString():"—"}</td><td>${r?fuelPercent(c,r.gallons).toFixed(1)+"%":"—"}</td><td>${Math.round(fuelConsumedForPeriod(state,c.id,"month")).toLocaleString()} gal</td><td>${Math.round(fuelRefilledForPeriod(state,c.id,"month")).toLocaleString()} gal</td><td>${r?htmlEscape(r.date||""):"—"}</td></tr>`; }).join("")}</table>`;
+    }
     if(selected.equipment) {
       body += `<h2>Equipment Roster (${state.equipment.length})</h2><table><tr><th>Equip #</th><th>Nomenclature</th><th>Make/Model</th><th>Serial #</th><th>Location</th><th>Status</th></tr>${state.equipment.map(e=>`<tr><td>${e.id}</td><td>${e.name}</td><td>${e.make||""} ${e.model||""}</td><td>${e.serial||"—"}</td><td>${e.location||"—"}</td><td>${e.status}</td></tr>`).join("")}</table>`;
     }
@@ -6198,6 +6202,7 @@ function ReportCombined({ state }) {
     ["spending","💰 Work Order Spending","Completed WOs with costs"],
     ["parts","📦 Parts Inventory","All parts with stock levels"],
     ["usage","📊 Equipment Usage","Current readings for tracked equipment"],
+    ["fuel","⛽ Fuel Report","Fuel on hand, usage, and refills by container"],
     ["equipment","🚜 Equipment Roster","Complete equipment list"],
   ];
 
@@ -6683,6 +6688,22 @@ function SetupWizard({ onComplete }) {
 }
 
 
+
+function fuelReportHTML(state={}, period="month") {
+  const containers = state.fuelContainers || [];
+  const total = containers.reduce((s,c)=>s+(+(latestFuelReading(state,c.id)?.gallons||0)),0);
+  const periodLabel = period==="month" ? "This Month" : period==="quarter" ? "This Quarter" : period==="year" ? "This Year" : "This FY";
+  return `<!DOCTYPE html><html><head><title>Fuel Report</title><style>body{font-family:Arial,sans-serif;padding:22px;color:#111}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f3f4f6}.right{text-align:right}@media print{button{display:none}}</style></head><body>${reportHeaderHTML(state,"Fuel Report")}<p>Total fuel on hand: <b>${Math.round(total).toLocaleString()} gallons</b></p><p>Usage period: <b>${periodLabel}</b></p><table><thead><tr><th>Container</th><th>Fuel</th><th>Capacity</th><th>Latest Inches</th><th>Gallons</th><th>% Full</th><th>Consumed</th><th>Refilled</th><th>Date</th></tr></thead><tbody>${containers.map(c=>{const r=latestFuelReading(state,c.id); const used=fuelConsumedForPeriod(state,c.id,period); const refill=fuelRefilledForPeriod(state,c.id,period); return `<tr><td>${htmlEscape(c.name||"")}</td><td>${htmlEscape(c.fuelType||"")}</td><td>${(+c.capacity||0).toLocaleString()}</td><td>${r?htmlEscape(r.inchesText ?? r.inches):""}</td><td>${r?Math.round(r.gallons).toLocaleString():""}</td><td>${r?fuelPercent(c,r.gallons).toFixed(1)+"%":""}</td><td>${Math.round(used).toLocaleString()}</td><td>${Math.round(refill).toLocaleString()}</td><td>${r?htmlEscape(r.date||""):""}</td></tr>`}).join("")}</tbody></table><br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button></body></html>`;
+}
+
+function printFuelReportWindow(state={}, period="month") {
+  const win = window.open("", "_blank", "width=900,height=700");
+  if(!win) return;
+  win.document.write(fuelReportHTML(state, period));
+  win.document.close();
+  win.print();
+}
+
 function FuelMetric({ label, value, sub }) {
   return (
     <div style={{ border:`1px solid ${T.border}`, borderRadius:10, padding:12, background:"#fff" }}>
@@ -6710,7 +6731,7 @@ function FuelTracking({ state, dispatch }) {
   const [editingEvent, setEditingEvent] = useState(null);
   const [form, setForm] = useState(emptyContainer);
   const [levelEntry, setLevelEntry] = useState({});
-  const [refillEntry, setRefillEntry] = useState({});
+  const [refillForm, setRefillForm] = useState({ containerId:"", mode:"max", unit:"gallons", amount:"", date:today(), notes:"" });
   const [period, setPeriod] = useState("month");
   const [historyContainer, setHistoryContainer] = useState("all");
   const [eventForm, setEventForm] = useState({ id:"", kind:"reading", containerId:"", inches:"", gallons:"", gallonsAdded:"", date:today(), notes:"" });
@@ -6738,7 +6759,10 @@ function FuelTracking({ state, dispatch }) {
     setModal(null);
   };
   const setLevel = (id, key, value) => setLevelEntry(prev=>({ ...prev, [id]:{ date:today(), inches:"", notes:"", ...(prev[id]||{}), [key]:value } }));
-  const setRefill = (id, key, value) => setRefillEntry(prev=>({ ...prev, [id]:{ date:today(), gallonsAdded:"", notes:"", ...(prev[id]||{}), [key]:value } }));
+  const openRefill = (c) => {
+    setRefillForm({ containerId:c.id, mode:"max", unit:"gallons", amount:"", date:today(), notes:"" });
+    setModal("refill");
+  };
   const saveLevel = (c) => {
     const row = levelEntry[c.id] || {};
     const inchesText = String(row.inches ?? "").trim();
@@ -6748,12 +6772,42 @@ function FuelTracking({ state, dispatch }) {
     dispatch({ type:"ADD_FUEL_READING", payload:{ id:genId("FLOG"), kind:"reading", containerId:c.id, date:row.date||today(), inches, inchesText, gallons, percent:fuelPercent(c, gallons), fuelType:c.fuelType, notes:row.notes||"" } });
     setLevelEntry(prev=>({ ...prev, [c.id]:{ date:today(), inches:"", notes:"" } }));
   };
-  const saveRefill = (c) => {
-    const row = refillEntry[c.id] || {};
-    const gallonsAdded = parseNumber(row.gallonsAdded, NaN);
-    if(!Number.isFinite(gallonsAdded) || gallonsAdded <= 0) return alert("Enter refill gallons added.");
-    dispatch({ type:"ADD_FUEL_READING", payload:{ id:genId("FREF"), kind:"refill", containerId:c.id, date:row.date||today(), gallonsAdded, fuelType:c.fuelType, notes:row.notes||"" } });
-    setRefillEntry(prev=>({ ...prev, [c.id]:{ date:today(), gallonsAdded:"", notes:"" } }));
+  const saveRefill = () => {
+    const c = containers.find(x=>x.id===refillForm.containerId);
+    if(!c) return alert("Select a fuel container.");
+    const last = latestFuelReading(state, c.id);
+    const currentGallons = parseNumber(last?.gallons, 0);
+    const capacity = parseNumber(c.capacity, 0);
+    let gallonsAdded = 0;
+    let postGallons = null;
+    let inches = null;
+    let inchesText = "";
+
+    if(refillForm.mode === "max") {
+      if(capacity <= 0) return alert("Enter a capacity for this container before using Max Refill.");
+      gallonsAdded = Math.max(0, capacity - currentGallons);
+      postGallons = capacity;
+      const maxInches = parseNumber(c.maxHeight, NaN);
+      if(Number.isFinite(maxInches) && maxInches > 0) { inches = maxInches; inchesText = String(c.maxHeight); }
+    } else if(refillForm.unit === "inches") {
+      inchesText = String(refillForm.amount||"").trim();
+      inches = parseInches(inchesText, NaN);
+      if(!Number.isFinite(inches)) return alert("Enter refill inches. Examples: 30, 30.5, 30 1/2, 30 7/8.");
+      postGallons = calculateFuelGallons(c, inches);
+      gallonsAdded = Math.max(0, postGallons - currentGallons);
+    } else {
+      gallonsAdded = parseNumber(refillForm.amount, NaN);
+      if(!Number.isFinite(gallonsAdded) || gallonsAdded <= 0) return alert("Enter refill gallons added.");
+      postGallons = capacity > 0 ? Math.min(capacity, currentGallons + gallonsAdded) : currentGallons + gallonsAdded;
+    }
+
+    if(gallonsAdded <= 0 && refillForm.mode !== "max") return alert("The refill amount must be greater than zero.");
+    dispatch({ type:"ADD_FUEL_READING", payload:{ id:genId("FREF"), kind:"refill", containerId:c.id, date:refillForm.date||today(), gallonsAdded, fuelType:c.fuelType, notes:refillForm.notes||"" } });
+    if(postGallons !== null) {
+      dispatch({ type:"ADD_FUEL_READING", payload:{ id:genId("FLOG"), kind:"reading", containerId:c.id, date:refillForm.date||today(), inches, inchesText, gallons:postGallons, percent:fuelPercent(c, postGallons), fuelType:c.fuelType, notes:"Post-refill level" } });
+    }
+    setModal(null);
+    setRefillForm({ containerId:"", mode:"max", unit:"gallons", amount:"", date:today(), notes:"" });
   };
   const openEditEvent = (r) => {
     setEditingEvent(r.id);
@@ -6785,13 +6839,19 @@ function FuelTracking({ state, dispatch }) {
   const totalGallons = containers.reduce((sum,c)=>sum+(+(latestFuelReading(state,c.id)?.gallons||0)),0);
   const periodLabel = period==="month" ? "This Month" : period==="quarter" ? "This Quarter" : period==="year" ? "This Year" : "This FY";
   const shownHistory = [...readings].filter(r=>historyContainer==="all" || r.containerId===historyContainer).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")) || String(b.id||"").localeCompare(String(a.id||"")));
+  const fuelCell = { padding:10, borderBottom:`1px solid ${T.border}`, verticalAlign:"middle" };
+  const fuelControlBox = { display:"grid", gap:6, alignItems:"center" };
+  const fuelControlRow = { display:"flex", gap:6, alignItems:"center", minHeight:38 };
+  const fuelActionRow = { display:"flex", gap:6, alignItems:"center", minHeight:38, flexWrap:"nowrap" };
+  const fuelHelp = { fontSize:11, color:T.muted, lineHeight:1.25 };
+  const fuelPreview = { fontSize:12, fontWeight:800, minHeight:16, lineHeight:"16px" };
 
   return <div style={{ display:"grid", gap:16 }}>
     <Card>
       <SectionHeading sub="Track tank level like equipment usage: enter inches on the container line and the app calculates gallons.">Fuel Tracking</SectionHeading>
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
         <Btn onClick={openAdd}>+ Add Fuel Container</Btn>
-        <Btn variant="secondary" onClick={()=>window.print()}>Print</Btn>
+        <Btn variant="secondary" onClick={()=>printFuelReportWindow(state, period)}>Print</Btn>
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }}>
         <FuelMetric label="Containers" value={containers.length} />
@@ -6812,19 +6872,18 @@ function FuelTracking({ state, dispatch }) {
         </select>
         <Btn variant="secondary" onClick={openAdd}>+ Add More Containers</Btn>
       </div>
-      <div className="mobile-x-scroll"><table style={{ borderCollapse:"collapse", width:"100%" }}><thead><tr>{["Container","Fuel","Latest Level","Gallons","Consumed","Refilled","Enter Inches","Refill","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, fontSize:12, color:T.muted }}>{h}</th>)}</tr></thead><tbody>
-        {containers.map(c=>{ const last=latestFuelReading(state,c.id); const pct=fuelPercent(c,last?.gallons||0); const le=levelEntry[c.id] || { date:today(), inches:"", notes:"" }; const re=refillEntry[c.id] || { date:today(), gallonsAdded:"", notes:"" }; const preview = le.inches!=="" ? calculateFuelGallons(c, le.inches) : null; return <tr key={c.id}>
-          <td style={{ padding:10, borderBottom:`1px solid ${T.border}`, fontWeight:700 }}>{c.name}</td>
-          <td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{c.fuelType}</td>
-          <td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{last?`${last.inches} in / ${pct.toFixed(1)}%`:"—"}</td>
-          <td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{last?Math.round(last.gallons).toLocaleString():"—"}</td>
-          <td style={{ padding:10, borderBottom:`1px solid ${T.border}`, fontWeight:800 }}>{Math.round(fuelConsumedForPeriod(state,c.id,period)).toLocaleString()} gal<br/><span style={{ color:T.muted, fontWeight:600, fontSize:11 }}>{periodLabel}</span></td>
-          <td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{Math.round(fuelRefilledForPeriod(state,c.id,period)).toLocaleString()} gal</td>
-          <td style={{ padding:10, borderBottom:`1px solid ${T.border}`, minWidth:220 }}><div style={{ display:"flex", gap:6, alignItems:"center" }}><input style={{ ...inp, width:110 }} type="text" placeholder="30 7/8" value={le.inches||""} onChange={e=>setLevel(c.id,"inches",e.target.value)} /><Btn small onClick={()=>saveLevel(c)}>Log</Btn></div>{preview!==null&&<div style={{ fontSize:12, fontWeight:800, marginTop:4 }}>{Math.round(preview).toLocaleString()} gal</div>}<div style={{ fontSize:11, color:T.muted, marginTop:3 }}>Examples: 30, 30.5, 30 1/2, 30 7/8</div><input style={{ ...inp, marginTop:5 }} type="date" value={le.date||today()} onChange={e=>setLevel(c.id,"date",e.target.value)} /></td>
-          <td style={{ padding:10, borderBottom:`1px solid ${T.border}`, minWidth:210 }}><div style={{ display:"flex", gap:6, alignItems:"center" }}><input style={{ ...inp, width:90 }} type="number" step="0.1" placeholder="gallons" value={re.gallonsAdded||""} onChange={e=>setRefill(c.id,"gallonsAdded",e.target.value)} /><Btn small variant="secondary" onClick={()=>saveRefill(c)}>Refill</Btn></div><input style={{ ...inp, marginTop:5 }} type="date" value={re.date||today()} onChange={e=>setRefill(c.id,"date",e.target.value)} /></td>
-          <td style={{ padding:10, borderBottom:`1px solid ${T.border}`, display:"flex", gap:6 }}><Btn small variant="secondary" onClick={()=>openEdit(c)}>Edit</Btn><Btn small variant="danger" onClick={()=>confirm("Delete this fuel container and its history?")&&dispatch({type:"DELETE_FUEL_CONTAINER",payload:c.id})}>Delete</Btn></td>
+      <div className="mobile-x-scroll"><table style={{ borderCollapse:"collapse", width:"100%" }}><thead><tr>{["Container","Fuel","Latest Level","Gallons","Consumed","Refilled","Enter Inches","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, fontSize:12, color:T.muted }}>{h}</th>)}</tr></thead><tbody>
+        {containers.map(c=>{ const last=latestFuelReading(state,c.id); const pct=fuelPercent(c,last?.gallons||0); const le=levelEntry[c.id] || { date:today(), inches:"", notes:"" }; const preview = le.inches!=="" ? calculateFuelGallons(c, le.inches) : null; return <tr key={c.id}>
+          <td style={{ ...fuelCell, fontWeight:800 }}>{c.name}</td>
+          <td style={fuelCell}>{c.fuelType}</td>
+          <td style={fuelCell}>{last?`${last.inchesText ?? last.inches} in / ${pct.toFixed(1)}%`:"—"}</td>
+          <td style={fuelCell}>{last?Math.round(last.gallons).toLocaleString():"—"}</td>
+          <td style={{ ...fuelCell, fontWeight:800 }}><div>{Math.round(fuelConsumedForPeriod(state,c.id,period)).toLocaleString()} gal</div><div style={{ color:T.muted, fontWeight:600, fontSize:11, marginTop:2 }}>{periodLabel}</div></td>
+          <td style={fuelCell}>{Math.round(fuelRefilledForPeriod(state,c.id,period)).toLocaleString()} gal</td>
+          <td style={{ ...fuelCell, minWidth:240 }}><div style={fuelControlBox}><div style={fuelControlRow}><input style={{ ...inp, width:115, height:36 }} type="text" placeholder="30 7/8" value={le.inches||""} onChange={e=>setLevel(c.id,"inches",e.target.value)} /><Btn small onClick={()=>saveLevel(c)}>Log</Btn></div><div style={fuelPreview}>{preview!==null ? `${Math.round(preview).toLocaleString()} gal` : ""}</div><div style={fuelHelp}>Examples: 30, 30.5, 30 1/2, 30 7/8</div><input style={{ ...inp, height:36 }} type="date" value={le.date||today()} onChange={e=>setLevel(c.id,"date",e.target.value)} /></div></td>
+          <td style={{ ...fuelCell, minWidth:215 }}><div style={fuelActionRow}><Btn small variant="secondary" onClick={()=>openRefill(c)}>Refill</Btn><Btn small variant="secondary" onClick={()=>openEdit(c)}>Edit</Btn><Btn small variant="danger" onClick={()=>confirm("Delete this fuel container and its history?")&&dispatch({type:"DELETE_FUEL_CONTAINER",payload:c.id})}>Delete</Btn></div></td>
         </tr> })}
-        {!containers.length && <tr><td colSpan="9" style={{ padding:24, textAlign:"center", color:T.muted }}>No fuel containers yet. Add a tank/container and enter its inch-to-gallon chart.</td></tr>}
+        {!containers.length && <tr><td colSpan="8" style={{ padding:24, textAlign:"center", color:T.muted }}>No fuel containers yet. Add a tank/container and enter its inch-to-gallon chart.</td></tr>}
       </tbody></table></div>
     </Card>
 
@@ -6836,6 +6895,18 @@ function FuelTracking({ state, dispatch }) {
         {!shownHistory.length && <tr><td colSpan="10" style={{ padding:24, textAlign:"center", color:T.muted }}>No fuel history yet.</td></tr>}
       </tbody></table></div>
     </Card>
+
+    {modal==="refill" && (()=>{ const c=containers.find(x=>x.id===refillForm.containerId)||{}; const last=latestFuelReading(state,c.id); const current=parseNumber(last?.gallons,0); const cap=parseNumber(c.capacity,0); const customByInches=refillForm.mode==="custom" && refillForm.unit==="inches"; const postByInches=customByInches && String(refillForm.amount||"").trim()?calculateFuelGallons(c, refillForm.amount):null; const maxAdd=cap>0?Math.max(0,cap-current):0; const preview=refillForm.mode==="max"?maxAdd:(customByInches?Math.max(0,(postByInches||0)-current):parseNumber(refillForm.amount,0)); return <Modal title={`Refill ${c.name||"Fuel Container"}`} onClose={()=>setModal(null)}>
+      <div style={{ display:"grid", gap:10 }}>
+        <div style={{ padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}><b>Current:</b> {Math.round(current).toLocaleString()} gal {cap?`/ ${cap.toLocaleString()} gal capacity`:""}</div>
+        <Field label="Refill Type"><select style={sel} value={refillForm.mode} onChange={e=>setRefillForm({...refillForm,mode:e.target.value})}><option value="max">Max Refill</option><option value="custom">Custom Refill</option></select></Field>
+        {refillForm.mode==="custom" && <Field label="Custom Refill Entry"><div style={{ display:"grid", gridTemplateColumns:"130px 1fr", gap:8 }}><select style={sel} value={refillForm.unit} onChange={e=>setRefillForm({...refillForm,unit:e.target.value,amount:""})}><option value="gallons">Gallons Added</option><option value="inches">Final Inches</option></select><input style={inp} type="text" placeholder={refillForm.unit==="inches"?"30 7/8":"250"} value={refillForm.amount} onChange={e=>setRefillForm({...refillForm,amount:e.target.value})} /></div>{refillForm.unit==="inches" && <div style={{ fontSize:11, color:T.muted, marginTop:3 }}>Enter the tank level after refill. Examples: 30, 30.5, 30 1/2, 30 7/8.</div>}</Field>}
+        <Field label="Date"><input style={inp} type="date" value={refillForm.date||today()} onChange={e=>setRefillForm({...refillForm,date:e.target.value})} /></Field>
+        <Field label="Notes"><input style={inp} value={refillForm.notes||""} onChange={e=>setRefillForm({...refillForm,notes:e.target.value})} placeholder="Delivery ticket, vendor, notes" /></Field>
+        <div style={{ padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:"#fff", fontWeight:800 }}>Refill to log: {Math.round(preview||0).toLocaleString()} gal{customByInches && postByInches!==null ? ` (final level ${Math.round(postByInches).toLocaleString()} gal)` : ""}</div>
+      </div>
+      <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:14 }}><Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn><Btn onClick={saveRefill}>Save Refill</Btn></div>
+    </Modal>; })()}
 
     {modal==="event" && <Modal title="Edit Fuel History" onClose={()=>setModal(null)}>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(2,minmax(0,1fr))", gap:10 }}>
@@ -6874,14 +6945,10 @@ function ReportFuel({ state }) {
   const readings = state.fuelReadings || [];
   const total = containers.reduce((s,c)=>s+(+(latestFuelReading(state,c.id)?.gallons||0)),0);
   const periodLabel = period==="month" ? "This Month" : period==="quarter" ? "This Quarter" : period==="year" ? "This Year" : "This FY";
-  const printReport = () => {
-    const win = window.open("", "_blank"); if(!win) return;
-    win.document.write(`<!DOCTYPE html><html><head><title>Fuel Report</title><style>body{font-family:Arial,sans-serif;padding:22px;color:#111}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f3f4f6}.right{text-align:right}</style></head><body>${reportHeaderHTML(state,"Fuel Report")}<p>Total fuel on hand: <b>${Math.round(total).toLocaleString()} gallons</b></p><p>Usage period: <b>${periodLabel}</b></p><table><thead><tr><th>Container</th><th>Fuel</th><th>Capacity</th><th>Latest Inches</th><th>Gallons</th><th>% Full</th><th>Consumed</th><th>Refilled</th><th>Date</th></tr></thead><tbody>${containers.map(c=>{const r=latestFuelReading(state,c.id); const used=fuelConsumedForPeriod(state,c.id,period); const refill=fuelRefilledForPeriod(state,c.id,period); return `<tr><td>${c.name}</td><td>${c.fuelType||""}</td><td>${(+c.capacity||0).toLocaleString()}</td><td>${r?(r.inchesText ?? r.inches):""}</td><td>${r?Math.round(r.gallons).toLocaleString():""}</td><td>${r?fuelPercent(c,r.gallons).toFixed(1)+"%":""}</td><td>${Math.round(used).toLocaleString()}</td><td>${Math.round(refill).toLocaleString()}</td><td>${r?r.date:""}</td></tr>`}).join("")}</tbody></table></body></html>`);
-    win.document.close(); win.print();
-  };
+  const printReport = () => printFuelReportWindow(state, period);
   return <div style={{ display:"grid", gap:16 }}>
     <Card><SectionHeading sub="Fuel levels and historical usage by container." action={<Btn onClick={printReport}>Print Fuel Report</Btn>}>Fuel Report</SectionHeading><div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:12 }}><span style={{ fontWeight:800 }}>Usage Period:</span><select style={{ ...sel, width:180 }} value={period} onChange={e=>setPeriod(e.target.value)}><option value="month">This Month</option><option value="quarter">This Quarter</option><option value="year">This Year</option><option value="fy">This FY</option></select></div><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }}><FuelMetric label="Containers" value={containers.length}/><FuelMetric label="Total Fuel" value={`${Math.round(total).toLocaleString()} gal`}/><FuelMetric label="History Records" value={readings.length}/></div></Card>
-    <Card><div className="mobile-x-scroll"><table style={{ borderCollapse:"collapse", width:"100%" }}><thead><tr>{["Container","Fuel","Capacity","Latest Inches","Gallons","% Full","Consumed","Refilled","Last Reading"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, color:T.muted }}>{h}</th>)}</tr></thead><tbody>{containers.map(c=>{const r=latestFuelReading(state,c.id);return <tr key={c.id}><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, fontWeight:700 }}>{c.name}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{c.fuelType}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{(+c.capacity||0).toLocaleString()} gal</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r?r.inches:"—"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r?Math.round(r.gallons).toLocaleString():"—"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r?fuelPercent(c,r.gallons).toFixed(1)+"%":"—"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, fontWeight:800 }}>{Math.round(fuelConsumedForPeriod(state,c.id,period)).toLocaleString()} gal</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{Math.round(fuelRefilledForPeriod(state,c.id,period)).toLocaleString()} gal</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r?r.date:"—"}</td></tr>})}{!containers.length&&<tr><td colSpan="9" style={{ padding:24, textAlign:"center", color:T.muted }}>No fuel containers to report.</td></tr>}</tbody></table></div></Card>
+    <Card><div className="mobile-x-scroll"><table style={{ borderCollapse:"collapse", width:"100%" }}><thead><tr>{["Container","Fuel","Capacity","Latest Inches","Gallons","% Full","Consumed","Refilled","Last Reading"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, color:T.muted }}>{h}</th>)}</tr></thead><tbody>{containers.map(c=>{const r=latestFuelReading(state,c.id);return <tr key={c.id}><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, fontWeight:700 }}>{c.name}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{c.fuelType}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{(+c.capacity||0).toLocaleString()} gal</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r?(r.inchesText ?? r.inches):"—"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r?Math.round(r.gallons).toLocaleString():"—"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r?fuelPercent(c,r.gallons).toFixed(1)+"%":"—"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, fontWeight:800 }}>{Math.round(fuelConsumedForPeriod(state,c.id,period)).toLocaleString()} gal</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{Math.round(fuelRefilledForPeriod(state,c.id,period)).toLocaleString()} gal</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r?r.date:"—"}</td></tr>})}{!containers.length&&<tr><td colSpan="9" style={{ padding:24, textAlign:"center", color:T.muted }}>No fuel containers to report.</td></tr>}</tbody></table></div></Card>
   </div>;
 }
 
