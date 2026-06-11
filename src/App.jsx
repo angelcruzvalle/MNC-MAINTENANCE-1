@@ -59,6 +59,42 @@ const handleUnitSelectChange = (value, currentValue, setValue) => {
   setValue(value);
 };
 
+const DEFAULT_PART_CATEGORIES = [
+  "Spark Plug", "Belt", "Blade", "Filter", "Oil Filter", "Water Separator", "Fuel Filter",
+  "Air Filter", "Hydraulic Filter", "Cabin Filter", "Battery", "Tire", "Tube", "Bearing",
+  "Seal", "Gasket", "Hose", "Fitting", "Bulb", "Fuse", "Relay", "Switch", "Sensor",
+  "Brake Pad", "Brake Shoe", "Cable", "Chain", "Sprocket", "Oil", "Hydraulic Oil",
+  "Grease", "Coolant", "Urea/DEF", "Paint", "Hardware", "Other"
+];
+
+function getPartCategoryOptions(state={}) {
+  const seen = new Set();
+  const add = (c) => { const v = String(c||"").trim(); if(v) seen.add(v); };
+  DEFAULT_PART_CATEGORIES.forEach(add);
+  (state.parts||[]).forEach(p=>add(p.category));
+  (state.pmTasks||[]).forEach(t=>(t.parts||[]).forEach(part=>add(part.category)));
+  (state.workOrders||[]).forEach(w=>(w.partsUsed||[]).forEach(part=>add(part.category)));
+  return Array.from(seen).sort((a,b)=>a.localeCompare(b, undefined, { numeric:true, sensitivity:"base" }));
+}
+
+function getEquipmentModelOptions(equipment=[]) {
+  const seen = new Set();
+  (equipment||[]).forEach(e=>{
+    const model = `${e.make||""} ${e.model||""}`.replace(/\s+/g," ").trim() || String(e.model||"").trim();
+    if(model) seen.add(model);
+  });
+  return Array.from(seen).sort((a,b)=>a.localeCompare(b, undefined, { numeric:true, sensitivity:"base" }));
+}
+
+function getPartStockStatus(part={}) {
+  const qty = +(part.qty||0);
+  const min = +(part.minQty||0);
+  if(qty <= 0) return "Out of Stock";
+  if(part.lowStockAlert !== false && qty <= min) return "Low Stock";
+  return "In Stock";
+}
+
+
 const INIT = {
   notifications: [],
   technicians: [],
@@ -1163,7 +1199,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const SERVICE_INTERVALS   = ["New Equipment Service","Weekly","Bi-Weekly","Monthly","Bi-Monthly","Quarterly","Bi-Annual","Annual"];
   const INSPECT_INTERVALS   = ["New Equipment Inspection","Weekly","Bi-Weekly","Monthly","Bi-Monthly","Quarterly","Bi-Annual","Annual"];
   const getIntervals = (woType) => woType==="Inspection" ? INSPECT_INTERVALS : SERVICE_INTERVALS;
-  const partCategories = [...new Set([...(state.categories||[]), ...(state.parts||[]).map(p=>p.category).filter(Boolean)])].sort((a,b)=>a.localeCompare(b));
+  const partCategories = getPartCategoryOptions(state);
 
   const STATUS_TABS = ["Active","Open","In Progress","Awaiting Parts","On Hold","Completed","All"];
   const PRIO_ORDER  = {"High":0,"Medium":1,"Low":2};
@@ -1331,7 +1367,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const addNewPartToInventory = (rowIdx) => {
     if(!newPartForm.name) return alert("Part name required.");
     const requestedQty = +(newPartForm.requestedQty || newPartForm.qty || 1);
-    const newPart = { ...newPartForm, id:genId("PT"), qty:+(newPartForm.qty||requestedQty||0), unitCost:+(newPartForm.unitCost||0), minQty:+(newPartForm.minQty||1) };
+    const newPart = { ...newPartForm, equipmentId:"", category:String(newPartForm.category||"").trim(), modelFit:String(newPartForm.modelFit||"").trim(), id:genId("PT"), qty:+(newPartForm.qty||requestedQty||0), unit:String(newPartForm.unit||"ea").trim()||"ea", unitCost:+(newPartForm.unitCost||0), minQty:+(newPartForm.minQty||1) };
     delete newPart.requestedQty;
     dispatch({ type:"ADD_PART", payload:newPart });
     setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[rowIdx]={name:newPart.name,qty:requestedQty||1,unit:newPart.unit||newPart.unitType||"ea",unitCost:newPart.unitCost,partId:newPart.id}; return {...f,partsUsed:arr}; });
@@ -1355,7 +1391,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const partName = String(p.name||"").trim();
     const addIt = confirm(`Part "${partName}" is not in stock / not found in inventory.\n\nDo you want to add this part to inventory now?`);
     if(addIt){
-      setNewPartForm({ name:partName, partNumber:"", qty:p.qty||1, requestedQty:p.qty||1, minQty:1, unit:p.unit||"ea", unitCost:p.unitCost||"", category:"", vendor:"" });
+      setNewPartForm({ name:partName, partNumber:"", qty:p.qty||1, requestedQty:p.qty||1, minQty:1, unit:p.unit||"ea", unitCost:p.unitCost||"", category:"", vendor:"", modelFit:"" });
       setShowNewPart(idx);
       alert("Add the stock quantity and price, then click Add & Use. Save the work order after that.");
       return true;
@@ -1792,10 +1828,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                     <input style={inp} list="wo-part-category-options" placeholder="Category" value={newPartForm.category||""} onChange={e=>setNewPartForm(f=>({...f,category:e.target.value}))} />
                     <datalist id="wo-part-category-options">{partCategories.map(c=><option key={c} value={c} />)}</datalist>
                     <input style={inp} placeholder="Vendor" value={newPartForm.vendor||""} onChange={e=>setNewPartForm(f=>({...f,vendor:e.target.value}))} />
-                    <select style={sel} value={newPartForm.equipmentId||""} onChange={e=>{ const eq=state.equipment.find(q=>q.id===e.target.value); setNewPartForm(f=>({...f,equipmentId:e.target.value,modelFit:eq?`${eq.make||""} ${eq.model||""}`.trim():f.modelFit})); }}>
-                      <option value="">Link to equipment (optional)</option>
-                      {state.equipment.map(e=><option key={e.id} value={e.id}>{e.name} ({e.id})</option>)}
-                    </select>
+                    <input style={inp} list="equipment-model-options" placeholder="Fits model (optional)" value={newPartForm.modelFit||""} onChange={e=>setNewPartForm(f=>({...f,modelFit:e.target.value}))} />
+                    <datalist id="equipment-model-options">{getEquipmentModelOptions(state.equipment).map(m=><option key={m} value={m} />)}</datalist>
                     <Btn small onClick={()=>addNewPartToInventory(idx)}>Add & Use</Btn>
                   </div>
                 </div>
@@ -3282,30 +3316,31 @@ function Parts({ state, dispatch }) {
   const [form, setForm]         = useState({});
   const [search, setSearch]     = useState("");
   const [catF, setCatF]         = useState("All");
+  const [stockF, setStockF]     = useState("All");
   const [expanded, setExpanded] = useState(null);
   const [invUpdate, setInvUpdate] = useState(null);
-  const [poForm, setPoForm]     = useState({ poNumber:"", vendor:"", date:today(), parts:[{name:"",partNumber:"",category:"",qty:"",unit:"ea",unitCost:"",location:"",equipmentId:"",modelFit:""}] });
+  const [poForm, setPoForm]     = useState({ poNumber:"", vendor:"", date:today(), parts:[{name:"",partNumber:"",category:"",qty:"",unit:"ea",unitCost:"",location:"",modelFit:""}] });
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
-  const partCategories = [...new Set([...(state.categories||[]), ...(state.parts||[]).map(p=>p.category).filter(Boolean)])].sort((a,b)=>a.localeCompare(b));
-  const rememberPartCategory = (category) => {
-    const clean = String(category||"").trim();
-    if(clean && !(state.categories||[]).includes(clean)) dispatch({ type:"ADD_CATEGORY", payload:clean });
-  };
-
+  const partCategories = getPartCategoryOptions(state);
+  const modelOptions = getEquipmentModelOptions(state.equipment);
   const cats     = ["All",...partCategories];
+  const stockFilters = ["All", "In Stock", "Low Stock", "Out of Stock"];
   const filtered = state.parts.filter(p=>{
     const mc = catF==="All"||p.category===catF;
-    const ms = `${p.name} ${p.partNumber||""} ${p.vendor||""} ${p.modelFit||""} ${p.equipmentId||""}`.toLowerCase().includes(search.toLowerCase());
-    return mc&&ms;
+    const st = getPartStockStatus(p);
+    const msf = stockF==="All"||st===stockF;
+    const ms = `${p.name} ${p.partNumber||""} ${p.vendor||""} ${p.modelFit||""} ${p.category||""}`.toLowerCase().includes(search.toLowerCase());
+    return mc&&msf&&ms;
   }).sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||""));
 
   const totalVal = state.parts.reduce((s,p)=>s+(+p.qty*(+p.unitCost||0)),0);
-  const openAdd  = () => { setForm({qty:0,minQty:1,unit:"ea",unitCost:0,lowStockAlert:true}); setModal("add"); };
+  const lowParts = state.parts.filter(p=>getPartStockStatus(p)==="Low Stock");
+  const outParts = state.parts.filter(p=>getPartStockStatus(p)==="Out of Stock");
+  const openAdd  = () => { setForm({qty:0,minQty:1,unit:"ea",unitCost:0,lowStockAlert:true,modelFit:"",equipmentId:""}); setModal("add"); };
   const openEdit = p  => { setForm({...p}); setModal(p); };
   const save = () => {
     if(!form.name) return alert("Nomenclature required.");
-    rememberPartCategory(form.category);
-    const cleanForm = { ...form, category:String(form.category||"").trim(), unit:String(form.unit||"ea").trim()||"ea", qty:+form.qty||0, unitCost:+form.unitCost||0, minQty:+form.minQty||0 };
+    const cleanForm = { ...form, category:String(form.category||"").trim(), unit:String(form.unit||"ea").trim()||"ea", qty:+form.qty||0, unitCost:+form.unitCost||0, minQty:+form.minQty||0, equipmentId:"" };
     modal==="add"
       ? dispatch({type:"ADD_PART",  payload:{...cleanForm,id:genId("PT")}})
       : dispatch({type:"UPDATE_PART",payload:cleanForm});
@@ -3340,7 +3375,7 @@ function Parts({ state, dispatch }) {
           const eq = p.equipmentId ? state.equipment.find(e=>e.id===p.equipmentId) : null;
           return `<tr class="${p.qty<=(p.minQty||0)?"low":""}"><td>${p.partNumber||"—"}</td><td>${p.name}</td><td>${p.category||"—"}</td><td>${p.location||"—"}</td><td>${eq?`${eq.id} - ${eq.name}`:p.modelFit||"—"}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td>${p.unit||"ea"}</td><td style="text-align:right">${p.qty}</td><td style="text-align:right">$${(p.qty*(+p.unitCost||0)).toFixed(2)}</td><td style="border-bottom:1px solid #bbb;min-width:80px">&nbsp;</td></tr>`;
         }).join("")}
-        <tr class="total-row"><td colspan="7" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">$${totalVal.toFixed(2)}</td><td></td></tr>
+        <tr class="total-row"><td colspan="8" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">$${totalVal.toFixed(2)}</td><td></td></tr>
       </table>
       ${reportButtonsHtml(exportRows)}
       </body></html>`);
@@ -3351,14 +3386,12 @@ function Parts({ state, dispatch }) {
     const valid = poForm.parts.filter(p=>p.name.trim());
     if(!valid.length) return alert("Add at least one part.");
     valid.forEach(p=>{
-      const eq = state.equipment.find(e=>e.id===p.equipmentId);
-      rememberPartCategory(p.category);
-      dispatch({type:"ADD_PART",payload:{...p,category:String(p.category||"").trim(),id:genId("PT"),qty:+p.qty||0,unit:String(p.unit||"ea").trim()||"ea",unitCost:+p.unitCost||0,minQty:1,lowStockAlert:true,vendor:poForm.vendor,poNumber:poForm.poNumber,dateReceived:poForm.date,modelFit:eq?`${eq.make||""} ${eq.model||""}`.trim():p.modelFit}});
+      dispatch({type:"ADD_PART",payload:{...p,equipmentId:"",category:String(p.category||"").trim(),id:genId("PT"),qty:+p.qty||0,unit:String(p.unit||"ea").trim()||"ea",unitCost:+p.unitCost||0,minQty:1,lowStockAlert:true,vendor:poForm.vendor,poNumber:poForm.poNumber,dateReceived:poForm.date,modelFit:String(p.modelFit||"").trim()}});
     });
     setModal(null);
-    setPoForm({poNumber:"",vendor:"",date:today(),parts:[{name:"",partNumber:"",category:"",qty:"",unit:"ea",unitCost:"",location:"",equipmentId:"",modelFit:""}]});
+    setPoForm({poNumber:"",vendor:"",date:today(),parts:[{name:"",partNumber:"",category:"",qty:"",unit:"ea",unitCost:"",location:"",modelFit:""}]});
   };
-  const addPoRow = () => setPoForm(f=>({...f,parts:[...f.parts,{name:"",partNumber:"",category:"",qty:"",unit:"ea",unitCost:"",location:"",equipmentId:"",modelFit:""}]}));
+  const addPoRow = () => setPoForm(f=>({...f,parts:[...f.parts,{name:"",partNumber:"",category:"",qty:"",unit:"ea",unitCost:"",location:"",modelFit:""}]}));
   const setPoRow = (i,k,v) => setPoForm(f=>{ const pts=[...f.parts]; pts[i]={...pts[i],[k]:v}; return {...f,parts:pts}; });
   const delPoRow = i => setPoForm(f=>{ const pts=[...f.parts]; pts.splice(i,1); return {...f,parts:pts}; });
 
@@ -3366,7 +3399,7 @@ function Parts({ state, dispatch }) {
     <div>
       <datalist id="part-category-options">{partCategories.map(c=><option key={c} value={c} />)}</datalist>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12, marginBottom:16 }}>
-        {[["Inventory Value","$"+totalVal.toLocaleString("en-US",{minimumFractionDigits:2}),T.accent],["Total SKUs",state.parts.length,T.text],["Low Stock",state.parts.filter(p=>p.lowStockAlert!==false&&p.qty<=(p.minQty||0)).length,T.red]].map(([l,v,c])=>(
+        {[["Inventory Value","$"+totalVal.toLocaleString("en-US",{minimumFractionDigits:2}),T.accent],["Total SKUs",state.parts.length,T.text],["Low Stock",lowParts.length,T.amber],["Out of Stock",outParts.length,T.red]].map(([l,v,c])=>(
           <Card key={l} style={{ padding:"14px 16px" }}>
             <div style={{ fontFamily:T.sans, fontSize:22, fontWeight:700, color:c }}>{v}</div>
             <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{l}</div>
@@ -3376,7 +3409,8 @@ function Parts({ state, dispatch }) {
       <div style={{ display:"flex", justifyContent:"space-between", marginBottom:12, gap:8, flexWrap:"wrap" }}>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
           <input style={{ ...inp, maxWidth:240 }} placeholder="Search parts..." value={search} onChange={e=>setSearch(e.target.value)} />
-          <select style={{ ...sel, maxWidth:160 }} value={catF} onChange={e=>setCatF(e.target.value)}>{cats.map(c=><option key={c}>{c}</option>)}</select>
+          <select style={{ ...sel, maxWidth:180 }} value={catF} onChange={e=>setCatF(e.target.value)}>{cats.map(c=><option key={c}>{c}</option>)}</select>
+          <select style={{ ...sel, maxWidth:170 }} value={stockF} onChange={e=>setStockF(e.target.value)}>{stockFilters.map(c=><option key={c}>{c}</option>)}</select>
         </div>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
           <Btn variant="secondary" onClick={printInventory}>Inventory Report</Btn>
@@ -3430,7 +3464,9 @@ function Parts({ state, dispatch }) {
           <tbody>
             {filtered.map((p,i)=>{
               const linkedEq = p.equipmentId ? state.equipment.find(e=>e.id===p.equipmentId) : null;
-              const isLow = p.lowStockAlert!==false && p.qty<=(p.minQty||0);
+              const stockStatus = getPartStockStatus(p);
+              const isOut = stockStatus === "Out of Stock";
+              const isLow = stockStatus === "Low Stock";
               return (
                 <React.Fragment key={p.id}>
                   <tr onClick={()=>setExpanded(expanded===p.id?null:p.id)}
@@ -3439,14 +3475,14 @@ function Parts({ state, dispatch }) {
                     onMouseLeave={e=>e.currentTarget.style.background=isLow?"#fff8f8":i%2===0?"#fff":T.grayLt}>
                     <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12, color:T.accent }}>{p.partNumber||"—"}</td>
                     <td style={{ padding:"10px 12px", fontWeight:600, color:T.text }}>
-                      {p.name}{isLow&&<span style={{ color:T.red, marginLeft:6, fontSize:11 }}>⚠ Low</span>}
+                      {p.name}{isOut&&<span style={{ color:T.red, marginLeft:6, fontSize:11 }}>Out</span>}{isLow&&<span style={{ color:T.amber, marginLeft:6, fontSize:11 }}>⚠ Low</span>}
                       {linkedEq&&<div style={{ fontSize:10, color:T.accent, fontWeight:500, marginTop:1 }}>For: {linkedEq.name} ({linkedEq.id})</div>}
                       {!linkedEq&&p.modelFit&&<div style={{ fontSize:10, color:T.muted, marginTop:1 }}>Fits: {p.modelFit}</div>}
                     </td>
                     <td style={{ padding:"10px 12px", color:T.subtext }}>{p.category||"—"}</td>
                     <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12 }}>${(+p.unitCost||0).toFixed(2)}</td>
                     <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12 }}>{p.unit||"ea"}</td>
-                    <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:13, fontWeight:700, color:isLow?T.red:T.green }}>{p.qty}</td>
+                    <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:13, fontWeight:700, color:isOut?T.red:isLow?T.amber:T.green }}>{p.qty}<div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600 }}>{stockStatus}</div></td>
                     <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>${(p.qty*(+p.unitCost||0)).toFixed(2)}</td>
                     <td style={{ padding:"10px 12px" }} onClick={e=>e.stopPropagation()}>
                       <Btn small variant="secondary" onClick={()=>openEdit(p)} style={{ marginRight:4 }}>Edit</Btn>
@@ -3457,7 +3493,7 @@ function Parts({ state, dispatch }) {
                     <tr style={{ borderBottom:`1px solid ${T.border}` }}>
                       <td colSpan={8} style={{ padding:"12px 20px", background:"#f8fbff" }}>
                         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:"10px 24px", marginBottom:12 }}>
-                          {[["Vendor",p.vendor],["Location",p.location],["Unit Type",p.unit||"ea"],["Min Qty",p.minQty],["PO Number",p.poNumber],["Date Received",p.dateReceived],["Fits Model",p.modelFit],["Linked Equipment",linkedEq?`${linkedEq.name} (${linkedEq.id})`:null]].filter(([,v])=>v).map(([k,v])=>(
+                          {[["Vendor",p.vendor],["Location",p.location],["Unit Type",p.unit||"ea"],["Stock Status",stockStatus],["Min Qty",p.minQty],["PO Number",p.poNumber],["Date Received",p.dateReceived],["Fits Model",p.modelFit]].filter(([,v])=>v).map(([k,v])=>(
                             <div key={k}><div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div><div style={{ fontFamily:T.sans, fontSize:13, color:T.text, marginTop:3 }}>{v}</div></div>
                           ))}
                         </div>
@@ -3486,16 +3522,8 @@ function Parts({ state, dispatch }) {
             <Field label="Part Number" half><input style={inp} value={form.partNumber||""} onChange={F("partNumber")} /></Field>
             <Field label="Part Name"><input style={inp} value={form.name||""} onChange={F("name")} /></Field>
             <Field label="Category" half><input style={inp} list="part-category-options" value={form.category||""} onChange={F("category")} placeholder="Pick or type category" /></Field>
-            <div style={{ marginBottom:14, gridColumn:"span 2" }}>
-              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>
-                Linked Equipment <span style={{ fontFamily:T.sans, fontSize:11, fontWeight:400, color:T.muted }}>(optional)</span>
-              </label>
-              <select style={sel} value={form.equipmentId||""} onChange={e=>{ const eq=state.equipment.find(q=>q.id===e.target.value); setForm(f=>({...f,equipmentId:e.target.value,modelFit:eq?`${eq.make||""} ${eq.model||""}`.trim():f.modelFit})); }}>
-                <option value="">-- None (generic part) --</option>
-                {state.equipment.map(e=><option key={e.id} value={e.id}>{e.name} ({e.id})</option>)}
-              </select>
-            </div>
-            <Field label="Fits Model (manual)" half><input style={inp} value={form.modelFit||""} onChange={F("modelFit")} placeholder="e.g. JD 5075E" /></Field>
+            <Field label="Fits Model" half><input style={inp} list="part-model-options" value={form.modelFit||""} onChange={F("modelFit")} placeholder="e.g. John Deere 5065E" /></Field>
+            <datalist id="part-model-options">{modelOptions.map(m=><option key={m} value={m} />)}</datalist>
             <Field label="Vendor" half><input style={inp} value={form.vendor||""} onChange={F("vendor")} /></Field>
             <Field label="PO Number" half><input style={inp} value={form.poNumber||""} onChange={F("poNumber")} /></Field>
             <Field label="Location" half><input style={inp} value={form.location||""} onChange={F("location")} /></Field>
@@ -3528,7 +3556,7 @@ function Parts({ state, dispatch }) {
             <Field label="Date Received"><input style={inp} type="date" value={poForm.date} onChange={e=>setPoForm(f=>({...f,date:e.target.value}))} /></Field>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 55px 80px 65px 1fr 1fr auto", gap:6, marginBottom:6, background:T.grayLt, padding:"6px 8px", borderRadius:6 }}>
-            {["Name*","Part #","Category","Qty","Unit","$/Unit","Location","Equipment",""].map(h=><div key={h} style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</div>)}
+            {["Name*","Part #","Category","Qty","Unit","$/Unit","Location","Fits Model",""].map(h=><div key={h} style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</div>)}
           </div>
           {poForm.parts.map((p,i)=>(
             <div key={i} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 55px 80px 65px 1fr 1fr auto", gap:6, marginBottom:6, alignItems:"center" }}>
@@ -3539,10 +3567,8 @@ function Parts({ state, dispatch }) {
               <select style={sel} value={p.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, p.unit||"ea", v=>setPoRow(i,"unit",v))}>{getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}<option value="__new_unit__">+ Add new...</option></select>
               <input style={inp} type="number" step="0.01" placeholder="0.00" value={p.unitCost} onChange={e=>setPoRow(i,"unitCost",e.target.value)} />
               <input style={inp} placeholder="Location" value={p.location} onChange={e=>setPoRow(i,"location",e.target.value)} />
-              <select style={sel} value={p.equipmentId||""} onChange={e=>{ const eq=state.equipment.find(q=>q.id===e.target.value); setPoRow(i,"equipmentId",e.target.value); if(eq)setPoRow(i,"modelFit",`${eq.make||""} ${eq.model||""}`.trim()); }}>
-                <option value="">Generic</option>
-                {state.equipment.map(e=><option key={e.id} value={e.id}>{e.name} ({e.id})</option>)}
-              </select>
+              <input style={inp} list="po-model-options" placeholder="Fits model" value={p.modelFit||""} onChange={e=>setPoRow(i,"modelFit",e.target.value)} />
+              <datalist id="po-model-options">{modelOptions.map(m=><option key={m} value={m} />)}</datalist>
               {poForm.parts.length>1?<button onClick={()=>delPoRow(i)} style={{ background:"none", border:"1px solid #fca5a5", borderRadius:5, color:T.red, cursor:"pointer", padding:"6px 8px", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>:<div/>}
             </div>
           ))}
@@ -5643,7 +5669,7 @@ function ReportPartsInv({ state }) {
           const low = p.qty<=(p.minQty||0)&&p.lowStockAlert!==false;
           return `<tr class="${low?"low":""}"><td>${p.partNumber||"—"}</td><td>${p.name}${low?" &#9888;":""}</td><td>${p.category||"—"}</td><td>${p.location||"—"}</td><td>${eq?`${eq.id} - ${eq.name}`:p.modelFit||"—"}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td>${p.unit||"ea"}</td><td style="text-align:right">${p.qty}</td><td style="text-align:right">$${(p.qty*(+p.unitCost||0)).toFixed(2)}</td><td style="border-bottom:1px solid #999;min-width:80px">&nbsp;</td></tr>`;
         }).join("")}
-        <tr class="total-row"><td colspan="7" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">$${totalVal.toFixed(2)}</td><td></td></tr>
+        <tr class="total-row"><td colspan="8" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">$${totalVal.toFixed(2)}</td><td></td></tr>
       </table>
       ${reportButtonsHtml(exportRows)}
       </body></html>`);
