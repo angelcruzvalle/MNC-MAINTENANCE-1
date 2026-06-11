@@ -464,6 +464,7 @@ function reducer(state, { type, payload }) {
     case "UPDATE_INSPECTION_SCHEDULE":return { ...state, inspectionSchedules: (state.inspectionSchedules||[]).map(s=>s.id===payload.id?payload:s) };
     case "DELETE_INSPECTION_SCHEDULE":return { ...state, inspectionSchedules: (state.inspectionSchedules||[]).filter(s=>s.id!==payload) };
     case "ADD_INV":       return { ...state, inventoryItems: [...(state.inventoryItems||[]), payload] };
+    case "UPDATE_INV":    return { ...state, inventoryItems: (state.inventoryItems||[]).map(i => i.id===payload.id ? payload : i) };
     case "DELETE_INV":    return { ...state, inventoryItems: (state.inventoryItems||[]).filter(i => i.id!==payload) };
     case "ADD_FUEL_CONTAINER": return { ...state, fuelContainers:[payload, ...(state.fuelContainers||[])] };
     case "UPDATE_FUEL_CONTAINER": return { ...state, fuelContainers:(state.fuelContainers||[]).map(c=>c.id===payload.id?payload:c) };
@@ -5654,8 +5655,11 @@ function EquipmentInventory({ state, dispatch }) {
   const [turnInForm, setTurnInForm] = useState({ equipmentId:"", reason:"", date:today(), paperwork:"" });
   const [search, setSearch] = useState("");
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
+  const isDark = T.bg === DARK_THEME.bg;
 
-  /* Combine equipment from Equipment tab with inventory-only items */
+  const [missingEeOnly, setMissingEeOnly] = useState(false);
+
+  /* Combine equipment from Equipment tab, equipment attachments, and inventory-only items */
   const eqAsInventory = (state.equipment||[]).map(e=>({
     id: e.id, name: e.name, eilNumber: e.eilNumber, serial: e.serial,
     category: e.category, location: e.location, make: e.make, model: e.model, year: e.year,
@@ -5665,14 +5669,39 @@ function EquipmentInventory({ state, dispatch }) {
     turnInReason: e.turnInReason, turnInDate: e.turnInDate, turnInPaperwork: e.turnInPaperwork,
     _source: "equipment",
   }));
+  const attachmentAsInventory = (state.equipment||[]).flatMap(e => (e.attachments||[]).map(at=>({
+    id: at.id,
+    name: at.name,
+    eilNumber: at.eilNumber,
+    serial: at.serial,
+    category: at.category || "Attachment / Implement",
+    location: at.location || e.location,
+    make: at.make,
+    model: at.model,
+    year: at.year,
+    acquisitionDate: at.acquisitionDate,
+    acquisitionCost: at.acquisitionCost,
+    notes: at.notes,
+    condition: at.condition || "Good",
+    turnInStatus: at.turnInStatus || "Active",
+    turnInReason: at.turnInReason,
+    turnInDate: at.turnInDate,
+    turnInPaperwork: at.turnInPaperwork,
+    documents: at.documents || [],
+    parentEquipmentId: e.id,
+    parentEquipmentName: e.name,
+    _source: "attachment",
+  })));
   const invOnly = (state.inventoryItems||[]).map(i=>({...i, _source:"inventory"}));
-  const items    = [...eqAsInventory, ...invOnly];
+  const items    = [...eqAsInventory, ...attachmentAsInventory, ...invOnly];
   const active   = items.filter(i=>!["Turned-in","Disposed"].includes(i.turnInStatus));
   const archived = items.filter(i=>["Turned-in","Disposed"].includes(i.turnInStatus));
 
-  const filtered = (tab==="active"?active:archived).filter(i=>
-    `${i.name} ${i.eilNumber||""} ${i.serial||""} ${i.location||""}`.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = (tab==="active"?active:archived).filter(i=> {
+    const matchesSearch = `${i.name} ${i.eilNumber||""} ${i.serial||""} ${i.location||""} ${i.parentEquipmentName||""}`.toLowerCase().includes(search.toLowerCase());
+    const noEe = !String(i.eilNumber||"").trim();
+    return matchesSearch && (!missingEeOnly || noEe);
+  });
 
   const CONDITIONS = ["New","Good","Poor","Damaged"];
   const TURNIN_STATUSES = ["Pending Turn-in","Turn-in Initiated","Turned-in","Disposed"];
@@ -5690,6 +5719,12 @@ function EquipmentInventory({ state, dispatch }) {
       if(form._source==="equipment") {
         const orig = state.equipment.find(e=>e.id===form.id);
         dispatch({type:"UPDATE_EQ", payload:{...orig, ...form}});
+      } else if(form._source==="attachment") {
+        const parent = state.equipment.find(e=>e.id===form.parentEquipmentId);
+        if(parent) {
+          const updatedAttachments = (parent.attachments||[]).map(a => a.id===form.id ? { ...a, ...form } : a);
+          dispatch({type:"UPDATE_EQ", payload:{...parent, attachments:updatedAttachments}});
+        }
       } else {
         dispatch({type:"UPDATE_INV", payload:form});
       }
@@ -5709,6 +5744,12 @@ function EquipmentInventory({ state, dispatch }) {
     if(item._source==="equipment") {
       const orig = state.equipment.find(e=>e.id===item.id);
       dispatch({type:"UPDATE_EQ", payload:{...orig, ...payloadBase}});
+    } else if(item._source==="attachment") {
+      const parent = state.equipment.find(e=>e.id===item.parentEquipmentId);
+      if(parent) {
+        const updatedAttachments = (parent.attachments||[]).map(a => a.id===item.id ? { ...a, ...payloadBase } : a);
+        dispatch({type:"UPDATE_EQ", payload:{...parent, attachments:updatedAttachments}});
+      }
     } else {
       dispatch({type:"UPDATE_INV", payload:{...item, ...payloadBase}});
     }
@@ -5719,6 +5760,12 @@ function EquipmentInventory({ state, dispatch }) {
     if(item._source==="equipment") {
       const orig = state.equipment.find(e=>e.id===item.id);
       dispatch({type:"UPDATE_EQ", payload:{...orig, turnInStatus:status}});
+    } else if(item._source==="attachment") {
+      const parent = state.equipment.find(e=>e.id===item.parentEquipmentId);
+      if(parent) {
+        const updatedAttachments = (parent.attachments||[]).map(a => a.id===item.id ? { ...a, turnInStatus:status } : a);
+        dispatch({type:"UPDATE_EQ", payload:{...parent, attachments:updatedAttachments}});
+      }
     } else {
       dispatch({type:"UPDATE_INV", payload:{...item, turnInStatus:status}});
     }
@@ -5730,6 +5777,9 @@ function EquipmentInventory({ state, dispatch }) {
     const item = items.find(i=>i.id===id);
     if(item?._source==="equipment") {
       dispatch({type:"DELETE_EQ", payload:id});
+    } else if(item?._source==="attachment") {
+      const parent = state.equipment.find(e=>e.id===item.parentEquipmentId);
+      if(parent) dispatch({type:"UPDATE_EQ", payload:{...parent, attachments:(parent.attachments||[]).filter(a=>a.id!==id)}});
     } else {
       dispatch({type:"DELETE_INV", payload:id});
     }
@@ -5746,8 +5796,9 @@ function EquipmentInventory({ state, dispatch }) {
             <button key={v} onClick={()=>setInvTab(v)} style={{ padding:"7px 18px", border:"none", borderLeft:i>0?`1px solid ${T.border}`:"none", background:tab===v?T.accent:"#fff", color:tab===v?"#fff":T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:tab===v?600:400 }}>{l} ({v==="active"?active.length:archived.length})</button>
           ))}
         </div>
-        <div style={{ display:"flex", gap:8 }}>
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
           <input style={{ ...inp, maxWidth:220 }} placeholder="Search inventory..." value={search} onChange={e=>setSearch(e.target.value)} />
+          <button type="button" onClick={()=>setMissingEeOnly(v=>!v)} style={{ padding:"7px 12px", borderRadius:7, border:`1px solid ${missingEeOnly?T.red:T.border}`, background:missingEeOnly?(isDark?"rgba(239,68,68,.16)":"#fee2e2"):(isDark?T.surface:"#fff"), color:missingEeOnly?T.red:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:700 }}>No EE ({items.filter(i=>!String(i.eilNumber||"").trim()).length})</button>
           {tab==="active" && <Btn variant="secondary" onClick={openTurnIn}>Turn In Equipment</Btn>}
           {tab==="active" && <Btn onClick={openAdd}>+ Add Item</Btn>}
         </div>
@@ -5768,8 +5819,11 @@ function EquipmentInventory({ state, dispatch }) {
               <tr key={item.id} onClick={()=>openItem(item)} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer" }}
                 onMouseEnter={e=>e.currentTarget.style.background=T.accentLt}
                 onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"#fff":T.grayLt}>
-                <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:11, color:T.muted }}>{item.eilNumber||"—"}</td>
-                <td style={{ padding:"10px 12px", fontWeight:600, color:T.text }}>{item.name}</td>
+                <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:11, color:item.eilNumber?T.muted:T.red, fontWeight:item.eilNumber?500:800 }}>{item.eilNumber||"No EE"}</td>
+                <td style={{ padding:"10px 12px", fontWeight:600, color:T.text }}>
+                  {item.name}
+                  {item._source==="attachment" && <div style={{ marginTop:2, fontSize:10, color:T.accent, fontWeight:700, textTransform:"uppercase", letterSpacing:.4 }}>Attachment on {item.parentEquipmentName||item.parentEquipmentId}</div>}
+                </td>
                 <td style={{ padding:"10px 12px", color:T.subtext }}>{item.category||"—"}</td>
                 <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:11, color:T.muted }}>{item.serial||"—"}</td>
                 <td style={{ padding:"10px 12px", color:T.subtext }}>{item.location||"—"}</td>
@@ -5849,7 +5903,7 @@ function EquipmentInventory({ state, dispatch }) {
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Select Equipment *</label>
               <select style={sel} value={turnInForm.equipmentId} onChange={e=>setTurnInForm(f=>({...f,equipmentId:e.target.value}))}>
                 <option value="">-- Select Item --</option>
-                {active.map(i=><option key={i.id} value={i.id}>{i.name} ({i.eilNumber||i.id})</option>)}
+                {active.map(i=><option key={i.id} value={i.id}>{i.name} ({i.eilNumber||"No EE"})</option>)}
               </select>
             </div>
             <Field label="Turn-in Date"><input style={inp} type="date" value={turnInForm.date} onChange={e=>setTurnInForm(f=>({...f,date:e.target.value}))} /></Field>
