@@ -1374,10 +1374,11 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const [detailWO, setDetailWO] = useState(null);
   const [editMode, setEditMode] = useState(false);
 
+  const isDarkMode = T.bg === DARK_THEME.bg;
   const WO_TYPES = [
-    { id:"Repair",     label:"Repair Work Order",     icon:"🛠", desc:"Fault repairs and breakdown response",     color:"#7f1d1d", bg:"#fef2f2" },
-    { id:"Service",    label:"Service Work Order",    icon:"🧰", desc:"Preventive maintenance service generated from PM tasks", color:T.accent, bg:"#eff6ff" },
-    { id:"Inspection", label:"Inspection Work Order", icon:"🔍", desc:"Equipment inspection generated from inspection tasks", color:T.green, bg:"#ecfdf5" },
+    { id:"Repair",     label:"Repair Work Order",     icon:"🛠", desc:"Fault repairs and breakdown response",     color:isDarkMode?T.red:"#7f1d1d", bg:isDarkMode?T.redLt:"#fef2f2" },
+    { id:"Service",    label:"Service Work Order",    icon:"🧰", desc:"Preventive maintenance service generated from PM tasks", color:T.accent, bg:isDarkMode?T.accentLt:"#eff6ff" },
+    { id:"Inspection", label:"Inspection Work Order", icon:"🔍", desc:"Equipment inspection generated from inspection tasks", color:T.green, bg:isDarkMode?T.greenLt:"#ecfdf5" },
   ];
 
   /* Intervals shown for Service and Inspection types */
@@ -1460,6 +1461,17 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   });
   const allMechanics = [...new Set(state.workOrders.map(w=>w.tech).filter(Boolean))];
   const technicians = state.technicians || [];
+  const defaultMechanic = technicians.length === 1 ? technicians[0] : null;
+
+  const applyDefaultMechanic = (base={}) => {
+    if(!defaultMechanic) return base;
+    return {
+      ...base,
+      techId: base.techId || defaultMechanic.id,
+      tech: base.tech || defaultMechanic.name || "",
+      laborCost: base.laborCost || ((+base.laborHours||0) * (+defaultMechanic.laborRate||0)),
+    };
+  };
 
   /* Smart WO ID. Service WOs are numbered per equipment: EQID SVC 01, EQID SVC 02... */
   const genWOId = (eqId, woType="Repair") => {
@@ -1491,7 +1503,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const openAdd = () => {
     setEqSearch("");
-    setForm({ woType:"Repair", status:"Open", equipmentStatus:"Fully Operational", priority:"Medium", created:today(), due:today(), tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], mechanicNotes:"", faultEnabled:true, faultDescription:"", usageHours:"", usageMileage:"", usageNA:false, repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"" });
+    setForm(applyDefaultMechanic({ woType:"Repair", status:"Open", equipmentStatus:"Fully Operational", priority:"Medium", created:today(), due:today(), tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], mechanicNotes:"", faultEnabled:true, faultDescription:"", usageHours:"", usageMileage:"", usageNA:false, repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"" }));
     setModal("pick");
   };
 
@@ -1603,11 +1615,11 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const usageModeReq = String(form.usageType||"hours").toLowerCase();
     const selectedEquipment = state.equipment.find(e=>e.id===form.equipment);
     const latestUsage = latestUsageForEquipment(form.equipment);
-    const formWithLatestUsage = form.usageNA ? form : {
+    const formWithLatestUsage = applyDefaultMechanic(form.usageNA ? form : {
       ...form,
       usageHours: String(form.usageHours ?? "").trim() || latestUsage.hours,
       usageMileage: String(form.usageMileage ?? "").trim() || latestUsage.mileage,
-    };
+    });
     const hoursEntered = !!String(formWithLatestUsage.usageHours||"").trim();
     const mileageEntered = !!String(formWithLatestUsage.usageMileage||"").trim();
     const hasUsageReading = formWithLatestUsage.usageNA || (usageModeReq==="mileage" ? mileageEntered : usageModeReq==="both" ? (hoursEntered || mileageEntered) : hoursEntered);
@@ -2056,15 +2068,30 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         {/* Mechanic inline */}
         <div style={{ gridColumn:"span 2", marginBottom:0 }}>
           <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Mechanic</label>
-          <div style={{ display:"flex", gap:8, alignItems:"flex-start", flexWrap:"wrap" }}>
-            <select style={{ ...sel, flex:1, minWidth:180 }} value={form.techId||""} onChange={e=>{ if(e.target.value==="__new__"){ setShowNewTech(true); } else { selectTech(e.target.value); setShowNewTech(false); } }}>
-              <option value="">-- Select Mechanic --</option>
-              {technicians.map(t=><option key={t.id} value={t.id}>{t.name}{t.laborRate?` ($${t.laborRate}/hr)`:""}</option>)}
-              <option value="__new__">+ Add New Mechanic...</option>
-            </select>
-            {form.techId && <div style={{ fontFamily:T.mono, fontSize:11, color:T.muted, paddingTop:8 }}>Rate: ${technicians.find(t=>t.id===form.techId)?.laborRate||0}/hr</div>}
-          </div>
-          {showNewTech && (
+          {defaultMechanic ? (
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 12px" }}>
+              <div>
+                <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:800, color:T.text }}>{form.tech || defaultMechanic.name}</div>
+                <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted }}>Only mechanic created — automatically assigned to this work order.</div>
+              </div>
+              <div style={{ fontFamily:T.mono, fontSize:11, color:T.muted, whiteSpace:"nowrap" }}>Rate: ${defaultMechanic.laborRate||0}/hr</div>
+            </div>
+          ) : (
+            <>
+              <div style={{ display:"flex", gap:8, alignItems:"flex-start", flexWrap:"wrap" }}>
+                <select style={{ ...sel, flex:1, minWidth:180 }} value={form.techId||""} onChange={e=>{ if(e.target.value==="__new__"){ setShowNewTech(true); } else { selectTech(e.target.value); setShowNewTech(false); } }}>
+                  <option value="">-- Select Mechanic --</option>
+                  {technicians.map(t=><option key={t.id} value={t.id}>{t.name}{t.laborRate?` ($${t.laborRate}/hr)`:""}</option>)}
+                  <option value="__new__">+ Add New Mechanic...</option>
+                </select>
+                {form.techId && <div style={{ fontFamily:T.mono, fontSize:11, color:T.muted, paddingTop:8 }}>Rate: ${technicians.find(t=>t.id===form.techId)?.laborRate||0}/hr</div>}
+              </div>
+              {technicians.length > 1 && !form.techId && (
+                <div style={{ fontFamily:T.sans, fontSize:11, color:T.orange, marginTop:5, fontWeight:700 }}>Multiple mechanics found — choose who is assigned to this work order.</div>
+              )}
+            </>
+          )}
+          {showNewTech && !defaultMechanic && (
             <div style={{ marginTop:10, background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:8, padding:"12px 14px", display:"grid", gridTemplateColumns:"1fr 1fr 1fr auto", gap:8, alignItems:"flex-end" }}>
               <div>
                 <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, display:"block", marginBottom:4 }}>Full Name</label>
@@ -2272,7 +2299,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
           <div style={{ display:"flex", gap:0, background:T.card, border:`1px solid ${T.border}`, borderRadius:7, overflow:"hidden", flexWrap:"wrap" }}>
             {STATUS_TABS.map((s,i)=>(
-              <button key={s} onClick={()=>setFilter(s)} style={{ padding:"7px 12px", border:"none", borderLeft:i>0?`1px solid ${T.border}`:"none", background:filter===s?T.accent:"#fff", color:filter===s?"#fff":T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:filter===s?600:400 }}>{s}</button>
+              <button key={s} onClick={()=>setFilter(s)} style={{ padding:"7px 12px", border:"none", borderLeft:i>0?`1px solid ${T.border}`:"none", background:filter===s?T.accent:T.card, color:filter===s?"#fff":T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:filter===s?600:400 }}>{s}</button>
             ))}
           </div>
           <Btn onClick={openAdd}>+ New Work Order</Btn>
@@ -2358,8 +2385,12 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               const typeInfo = WO_TYPES.find(t=>t.id===wo.woType);
               const rowStatus = wo.status==="Completed" ? "Fully Operational" : (wo.equipmentStatus || eq?.status || "Fully Operational");
               const isOpenInspection = wo.woType==="Inspection" && wo.status!=="Completed";
-              const rowBg = isOpenInspection ? "#dbeafe" : rowStatus==="Out of Service / Deadline" ? "#fff5f5" : rowStatus==="Operational with Deficiencies" ? "#fffbeb" : (i%2===0?"#fff":T.grayLt);
-              const rowHover = isOpenInspection ? "#bfdbfe" : rowStatus==="Out of Service / Deadline" ? "#fee2e2" : rowStatus==="Operational with Deficiencies" ? "#fef3c7" : T.accentLt;
+              const rowBg = isDarkMode
+                ? (isOpenInspection ? T.accentLt : rowStatus==="Out of Service / Deadline" ? T.redLt : rowStatus==="Operational with Deficiencies" ? T.amberLt : (i%2===0?T.card:T.grayLt))
+                : (isOpenInspection ? "#dbeafe" : rowStatus==="Out of Service / Deadline" ? "#fff5f5" : rowStatus==="Operational with Deficiencies" ? "#fffbeb" : (i%2===0?"#fff":T.grayLt));
+              const rowHover = isDarkMode
+                ? (isOpenInspection ? "#1e3a8a" : rowStatus==="Out of Service / Deadline" ? "#4a1f2a" : rowStatus==="Operational with Deficiencies" ? "#4a3a16" : T.accentLt)
+                : (isOpenInspection ? "#bfdbfe" : rowStatus==="Out of Service / Deadline" ? "#fee2e2" : rowStatus==="Operational with Deficiencies" ? "#fef3c7" : T.accentLt);
               const rowBorder = isOpenInspection ? "4px solid #7dd3fc" : rowStatus==="Out of Service / Deadline" ? "4px solid #ef4444" : rowStatus==="Operational with Deficiencies" ? "4px solid #f59e0b" : "4px solid transparent";
               const completedDate = wo.completed || wo.completedDate || wo.dateCompleted || wo.closedDate || wo.closedAt || wo.completedAt || "";
               return (
@@ -2396,19 +2427,19 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                     <button
                       title="Edit Work Order"
                       onClick={e=>{ e.stopPropagation(); openEdit(wo); }}
-                      style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:13, color:T.subtext, display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
+                      style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:13, color:T.subtext, display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
                       ✏️
                     </button>
                     <button
                       title="Print Work Order"
                       onClick={e=>{ e.stopPropagation(); printWO(wo); }}
-                      style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:14, color:T.subtext, display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
+                      style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:14, color:T.subtext, display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
                       🖨
                     </button>
                     <button
                       title="Delete Work Order"
                       onClick={e=>{ e.stopPropagation(); del(wo.id); }}
-                      style={{ background:"#fff5f5", border:`1px solid ${T.red}`, borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:14, color:T.red, display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
+                      style={{ background:T.redLt, border:`1px solid ${T.red}`, borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:14, color:T.red, display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
                       🗑
                     </button>
                   </td>
@@ -7642,7 +7673,7 @@ export default function App() {
         button { color:inherit; }
         [data-theme="dark"] table, [data-theme="dark"] th, [data-theme="dark"] td { border-color:${T.border} !important; }
         [data-theme="dark"] th { background:${T.grayLt} !important; color:${T.subtext} !important; }
-        [data-theme="dark"] td { color:${T.text} !important; }
+        [data-theme="dark"] td { color:${T.text}; }
         [data-theme="dark"] tr:hover { background:${T.accentLt} !important; }
         [data-theme="dark"] a { color:${T.accent}; }
 
@@ -7707,6 +7738,16 @@ export default function App() {
         [data-theme="dark"] [style*="color: #667085"],
         [data-theme="dark"] [style*="color:#6b7280"],
         [data-theme="dark"] [style*="color: #6b7280"] { color:${T.muted} !important; }
+
+
+        [data-theme="dark"] [style*="background: rgb(255, 255, 255)"],
+        [data-theme="dark"] [style*="background:rgb(255, 255, 255)"] { background:${T.card} !important; color:${T.text} !important; }
+        [data-theme="dark"] [style*="background: rgb(255, 251, 235)"],
+        [data-theme="dark"] [style*="background:rgb(255, 251, 235)"] { background:${T.amberLt} !important; color:${T.amber} !important; }
+        [data-theme="dark"] [style*="background: rgb(255, 245, 245)"],
+        [data-theme="dark"] [style*="background:rgb(255, 245, 245)"] { background:${T.redLt} !important; color:${T.red} !important; }
+        [data-theme="dark"] [style*="background: rgb(219, 234, 254)"],
+        [data-theme="dark"] [style*="background:rgb(219, 234, 254)"] { background:${T.accentLt} !important; color:${T.accent} !important; }
 
         [data-theme="dark"] input[type="date"]::-webkit-calendar-picker-indicator { filter:invert(1); opacity:.85; }
         [data-theme="dark"] input[type="number"]::-webkit-inner-spin-button,
