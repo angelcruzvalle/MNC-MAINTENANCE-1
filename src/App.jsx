@@ -2385,12 +2385,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               const typeInfo = WO_TYPES.find(t=>t.id===wo.woType);
               const rowStatus = wo.status==="Completed" ? "Fully Operational" : (wo.equipmentStatus || eq?.status || "Fully Operational");
               const isOpenInspection = wo.woType==="Inspection" && wo.status!=="Completed";
-              const rowBg = isDarkMode
-                ? (isOpenInspection ? T.accentLt : rowStatus==="Out of Service / Deadline" ? T.redLt : rowStatus==="Operational with Deficiencies" ? T.amberLt : (i%2===0?T.card:T.grayLt))
-                : (isOpenInspection ? "#dbeafe" : rowStatus==="Out of Service / Deadline" ? "#fff5f5" : rowStatus==="Operational with Deficiencies" ? "#fffbeb" : (i%2===0?"#fff":T.grayLt));
-              const rowHover = isDarkMode
-                ? (isOpenInspection ? "#1e3a8a" : rowStatus==="Out of Service / Deadline" ? "#4a1f2a" : rowStatus==="Operational with Deficiencies" ? "#4a3a16" : T.accentLt)
-                : (isOpenInspection ? "#bfdbfe" : rowStatus==="Out of Service / Deadline" ? "#fee2e2" : rowStatus==="Operational with Deficiencies" ? "#fef3c7" : T.accentLt);
+              // Keep work order rows neutral in dark/light mode. Equipment status is shown only by the small left color tab.
+              const rowBg = isDarkMode ? (i%2===0 ? T.card : T.grayLt) : (i%2===0 ? "#fff" : T.grayLt);
+              const rowHover = isDarkMode ? T.accentLt : T.grayLt;
               const rowBorder = isOpenInspection ? "4px solid #7dd3fc" : rowStatus==="Out of Service / Deadline" ? "4px solid #ef4444" : rowStatus==="Operational with Deficiencies" ? "4px solid #f59e0b" : "4px solid transparent";
               const completedDate = wo.completed || wo.completedDate || wo.dateCompleted || wo.closedDate || wo.closedAt || wo.completedAt || "";
               return (
