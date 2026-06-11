@@ -670,6 +670,7 @@ const statusStyle = {
   "Completed":                     { color:"#065f46", bg:"#ecfdf5",  border:"#6ee7b7" },
   "Awaiting Parts":                { color:"#6b21a8", bg:"#faf5ff",  border:"#e9d5ff" },
   "On Hold":                       { color:"#7f1d1d", bg:"#fef2f2",  border:"#fca5a5" },
+  "Pending Diagnostic":            { color:"#0f766e", bg:"#f0fdfa",  border:"#99f6e4" },
   "Fully Operational":             { color:"#065f46", bg:"#ecfdf5",  border:"#6ee7b7" },
   "Operational with Deficiencies": { color:"#92400e", bg:"#fffbeb",  border:"#fcd34d" },
   "Out of Service / Deadline":     { color:"#7f1d1d", bg:"#fef2f2",  border:"#fca5a5" },
@@ -1333,7 +1334,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const getIntervals = (woType) => woType==="Inspection" ? INSPECT_INTERVALS : SERVICE_INTERVALS;
   const partCategories = getPartCategoryOptions(state);
 
-  const STATUS_TABS = ["Active","Open","In Progress","Awaiting Parts","On Hold","Completed","All"];
+  const WO_STATUS_OPTIONS = ["Open","In Progress","Pending Diagnostic","Awaiting Parts","On Hold","Completed"];
+  const STATUS_TABS = ["Active", ...WO_STATUS_OPTIONS, "All"];
   const PRIO_ORDER  = {"High":0,"Medium":1,"Low":2};
   const EQUIPMENT_STATUS_FILTERS = ["Fully Operational", "Operational with Deficiencies", "Out of Service / Deadline"];
   const EQUIPMENT_STATUS_ALL_SORTS = {
@@ -1503,7 +1505,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const addPartFromInventory = (invPart, rowIdx) => {
     setForm(f=>{
       const arr = [...(f.partsUsed||[])];
-      arr[rowIdx] = { name:invPart.name, qty:1, unit:invPart.unit||invPart.unitType||"ea", unitCost:invPart.unitCost, partId:invPart.id };
+      arr[rowIdx] = { name:invPart.name, partNumber:invPart.partNumber||"", qty:1, unit:invPart.unit||invPart.unitType||"ea", unitCost:invPart.unitCost, partId:invPart.id, availableQty:+(invPart.qty||0), partSearch:invPart.name||invPart.partNumber||"" };
       return {...f, partsUsed:arr};
     });
   };
@@ -1920,7 +1922,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             <div key={idx}>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 64px 96px 90px auto auto", gap:8, marginBottom:4, alignItems:"center" }}>
                 <div style={{ position:"relative" }}>
-                  <input style={inp} placeholder="Part name or pick from inventory..." value={p.name||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],name:e.target.value,partId:undefined}; return {...f,partsUsed:arr}; })} />
+                  <input style={inp} placeholder="Part name or pick from inventory..." value={p.name||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],name:e.target.value,partSearch:e.target.value,partId:undefined,availableQty:undefined,partNumber:undefined}; return {...f,partsUsed:arr}; })} />
                   {p.partId && <span style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", fontFamily:T.mono, fontSize:9, color:T.green }}>inv</span>}
                 </div>
                 <input style={{ ...inp, textAlign:"center" }} type="number" min="1" placeholder="Qty" value={p.qty||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],qty:e.target.value}; return {...f,partsUsed:arr}; })} />
@@ -1934,6 +1936,11 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                 </button>
                 <button onClick={()=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr.splice(idx,1); return {...f,partsUsed:arr}; })} style={{ padding:"6px 10px", border:"1px solid #fca5a5", borderRadius:6, background:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>
               </div>
+              {p.partId && (
+                <div style={{ fontFamily:T.sans, fontSize:11, color:(+p.qty||0)>(+p.availableQty||0)?T.red:T.green, margin:"0 0 6px 2px", fontWeight:600 }}>
+                  Inventory selected{p.partNumber?` • #${p.partNumber}`:""} • Available: {p.availableQty ?? 0} {p.unit||"ea"}{(+p.qty||0)>(+p.availableQty||0)?" • Not enough stock":""}
+                </div>
+              )}
               {showNewPart===idx && (
                 <div style={{ background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 12px", marginBottom:8 }}>
                   <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:8 }}>Pick from Inventory</div>
@@ -1942,20 +1949,29 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                     {(() => {
                       const eq = state.equipment.find(e=>e.id===form.equipment);
                       const eqKey = `${eq?.make||""} ${eq?.model||""}`.trim().toLowerCase();
-                      const matched = state.parts.filter(pt=>pt.qty>0&&pt.modelFit&&eqKey&&pt.modelFit.toLowerCase().split(",").some(m=>eqKey.includes(m.trim().toLowerCase())||m.trim().toLowerCase().includes(eqKey)));
-                      const other   = state.parts.filter(pt=>pt.qty>0&&!matched.find(m=>m.id===pt.id));
+                      const search = String(p.partSearch || p.name || "").trim().toLowerCase();
+                      const inStock = (state.parts||[]).filter(pt=>(+pt.qty||0)>0);
+                      const searchable = inStock.filter(pt=>{
+                        if(!search) return true;
+                        return `${pt.name||""} ${pt.partNumber||""} ${pt.category||""} ${pt.vendor||""} ${pt.modelFit||""}`.toLowerCase().includes(search);
+                      });
+                      const matched = searchable.filter(pt=>pt.modelFit&&eqKey&&pt.modelFit.toLowerCase().split(",").some(m=>eqKey.includes(m.trim().toLowerCase())||m.trim().toLowerCase().includes(eqKey)));
+                      const other   = searchable.filter(pt=>!matched.find(m=>m.id===pt.id));
+                      const setPartSearch = (value) => setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],partSearch:value,name:value,partId:undefined,availableQty:undefined,partNumber:undefined}; return {...f,partsUsed:arr}; });
                       const renderRow = (pt, highlight) => (
                         <button key={pt.id} onClick={()=>{ addPartFromInventory(pt,idx); setShowNewPart(null); }} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"6px 10px", background:highlight?"#f0fdf4":"#fff", border:`1px solid ${highlight?"#86efac":T.border}`, borderRadius:6, cursor:"pointer", textAlign:"left", fontFamily:T.sans, fontSize:12 }}>
-                          <span><b>{pt.name}</b> <span style={{ color:T.muted, fontSize:11 }}>#{pt.partNumber}</span> {highlight&&<span style={{ color:T.green, fontSize:10, fontWeight:700 }}>Model Match</span>}</span>
-                          <span style={{ color:T.green, fontFamily:T.mono, fontSize:11, marginLeft:8, flexShrink:0 }}>Qty:{pt.qty} {pt.unit||"ea"} | ${pt.unitCost}</span>
+                          <span><b>{pt.name}</b> <span style={{ color:T.muted, fontSize:11 }}>{pt.partNumber?`#${pt.partNumber}`:"No part #"}</span> {highlight&&<span style={{ color:T.green, fontSize:10, fontWeight:700 }}>Model Match</span>}</span>
+                          <span style={{ color:T.green, fontFamily:T.mono, fontSize:11, marginLeft:8, flexShrink:0 }}>Qty:{pt.qty} {pt.unit||"ea"} | ${pt.unitCost||0}</span>
                         </button>
                       );
                       return (<>
+                        <input style={{...inp, marginBottom:8}} placeholder="Search inventory by part name, part #, category, vendor, or model..." value={p.partSearch || p.name || ""} onChange={e=>setPartSearch(e.target.value)} autoFocus />
                         {matched.length>0&&<div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.green, textTransform:"uppercase", letterSpacing:.5, padding:"2px 0" }}>Model-Specific Parts</div>}
                         {matched.map(pt=>renderRow(pt,true))}
                         {other.length>0&&matched.length>0&&<div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5, padding:"4px 0 2px" }}>All Other Parts</div>}
                         {other.map(pt=>renderRow(pt,false))}
-                        {state.parts.filter(pt=>pt.qty>0).length===0&&<div style={{ color:T.muted, fontSize:12, fontFamily:T.sans }}>No parts in stock.</div>}
+                        {inStock.length===0&&<div style={{ color:T.muted, fontSize:12, fontFamily:T.sans }}>No parts in stock.</div>}
+                        {inStock.length>0&&searchable.length===0&&<div style={{ color:T.muted, fontSize:12, fontFamily:T.sans }}>No inventory parts match that search.</div>}
                       </>);
                     })()}
                   </div>
@@ -2320,7 +2336,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                   <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:T.subtext, whiteSpace:"nowrap" }}>{total>0?`$${total.toFixed(0)}`:"—"}</td>
                   <td style={{ padding:"4px 10px", whiteSpace:"nowrap", display:"flex", gap:6, alignItems:"center" }} onClick={e=>e.stopPropagation()}>
                     <select title="Change Work Order Status" value={wo.status||"Open"} onChange={e=>quickUpdateWO(wo,{status:e.target.value})} style={{ ...sel, width:145, minWidth:145, padding:"7px 10px", fontSize:12 }}>
-                      {["Open","In Progress","Awaiting Parts","On Hold","Completed"].map(s=><option key={s}>{s}</option>)}
+                      {WO_STATUS_OPTIONS.map(s=><option key={s}>{s}</option>)}
                     </select>
                     <select title="Change Equipment Status" value={wo.status==="Completed"?"Fully Operational":(wo.equipmentStatus||eq?.status||"Fully Operational")} onChange={e=>quickUpdateWO(wo,{equipmentStatus:e.target.value})} disabled={wo.status==="Completed"} style={{ ...sel, width:240, minWidth:240, padding:"7px 10px", fontSize:12, opacity:wo.status==="Completed" ? .65 : 1 }}>
                       {["Fully Operational","Operational with Deficiencies","Out of Service / Deadline"].map(s=><option key={s}>{s}</option>)}
@@ -3057,7 +3073,7 @@ function Equipment({ state, dispatch }) {
               <div style={{ fontFamily:T.sans }}>
                 <Field label="Status">
                   <select style={inp} value={historyWO.status||""} onChange={e=>setHistoryWO(w=>({...w,status:e.target.value}))}>
-                    {["Open","In Progress","Awaiting Parts","On Hold","Completed"].map(s=><option key={s} value={s}>{s}</option>)}
+                    {WO_STATUS_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}
                   </select>
                 </Field>
                 <Field label="Description">
@@ -7112,7 +7128,7 @@ export default function App() {
       const alreadyOpen = (state.workOrders || []).some(w =>
         w.scheduleId === schedule.id &&
         w.woType === "Service" &&
-        ["Open", "In Progress", "On Hold"].includes(w.status)
+        ["Open", "In Progress", "Pending Diagnostic", "On Hold"].includes(w.status)
       );
       if(alreadyOpen) return;
       const triggers = scheduleTriggers(schedule);
@@ -7201,7 +7217,7 @@ export default function App() {
       const alreadyOpen = (state.workOrders||[]).some(w =>
         w.inspectionScheduleId === schedule.id &&
         w.woType === "Inspection" &&
-        ["Open","In Progress","On Hold"].includes(w.status)
+        ["Open","In Progress","Pending Diagnostic","On Hold"].includes(w.status)
       );
       if(alreadyOpen) return;
       const task = (state.inspectionTasks||[]).find(t => t.id === schedule.taskId);
