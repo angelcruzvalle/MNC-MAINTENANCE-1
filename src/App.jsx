@@ -32,6 +32,33 @@ const T = {
   shadowMd: "0 4px 6px rgba(0,0,0,0.06), 0 2px 4px rgba(0,0,0,0.04)",
 };
 
+
+const DEFAULT_UNIT_TYPES = [
+  "ea", "each", "numerous", "quart", "quarts", "qt", "gallon", "gallons", "gal",
+  "liter", "liters", "L", "oz", "fl oz", "pint", "pints", "pt", "case", "box",
+  "pack", "pk", "set", "pair", "roll", "tube", "can", "bottle", "bucket",
+  "drum", "bag", "lb", "lbs", "ft", "in", "meter", "m"
+];
+
+function getUnitOptionsFromState(state={}) {
+  const seen = new Set();
+  const add = (u) => { const v = String(u||"").trim(); if(v) seen.add(v); };
+  DEFAULT_UNIT_TYPES.forEach(add);
+  (state.parts||[]).forEach(p=>add(p.unit||p.unitType));
+  (state.pmTasks||[]).forEach(t=>(t.parts||[]).forEach(part=>add(part.unit||part.unitType)));
+  (state.workOrders||[]).forEach(w=>(w.partsUsed||[]).forEach(part=>add(part.unit||part.unitType)));
+  return Array.from(seen).sort((a,b)=>a.localeCompare(b, undefined, { numeric:true, sensitivity:"base" }));
+}
+
+const handleUnitSelectChange = (value, currentValue, setValue) => {
+  if(value === "__new_unit__") {
+    const custom = prompt("Enter new unit type:", currentValue && currentValue !== "__new_unit__" ? currentValue : "");
+    if(custom && custom.trim()) setValue(custom.trim());
+    return;
+  }
+  setValue(value);
+};
+
 const INIT = {
   notifications: [],
   technicians: [],
@@ -1296,7 +1323,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const addPartFromInventory = (invPart, rowIdx) => {
     setForm(f=>{
       const arr = [...(f.partsUsed||[])];
-      arr[rowIdx] = { name:invPart.name, qty:1, unitCost:invPart.unitCost, partId:invPart.id };
+      arr[rowIdx] = { name:invPart.name, qty:1, unit:invPart.unit||invPart.unitType||"ea", unitCost:invPart.unitCost, partId:invPart.id };
       return {...f, partsUsed:arr};
     });
   };
@@ -1307,7 +1334,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const newPart = { ...newPartForm, id:genId("PT"), qty:+(newPartForm.qty||requestedQty||0), unitCost:+(newPartForm.unitCost||0), minQty:+(newPartForm.minQty||1) };
     delete newPart.requestedQty;
     dispatch({ type:"ADD_PART", payload:newPart });
-    setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[rowIdx]={name:newPart.name,qty:requestedQty||1,unitCost:newPart.unitCost,partId:newPart.id}; return {...f,partsUsed:arr}; });
+    setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[rowIdx]={name:newPart.name,qty:requestedQty||1,unit:newPart.unit||newPart.unitType||"ea",unitCost:newPart.unitCost,partId:newPart.id}; return {...f,partsUsed:arr}; });
     setNewPartForm({});
     setShowNewPart(null);
   };
@@ -1328,7 +1355,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const partName = String(p.name||"").trim();
     const addIt = confirm(`Part "${partName}" is not in stock / not found in inventory.\n\nDo you want to add this part to inventory now?`);
     if(addIt){
-      setNewPartForm({ name:partName, partNumber:"", qty:p.qty||1, requestedQty:p.qty||1, minQty:1, unitCost:p.unitCost||"", category:"", vendor:"" });
+      setNewPartForm({ name:partName, partNumber:"", qty:p.qty||1, requestedQty:p.qty||1, minQty:1, unit:p.unit||"ea", unitCost:p.unitCost||"", category:"", vendor:"" });
       setShowNewPart(idx);
       alert("Add the stock quantity and price, then click Add & Use. Save the work order after that.");
       return true;
@@ -1574,7 +1601,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <table class="data-table">
             <thead><tr><th style="width:50%">Description</th><th style="width:13%" class="center">Quantity</th><th style="width:18%" class="right">Unit Price</th><th style="width:19%" class="right">Total</th></tr></thead>
             <tbody>
-              ${partsUsed.length>0 ? partsUsed.map(part=>{ const q=+(part.qty||1); const u=+(part.unitCost||0); return `<tr><td>${h(part.name || part.description || "—")}</td><td class="center">${h(q)}</td><td class="right">${money(u)}</td><td class="right">${money(q*u)}</td></tr>`; }).join("") : `<tr><td colspan="4" style="color:#64748b;font-style:italic">No parts listed</td></tr>`}
+              ${partsUsed.length>0 ? partsUsed.map(part=>{ const q=+(part.qty||1); const u=+(part.unitCost||0); return `<tr><td>${h(part.name || part.description || "—")}</td><td class="center">${h(q)} ${h(part.unit||"ea")}</td><td class="right">${money(u)}</td><td class="right">${money(q*u)}</td></tr>`; }).join("") : `<tr><td colspan="4" style="color:#64748b;font-style:italic">No parts listed</td></tr>`}
               <tr class="subRow"><td colspan="3">Parts Subtotal</td><td class="right">${money(partsTotal)}</td></tr>
             </tbody>
           </table>` : ""}
@@ -1711,12 +1738,16 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:8 }}>Parts</label>
           {(form.partsUsed||[]).map((p,idx)=>(
             <div key={idx}>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 64px 90px auto auto", gap:8, marginBottom:4, alignItems:"center" }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 64px 96px 90px auto auto", gap:8, marginBottom:4, alignItems:"center" }}>
                 <div style={{ position:"relative" }}>
                   <input style={inp} placeholder="Part name or pick from inventory..." value={p.name||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],name:e.target.value,partId:undefined}; return {...f,partsUsed:arr}; })} />
                   {p.partId && <span style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", fontFamily:T.mono, fontSize:9, color:T.green }}>inv</span>}
                 </div>
                 <input style={{ ...inp, textAlign:"center" }} type="number" min="1" placeholder="Qty" value={p.qty||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],qty:e.target.value}; return {...f,partsUsed:arr}; })} />
+                <select style={sel} value={p.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, p.unit||"ea", v=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],unit:v}; return {...f,partsUsed:arr}; }))}>
+                  {getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}
+                  <option value="__new_unit__">+ Add new...</option>
+                </select>
                 <input style={inp} type="number" min="0" step="0.01" placeholder="Unit $" value={p.unitCost||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],unitCost:e.target.value}; return {...f,partsUsed:arr}; })} />
                 <button onClick={()=>setShowNewPart(showNewPart===idx?null:idx)} style={{ padding:"6px 8px", border:`1px solid ${T.border}`, borderRadius:6, background:T.grayLt, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.accent, whiteSpace:"nowrap" }}>
                   {showNewPart===idx?"Close":"Inventory"}
@@ -1736,7 +1767,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                       const renderRow = (pt, highlight) => (
                         <button key={pt.id} onClick={()=>{ addPartFromInventory(pt,idx); setShowNewPart(null); }} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"6px 10px", background:highlight?"#f0fdf4":"#fff", border:`1px solid ${highlight?"#86efac":T.border}`, borderRadius:6, cursor:"pointer", textAlign:"left", fontFamily:T.sans, fontSize:12 }}>
                           <span><b>{pt.name}</b> <span style={{ color:T.muted, fontSize:11 }}>#{pt.partNumber}</span> {highlight&&<span style={{ color:T.green, fontSize:10, fontWeight:700 }}>Model Match</span>}</span>
-                          <span style={{ color:T.green, fontFamily:T.mono, fontSize:11, marginLeft:8, flexShrink:0 }}>Qty:{pt.qty} | ${pt.unitCost}</span>
+                          <span style={{ color:T.green, fontFamily:T.mono, fontSize:11, marginLeft:8, flexShrink:0 }}>Qty:{pt.qty} {pt.unit||"ea"} | ${pt.unitCost}</span>
                         </button>
                       );
                       return (<>
@@ -1749,11 +1780,12 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                     })()}
                   </div>
                   <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:6 }}>Or Add New Part to Inventory</div>
-                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 80px 80px 80px", gap:6, marginBottom:6 }}>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 80px 80px 90px 80px", gap:6, marginBottom:6 }}>
                     <input style={inp} placeholder="Part name*" value={newPartForm.name||""} onChange={e=>setNewPartForm(f=>({...f,name:e.target.value}))} />
                     <input style={inp} placeholder="Part number" value={newPartForm.partNumber||""} onChange={e=>setNewPartForm(f=>({...f,partNumber:e.target.value}))} />
                     <input style={inp} placeholder="Stock" type="number" value={newPartForm.qty||""} onChange={e=>setNewPartForm(f=>({...f,qty:e.target.value}))} />
                     <input style={inp} placeholder="Min" type="number" value={newPartForm.minQty||""} onChange={e=>setNewPartForm(f=>({...f,minQty:e.target.value}))} />
+                    <select style={sel} value={newPartForm.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, newPartForm.unit||"ea", v=>setNewPartForm(f=>({...f,unit:v})))}>{getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}<option value="__new_unit__">+ Add new...</option></select>
                     <input style={inp} placeholder="$/unit" type="number" step="0.01" value={newPartForm.unitCost||""} onChange={e=>setNewPartForm(f=>({...f,unitCost:e.target.value}))} />
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr auto", gap:6 }}>
@@ -1770,7 +1802,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               )}
             </div>
           ))}
-          <button onClick={()=>setForm(f=>({...f,partsUsed:[...(f.partsUsed||[]),{name:"",qty:1,unitCost:""}]}))} style={{ background:"none", border:"1px dashed #c8d0e0", borderRadius:6, padding:"7px 16px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600, width:"100%" }}>
+          <button onClick={()=>setForm(f=>({...f,partsUsed:[...(f.partsUsed||[]),{name:"",qty:1,unit:"ea",unitCost:""}]}))} style={{ background:"none", border:"1px dashed #c8d0e0", borderRadius:6, padding:"7px 16px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600, width:"100%" }}>
             + Add Part
           </button>
         </div>
@@ -2501,7 +2533,7 @@ function Equipment({ state, dispatch }) {
           <table class="data-table">
             <thead><tr><th style="width:50%">Description</th><th style="width:13%" class="center">Quantity</th><th style="width:18%" class="right">Unit Price</th><th style="width:19%" class="right">Total</th></tr></thead>
             <tbody>
-              ${partsUsed.length ? partsUsed.map(part => { const q=+(part.qty||1); const u=+(part.unitCost||0); return `<tr><td>${h(part.name || part.description || "—")}</td><td class="center">${h(q)}</td><td class="right">${money(u)}</td><td class="right">${money(q*u)}</td></tr>`; }).join("") : `<tr><td colspan="4" style="color:#64748b;font-style:italic">No parts listed</td></tr>`}
+              ${partsUsed.length ? partsUsed.map(part => { const q=+(part.qty||1); const u=+(part.unitCost||0); return `<tr><td>${h(part.name || part.description || "—")}</td><td class="center">${h(q)} ${h(part.unit||"ea")}</td><td class="right">${money(u)}</td><td class="right">${money(q*u)}</td></tr>`; }).join("") : `<tr><td colspan="4" style="color:#64748b;font-style:italic">No parts listed</td></tr>`}
               <tr class="subRow"><td colspan="3">Parts Subtotal</td><td class="right">${money(partsTotal)}</td></tr>
             </tbody>
           </table>
@@ -2826,7 +2858,7 @@ function Equipment({ state, dispatch }) {
                     {(historyWO.partsUsed||[]).length>0 && (
                       <div style={{ marginBottom:12 }}>
                         <div style={{ fontSize:11, fontWeight:900, color:T.text, textTransform:"uppercase", letterSpacing:.5, marginBottom:5 }}>Parts</div>
-                        {(historyWO.partsUsed||[]).map((p,i)=><div key={i} style={{ fontSize:13, padding:"4px 0", borderBottom:`1px solid ${T.border}` }}>{p.name || p.partName || "Part"} · Qty {p.qty || 1} · ${p.unitCost || 0}</div>)}
+                        {(historyWO.partsUsed||[]).map((p,i)=><div key={i} style={{ fontSize:13, padding:"4px 0", borderBottom:`1px solid ${T.border}` }}>{p.name || p.partName || "Part"} · Qty {p.qty || 1} {p.unit || "ea"} · ${p.unitCost || 0}</div>)}
                       </div>
                     )}
                     {getInspectionRowsForWO(historyWO).length>0 && (
@@ -3252,7 +3284,7 @@ function Parts({ state, dispatch }) {
   const [catF, setCatF]         = useState("All");
   const [expanded, setExpanded] = useState(null);
   const [invUpdate, setInvUpdate] = useState(null);
-  const [poForm, setPoForm]     = useState({ poNumber:"", vendor:"", date:today(), parts:[{name:"",partNumber:"",category:"",qty:"",unitCost:"",location:"",equipmentId:"",modelFit:""}] });
+  const [poForm, setPoForm]     = useState({ poNumber:"", vendor:"", date:today(), parts:[{name:"",partNumber:"",category:"",qty:"",unit:"ea",unitCost:"",location:"",equipmentId:"",modelFit:""}] });
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
   const partCategories = [...new Set([...(state.categories||[]), ...(state.parts||[]).map(p=>p.category).filter(Boolean)])].sort((a,b)=>a.localeCompare(b));
   const rememberPartCategory = (category) => {
@@ -3268,12 +3300,12 @@ function Parts({ state, dispatch }) {
   }).sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||""));
 
   const totalVal = state.parts.reduce((s,p)=>s+(+p.qty*(+p.unitCost||0)),0);
-  const openAdd  = () => { setForm({qty:0,minQty:1,unitCost:0,lowStockAlert:true}); setModal("add"); };
+  const openAdd  = () => { setForm({qty:0,minQty:1,unit:"ea",unitCost:0,lowStockAlert:true}); setModal("add"); };
   const openEdit = p  => { setForm({...p}); setModal(p); };
   const save = () => {
     if(!form.name) return alert("Nomenclature required.");
     rememberPartCategory(form.category);
-    const cleanForm = { ...form, category:String(form.category||"").trim() };
+    const cleanForm = { ...form, category:String(form.category||"").trim(), unit:String(form.unit||"ea").trim()||"ea", qty:+form.qty||0, unitCost:+form.unitCost||0, minQty:+form.minQty||0 };
     modal==="add"
       ? dispatch({type:"ADD_PART",  payload:{...cleanForm,id:genId("PT")}})
       : dispatch({type:"UPDATE_PART",payload:cleanForm});
@@ -3303,10 +3335,10 @@ function Parts({ state, dispatch }) {
       ${reportHeaderHTML(state, "Parts Inventory Report")}
       <p style="font-size:12px;color:#666;margin-bottom:12px">SKUs: ${state.parts.length} | Total Value: $${totalVal.toFixed(2)} | Low Stock: ${lowParts.length}</p>
       <table>
-        <tr><th>Part #</th><th>Nomenclature</th><th>Category</th><th>Location</th><th>Equipment / Model</th><th style="text-align:right">Unit $</th><th style="text-align:right">Qty</th><th style="text-align:right">Total $</th><th>New Count</th></tr>
+        <tr><th>Part #</th><th>Nomenclature</th><th>Category</th><th>Location</th><th>Equipment / Model</th><th style="text-align:right">Unit $</th><th>Unit Type</th><th style="text-align:right">Qty</th><th style="text-align:right">Total $</th><th>New Count</th></tr>
         ${state.parts.sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||"")).map(p=>{
           const eq = p.equipmentId ? state.equipment.find(e=>e.id===p.equipmentId) : null;
-          return `<tr class="${p.qty<=(p.minQty||0)?"low":""}"><td>${p.partNumber||"—"}</td><td>${p.name}</td><td>${p.category||"—"}</td><td>${p.location||"—"}</td><td>${eq?`${eq.id} - ${eq.name}`:p.modelFit||"—"}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td style="text-align:right">${p.qty}</td><td style="text-align:right">$${(p.qty*(+p.unitCost||0)).toFixed(2)}</td><td style="border-bottom:1px solid #bbb;min-width:80px">&nbsp;</td></tr>`;
+          return `<tr class="${p.qty<=(p.minQty||0)?"low":""}"><td>${p.partNumber||"—"}</td><td>${p.name}</td><td>${p.category||"—"}</td><td>${p.location||"—"}</td><td>${eq?`${eq.id} - ${eq.name}`:p.modelFit||"—"}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td>${p.unit||"ea"}</td><td style="text-align:right">${p.qty}</td><td style="text-align:right">$${(p.qty*(+p.unitCost||0)).toFixed(2)}</td><td style="border-bottom:1px solid #bbb;min-width:80px">&nbsp;</td></tr>`;
         }).join("")}
         <tr class="total-row"><td colspan="7" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">$${totalVal.toFixed(2)}</td><td></td></tr>
       </table>
@@ -3321,12 +3353,12 @@ function Parts({ state, dispatch }) {
     valid.forEach(p=>{
       const eq = state.equipment.find(e=>e.id===p.equipmentId);
       rememberPartCategory(p.category);
-      dispatch({type:"ADD_PART",payload:{...p,category:String(p.category||"").trim(),id:genId("PT"),qty:+p.qty||0,unitCost:+p.unitCost||0,minQty:1,lowStockAlert:true,vendor:poForm.vendor,poNumber:poForm.poNumber,dateReceived:poForm.date,modelFit:eq?`${eq.make||""} ${eq.model||""}`.trim():p.modelFit}});
+      dispatch({type:"ADD_PART",payload:{...p,category:String(p.category||"").trim(),id:genId("PT"),qty:+p.qty||0,unit:String(p.unit||"ea").trim()||"ea",unitCost:+p.unitCost||0,minQty:1,lowStockAlert:true,vendor:poForm.vendor,poNumber:poForm.poNumber,dateReceived:poForm.date,modelFit:eq?`${eq.make||""} ${eq.model||""}`.trim():p.modelFit}});
     });
     setModal(null);
-    setPoForm({poNumber:"",vendor:"",date:today(),parts:[{name:"",partNumber:"",category:"",qty:"",unitCost:"",location:"",equipmentId:"",modelFit:""}]});
+    setPoForm({poNumber:"",vendor:"",date:today(),parts:[{name:"",partNumber:"",category:"",qty:"",unit:"ea",unitCost:"",location:"",equipmentId:"",modelFit:""}]});
   };
-  const addPoRow = () => setPoForm(f=>({...f,parts:[...f.parts,{name:"",partNumber:"",category:"",qty:"",unitCost:"",location:"",equipmentId:"",modelFit:""}]}));
+  const addPoRow = () => setPoForm(f=>({...f,parts:[...f.parts,{name:"",partNumber:"",category:"",qty:"",unit:"ea",unitCost:"",location:"",equipmentId:"",modelFit:""}]}));
   const setPoRow = (i,k,v) => setPoForm(f=>{ const pts=[...f.parts]; pts[i]={...pts[i],[k]:v}; return {...f,parts:pts}; });
   const delPoRow = i => setPoForm(f=>{ const pts=[...f.parts]; pts.splice(i,1); return {...f,parts:pts}; });
 
@@ -3390,7 +3422,7 @@ function Parts({ state, dispatch }) {
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-              {["Part Number","Name","Category","Unit Cost","Qty","Total Value",""].map(h=>(
+              {["Part Number","Name","Category","Unit Cost","Unit","Qty","Total Value",""].map(h=>(
                 <th key={h} style={{ padding:"10px 12px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4, whiteSpace:"nowrap" }}>{h}</th>
               ))}
             </tr>
@@ -3413,6 +3445,7 @@ function Parts({ state, dispatch }) {
                     </td>
                     <td style={{ padding:"10px 12px", color:T.subtext }}>{p.category||"—"}</td>
                     <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12 }}>${(+p.unitCost||0).toFixed(2)}</td>
+                    <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12 }}>{p.unit||"ea"}</td>
                     <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:13, fontWeight:700, color:isLow?T.red:T.green }}>{p.qty}</td>
                     <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>${(p.qty*(+p.unitCost||0)).toFixed(2)}</td>
                     <td style={{ padding:"10px 12px" }} onClick={e=>e.stopPropagation()}>
@@ -3422,9 +3455,9 @@ function Parts({ state, dispatch }) {
                   </tr>
                   {expanded===p.id && (
                     <tr style={{ borderBottom:`1px solid ${T.border}` }}>
-                      <td colSpan={7} style={{ padding:"12px 20px", background:"#f8fbff" }}>
+                      <td colSpan={8} style={{ padding:"12px 20px", background:"#f8fbff" }}>
                         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:"10px 24px", marginBottom:12 }}>
-                          {[["Vendor",p.vendor],["Location",p.location],["Min Qty",p.minQty],["PO Number",p.poNumber],["Date Received",p.dateReceived],["Fits Model",p.modelFit],["Linked Equipment",linkedEq?`${linkedEq.name} (${linkedEq.id})`:null]].filter(([,v])=>v).map(([k,v])=>(
+                          {[["Vendor",p.vendor],["Location",p.location],["Unit Type",p.unit||"ea"],["Min Qty",p.minQty],["PO Number",p.poNumber],["Date Received",p.dateReceived],["Fits Model",p.modelFit],["Linked Equipment",linkedEq?`${linkedEq.name} (${linkedEq.id})`:null]].filter(([,v])=>v).map(([k,v])=>(
                             <div key={k}><div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div><div style={{ fontFamily:T.sans, fontSize:13, color:T.text, marginTop:3 }}>{v}</div></div>
                           ))}
                         </div>
@@ -3469,6 +3502,7 @@ function Parts({ state, dispatch }) {
             <Field label="Date Received" half><input style={inp} type="date" value={form.dateReceived||""} onChange={F("dateReceived")} /></Field>
             <Field label="Unit Cost ($)" half><input style={inp} type="number" value={form.unitCost||0} onChange={F("unitCost")} /></Field>
             <Field label="Qty on Hand" half><input style={inp} type="number" value={form.qty||0} onChange={F("qty")} /></Field>
+            <Field label="Unit Type" half><select style={sel} value={form.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, form.unit||"ea", v=>setForm(f=>({...f,unit:v})))}>{getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}<option value="__new_unit__">+ Add new...</option></select></Field>
             <Field label="Min Qty (Low Stock)" half><input style={inp} type="number" value={form.minQty||1} onChange={F("minQty")} /></Field>
             <div style={{ marginBottom:14, gridColumn:"span 2", display:"flex", alignItems:"center", gap:12 }}>
               <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext }}>Low Stock Alert:</label>
@@ -3493,15 +3527,16 @@ function Parts({ state, dispatch }) {
             <Field label="Vendor"><input style={inp} value={poForm.vendor} onChange={e=>setPoForm(f=>({...f,vendor:e.target.value}))} /></Field>
             <Field label="Date Received"><input style={inp} type="date" value={poForm.date} onChange={e=>setPoForm(f=>({...f,date:e.target.value}))} /></Field>
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 55px 65px 1fr 1fr auto", gap:6, marginBottom:6, background:T.grayLt, padding:"6px 8px", borderRadius:6 }}>
-            {["Name*","Part #","Category","Qty","$/Unit","Location","Equipment",""].map(h=><div key={h} style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</div>)}
+          <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 55px 80px 65px 1fr 1fr auto", gap:6, marginBottom:6, background:T.grayLt, padding:"6px 8px", borderRadius:6 }}>
+            {["Name*","Part #","Category","Qty","Unit","$/Unit","Location","Equipment",""].map(h=><div key={h} style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</div>)}
           </div>
           {poForm.parts.map((p,i)=>(
-            <div key={i} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 55px 65px 1fr 1fr auto", gap:6, marginBottom:6, alignItems:"center" }}>
+            <div key={i} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 55px 80px 65px 1fr 1fr auto", gap:6, marginBottom:6, alignItems:"center" }}>
               <input style={inp} placeholder="Part name*" value={p.name} onChange={e=>setPoRow(i,"name",e.target.value)} />
               <input style={inp} placeholder="Part #" value={p.partNumber} onChange={e=>setPoRow(i,"partNumber",e.target.value)} />
               <input style={inp} list="part-category-options" placeholder="Category" value={p.category} onChange={e=>setPoRow(i,"category",e.target.value)} />
               <input style={inp} type="number" placeholder="Qty" value={p.qty} onChange={e=>setPoRow(i,"qty",e.target.value)} />
+              <select style={sel} value={p.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, p.unit||"ea", v=>setPoRow(i,"unit",v))}>{getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}<option value="__new_unit__">+ Add new...</option></select>
               <input style={inp} type="number" step="0.01" placeholder="0.00" value={p.unitCost} onChange={e=>setPoRow(i,"unitCost",e.target.value)} />
               <input style={inp} placeholder="Location" value={p.location} onChange={e=>setPoRow(i,"location",e.target.value)} />
               <select style={sel} value={p.equipmentId||""} onChange={e=>{ const eq=state.equipment.find(q=>q.id===e.target.value); setPoRow(i,"equipmentId",e.target.value); if(eq)setPoRow(i,"modelFit",`${eq.make||""} ${eq.model||""}`.trim()); }}>
@@ -4233,9 +4268,9 @@ function PM({ state, dispatch }) {
   const saveTask = () => {
     if(!taskForm.name) return alert("Task name required.");
     if(editTaskId) {
-      dispatch({type:"UPDATE_PM_TASK", payload:{...taskForm, id:editTaskId}});
+      dispatch({type:"UPDATE_PM_TASK", payload:{...taskForm, parts:(taskForm.parts||[]).map(p=>({...p, unit:String(p.unit||"ea").trim()||"ea"})), id:editTaskId}});
     } else {
-      dispatch({type:"ADD_PM_TASK", payload:{...taskForm, id:genId("PMT")}});
+      dispatch({type:"ADD_PM_TASK", payload:{...taskForm, parts:(taskForm.parts||[]).map(p=>({...p, unit:String(p.unit||"ea").trim()||"ea"})), id:genId("PMT")}});
     }
     setTaskModal(false); setEditTaskId(null); setTaskForm(blankTaskForm());
   };
@@ -4583,8 +4618,9 @@ function PM({ state, dispatch }) {
                 <div key={i} style={{ display:"grid", gridTemplateColumns:"1fr 80px 80px auto", gap:6, marginBottom:6, alignItems:"center" }}>
                   <input style={inp} placeholder="e.g. Engine Oil, Air Filter..." value={p.name} onPaste={pasteIntoText(v=>setTaskPart(i,"name",v))} onChange={e=>setTaskPart(i,"name",e.target.value)} />
                   <input style={inp} type="number" placeholder="5" value={p.qty} onChange={e=>setTaskPart(i,"qty",e.target.value)} />
-                  <select style={sel} value={p.unit||"ea"} onChange={e=>setTaskPart(i,"unit",e.target.value)}>
-                    {["ea","qt","gal","L","oz","lbs","ft","m","set","pk"].map(u=><option key={u} value={u}>{u}</option>)}
+                  <select style={sel} value={p.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, p.unit||"ea", v=>setTaskPart(i,"unit",v))}>
+                    {getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}
+                    <option value="__new_unit__">+ Add new...</option>
                   </select>
                   {(taskForm.parts||[]).length>1?<button onClick={()=>delTaskPart(i)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>:<div/>}
                 </div>
@@ -5601,11 +5637,11 @@ function ReportPartsInv({ state }) {
       <h1>Parts Inventory Report</h1>
       <p>Generated: ${new Date().toLocaleDateString()} | Total SKUs: ${state.parts.length} | Total Value: $${totalVal.toFixed(2)} | Low Stock Items: ${lowParts.length}</p>
       <table>
-        <tr><th>Part #</th><th>Nomenclature</th><th>Category</th><th>Location</th><th>Equipment / Model</th><th style="text-align:right">Unit $</th><th style="text-align:right">Qty</th><th style="text-align:right">Total $</th><th>New Count</th></tr>
+        <tr><th>Part #</th><th>Nomenclature</th><th>Category</th><th>Location</th><th>Equipment / Model</th><th style="text-align:right">Unit $</th><th>Unit Type</th><th style="text-align:right">Qty</th><th style="text-align:right">Total $</th><th>New Count</th></tr>
         ${sorted.map(p=>{
           const eq = p.equipmentId?state.equipment.find(e=>e.id===p.equipmentId):null;
           const low = p.qty<=(p.minQty||0)&&p.lowStockAlert!==false;
-          return `<tr class="${low?"low":""}"><td>${p.partNumber||"—"}</td><td>${p.name}${low?" &#9888;":""}</td><td>${p.category||"—"}</td><td>${p.location||"—"}</td><td>${eq?`${eq.id} - ${eq.name}`:p.modelFit||"—"}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td style="text-align:right">${p.qty}</td><td style="text-align:right">$${(p.qty*(+p.unitCost||0)).toFixed(2)}</td><td style="border-bottom:1px solid #999;min-width:80px">&nbsp;</td></tr>`;
+          return `<tr class="${low?"low":""}"><td>${p.partNumber||"—"}</td><td>${p.name}${low?" &#9888;":""}</td><td>${p.category||"—"}</td><td>${p.location||"—"}</td><td>${eq?`${eq.id} - ${eq.name}`:p.modelFit||"—"}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td>${p.unit||"ea"}</td><td style="text-align:right">${p.qty}</td><td style="text-align:right">$${(p.qty*(+p.unitCost||0)).toFixed(2)}</td><td style="border-bottom:1px solid #999;min-width:80px">&nbsp;</td></tr>`;
         }).join("")}
         <tr class="total-row"><td colspan="7" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">$${totalVal.toFixed(2)}</td><td></td></tr>
       </table>
@@ -5647,7 +5683,7 @@ function ReportPartsInv({ state }) {
               );
             })}
             <tr style={{ background:T.grayLt, borderTop:`2px solid ${T.border}` }}>
-              <td colSpan={7} style={{ padding:"10px 12px", fontFamily:T.sans, fontSize:13, fontWeight:700, textAlign:"right" }}>TOTAL VALUE</td>
+              <td colSpan={8} style={{ padding:"10px 12px", fontFamily:T.sans, fontSize:13, fontWeight:700, textAlign:"right" }}>TOTAL VALUE</td>
               <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:14, fontWeight:700, color:T.accent }}>${totalVal.toFixed(2)}</td>
             </tr>
           </tbody>
@@ -5872,7 +5908,7 @@ function ReportPM({ state }) {
                     <td style={{ padding:"9px 12px" }}><Badge label={p.status} /></td>
                   </tr>;
                 })}
-                {list.length===0&&<tr><td colSpan={7} style={{ padding:20, textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13 }}>None</td></tr>}
+                {list.length===0&&<tr><td colSpan={8} style={{ padding:20, textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13 }}>None</td></tr>}
               </tbody>
             </table>
           </Card>
