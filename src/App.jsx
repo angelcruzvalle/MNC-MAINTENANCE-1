@@ -95,6 +95,61 @@ function getPartStockStatus(part={}) {
 }
 
 
+const CONVAULT_2000_CALIBRATION = [
+  { inches:0, gallons:0 }, { inches:0.125, gallons:5 }, { inches:0.25, gallons:11 }, { inches:0.375, gallons:16 }, { inches:0.5, gallons:22 }, { inches:0.625, gallons:27 }, { inches:0.75, gallons:33 }, { inches:0.875, gallons:38 },
+  { inches:1, gallons:44 }, { inches:2, gallons:88 }, { inches:3, gallons:131 }, { inches:4, gallons:175 }, { inches:5, gallons:219 }, { inches:6, gallons:263 }, { inches:7, gallons:306 }, { inches:8, gallons:350 }, { inches:9, gallons:394 }, { inches:10, gallons:438 },
+  { inches:11, gallons:481 }, { inches:12, gallons:525 }, { inches:13, gallons:569 }, { inches:14, gallons:613 }, { inches:15, gallons:656 }, { inches:16, gallons:700 }, { inches:17, gallons:744 }, { inches:18, gallons:788 }, { inches:19, gallons:832 }, { inches:20, gallons:875 },
+  { inches:21, gallons:919 }, { inches:22, gallons:963 }, { inches:23, gallons:1007 }, { inches:24, gallons:1050 }, { inches:25, gallons:1094 }, { inches:26, gallons:1138 }, { inches:27, gallons:1182 }, { inches:28, gallons:1225 }, { inches:29, gallons:1269 }, { inches:30, gallons:1313 },
+  { inches:31, gallons:1357 }, { inches:32, gallons:1401 }, { inches:33, gallons:1444 }, { inches:34, gallons:1488 }, { inches:35, gallons:1532 }, { inches:36, gallons:1576 }, { inches:37, gallons:1619 }, { inches:38, gallons:1663 }, { inches:39, gallons:1707 }, { inches:40, gallons:1751 },
+  { inches:41, gallons:1794 }, { inches:42, gallons:1838 }, { inches:43, gallons:1882 }, { inches:44, gallons:1926 }, { inches:45, gallons:1969 }, { inches:46, gallons:2013 }, { inches:46.75, gallons:2046 }
+];
+
+function parseNumber(value, fallback=0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function fuelCalibrationRows(container={}) {
+  const rows = Array.isArray(container.calibration) ? container.calibration : [];
+  return rows.map(r=>({ inches:parseNumber(r.inches, NaN), gallons:parseNumber(r.gallons, NaN) }))
+    .filter(r=>Number.isFinite(r.inches) && Number.isFinite(r.gallons))
+    .sort((a,b)=>a.inches-b.inches);
+}
+
+function calculateFuelGallons(container={}, inchesInput=0) {
+  const inches = parseNumber(inchesInput, 0);
+  const rows = fuelCalibrationRows(container);
+  if(rows.length) {
+    if(inches <= rows[0].inches) return Math.max(0, rows[0].gallons);
+    for(let i=1;i<rows.length;i++) {
+      const prev = rows[i-1], next = rows[i];
+      if(inches <= next.inches) {
+        const span = next.inches - prev.inches;
+        if(!span) return next.gallons;
+        const ratio = (inches - prev.inches) / span;
+        return Math.max(0, prev.gallons + ratio * (next.gallons - prev.gallons));
+      }
+    }
+    return Math.max(0, rows[rows.length-1].gallons);
+  }
+  const gpi = parseNumber(container.gallonsPerInch, 0);
+  const capacity = parseNumber(container.capacity, 0);
+  const calc = gpi > 0 ? inches * gpi : (capacity && container.maxHeight ? (inches / parseNumber(container.maxHeight, 1)) * capacity : 0);
+  return Math.max(0, capacity ? Math.min(calc, capacity) : calc);
+}
+
+function latestFuelReading(state={}, containerId) {
+  return (state.fuelReadings || [])
+    .filter(r=>r.containerId===containerId)
+    .sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")) || String(b.id||"").localeCompare(String(a.id||"")))[0] || null;
+}
+
+function fuelPercent(container={}, gallons=0) {
+  const cap = parseNumber(container.capacity, 0);
+  return cap > 0 ? Math.max(0, Math.min(100, (parseNumber(gallons,0) / cap) * 100)) : 0;
+}
+
+
 const INIT = {
   notifications: [],
   technicians: [],
@@ -109,6 +164,8 @@ const INIT = {
   inspectionTasks: [],
   inspectionSchedules: [],
   inventoryItems: [],
+  fuelContainers: [],
+  fuelReadings: [],
   profile: null,
   settings: null,
   woSettings: null,
@@ -290,6 +347,11 @@ function reducer(state, { type, payload }) {
     case "DELETE_INSPECTION_SCHEDULE":return { ...state, inspectionSchedules: (state.inspectionSchedules||[]).filter(s=>s.id!==payload) };
     case "ADD_INV":       return { ...state, inventoryItems: [...(state.inventoryItems||[]), payload] };
     case "DELETE_INV":    return { ...state, inventoryItems: (state.inventoryItems||[]).filter(i => i.id!==payload) };
+    case "ADD_FUEL_CONTAINER": return { ...state, fuelContainers:[payload, ...(state.fuelContainers||[])] };
+    case "UPDATE_FUEL_CONTAINER": return { ...state, fuelContainers:(state.fuelContainers||[]).map(c=>c.id===payload.id?payload:c) };
+    case "DELETE_FUEL_CONTAINER": return { ...state, fuelContainers:(state.fuelContainers||[]).filter(c=>c.id!==payload), fuelReadings:(state.fuelReadings||[]).filter(r=>r.containerId!==payload) };
+    case "ADD_FUEL_READING": return { ...state, fuelReadings:[payload, ...(state.fuelReadings||[])] };
+    case "DELETE_FUEL_READING": return { ...state, fuelReadings:(state.fuelReadings||[]).filter(r=>r.id!==payload) };
     case "UPDATE_PROFILE":return { ...state, profile: payload };
     case "UPDATE_WO_SETTINGS": return { ...state, woSettings: payload };
     case "ADD_TECH":      return { ...state, technicians: [...(state.technicians||[]), payload] };
@@ -768,6 +830,7 @@ const NAV = [
   { id:"parts",      icon:"📦", label:"Parts Inventory" },
   { id:"pm",         icon:"🔧", label:"Preventive Maint." },
   { id:"usage",      icon:"📊", label:"Usage Tracking" },
+  { id:"fuel",       icon:"⛽", label:"Fuel Tracking" },
   { id:"spending",   icon:"💰", label:"Spending & Costs" },
 ];
 
@@ -776,6 +839,7 @@ const NAV_REPORTS = [
   { id:"reports_parts_inv",   icon:"📦", label:"Parts Inventory Report" },
   { id:"reports_pm",          icon:"🔧", label:"PM Report" },
   { id:"reports_usage",       icon:"📊", label:"Usage Report" },
+  { id:"reports_fuel",        icon:"⛽", label:"Fuel Report" },
   { id:"reports_spending",    icon:"💰", label:"Spending Reports" },
   { id:"reports_combined",    icon:"📑", label:"Combined Report" },
 ];
@@ -1204,6 +1268,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const STATUS_TABS = ["Active","Open","In Progress","Awaiting Parts","On Hold","Completed","All"];
   const PRIO_ORDER  = {"High":0,"Medium":1,"Low":2};
   const EQUIPMENT_STATUS_FILTERS = ["Fully Operational", "Operational with Deficiencies", "Out of Service / Deadline"];
+  const EQUIPMENT_STATUS_ALL_SORTS = {
+    allAsc: "All Statuses — Fully Operational First",
+    allDesc: "All Statuses — Deadline First",
+  };
   const getCompletedDate = (w) => w?.completed || w?.completedDate || w?.dateCompleted || w?.closedDate || w?.closedAt || w?.completedAt || "";
 
   /* Date range filter for completed WOs */
@@ -1243,22 +1311,30 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const matchPriority = priorityFilter==="All" || w.priority===priorityFilter;
     const matchMech     = mechFilter==="All"     || w.tech===mechFilter;
     const woEqStatus = getWOEquipmentStatus(w);
-    const matchEquipmentStatus = equipmentStatusFilter==="All" || woEqStatus===equipmentStatusFilter;
+    const matchEquipmentStatus = equipmentStatusFilter==="All" || equipmentStatusFilter==="allAsc" || equipmentStatusFilter==="allDesc" || woEqStatus===equipmentStatusFilter;
     return matchStatus && matchType && matchPriority && matchMech && matchEquipmentStatus && matchCompletedDate(w);
   }).sort((a,b)=>{
-    let cmp = 0;
-    if(sortBy==="priority") cmp = (PRIO_ORDER[a.priority]??9)-(PRIO_ORDER[b.priority]??9);
-    else if(sortBy==="due")     cmp = (a.due||"").localeCompare(b.due||"");
-    else if(sortBy==="created") cmp = (a.created||"").localeCompare(b.created||"");
-    else if(sortBy==="completed") cmp = getCompletedDate(a).localeCompare(getCompletedDate(b));
-    else if(sortBy==="status")  cmp = (a.status||"").localeCompare(b.status||"");
-    else if(sortBy==="equipmentStatus") cmp = equipmentStatusRank(getWOEquipmentStatus(a)) - equipmentStatusRank(getWOEquipmentStatus(b));
-    else if(sortBy==="cost") {
-      const aParts = Array.isArray(a.partsUsed)&&a.partsUsed.length ? a.partsUsed.reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+a.partsCost||0);
-      const bParts = Array.isArray(b.partsUsed)&&b.partsUsed.length ? b.partsUsed.reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+b.partsCost||0);
-      cmp = ((+a.laborCost||0)+aParts)-((+b.laborCost||0)+bParts);
+    const compareBySelectedSort = () => {
+      let cmp = 0;
+      if(sortBy==="priority") cmp = (PRIO_ORDER[a.priority]??9)-(PRIO_ORDER[b.priority]??9);
+      else if(sortBy==="due")     cmp = (a.due||"").localeCompare(b.due||"");
+      else if(sortBy==="created") cmp = (a.created||"").localeCompare(b.created||"");
+      else if(sortBy==="completed") cmp = getCompletedDate(a).localeCompare(getCompletedDate(b));
+      else if(sortBy==="status")  cmp = (a.status||"").localeCompare(b.status||"");
+      else if(sortBy==="equipmentStatus") cmp = equipmentStatusRank(getWOEquipmentStatus(a)) - equipmentStatusRank(getWOEquipmentStatus(b));
+      else if(sortBy==="cost") {
+        const aParts = Array.isArray(a.partsUsed)&&a.partsUsed.length ? a.partsUsed.reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+a.partsCost||0);
+        const bParts = Array.isArray(b.partsUsed)&&b.partsUsed.length ? b.partsUsed.reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+b.partsCost||0);
+        cmp = ((+a.laborCost||0)+aParts)-((+b.laborCost||0)+bParts);
+      }
+      return sortDir==="asc" ? cmp : -cmp;
+    };
+    if(equipmentStatusFilter==="allAsc" || equipmentStatusFilter==="allDesc") {
+      const statusCmp = equipmentStatusRank(getWOEquipmentStatus(a)) - equipmentStatusRank(getWOEquipmentStatus(b));
+      if(statusCmp !== 0) return equipmentStatusFilter==="allAsc" ? statusCmp : -statusCmp;
+      return compareBySelectedSort();
     }
-    return sortDir==="asc" ? cmp : -cmp;
+    return compareBySelectedSort();
   });
   const allMechanics = [...new Set(state.workOrders.map(w=>w.tech).filter(Boolean))];
   const technicians = state.technicians || [];
@@ -2085,8 +2161,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             {allMechanics.map(m=><option key={m}>{m}</option>)}
           </select>
           {/* Equipment Status */}
-          <select style={{ ...sel, width:230 }} value={equipmentStatusFilter} onChange={e=>setEquipmentStatusFilter(e.target.value)}>
+          <select style={{ ...sel, width:280 }} value={equipmentStatusFilter} onChange={e=>setEquipmentStatusFilter(e.target.value)}>
             <option value="All">All Equipment Statuses</option>
+            <option value="allAsc">{EQUIPMENT_STATUS_ALL_SORTS.allAsc}</option>
+            <option value="allDesc">{EQUIPMENT_STATUS_ALL_SORTS.allDesc}</option>
             {EQUIPMENT_STATUS_FILTERS.map(s=><option key={s} value={s}>{s}</option>)}
           </select>
           {/* Date range — only when viewing Completed */}
@@ -6536,6 +6614,134 @@ function SetupWizard({ onComplete }) {
   );
 }
 
+
+function FuelTracking({ state, dispatch }) {
+  const emptyContainer = { name:"", fuelType:"Diesel", capacity:2000, maxHeight:46.75, gallonsPerInch:43.77, length:122, width:82.88, height:46.75, calibration:CONVAULT_2000_CALIBRATION };
+  const [modal, setModal] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState(emptyContainer);
+  const [reading, setReading] = useState({ containerId:"", inches:"", date:today(), notes:"" });
+  const containers = state.fuelContainers || [];
+  const readings = state.fuelReadings || [];
+
+  const openAdd = () => { setEditing(null); setForm({ ...emptyContainer, calibration:CONVAULT_2000_CALIBRATION.map(r=>({...r})) }); setModal("container"); };
+  const openEdit = (c) => { setEditing(c.id); setForm({ ...emptyContainer, ...c, calibration:fuelCalibrationRows(c) }); setModal("container"); };
+  const saveContainer = () => {
+    if(!String(form.name||"").trim()) return alert("Enter a tank/container name.");
+    const payload = {
+      ...form,
+      id: editing || genId("FUEL"),
+      name:String(form.name||"").trim(),
+      fuelType:String(form.fuelType||"Fuel").trim(),
+      capacity:parseNumber(form.capacity,0),
+      maxHeight:parseNumber(form.maxHeight,0),
+      gallonsPerInch:parseNumber(form.gallonsPerInch,0),
+      length:parseNumber(form.length,0),
+      width:parseNumber(form.width,0),
+      height:parseNumber(form.height,0),
+      calibration:fuelCalibrationRows(form),
+    };
+    dispatch({ type:editing?"UPDATE_FUEL_CONTAINER":"ADD_FUEL_CONTAINER", payload });
+    setModal(null);
+  };
+  const addDefaultTwo = () => {
+    const stamp = Date.now();
+    dispatch({ type:"ADD_FUEL_CONTAINER", payload:{ ...emptyContainer, id:`FUEL${stamp}D`, name:"ConVault 2000 Gallon Diesel Tank", fuelType:"Diesel", calibration:CONVAULT_2000_CALIBRATION.map(r=>({...r})) } });
+    dispatch({ type:"ADD_FUEL_CONTAINER", payload:{ ...emptyContainer, id:`FUEL${stamp}G`, name:"ConVault 2000 Gallon Gasoline Tank", fuelType:"Gasoline", calibration:CONVAULT_2000_CALIBRATION.map(r=>({...r})) } });
+  };
+  const saveReading = () => {
+    const c = containers.find(x=>x.id===reading.containerId);
+    if(!c) return alert("Select a fuel tank/container.");
+    const inches = parseNumber(reading.inches, NaN);
+    if(!Number.isFinite(inches)) return alert("Enter inches.");
+    const gallons = calculateFuelGallons(c, inches);
+    dispatch({ type:"ADD_FUEL_READING", payload:{ id:genId("FLOG"), containerId:c.id, date:reading.date||today(), inches, gallons, percent:fuelPercent(c, gallons), fuelType:c.fuelType, notes:reading.notes||"" } });
+    setReading({ containerId:c.id, inches:"", date:today(), notes:"" });
+  };
+  const updateCalibrationRow = (idx, key, value) => {
+    const rows = [...(form.calibration||[])];
+    rows[idx] = { ...(rows[idx]||{}), [key]:value };
+    setForm({ ...form, calibration:rows });
+  };
+  const totalGallons = containers.reduce((sum,c)=>sum+(+(latestFuelReading(state,c.id)?.gallons||0)),0);
+
+  return <div style={{ display:"grid", gap:16 }}>
+    <Card>
+      <SectionHeading sub="Track tank level by entering inches. The app calculates gallons from a tank chart or gallons-per-inch.">Fuel Tracking</SectionHeading>
+      <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
+        <Btn onClick={openAdd}>+ Add Fuel Container</Btn>
+        <Btn variant="secondary" onClick={addDefaultTwo}>Add My Two ConVault 2000 Tanks</Btn>
+        <Btn variant="secondary" onClick={()=>window.print()}>Print</Btn>
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }}>
+        <Metric label="Containers" value={containers.length} />
+        <Metric label="Fuel On Hand" value={`${Math.round(totalGallons).toLocaleString()} gal`} />
+        <Metric label="Readings" value={readings.length} />
+      </div>
+    </Card>
+
+    <Card>
+      <SectionHeading sub="Add a measurement using a stick reading in inches.">Add Fuel Reading</SectionHeading>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:10, alignItems:"end" }}>
+        <Field label="Tank / Container"><select style={sel} value={reading.containerId} onChange={e=>setReading({...reading,containerId:e.target.value})}><option value="">Select...</option>{containers.map(c=><option key={c.id} value={c.id}>{c.name} ({c.fuelType})</option>)}</select></Field>
+        <Field label="Stick Reading Inches"><input style={inp} type="number" step="0.001" value={reading.inches} onChange={e=>setReading({...reading,inches:e.target.value})} /></Field>
+        <Field label="Date"><input style={inp} type="date" value={reading.date} onChange={e=>setReading({...reading,date:e.target.value})} /></Field>
+        <Field label="Notes"><input style={inp} value={reading.notes} onChange={e=>setReading({...reading,notes:e.target.value})} placeholder="optional" /></Field>
+        <Btn onClick={saveReading} style={{ height:38, marginBottom:14 }}>Save Reading</Btn>
+      </div>
+      {reading.containerId && reading.inches!=="" && (()=>{ const c=containers.find(x=>x.id===reading.containerId); const gal=calculateFuelGallons(c, reading.inches); return <div style={{ marginTop:4, padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt, fontWeight:800 }}>Calculated: {Math.round(gal).toLocaleString()} gallons ({fuelPercent(c,gal).toFixed(1)}%)</div>; })()}
+    </Card>
+
+    <Card>
+      <SectionHeading sub="Latest level for each tank/container.">Fuel Containers</SectionHeading>
+      <div className="mobile-x-scroll"><table style={{ borderCollapse:"collapse", width:"100%" }}><thead><tr>{["Container","Fuel","Capacity","Latest Inches","Gallons","% Full","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, fontSize:12, color:T.muted }}>{h}</th>)}</tr></thead><tbody>
+        {containers.map(c=>{ const last=latestFuelReading(state,c.id); const pct=fuelPercent(c,last?.gallons||0); return <tr key={c.id}><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, fontWeight:700 }}>{c.name}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{c.fuelType}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{(+c.capacity||0).toLocaleString()} gal</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{last?last.inches:"—"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{last?Math.round(last.gallons).toLocaleString():"—"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{last?`${pct.toFixed(1)}%`:"—"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, display:"flex", gap:6 }}><Btn small variant="secondary" onClick={()=>openEdit(c)}>Edit</Btn><Btn small variant="danger" onClick={()=>confirm("Delete this fuel container and its readings?")&&dispatch({type:"DELETE_FUEL_CONTAINER",payload:c.id})}>Delete</Btn></td></tr> })}
+        {!containers.length && <tr><td colSpan="7" style={{ padding:24, textAlign:"center", color:T.muted }}>No fuel containers yet. Add your diesel and gasoline tanks or create a custom container.</td></tr>}
+      </tbody></table></div>
+    </Card>
+
+    <Card>
+      <SectionHeading sub="All fuel measurement history.">Reading History</SectionHeading>
+      <div className="mobile-x-scroll"><table style={{ borderCollapse:"collapse", width:"100%" }}><thead><tr>{["Date","Container","Fuel","Inches","Gallons","% Full","Notes",""].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, fontSize:12, color:T.muted }}>{h}</th>)}</tr></thead><tbody>
+        {[...readings].sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))).map(r=>{ const c=containers.find(x=>x.id===r.containerId)||{}; return <tr key={r.id}><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.date}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, fontWeight:700 }}>{c.name||"Deleted container"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.fuelType||c.fuelType}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.inches}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{Math.round(+r.gallons||0).toLocaleString()}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{(+r.percent||fuelPercent(c,r.gallons)).toFixed(1)}%</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.notes}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}><Btn small variant="danger" onClick={()=>dispatch({type:"DELETE_FUEL_READING",payload:r.id})}>Delete</Btn></td></tr> })}
+        {!readings.length && <tr><td colSpan="8" style={{ padding:24, textAlign:"center", color:T.muted }}>No readings yet.</td></tr>}
+      </tbody></table></div>
+    </Card>
+
+    {modal==="container" && <Modal title={editing?"Edit Fuel Container":"Add Fuel Container"} onClose={()=>setModal(null)}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(2,minmax(0,1fr))", gap:10 }}>
+        <Field label="Container Name"><input style={inp} value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Diesel tank" /></Field>
+        <Field label="Fuel Type"><input style={inp} value={form.fuelType} onChange={e=>setForm({...form,fuelType:e.target.value})} placeholder="Diesel, Gasoline, DEF" /></Field>
+        <Field label="Capacity Gallons"><input style={inp} type="number" value={form.capacity} onChange={e=>setForm({...form,capacity:e.target.value})} /></Field>
+        <Field label="Max Fuel Height Inches"><input style={inp} type="number" step="0.01" value={form.maxHeight} onChange={e=>setForm({...form,maxHeight:e.target.value})} /></Field>
+        <Field label="Gallons Per Inch"><input style={inp} type="number" step="0.01" value={form.gallonsPerInch} onChange={e=>setForm({...form,gallonsPerInch:e.target.value})} /></Field>
+        <Field label="Dimensions L x W x H"><div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:6 }}><input style={inp} type="number" placeholder="L" value={form.length} onChange={e=>setForm({...form,length:e.target.value})}/><input style={inp} type="number" placeholder="W" value={form.width} onChange={e=>setForm({...form,width:e.target.value})}/><input style={inp} type="number" placeholder="H" value={form.height} onChange={e=>setForm({...form,height:e.target.value})}/></div></Field>
+      </div>
+      <div style={{ marginTop:8, padding:12, background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:8 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}><b>Inches-to-Gallons Chart</b><div style={{ display:"flex", gap:6 }}><Btn small variant="secondary" onClick={()=>setForm({...form,calibration:CONVAULT_2000_CALIBRATION.map(r=>({...r}))})}>Use ConVault 2000 Chart</Btn><Btn small variant="secondary" onClick={()=>setForm({...form,calibration:[...(form.calibration||[]),{inches:"",gallons:""}]})}>+ Row</Btn></div></div>
+        <div style={{ maxHeight:220, overflow:"auto" }}><table style={{ width:"100%", borderCollapse:"collapse" }}><thead><tr><th style={{ textAlign:"left", padding:6 }}>Inches</th><th style={{ textAlign:"left", padding:6 }}>Gallons</th><th></th></tr></thead><tbody>{(form.calibration||[]).map((r,i)=><tr key={i}><td style={{ padding:4 }}><input style={inp} type="number" step="0.001" value={r.inches} onChange={e=>updateCalibrationRow(i,"inches",e.target.value)} /></td><td style={{ padding:4 }}><input style={inp} type="number" step="1" value={r.gallons} onChange={e=>updateCalibrationRow(i,"gallons",e.target.value)} /></td><td style={{ padding:4 }}><Btn small variant="ghost" onClick={()=>setForm({...form,calibration:(form.calibration||[]).filter((_,x)=>x!==i)})}>×</Btn></td></tr>)}</tbody></table></div>
+        <div style={{ fontSize:12, color:T.muted, marginTop:8 }}>Tip: For non-standard tanks, add several known inch/gallon points from the manufacturer chart. The app interpolates between points.</div>
+      </div>
+      <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:14 }}><Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn><Btn onClick={saveContainer}>Save Container</Btn></div>
+    </Modal>}
+  </div>;
+}
+
+function ReportFuel({ state }) {
+  const containers = state.fuelContainers || [];
+  const readings = state.fuelReadings || [];
+  const total = containers.reduce((s,c)=>s+(+(latestFuelReading(state,c.id)?.gallons||0)),0);
+  const printReport = () => {
+    const win = window.open("", "_blank"); if(!win) return;
+    win.document.write(`<!DOCTYPE html><html><head><title>Fuel Report</title><style>body{font-family:Arial,sans-serif;padding:22px;color:#111}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f3f4f6}.right{text-align:right}</style></head><body>${reportHeaderHTML(state,"Fuel Report")}<p>Total fuel on hand: <b>${Math.round(total).toLocaleString()} gallons</b></p><table><thead><tr><th>Container</th><th>Fuel</th><th>Capacity</th><th>Latest Inches</th><th>Gallons</th><th>% Full</th><th>Date</th></tr></thead><tbody>${containers.map(c=>{const r=latestFuelReading(state,c.id); return `<tr><td>${c.name}</td><td>${c.fuelType||""}</td><td>${(+c.capacity||0).toLocaleString()}</td><td>${r?r.inches:""}</td><td>${r?Math.round(r.gallons).toLocaleString():""}</td><td>${r?fuelPercent(c,r.gallons).toFixed(1)+"%":""}</td><td>${r?r.date:""}</td></tr>`}).join("")}</tbody></table></body></html>`);
+    win.document.close(); win.print();
+  };
+  return <div style={{ display:"grid", gap:16 }}>
+    <Card><SectionHeading sub="Fuel levels by container, based on latest inch readings." action={<Btn onClick={printReport}>Print Fuel Report</Btn>}>Fuel Report</SectionHeading><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }}><Metric label="Containers" value={containers.length}/><Metric label="Total Fuel" value={`${Math.round(total).toLocaleString()} gal`}/><Metric label="Readings" value={readings.length}/></div></Card>
+    <Card><div className="mobile-x-scroll"><table style={{ borderCollapse:"collapse", width:"100%" }}><thead><tr>{["Container","Fuel","Capacity","Latest Inches","Gallons","% Full","Last Reading"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, color:T.muted }}>{h}</th>)}</tr></thead><tbody>{containers.map(c=>{const r=latestFuelReading(state,c.id);return <tr key={c.id}><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, fontWeight:700 }}>{c.name}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{c.fuelType}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{(+c.capacity||0).toLocaleString()} gal</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r?r.inches:"—"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r?Math.round(r.gallons).toLocaleString():"—"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r?fuelPercent(c,r.gallons).toFixed(1)+"%":"—"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r?r.date:"—"}</td></tr>})}{!containers.length&&<tr><td colSpan="7" style={{ padding:24, textAlign:"center", color:T.muted }}>No fuel containers to report.</td></tr>}</tbody></table></div></Card>
+  </div>;
+}
+
 const PAGE_TITLES = {
   dashboard:        "Maintenance Dashboard",
   workorders:       "Work Orders",
@@ -6543,12 +6749,14 @@ const PAGE_TITLES = {
   parts:            "Parts Inventory",
   pm:               "Preventive Maintenance",
   usage:            "Usage Tracking",
+  fuel:             "Fuel Tracking",
   spending:         "Spending & Costs",
   inventory:        "Equipment Inventory List",
   reports_deadline: "Deadline Equipment Report",
   reports_parts_inv:"Parts Inventory Report",
   reports_pm:       "PM Reports",
   reports_usage:    "Usage Report",
+  reports_fuel:     "Fuel Report",
   reports_spending: "Spending Reports",
   reports_combined: "Combined Report",
 };
@@ -6896,12 +7104,14 @@ export default function App() {
     parts:            <Parts            state={state} dispatch={dispatch} />,
     pm:               <PM               state={state} dispatch={dispatch} />,
     usage:            <UsageTracking    state={state} dispatch={dispatch} />,
+    fuel:             <FuelTracking     state={state} dispatch={dispatch} />,
     spending:         <Spending         state={state} />,
     inventory:        <EquipmentInventory state={state} dispatch={dispatch} />,
     reports_deadline: <ReportDeadline   state={state} />,
     reports_parts_inv:<ReportPartsInv   state={state} />,
     reports_pm:       <ReportPM         state={state} />,
     reports_usage:    <ReportUsage      state={state} />,
+    reports_fuel:     <ReportFuel       state={state} />,
     reports_spending: <ReportSpending   state={state} />,
     reports_combined: <ReportCombined   state={state} />,
   };
