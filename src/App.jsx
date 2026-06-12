@@ -1853,10 +1853,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             </tbody>
           </table>` : ""}
 
-          ${(printOpt("showLaborHours") || printOpt("showCosts")) ? `<div class="miniTitle">Labor</div>
+          ${(printOpt("showLaborHours") || printOpt("showLaborCost")) ? `<div class="miniTitle">Labor</div>
           <table class="data-table">
             <thead><tr><th style="width:63%">Work Performed</th><th style="width:15%" class="center">Hours</th><th style="width:22%" class="right">Total</th></tr></thead>
-            <tbody><tr><td>${h(wo.laborDescription || wo.laborTask || "Diagnosis and Repair")}</td><td class="center">${laborHoursTotal.toFixed(1)}</td><td class="right">${money(laborTotal)}</td></tr></tbody>
+            <tbody><tr><td>${h(wo.laborDescription || wo.laborTask || "Diagnosis and Repair")}</td><td class="center">${printOpt("showLaborHours")?laborHoursTotal.toFixed(1):""}</td><td class="right">${printOpt("showLaborCost")?money(laborTotal):""}</td></tr></tbody>
           </table>` : ""}
           ${printOpt("showCosts") ? `<div class="grandTotal"><div>Grand Total</div><div>${money(grandTotal)}</div></div>` : ""}
         </section>` : ""}
@@ -2817,7 +2817,7 @@ function Equipment({ state, dispatch }) {
           <div class="miniTitle">Labor</div>
           <table class="data-table">
             <thead><tr><th style="width:63%">Work Performed</th><th style="width:15%" class="center">Hours</th><th style="width:22%" class="right">Total</th></tr></thead>
-            <tbody><tr><td>${h(wo.laborDescription || wo.laborTask || "Diagnosis and Repair")}</td><td class="center">${laborHoursTotal.toFixed(1)}</td><td class="right">${money(laborTotal)}</td></tr></tbody>
+            <tbody><tr><td>${h(wo.laborDescription || wo.laborTask || "Diagnosis and Repair")}</td><td class="center">${printOpt("showLaborHours")?laborHoursTotal.toFixed(1):""}</td><td class="right">${printOpt("showLaborCost")?money(laborTotal):""}</td></tr></tbody>
           </table>
           <div class="grandTotal"><div>Grand Total</div><div>${money(grandTotal)}</div></div>
         </section>
@@ -5366,6 +5366,7 @@ function WOSettings({ state, dispatch, onClose }) {
     showMechanicNotes: s.showMechanicNotes!==false,
     showParts:     s.showParts!==false,
     showLaborHours: s.showLaborHours!==false,
+    showLaborCost: s.showLaborCost!==false,
     showSignature: s.showSignature!==false,
     showFooterText: s.showFooterText!==false,
     showFooterBar: s.showFooterBar!==false,
@@ -5435,7 +5436,8 @@ function WOSettings({ state, dispatch, onClose }) {
       <Toggle label="Service / Inspection Details" k="showTypeSpecific" />
       <Toggle label="Mechanic Notes" k="showMechanicNotes" />
       <Toggle label="Parts Table" k="showParts" />
-      <Toggle label="Labor Hours & Cost" k="showLaborHours" />
+      <Toggle label="Labor Hours" k="showLaborHours" />
+      <Toggle label="Labor Total $" k="showLaborCost" />
       <Toggle label="Grand Total" k="showCosts" />
       <Toggle label="Mechanic Signature Block" k="showSignature" />
       <Toggle label="Remarks / Footer Notes" k="showFooterText" />
