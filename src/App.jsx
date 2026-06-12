@@ -602,7 +602,11 @@ function printCustomizePanelHtml(layoutType="Report") {
   return `<details class="print-customize" open style="margin:14px auto;max-width:900px;border:1px solid #cbd5e1;border-radius:10px;padding:10px 12px;background:#f8fafc;font-family:Arial,sans-serif">
     <summary style="cursor:pointer;font-weight:800;color:#111827">Choose What To Print</summary>
     <div style="font-size:12px;color:#475569;margin:6px 0 10px">Turn any section or table column on/off before printing or saving as PDF. This layout is saved for ${safeLayoutType} work orders.</div>
+    <div style="font-size:11px;font-weight:800;color:#334155;text-transform:uppercase;letter-spacing:.4px;margin:8px 0 5px">Work Order Components</div>
+    <div id="printComponentToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px;margin-bottom:10px"></div>
+    <div style="font-size:11px;font-weight:800;color:#334155;text-transform:uppercase;letter-spacing:.4px;margin:8px 0 5px">Sections</div>
     <div id="printSectionToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px;margin-bottom:10px"></div>
+    <div style="font-size:11px;font-weight:800;color:#334155;text-transform:uppercase;letter-spacing:.4px;margin:8px 0 5px">Table Columns</div>
     <div id="printColumnToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px"></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button onclick="window.print()" style="padding:8px 18px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer">Print Selected Layout</button><button onclick="localStorage.removeItem(\'ncaPrintLayout_${safeLayoutType}\');location.reload()" style="padding:8px 14px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;font-weight:700;cursor:pointer">Reset Saved Layout</button></div>
   </details>
@@ -636,8 +640,43 @@ function printCustomizePanelHtml(layoutType="Report") {
       return clean(h && h.textContent) || ('Section '+(i+1));
     }
     function setup(){
+      var compBox=document.getElementById('printComponentToggles');
       var secBox=document.getElementById('printSectionToggles');
       var colBox=document.getElementById('printColumnToggles');
+
+      function addGroupedComponent(label, nodes, defaultShow){
+        nodes = Array.from(nodes || []).filter(function(el){ return el && !el.closest('.print-customize,.pbtn'); });
+        if(!nodes.length) return;
+        addToggle(compBox, label, defaultShow !== false, function(show){
+          nodes.forEach(function(el){ el.style.display = show ? '' : 'none'; });
+        }, 'component:'+label);
+      }
+
+      var componentGroups = {};
+      Array.from(document.querySelectorAll('[data-print-item]')).forEach(function(el){
+        var label = clean(el.getAttribute('data-print-item'));
+        if(!label) return;
+        (componentGroups[label] = componentGroups[label] || []).push(el);
+      });
+      Object.keys(componentGroups).sort().forEach(function(label){ addGroupedComponent(label, componentGroups[label], true); });
+
+      var fieldGroups = {};
+      Array.from(document.querySelectorAll('.cell')).forEach(function(cell){
+        if(cell.closest('.print-customize,.pbtn')) return;
+        var labelNode = cell.querySelector('.fieldLabel');
+        var label = clean(labelNode && labelNode.textContent);
+        if(!label) return;
+        (fieldGroups['Field: '+label] = fieldGroups['Field: '+label] || []).push(cell);
+      });
+      Object.keys(fieldGroups).sort().forEach(function(label){ addGroupedComponent(label, fieldGroups[label], true); });
+
+      addGroupedComponent('Parts Subtotal Row', document.querySelectorAll('.subRow'), true);
+      addGroupedComponent('Grand Total Bar', document.querySelectorAll('.grandTotal'), true);
+      addGroupedComponent('Signature Lines', document.querySelectorAll('.signatureGrid,.sigs'), true);
+      addGroupedComponent('WO Status Bar', document.querySelectorAll('.status'), true);
+      addGroupedComponent('WO Type Badge', document.querySelectorAll('.typePill'), true);
+      addGroupedComponent('Logo Box', document.querySelectorAll('.logoBox'), true);
+
       var sections=Array.from(document.querySelectorAll('.page .hdr,.page .top,.page .row,.page .dateGrid,.page .infoGrid,.page .sec,.page .section,.page .sigs,.page .signatureGrid,.page .ftr,.page .footerBar, body > h1, body > h2')).filter(function(el){ return !el.closest('.print-customize,.pbtn'); });
       var seen={};
       sections.forEach(function(el,i){
@@ -650,14 +689,22 @@ function printCustomizePanelHtml(layoutType="Report") {
       tables.forEach(function(table,tIndex){
         var headers=Array.from(table.querySelectorAll('thead th'));
         if(!headers.length){ headers=Array.from(table.querySelectorAll('tr:first-child th, tr:first-child td')); }
+        var tableName='Table '+(tIndex+1);
+        var prev=table.previousElementSibling;
+        if(prev && clean(prev.textContent)) tableName=clean(prev.textContent);
+        else {
+          var section=table.closest('.section,.sec');
+          var title=section && section.querySelector('.summaryTitle,.section-title,.sh,h2,h3');
+          if(title && clean(title.textContent)) tableName=clean(title.textContent);
+        }
         headers.forEach(function(th,idx){
           var label=clean(th.textContent) || ('Column '+(idx+1));
-          var prefix=tables.length>1 ? 'Table '+(tIndex+1)+': ' : 'Column: ';
-          addToggle(colBox,prefix+label,true,function(show){
+          addToggle(colBox,tableName+': '+label,true,function(show){
             Array.from(table.rows).forEach(function(row){ if(row.cells[idx]) row.cells[idx].style.display=show?'':'none'; });
-          }, 'table:'+tIndex+':column:'+idx+':'+label);
+          }, 'table:'+tableName+':column:'+idx+':'+label);
         });
       });
+      if(compBox && !compBox.children.length) compBox.innerHTML='<div style="font-size:12px;color:#64748b">No separate components detected.</div>';
       if(secBox && !secBox.children.length) secBox.innerHTML='<div style="font-size:12px;color:#64748b">No separate sections detected.</div>';
       if(colBox && !colBox.children.length) colBox.innerHTML='<div style="font-size:12px;color:#64748b">No table columns detected.</div>';
     }
@@ -1089,6 +1136,11 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
             lastGroup = n.group;
             return (
               <React.Fragment key={`${n.group}:${n.id}:wrap`}>
+                {showTitle && (
+                  <div style={{ margin:"14px 20px 6px", paddingTop:idx?10:0, borderTop:idx?`1px solid ${T.border}`:"none", fontFamily:T.sans, fontSize:11, fontWeight:900, color:T.muted, textTransform:"uppercase", letterSpacing:.8 }}>
+                    {n.groupTitle || (n.group === "reports" ? "Reports" : "Main Menu")}
+                  </div>
+                )}
                 {renderMenuButton(n, idx)}
               </React.Fragment>
             );
@@ -1842,23 +1894,23 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         ${inspectionChecklistPrint}
         ${wo.woType !== "Inspection" && printOpt("showMechanicNotes") ? `<section class="section"><div class="section-title">Mechanic Notes</div><div class="textBlock tall">${h(wo.mechanicNotes)||"&nbsp;"}</div></section>` : ""}
 
-        ${(printOpt("showParts") || printOpt("showLaborHours") || printOpt("showCosts")) ? `<section class="section">
+        ${(printOpt("showParts") || printOpt("showLaborHours") || printOpt("showLaborTotal") || printOpt("showGrandTotal") || printOpt("showCosts")) ? `<section class="section" data-print-item="Parts and Labor Summary">
           <div class="summaryTitle">Parts and Labor Summary</div>
           ${printOpt("showParts") ? `<div class="miniTitle">Parts Used</div>
           <table class="data-table">
-            <thead><tr><th style="width:50%">Description</th><th style="width:13%" class="center">Quantity</th><th style="width:18%" class="right">Unit Price</th><th style="width:19%" class="right">Total</th></tr></thead>
+            <thead><tr><th style="width:50%">Description</th><th style="width:13%" class="center">Quantity</th>${printOpt("showPartsUnitPrice") ? `<th style="width:18%" class="right">Unit Price</th>` : ""}${printOpt("showPartsLineTotal") ? `<th style="width:19%" class="right">Total</th>` : ""}</tr></thead>
             <tbody>
-              ${partsUsed.length>0 ? partsUsed.map(part=>{ const q=+(part.qty||1); const u=+(part.unitCost||0); return `<tr><td>${h(part.name || part.description || "—")}</td><td class="center">${h(q)} ${h(part.unit||"ea")}</td><td class="right">${money(u)}</td><td class="right">${money(q*u)}</td></tr>`; }).join("") : `<tr><td colspan="4" style="color:#64748b;font-style:italic">No parts listed</td></tr>`}
-              <tr class="subRow"><td colspan="3">Parts Subtotal</td><td class="right">${money(partsTotal)}</td></tr>
+              ${partsUsed.length>0 ? partsUsed.map(part=>{ const q=+(part.qty||1); const u=+(part.unitCost||0); return `<tr><td>${h(part.name || part.description || "—")}</td><td class="center">${h(q)} ${h(part.unit||"ea")}</td>${printOpt("showPartsUnitPrice") ? `<td class="right">${money(u)}</td>` : ""}${printOpt("showPartsLineTotal") ? `<td class="right">${money(q*u)}</td>` : ""}</tr>`; }).join("") : `<tr><td colspan="${2 + (printOpt("showPartsUnitPrice") ? 1 : 0) + (printOpt("showPartsLineTotal") ? 1 : 0)}" style="color:#64748b;font-style:italic">No parts listed</td></tr>`}
+              ${printOpt("showPartsSubtotal") ? `<tr class="subRow"><td colspan="${2 + (printOpt("showPartsUnitPrice") ? 1 : 0) + (printOpt("showPartsLineTotal") ? 1 : 0)}">Parts Subtotal: ${money(partsTotal)}</td></tr>` : ""}
             </tbody>
           </table>` : ""}
 
-          ${(printOpt("showLaborHours") || printOpt("showLaborCost")) ? `<div class="miniTitle">Labor</div>
+          ${(printOpt("showLaborHours") || printOpt("showLaborTotal")) ? `<div class="miniTitle" data-print-item="Labor Table">Labor</div>
           <table class="data-table">
-            <thead><tr><th style="width:63%">Work Performed</th><th style="width:15%" class="center">Hours</th><th style="width:22%" class="right">Total</th></tr></thead>
-            <tbody><tr><td>${h(wo.laborDescription || wo.laborTask || "Diagnosis and Repair")}</td><td class="center">${printOpt("showLaborHours")?laborHoursTotal.toFixed(1):""}</td><td class="right">${printOpt("showLaborCost")?money(laborTotal):""}</td></tr></tbody>
+            <thead><tr><th style="width:63%">Work Performed</th>${printOpt("showLaborHours") ? `<th style="width:15%" class="center">Hours</th>` : ""}${printOpt("showLaborTotal") ? `<th style="width:22%" class="right">Total</th>` : ""}</tr></thead>
+            <tbody><tr><td>${h(wo.laborDescription || wo.laborTask || "Diagnosis and Repair")}</td>${printOpt("showLaborHours") ? `<td class="center">${laborHoursTotal.toFixed(1)}</td>` : ""}${printOpt("showLaborTotal") ? `<td class="right">${money(laborTotal)}</td>` : ""}</tr></tbody>
           </table>` : ""}
-          ${printOpt("showCosts") ? `<div class="grandTotal"><div>Grand Total</div><div>${money(grandTotal)}</div></div>` : ""}
+          ${printOpt("showGrandTotal") ? `<div class="grandTotal"><div>Grand Total</div><div>${money(grandTotal)}</div></div>` : ""}
         </section>` : ""}
 
         ${printOpt("showFooterText") && ws.footerText ? `<section class="section"><div class="section-title">Remarks</div><div class="textBlock">${h(ws.footerText)}</div></section>` : ""}
@@ -2804,9 +2856,9 @@ function Equipment({ state, dispatch }) {
         <section class="section"><div class="section-title">Work Description and Work Performed</div><div class="textBlock tall">${h(wo.description)||"&nbsp;"}</div></section>
         ${!typeLower.includes("inspection") ? `<section class="section"><div class="section-title">Mechanic Notes</div><div class="textBlock tall">${h(wo.mechanicNotes)||"&nbsp;"}</div></section>` : ""}
         ${typeLower.includes("inspection") && inspectionRowsForPrint.length ? `<section class="section"><div class="section-title">Inspection Checklist</div><table class="data-table"><thead><tr><th style="width:55%">Step</th><th style="width:15%">Pass / Fail</th><th style="width:30%">Comment</th></tr></thead><tbody>${inspectionRowsForPrint.map((r,i)=>`<tr><td>${i+1}. ${h(r.step)||"&nbsp;"}</td><td><b>${h(r.result)||"—"}</b></td><td>${h(r.comment)||"—"}</td></tr>`).join("")}</tbody></table></section>` : ""}
-        <section class="section">
+        <section class="section" data-print-item="Parts and Labor Summary">
           <div class="summaryTitle">Parts and Labor Summary</div>
-          <div class="miniTitle">Parts Used</div>
+          <div class="miniTitle" data-print-item="Parts Used Table">Parts Used</div>
           <table class="data-table">
             <thead><tr><th style="width:50%">Description</th><th style="width:13%" class="center">Quantity</th><th style="width:18%" class="right">Unit Price</th><th style="width:19%" class="right">Total</th></tr></thead>
             <tbody>
@@ -2814,10 +2866,10 @@ function Equipment({ state, dispatch }) {
               <tr class="subRow"><td colspan="3">Parts Subtotal</td><td class="right">${money(partsTotal)}</td></tr>
             </tbody>
           </table>
-          <div class="miniTitle">Labor</div>
+          <div class="miniTitle" data-print-item="Labor Table">Labor</div>
           <table class="data-table">
             <thead><tr><th style="width:63%">Work Performed</th><th style="width:15%" class="center">Hours</th><th style="width:22%" class="right">Total</th></tr></thead>
-            <tbody><tr><td>${h(wo.laborDescription || wo.laborTask || "Diagnosis and Repair")}</td><td class="center">${printOpt("showLaborHours")?laborHoursTotal.toFixed(1):""}</td><td class="right">${printOpt("showLaborCost")?money(laborTotal):""}</td></tr></tbody>
+            <tbody><tr><td>${h(wo.laborDescription || wo.laborTask || "Diagnosis and Repair")}</td><td class="center">${laborHoursTotal.toFixed(1)}</td><td class="right">${money(laborTotal)}</td></tr></tbody>
           </table>
           <div class="grandTotal"><div>Grand Total</div><div>${money(grandTotal)}</div></div>
         </section>
@@ -5365,8 +5417,12 @@ function WOSettings({ state, dispatch, onClose }) {
     showTypeSpecific: s.showTypeSpecific!==false,
     showMechanicNotes: s.showMechanicNotes!==false,
     showParts:     s.showParts!==false,
+    showPartsUnitPrice: s.showPartsUnitPrice!==false,
+    showPartsLineTotal: s.showPartsLineTotal!==false,
+    showPartsSubtotal: s.showPartsSubtotal!==false,
     showLaborHours: s.showLaborHours!==false,
-    showLaborCost: s.showLaborCost!==false,
+    showLaborTotal: s.showLaborTotal!==false,
+    showGrandTotal: s.showGrandTotal!==false,
     showSignature: s.showSignature!==false,
     showFooterText: s.showFooterText!==false,
     showFooterBar: s.showFooterBar!==false,
@@ -5436,9 +5492,12 @@ function WOSettings({ state, dispatch, onClose }) {
       <Toggle label="Service / Inspection Details" k="showTypeSpecific" />
       <Toggle label="Mechanic Notes" k="showMechanicNotes" />
       <Toggle label="Parts Table" k="showParts" />
-      <Toggle label="Labor Hours" k="showLaborHours" />
-      <Toggle label="Labor Total $" k="showLaborCost" />
-      <Toggle label="Grand Total" k="showCosts" />
+      <Toggle label="Parts Unit Price Column" k="showPartsUnitPrice" />
+      <Toggle label="Parts Line Total Column" k="showPartsLineTotal" />
+      <Toggle label="Parts Subtotal Row" k="showPartsSubtotal" />
+      <Toggle label="Labor Hours Column" k="showLaborHours" />
+      <Toggle label="Labor Total $ Column" k="showLaborTotal" />
+      <Toggle label="Grand Total $ Bar" k="showGrandTotal" />
       <Toggle label="Mechanic Signature Block" k="showSignature" />
       <Toggle label="Remarks / Footer Notes" k="showFooterText" />
       <Toggle label="Bottom Footer Bar" k="showFooterBar" />
