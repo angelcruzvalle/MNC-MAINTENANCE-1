@@ -314,6 +314,26 @@ function makeNotification(payload={}) {
   };
 }
 
+
+function lineItemTotal(item={}) {
+  const qty = +(item.qty || 1);
+  const unitCost = +(item.unitCost ?? item.cost ?? 0);
+  return qty * unitCost;
+}
+
+function outsideServicesTotal(outsideServices=[]) {
+  return (Array.isArray(outsideServices) ? outsideServices : []).reduce((sum, item) => sum + lineItemTotal(item), 0);
+}
+
+function woPartsTotal(wo={}) {
+  const partsUsed = Array.isArray(wo.partsUsed) ? wo.partsUsed : [];
+  return partsUsed.length ? partsUsed.reduce((sum, item) => sum + lineItemTotal(item), 0) : (+wo.partsCost || 0);
+}
+
+function woTotalCost(wo={}) {
+  return (+wo.laborCost || 0) + woPartsTotal(wo) + outsideServicesTotal(wo.outsideServices);
+}
+
 function formatNotificationTime(notification) {
   const raw = notification?.createdAt || notification?.timestamp || notification?.time;
   const date = raw ? new Date(raw) : null;
@@ -1187,7 +1207,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   const pmOverdue = pms.filter(p=>p.status==="Overdue").length;
   const pmDueSoon = pms.filter(p=>p.status==="Due Soon").length;
   const lowStock = parts.filter(p=>p.lowStockAlert!==false && (+p.qty||0)<=(+p.minQty||0)).length;
-  const totalCost = w => (+w.laborCost||0)+(Array.isArray(w.partsUsed)&&w.partsUsed.length ? w.partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+w.partsCost||0));
+  const totalCost = w => woTotalCost(w);
   const spendMo = wos.filter(w=>w.status==="Completed" && (w.completed||"").slice(0,7)===monthKey).reduce((s,w)=>s+totalCost(w),0);
   const urgentWOs = wos.filter(w=>w.status!=="Completed").sort((a,b)=>({High:0,Medium:1,Low:2}[a.priority]??3)-({High:0,Medium:1,Low:2}[b.priority]??3)).slice(0,5);
   const servicesDue = pms.filter(p=>p.status==="Overdue"||p.status==="Due Soon").map(pm=>({...pm, eqName:eqs.find(e=>e.id===pm.equipment)?.name||pm.equipment})).sort((a,b)=>(a.nextDue||"").localeCompare(b.nextDue||"")).slice(0,5);
@@ -1499,9 +1519,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       else if(sortBy==="status")  cmp = (a.status||"").localeCompare(b.status||"");
       else if(sortBy==="equipmentStatus") cmp = equipmentStatusRank(getWOEquipmentStatus(a)) - equipmentStatusRank(getWOEquipmentStatus(b));
       else if(sortBy==="cost") {
-        const aParts = Array.isArray(a.partsUsed)&&a.partsUsed.length ? a.partsUsed.reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+a.partsCost||0);
-        const bParts = Array.isArray(b.partsUsed)&&b.partsUsed.length ? b.partsUsed.reduce((sum,p)=>sum+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+b.partsCost||0);
-        cmp = ((+a.laborCost||0)+aParts)-((+b.laborCost||0)+bParts);
+        cmp = woTotalCost(a)-woTotalCost(b);
       }
       return sortDir==="asc" ? cmp : -cmp;
     };
@@ -1556,7 +1574,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const openAdd = () => {
     setEqSearch("");
-    setForm(applyDefaultMechanic({ woType:"Repair", status:"Open", equipmentStatus:"Fully Operational", priority:"Medium", created:today(), due:today(), tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], mechanicNotes:"", faultEnabled:true, faultDescription:"", usageHours:"", usageMileage:"", usageNA:false, repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"" }));
+    setForm(applyDefaultMechanic({ woType:"Repair", status:"Open", equipmentStatus:"Fully Operational", priority:"Medium", created:today(), due:today(), tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], outsideServices:[], mechanicNotes:"", faultEnabled:true, faultDescription:"", usageHours:"", usageMileage:"", usageNA:false, repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"" }));
     setModal("pick");
   };
 
@@ -1590,6 +1608,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     setForm({
       ...wo,
       partsUsed:wo.partsUsed||[],
+      outsideServices:wo.outsideServices||[],
       usageType: wo.usageType || eq?.usageType || "hours",
       // Inspection WOs for equipment without usage tracking still need the user to confirm a reading or choose N/A.
       usageNA: needsManualUsagePrompt ? false : !!wo.usageNA,
@@ -1683,10 +1702,12 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const prevWO = isEdit ? state.workOrders.find(w=>w.id===formWithLatestUsage.id) : null;
 
     const newParts  = (formWithLatestUsage.partsUsed||[]);
-    const partsTotal = newParts.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
+    const partsTotal = newParts.reduce((s,p)=>s+lineItemTotal(p),0);
+    const outsideServices = (formWithLatestUsage.outsideServices||[]).filter(svc=>String(svc?.description||svc?.name||"").trim() || +(svc?.unitCost||svc?.cost||0));
+    const outsideServicesSubtotal = outsideServicesTotal(outsideServices);
     if(promptMissingPartInventory()) return;
     if(isEdit) {
-      const payload = {...formWithLatestUsage, woType:formWithLatestUsage.woType||"Repair", title:formWithLatestUsage.faultDescription||formWithLatestUsage.woType||"Work Order", faultEnabled:true, partsCost:partsTotal};
+      const payload = {...formWithLatestUsage, woType:formWithLatestUsage.woType||"Repair", title:formWithLatestUsage.faultDescription||formWithLatestUsage.woType||"Work Order", faultEnabled:true, outsideServices, partsCost:partsTotal, outsideServicesCost:outsideServicesSubtotal};
       if(prevWO && payload.status !== prevWO.status && !confirmWOStatusChange(prevWO, payload.status)) return;
       dispatch({type:"UPDATE_WO", payload});
       if(prevWO && prevWO.status !== "Completed" && payload.status === "Completed") {
@@ -1697,7 +1718,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     } else {
       const nextType = formWithLatestUsage.woType || "Repair";
       const nextId = genWOId(formWithLatestUsage.equipment, nextType);
-      dispatch({type:"ADD_WO", payload:{...formWithLatestUsage, woType:nextType, title:formWithLatestUsage.faultDescription||nextType, faultEnabled:true, id:nextId, woNumber:nextId, partsCost:partsTotal}});
+      dispatch({type:"ADD_WO", payload:{...formWithLatestUsage, woType:nextType, title:formWithLatestUsage.faultDescription||nextType, faultEnabled:true, id:nextId, woNumber:nextId, outsideServices, partsCost:partsTotal, outsideServicesCost:outsideServicesSubtotal}});
     }
     setModal(null);
     setDetailWO(null);
@@ -1762,14 +1783,12 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       : (wo.faultDescription || "");
 
     const partsUsed = Array.isArray(wo.partsUsed) ? wo.partsUsed : [];
-    const partsTotal = partsUsed.reduce((sum, part) => {
-      const qty = +(part.qty || 1);
-      const unitCost = +(part.unitCost || 0);
-      return sum + (qty * unitCost);
-    }, 0);
+    const partsTotal = partsUsed.reduce((sum, part) => sum + lineItemTotal(part), 0);
+    const outsideServices = Array.isArray(wo.outsideServices) ? wo.outsideServices : [];
+    const outsideServicesSubtotal = outsideServicesTotal(outsideServices);
     const laborHoursTotal = +(wo.laborHours || 0);
     const laborTotal = +(wo.laborCost || 0);
-    const grandTotal = partsTotal + laborTotal;
+    const grandTotal = partsTotal + outsideServicesSubtotal + laborTotal;
 
     const statusClass = String(wo.status || "Open").toLowerCase().includes("complete") ? "completed" : String(wo.status || "Open").toLowerCase().replace(/[^a-z0-9]+/g,"-");
     const workType = String(wo.woType || "Repair").toUpperCase();
@@ -1894,7 +1913,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         ${inspectionChecklistPrint}
         ${wo.woType !== "Inspection" && printOpt("showMechanicNotes") ? `<section class="section"><div class="section-title">Mechanic Notes</div><div class="textBlock tall">${h(wo.mechanicNotes)||"&nbsp;"}</div></section>` : ""}
 
-        ${(printOpt("showParts") || printOpt("showLaborHours") || printOpt("showLaborTotal") || printOpt("showGrandTotal") || printOpt("showCosts")) ? `<section class="section" data-print-item="Parts and Labor Summary">
+        ${(printOpt("showParts") || printOpt("showOutsideServices") || printOpt("showLaborHours") || printOpt("showLaborTotal") || printOpt("showGrandTotal") || printOpt("showCosts")) ? `<section class="section" data-print-item="Parts and Labor Summary">
           <div class="summaryTitle">Parts and Labor Summary</div>
           ${printOpt("showParts") ? `<div class="miniTitle">Parts Used</div>
           <table class="data-table">
@@ -1902,6 +1921,15 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             <tbody>
               ${partsUsed.length>0 ? partsUsed.map(part=>{ const q=+(part.qty||1); const u=+(part.unitCost||0); return `<tr><td>${h(part.name || part.description || "—")}</td><td class="center">${h(q)} ${h(part.unit||"ea")}</td>${printOpt("showPartsUnitPrice") ? `<td class="right">${money(u)}</td>` : ""}${printOpt("showPartsLineTotal") ? `<td class="right">${money(q*u)}</td>` : ""}</tr>`; }).join("") : `<tr><td colspan="${2 + (printOpt("showPartsUnitPrice") ? 1 : 0) + (printOpt("showPartsLineTotal") ? 1 : 0)}" style="color:#64748b;font-style:italic">No parts listed</td></tr>`}
               ${printOpt("showPartsSubtotal") ? `<tr class="subRow"><td colspan="${2 + (printOpt("showPartsUnitPrice") ? 1 : 0) + (printOpt("showPartsLineTotal") ? 1 : 0)}">Parts Subtotal: ${money(partsTotal)}</td></tr>` : ""}
+            </tbody>
+          </table>` : ""}
+
+          ${printOpt("showOutsideServices") ? `<div class="miniTitle" data-print-item="Outside Services Table">Outside Services</div>
+          <table class="data-table">
+            <thead><tr><th style="width:50%">Service Description</th><th style="width:13%" class="center">Quantity</th>${printOpt("showOutsideServicesUnitPrice") ? `<th style="width:18%" class="right">Unit Cost</th>` : ""}${printOpt("showOutsideServicesLineTotal") ? `<th style="width:19%" class="right">Total</th>` : ""}</tr></thead>
+            <tbody>
+              ${outsideServices.length>0 ? outsideServices.map(svc=>{ const q=+(svc.qty||1); const u=+(svc.unitCost ?? svc.cost ?? 0); return `<tr><td>${h(svc.description || svc.name || "—")}</td><td class="center">${h(q)}</td>${printOpt("showOutsideServicesUnitPrice") ? `<td class="right">${money(u)}</td>` : ""}${printOpt("showOutsideServicesLineTotal") ? `<td class="right">${money(q*u)}</td>` : ""}</tr>`; }).join("") : `<tr><td colspan="${2 + (printOpt("showOutsideServicesUnitPrice") ? 1 : 0) + (printOpt("showOutsideServicesLineTotal") ? 1 : 0)}" style="color:#64748b;font-style:italic">No outside services listed</td></tr>`}
+              ${printOpt("showOutsideServicesSubtotal") ? `<tr class="subRow"><td colspan="${2 + (printOpt("showOutsideServicesUnitPrice") ? 1 : 0) + (printOpt("showOutsideServicesLineTotal") ? 1 : 0)}">Outside Services Subtotal: ${money(outsideServicesSubtotal)}</td></tr>` : ""}
             </tbody>
           </table>` : ""}
 
@@ -2118,6 +2146,26 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           </button>
         </div>
 
+
+
+        {/* Outside Services */}
+        <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.grayLt }}>
+          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:8 }}>Outside Services</label>
+          <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginBottom:8 }}>Use this for outsourced services like DPF cleaning, tire mounting, machine work, welding, hydraulic hose fabrication, or vendor repairs.</div>
+          {(form.outsideServices||[]).map((svc,idx)=>(
+            <div key={idx} style={{ display:"grid", gridTemplateColumns:"1fr 80px 110px 110px auto", gap:8, marginBottom:8, alignItems:"center" }}>
+              <input style={inp} placeholder="Service description..." value={svc.description||svc.name||""} onChange={e=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr[idx]={...arr[idx],description:e.target.value}; return {...f,outsideServices:arr}; })} />
+              <input style={{ ...inp, textAlign:"center" }} type="number" min="1" step="0.01" placeholder="Qty" value={svc.qty||""} onChange={e=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr[idx]={...arr[idx],qty:e.target.value}; return {...f,outsideServices:arr}; })} />
+              <input style={inp} type="number" min="0" step="0.01" placeholder="Unit Cost" value={svc.unitCost ?? svc.cost ?? ""} onChange={e=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr[idx]={...arr[idx],unitCost:e.target.value}; return {...f,outsideServices:arr}; })} />
+              <div style={{ fontFamily:T.mono, fontSize:12, fontWeight:700, color:T.text, textAlign:"right" }}>${lineItemTotal(svc).toFixed(2)}</div>
+              <button onClick={()=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr.splice(idx,1); return {...f,outsideServices:arr}; })} style={{ padding:"6px 10px", border:`1px solid ${T.red}`, borderRadius:6, background:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>
+            </div>
+          ))}
+          <button onClick={()=>setForm(f=>({...f,outsideServices:[...(f.outsideServices||[]),{description:"",qty:1,unitCost:""}]}))} style={{ background:"none", border:`1px dashed ${T.borderHi}`, borderRadius:6, padding:"7px 16px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600, width:"100%" }}>
+            + Add Outside Service
+          </button>
+        </div>
+
         {/* Mechanic inline */}
         <div style={{ gridColumn:"span 2", marginBottom:0 }}>
           <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Mechanic</label>
@@ -2186,8 +2234,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const eq = state.equipment.find(e=>e.id===wo.equipment);
     const typeInfo = WO_TYPES.find(t=>t.id===wo.woType);
     const partsUsed = wo.partsUsed||[];
-    const partsTotal = partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
-    const total = (+wo.laborCost||0)+partsTotal;
+    const partsTotal = partsUsed.reduce((s,p)=>s+lineItemTotal(p),0);
+    const outsideServices = wo.outsideServices||[];
+    const outsideServicesSubtotal = outsideServicesTotal(outsideServices);
+    const total = (+wo.laborCost||0)+partsTotal+outsideServicesSubtotal;
     const isCompleted = wo.status==="Completed";
 
     const completeWO = () => {
@@ -2224,7 +2274,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             <Btn small variant="danger" onClick={()=>del(wo.id)}>Delete</Btn>
             {!isCompleted && !editMode && <Btn small onClick={()=>setEditMode(true)} style={{ background:"#1e40af", borderColor:"#1e40af" }}>Update Work Order</Btn>}
             {!isCompleted && editMode && <Btn small onClick={()=>{ const payload={ ...wo, ...form }; if(payload.status!==wo.status && !confirmWOStatusChange(wo, payload.status)) return; dispatch({ type:"UPDATE_WO", payload }); setEditMode(false); setDetailWO(payload); }} style={{ background:T.green, borderColor:T.green }}>Save Changes</Btn>}
-            {!isCompleted && editMode && <Btn small variant="secondary" onClick={()=>{ setEditMode(false); setForm({...wo, partsUsed:wo.partsUsed||[]}); }}>Cancel Edit</Btn>}
+            {!isCompleted && editMode && <Btn small variant="secondary" onClick={()=>{ setEditMode(false); setForm({...wo, partsUsed:wo.partsUsed||[], outsideServices:wo.outsideServices||[]}); }}>Cancel Edit</Btn>}
             {!isCompleted && !editMode && <Btn small onClick={completeWO} style={{ background:T.green, borderColor:T.green }}>Complete Work Order</Btn>}
             <Btn small variant="danger" onClick={()=>del(wo.id)}>Delete</Btn>
           </div>
@@ -2333,9 +2383,27 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               </tbody>
             </table>
           )}
-          {partsUsed.length===0 && <div style={{ padding:"10px 12px", fontFamily:T.sans, fontSize:13, color:T.muted, fontStyle:"italic" }}>No parts recorded.</div>}
+
+          {outsideServices.length>0 && (
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans, borderTop:`1px solid ${T.border}` }}>
+              <thead><tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
+                {["Outside Service","Qty","Unit Cost","Total"].map(h=><th key={h} style={{ padding:"6px 12px", textAlign:"left", fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase" }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {outsideServices.map((svc,i)=>(
+                  <tr key={i} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
+                    <td style={{ padding:"8px 12px", color:T.text, fontWeight:500 }}>{svc.description || svc.name || "Outside service"}</td>
+                    <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{svc.qty || 1}</td>
+                    <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>${(+(svc.unitCost ?? svc.cost ?? 0)).toFixed(2)}</td>
+                    <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, fontWeight:600 }}>${lineItemTotal(svc).toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {partsUsed.length===0 && outsideServices.length===0 && <div style={{ padding:"10px 12px", fontFamily:T.sans, fontSize:13, color:T.muted, fontStyle:"italic" }}>No parts or outside services recorded.</div>}
           <div style={{ background:T.grayLt, borderTop:`2px solid ${T.border}`, padding:"10px 14px", display:"flex", gap:24, flexWrap:"wrap" }}>
-            {[["Labor ("+wo.laborHours+"hrs)",`$${(+wo.laborCost||0).toFixed(2)}`],["Parts",`$${partsTotal.toFixed(2)}`],["GRAND TOTAL",`$${total.toFixed(2)}`]].map(([k,v])=>(
+            {[["Labor ("+wo.laborHours+"hrs)",`$${(+wo.laborCost||0).toFixed(2)}`],["Parts",`$${partsTotal.toFixed(2)}`],["Outside Services",`$${outsideServicesSubtotal.toFixed(2)}`],["GRAND TOTAL",`$${total.toFixed(2)}`]].map(([k,v])=>(
               <div key={k}><div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase" }}>{k}</div><div style={{ fontFamily:T.sans, fontSize:k==="GRAND TOTAL"?18:14, fontWeight:700, color:k==="GRAND TOTAL"?T.accent:T.text, marginTop:2 }}>{v}</div></div>
             ))}
           </div>
@@ -2760,14 +2828,12 @@ function Equipment({ state, dispatch }) {
     })();
     const money = (value) => `$${(+value || 0).toFixed(2)}`;
     const partsUsed = Array.isArray(wo.partsUsed) ? wo.partsUsed : [];
-    const partsTotal = partsUsed.reduce((sum, part) => {
-      const qty = +(part.qty || 1);
-      const unitCost = +(part.unitCost || 0);
-      return sum + (qty * unitCost);
-    }, 0);
+    const partsTotal = partsUsed.reduce((sum, part) => sum + lineItemTotal(part), 0);
+    const outsideServices = Array.isArray(wo.outsideServices) ? wo.outsideServices : [];
+    const outsideServicesSubtotal = outsideServicesTotal(outsideServices);
     const laborHoursTotal = +(wo.laborHours || 0);
     const laborTotal = +(wo.laborCost || 0);
-    const grandTotal = partsTotal + laborTotal;
+    const grandTotal = partsTotal + outsideServicesSubtotal + laborTotal;
     const type = String(wo.woType || wo.type || "Repair");
     const typeLower = type.toLowerCase();
     const colorMap = {
@@ -2864,6 +2930,14 @@ function Equipment({ state, dispatch }) {
             <tbody>
               ${partsUsed.length ? partsUsed.map(part => { const q=+(part.qty||1); const u=+(part.unitCost||0); return `<tr><td>${h(part.name || part.description || "—")}</td><td class="center">${h(q)} ${h(part.unit||"ea")}</td><td class="right">${money(u)}</td><td class="right">${money(q*u)}</td></tr>`; }).join("") : `<tr><td colspan="4" style="color:#64748b;font-style:italic">No parts listed</td></tr>`}
               <tr class="subRow"><td colspan="3">Parts Subtotal</td><td class="right">${money(partsTotal)}</td></tr>
+            </tbody>
+          </table>
+          <div class="miniTitle" data-print-item="Outside Services Table">Outside Services</div>
+          <table class="data-table">
+            <thead><tr><th style="width:50%">Service Description</th><th style="width:13%" class="center">Quantity</th><th style="width:18%" class="right">Unit Cost</th><th style="width:19%" class="right">Total</th></tr></thead>
+            <tbody>
+              ${outsideServices.length ? outsideServices.map(svc => { const q=+(svc.qty||1); const u=+(svc.unitCost ?? svc.cost ?? 0); return `<tr><td>${h(svc.description || svc.name || "—")}</td><td class="center">${h(q)}</td><td class="right">${money(u)}</td><td class="right">${money(q*u)}</td></tr>`; }).join("") : `<tr><td colspan="4" style="color:#64748b;font-style:italic">No outside services listed</td></tr>`}
+              <tr class="subRow"><td colspan="3">Outside Services Subtotal</td><td class="right">${money(outsideServicesSubtotal)}</td></tr>
             </tbody>
           </table>
           <div class="miniTitle" data-print-item="Labor Table">Labor</div>
@@ -3055,7 +3129,7 @@ function Equipment({ state, dispatch }) {
     const serviceHistory = completedHistory.filter(isServiceHistoryWO);
     const repairHistory = completedHistory.filter(isRepairHistoryWO);
     const inspectionHistory = completedHistory.filter(isInspectionHistoryWO);
-    const historyCost = (wo) => (+wo.laborCost||0)+(+(wo.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0));
+    const historyCost = (wo) => woTotalCost(wo);
     const historyUsage = (wo) => {
       if (wo.usageNA) return "N/A";
       if (wo.usageType==="mileage") return wo.usageMileage ? `${wo.usageMileage} mi` : "—";
@@ -5212,7 +5286,7 @@ function Spending({ state }) {
   const PERIODS = [["all","All Time"],["monthly","This Month"],["biannual","Last 6 Months"],["fy","Fiscal Year"],["annual","Last 12 Months"]];
 
   const wos = state.workOrders.filter(filterByPeriod);
-  const totalCost = w => (+w.laborCost||0)+(Array.isArray(w.partsUsed)&&w.partsUsed.length ? w.partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+w.partsCost||0));
+  const totalCost = w => woTotalCost(w);
   const totLabor  = wos.reduce((s,w)=>s+(+w.laborCost||0),0);
   const totParts  = wos.reduce((s,w)=>s+totalCost(w)-(+w.laborCost||0),0);
   const grand     = totLabor+totParts;
@@ -5420,6 +5494,10 @@ function WOSettings({ state, dispatch, onClose }) {
     showPartsUnitPrice: s.showPartsUnitPrice!==false,
     showPartsLineTotal: s.showPartsLineTotal!==false,
     showPartsSubtotal: s.showPartsSubtotal!==false,
+    showOutsideServices: s.showOutsideServices!==false,
+    showOutsideServicesUnitPrice: s.showOutsideServicesUnitPrice!==false,
+    showOutsideServicesLineTotal: s.showOutsideServicesLineTotal!==false,
+    showOutsideServicesSubtotal: s.showOutsideServicesSubtotal!==false,
     showLaborHours: s.showLaborHours!==false,
     showLaborTotal: s.showLaborTotal!==false,
     showGrandTotal: s.showGrandTotal!==false,
@@ -5495,6 +5573,10 @@ function WOSettings({ state, dispatch, onClose }) {
       <Toggle label="Parts Unit Price Column" k="showPartsUnitPrice" />
       <Toggle label="Parts Line Total Column" k="showPartsLineTotal" />
       <Toggle label="Parts Subtotal Row" k="showPartsSubtotal" />
+      <Toggle label="Outside Services Table" k="showOutsideServices" />
+      <Toggle label="Outside Services Unit Cost Column" k="showOutsideServicesUnitPrice" />
+      <Toggle label="Outside Services Line Total Column" k="showOutsideServicesLineTotal" />
+      <Toggle label="Outside Services Subtotal Row" k="showOutsideServicesSubtotal" />
       <Toggle label="Labor Hours Column" k="showLaborHours" />
       <Toggle label="Labor Total $ Column" k="showLaborTotal" />
       <Toggle label="Grand Total $ Bar" k="showGrandTotal" />
@@ -6398,13 +6480,13 @@ function ReportSpending({ state }) {
   const fy_end = new Date(fyYear + 1, 9, 1); // exclusive
   const month_start = new Date(now.getFullYear(), now.getMonth(), 1);
   const wos = state.workOrders;
-  const totalCost = (w) => (+w.laborCost||0)+(Array.isArray(w.partsUsed)&&w.partsUsed.length ? w.partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+w.partsCost||0));
+  const totalCost = (w) => woTotalCost(w);
   const monthly = wos.filter(w=>w.completed&&new Date(w.completed)>=month_start);
   const annual  = wos.filter(w=>w.completed&&new Date(w.completed)>=fy_start&&new Date(w.completed)<fy_end);
   const monthTotal = monthly.reduce((s,w)=>s+totalCost(w),0);
   const fyTotal    = annual.reduce((s,w)=>s+totalCost(w),0);
 
-  const spendingRows = (list) => list.map(w=>({"Equipment #":w.equipment||"", Nomenclature:state.equipment.find(e=>e.id===w.equipment)?.name||"", "WO #":w.id, Title:w.title||"", Mechanic:w.tech||"", Date:w.completed||w.created||"", Labor:(+w.laborCost||0).toFixed(2), Parts:(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0)).toFixed(2), Total:totalCost(w).toFixed(2)}));
+  const spendingRows = (list) => list.map(w=>({"Equipment #":w.equipment||"", Nomenclature:state.equipment.find(e=>e.id===w.equipment)?.name||"", "WO #":w.id, Title:w.title||"", Mechanic:w.tech||"", Date:w.completed||w.created||"", Labor:(+w.laborCost||0).toFixed(2), Parts:woPartsTotal(w).toFixed(2), "Outside Services":outsideServicesTotal(w.outsideServices).toFixed(2), Total:totalCost(w).toFixed(2)}));
   const printSpending = (list, title) => {
     const rows = spendingRows(list);
     const win = window.open("","_blank","width=900,height=700");
@@ -6412,8 +6494,8 @@ function ReportSpending({ state }) {
     win.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
       <style>body{font-family:Arial,sans-serif;padding:24px}h1{font-size:18px;margin:0}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px;text-transform:uppercase}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}@media print{button{display:none}}</style>
       </head><body>${reportHeaderHTML(state, title)}
-      <table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO #</th><th>Title</th><th>Mechanic</th><th>Date</th><th>Labor</th><th>Parts</th><th>Total</th></tr>
-      ${list.map(w=>`<tr><td><b>${w.equipment||"—"}</b></td><td>${state.equipment.find(e=>e.id===w.equipment)?.name||"—"}</td><td>${w.id}</td><td>${w.title}</td><td>${w.tech||"—"}</td><td>${w.completed||w.created||"—"}</td><td>$${(+w.laborCost||0).toFixed(2)}</td><td>$${(+(w.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0)).toFixed(2)}</td><td><b>$${totalCost(w).toFixed(2)}</b></td></tr>`).join("")}
+      <table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO #</th><th>Title</th><th>Mechanic</th><th>Date</th><th>Labor</th><th>Parts</th><th>Outside Services</th><th>Total</th></tr>
+      ${list.map(w=>`<tr><td><b>${w.equipment||"—"}</b></td><td>${state.equipment.find(e=>e.id===w.equipment)?.name||"—"}</td><td>${w.id}</td><td>${w.title}</td><td>${w.tech||"—"}</td><td>${w.completed||w.created||"—"}</td><td>$${(+w.laborCost||0).toFixed(2)}</td><td>$${woPartsTotal(w).toFixed(2)}</td><td>$${outsideServicesTotal(w.outsideServices).toFixed(2)}</td><td><b>$${totalCost(w).toFixed(2)}</b></td></tr>`).join("")}
       <tr style="font-weight:700;background:#f3f4f6"><td colspan="8">TOTAL</td><td>$${list.reduce((s,w)=>s+totalCost(w),0).toFixed(2)}</td></tr>
       </table>${reportButtonsHtml(rows)}</body></html>`);
     win.document.close();
@@ -6448,7 +6530,7 @@ function ReportCombined({ state }) {
     const win = window.open("","_blank","width=900,height=700");
     if(!win) return;
     const eqName = id => state.equipment.find(e=>e.id===id)?.name||id;
-    const totalCost = w => (+w.laborCost||0)+(Array.isArray(w.partsUsed)&&w.partsUsed.length ? w.partsUsed.reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0) : (+w.partsCost||0));
+    const totalCost = w => woTotalCost(w);
     const allLogs = state.usageLogs || [];
     const currentReading = (eqId, field) => { const l = allLogs.filter(x=>x.equipmentId===eqId&&x[field]).sort((a,b)=>b.date.localeCompare(a.date))[0]; return l?+(l[field]||0):0; };
 
