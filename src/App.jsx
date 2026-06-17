@@ -6641,12 +6641,24 @@ function getFacilityQrToken(settings={}, facility="") {
   return ids[facility] || slugifyFacility(facility);
 }
 
-function requestUrlForFacility(facility="", settings={}) {
+function requestUrlForFacility(facility="", settings={}, ownerUserId="") {
   try {
     const base = window.location.origin + window.location.pathname;
     const token = getFacilityQrToken(settings, facility);
-    return `${base}?woRequest=${encodeURIComponent(token)}`;
-  } catch(e) { return `?woRequest=${encodeURIComponent(getFacilityQrToken(settings, facility))}`; }
+    const params = new URLSearchParams();
+    params.set("woRequest", token);
+    if(ownerUserId) params.set("owner", ownerUserId);
+    if(facility) params.set("facility", facility);
+    return `${base}?${params.toString()}`;
+  } catch(e) {
+    const token = getFacilityQrToken(settings, facility);
+    return `?woRequest=${encodeURIComponent(token)}${ownerUserId?`&owner=${encodeURIComponent(ownerUserId)}`:""}${facility?`&facility=${encodeURIComponent(facility)}`:""}`;
+  }
+}
+
+function getWORequestUrlParam(name) {
+  try { return new URLSearchParams(window.location.search).get(name) || ""; }
+  catch(e) { return ""; }
 }
 
 function qrUrlForText(text="") {
@@ -6655,8 +6667,7 @@ function qrUrlForText(text="") {
 
 
 function getWORequestPortalToken() {
-  try { return new URLSearchParams(window.location.search).get("woRequest") || ""; }
-  catch(e) { return ""; }
+  return getWORequestUrlParam("woRequest");
 }
 
 function isPublicWORequestPage() {
@@ -6695,7 +6706,22 @@ async function loadWORequestPortal(token) {
       .eq("token", token)
       .maybeSingle();
     if(error) throw error;
-    return data || null;
+    if(data) return data;
+
+    // Fallback for older/permanent QR links that include owner + facility.
+    // This keeps an already printed QR useful even if the token record has to be re-synced.
+    const owner = getWORequestUrlParam("owner");
+    const facility = getWORequestUrlParam("facility");
+    if(owner && facility) {
+      const res = await supabase
+        .from("wo_request_portals")
+        .select("token,owner_user_id,facility,company_name,equipment_json")
+        .eq("owner_user_id", owner)
+        .eq("facility", facility)
+        .maybeSingle();
+      if(!res.error && res.data) return res.data;
+    }
+    return null;
   } catch(e) {
     console.warn("WO request public portal load failed:", e);
     return null;
@@ -6723,7 +6749,15 @@ async function submitPublicWORequest(req) {
     return true;
   } catch(e) {
     console.warn("Public WO request submit failed:", e);
-    alert("The request could not be submitted. Please try again or notify maintenance.");
+    const msg = String(e?.message || e || "");
+    const code = String(e?.code || "");
+    if(code === "42P01" || msg.toLowerCase().includes("does not exist") || msg.toLowerCase().includes("schema cache")) {
+      alert("This request portal is not fully connected yet. Maintenance needs to finish the Work Order Request storage setup in Supabase.");
+    } else if(code === "42501" || msg.toLowerCase().includes("row-level security") || msg.toLowerCase().includes("permission")) {
+      alert("This request portal is active, but guest submissions are blocked by Supabase security settings. Maintenance needs to enable guest request submissions.");
+    } else {
+      alert("The request could not be submitted. Please try again or notify maintenance.");
+    }
     return false;
   }
 }
@@ -6795,6 +6829,17 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
   useEffect(()=>{
     if(isOperatorPortal && facilityFromToken && facility !== facilityFromToken) setFacility(facilityFromToken);
   }, [portalToken, facilityFromToken]);
+  useEffect(()=>{
+    if(isOperatorPortal || !session?.user?.id) return;
+    const timer = setTimeout(()=>{
+      (allFacilities||[]).forEach(fac=>{
+        const token = getFacilityQrToken(settings, fac);
+        upsertWORequestPortal({ token, ownerUserId:session.user.id, facility:fac, settings, equipment:state.equipment||[] });
+      });
+    }, 600);
+    return ()=>clearTimeout(timer);
+  }, [isOperatorPortal, session?.user?.id, allFacilities.join("|"), JSON.stringify(facilityQrIds), (state.equipment||[]).length, settings.companyName]);
+
 
   const eqForFacility = equipmentSource.filter(e=> !facility || String(e.location||"").toLowerCase()===String(facility||"").toLowerCase() || facilities.length<=1 || !e.location);
   const equipmentSuggestions = eqForFacility.filter(e=>{
@@ -6819,7 +6864,8 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
   };
   const submitRequest = async () => {
     if(!requestForm.requestedBy.trim()) { alert("Enter Requested By."); return; }
-    if(!requestForm.equipment) { alert("Select equipment."); return; }
+    const typedEquipment = equipmentSearch.trim();
+    if(!requestForm.equipment && !typedEquipment) { alert("Select or type equipment."); return; }
     if(!requestForm.description.trim()) { alert("Enter the problem description."); return; }
     const eq = equipmentSource.find(e=>e.id===requestForm.equipment) || {};
     const req = {
@@ -6829,8 +6875,8 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
       createdAt: new Date().toISOString(),
       faultDate: requestForm.faultDate || today(),
       requestedBy: requestForm.requestedBy.trim(),
-      equipment: requestForm.equipment,
-      equipmentName: eq.name || eq.nomenclature || "",
+      equipment: requestForm.equipment || typedEquipment,
+      equipmentName: eq.name || eq.nomenclature || (requestForm.equipment ? "" : "Typed by operator"),
       description: requestForm.description.trim(),
       photos: requestForm.photos || [],
       status:"New",
@@ -6881,8 +6927,8 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
   };
 
   const printQR = async (fac) => {
-    const url = requestUrlForFacility(fac, settings);
     const token = getFacilityQrToken(settings, fac);
+    const url = requestUrlForFacility(fac, settings, session?.user?.id || "");
     await upsertWORequestPortal({ token, ownerUserId:session?.user?.id, facility:fac, settings, equipment:state.equipment||[] });
     const win = window.open("","_blank");
     if(!win) { alert("Pop-up blocked. Allow pop-ups to print the QR code."); return; }
@@ -8169,7 +8215,21 @@ export default function App() {
 
   if (publicWORequestMode) {
     if(publicPortalLoading) return <div style={{ padding:40, fontSize:20, fontFamily:T.sans }}>Loading request form...</div>;
-    if(!publicPortal) return <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", padding:18, fontFamily:T.sans, background:T.bg, color:T.text }}><div style={{ maxWidth:520, background:T.card, border:`1px solid ${T.border}`, borderRadius:16, padding:20, textAlign:"center" }}><h2>Request link not active</h2><p>This QR code is not connected to an active facility yet. Please contact maintenance.</p></div></div>;
+    if(!publicPortal) {
+      const token = getWORequestPortalToken();
+      const fallbackFacility = getWORequestUrlParam("facility") || "Facility";
+      const fallbackOwner = getWORequestUrlParam("owner") || "";
+      const fallbackPortal = fallbackOwner ? {
+        token,
+        owner_user_id:fallbackOwner,
+        facility:fallbackFacility,
+        company_name:"MaintForge",
+        equipment_json:[],
+        fallback:true,
+      } : null;
+      if(fallbackPortal) return <div style={{ minHeight:"100vh", background:T.bg, padding:16 }}><WorkOrderRequests state={{...INIT, settings:{ companyName:"MaintForge", locations:[fallbackFacility], facilityQrIds:{ [fallbackFacility]:token } }, equipment:[], workOrderRequests:[]}} dispatch={()=>{}} session={null} publicPortal={fallbackPortal} publicMode={true} /></div>;
+      return <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", padding:18, fontFamily:T.sans, background:T.bg, color:T.text }}><div style={{ maxWidth:520, background:T.card, border:`1px solid ${T.border}`, borderRadius:16, padding:20, textAlign:"center" }}><h2>Request link not active</h2><p>This QR code has not been activated by maintenance yet.</p></div></div>;
+    }
     return <div style={{ minHeight:"100vh", background:T.bg, padding:16 }}><WorkOrderRequests state={{...INIT, settings:{ companyName:publicPortal.company_name || "MaintForge", locations:[publicPortal.facility], facilityQrIds:{ [publicPortal.facility]:getWORequestPortalToken() } }, equipment:publicPortal.equipment_json || [], workOrderRequests:[]}} dispatch={()=>{}} session={null} publicPortal={publicPortal} publicMode={true} /></div>;
   }
 
