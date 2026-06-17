@@ -6653,15 +6653,91 @@ function qrUrlForText(text="") {
   return `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(text)}`;
 }
 
-function WorkOrderRequests({ state, dispatch }) {
-  const params = (()=>{ try { return new URLSearchParams(window.location.search); } catch(e) { return new URLSearchParams(); } })();
-  const portalToken = params.get("woRequest") || "";
+
+function getWORequestPortalToken() {
+  try { return new URLSearchParams(window.location.search).get("woRequest") || ""; }
+  catch(e) { return ""; }
+}
+
+function isPublicWORequestPage() {
+  return !!getWORequestPortalToken();
+}
+
+async function upsertWORequestPortal({ token, ownerUserId, facility, settings, equipment }) {
+  if(!token || !ownerUserId || !facility) return;
+  const portal = {
+    token,
+    owner_user_id: ownerUserId,
+    facility,
+    company_name: settings?.companyName || "MaintForge",
+    equipment_json: (equipment||[]).filter(e => !facility || String(e.location||"").toLowerCase()===String(facility||"").toLowerCase() || !e.location).map(e => ({
+      id:e.id,
+      name:e.name || e.nomenclature || "",
+      nomenclature:e.nomenclature || e.name || "",
+      category:e.category || "",
+      location:e.location || facility,
+    })),
+    updated_at: new Date().toISOString(),
+  };
+  try {
+    await supabase.from("wo_request_portals").upsert(portal, { onConflict:"token" });
+  } catch(e) {
+    console.warn("WO request portal sync failed:", e);
+  }
+}
+
+async function loadWORequestPortal(token) {
+  if(!token) return null;
+  try {
+    const { data, error } = await supabase
+      .from("wo_request_portals")
+      .select("token,owner_user_id,facility,company_name,equipment_json")
+      .eq("token", token)
+      .maybeSingle();
+    if(error) throw error;
+    return data || null;
+  } catch(e) {
+    console.warn("WO request public portal load failed:", e);
+    return null;
+  }
+}
+
+async function submitPublicWORequest(req) {
+  try {
+    const { error } = await supabase.from("wo_requests_public").insert({
+      id:req.id,
+      portal_token:req.portalToken,
+      owner_user_id:req.ownerUserId,
+      facility:req.facility,
+      submitted_date:req.submittedDate,
+      fault_date:req.faultDate,
+      requested_by:req.requestedBy,
+      equipment:req.equipment,
+      equipment_name:req.equipmentName,
+      description:req.description,
+      photos_json:req.photos || [],
+      status:"New",
+      created_at:req.createdAt || new Date().toISOString(),
+    });
+    if(error) throw error;
+    return true;
+  } catch(e) {
+    console.warn("Public WO request submit failed:", e);
+    alert("The request could not be submitted. Please try again or notify maintenance.");
+    return false;
+  }
+}
+
+function WorkOrderRequests({ state, dispatch, session, publicPortal=null, publicMode=false }) {
+  const portalToken = getWORequestPortalToken();
   const isOperatorPortal = !!portalToken;
-  const settings = state.settings || {};
-  const facilities = [...new Set([...(settings.locations||[]), ...(state.equipment||[]).map(e=>e.location).filter(Boolean), settings.location, settings.siteName].filter(Boolean))];
-  const allFacilities = facilities.length ? facilities : ["Main Facility"];
+  const settings = publicPortal ? { companyName:publicPortal.company_name || "MaintForge", locations:[publicPortal.facility].filter(Boolean), facilityQrIds:{ [publicPortal.facility]:portalToken } } : (state.settings || {});
+  const portalEquipment = Array.isArray(publicPortal?.equipment_json) ? publicPortal.equipment_json : [];
+  const equipmentSource = publicMode ? portalEquipment : (state.equipment||[]);
+  const facilities = [...new Set([...(settings.locations||[]), ...equipmentSource.map(e=>e.location).filter(Boolean), settings.location, settings.siteName].filter(Boolean))];
+  const allFacilities = facilities.length ? facilities : [publicPortal?.facility || "Main Facility"];
   const facilityQrIds = settings.facilityQrIds || {};
-  const facilityFromToken = portalToken ? (allFacilities.find(f=>facilityQrIds[f]===portalToken) || allFacilities.find(f=>slugifyFacility(f)===portalToken) || allFacilities[0]) : "";
+  const facilityFromToken = portalToken ? (publicPortal?.facility || allFacilities.find(f=>facilityQrIds[f]===portalToken) || allFacilities.find(f=>slugifyFacility(f)===portalToken) || allFacilities[0]) : "";
   const defaultFacility = facilityFromToken || allFacilities[0] || "Main Facility";
   const [facility, setFacility] = useState(defaultFacility);
   const [requestForm, setRequestForm] = useState({ requestedBy:"", faultDate:today(), equipment:"", description:"", photos:[] });
@@ -6670,6 +6746,42 @@ function WorkOrderRequests({ state, dispatch }) {
   const [statusFilter, setStatusFilter] = useState("New");
   const [showQRPicker, setShowQRPicker] = useState(false);
   const [reviewRequest, setReviewRequest] = useState(null);
+
+  useEffect(()=>{
+    if(isOperatorPortal || !session?.user?.id) return;
+    let cancelled = false;
+    async function loadPublicRequests(){
+      try {
+        const { data, error } = await supabase
+          .from("wo_requests_public")
+          .select("*")
+          .eq("owner_user_id", session.user.id)
+          .order("created_at", { ascending:false });
+        if(error) throw error;
+        if(cancelled) return;
+        const existing = new Set((state.workOrderRequests||[]).map(r=>r.id));
+        (data||[]).forEach(row=>{
+          if(existing.has(row.id)) return;
+          dispatch({type:"ADD_WO_REQUEST", payload:{
+            id:row.id,
+            portalToken:row.portal_token,
+            facility:row.facility,
+            submittedDate:row.submitted_date,
+            createdAt:row.created_at,
+            faultDate:row.fault_date,
+            requestedBy:row.requested_by,
+            equipment:row.equipment,
+            equipmentName:row.equipment_name,
+            description:row.description,
+            photos:row.photos_json || [],
+            status:row.status || "New",
+            publicRequest:true,
+          }});
+        });
+      } catch(e) { console.warn("Public WO requests load failed:", e); }
+    }
+    loadPublicRequests();
+  }, [isOperatorPortal, session?.user?.id]);
 
   useEffect(()=>{
     const missing = allFacilities.filter(f=>!facilityQrIds[f]);
@@ -6684,14 +6796,14 @@ function WorkOrderRequests({ state, dispatch }) {
     if(isOperatorPortal && facilityFromToken && facility !== facilityFromToken) setFacility(facilityFromToken);
   }, [portalToken, facilityFromToken]);
 
-  const eqForFacility = (state.equipment||[]).filter(e=> !facility || String(e.location||"").toLowerCase()===String(facility||"").toLowerCase() || facilities.length<=1);
+  const eqForFacility = equipmentSource.filter(e=> !facility || String(e.location||"").toLowerCase()===String(facility||"").toLowerCase() || facilities.length<=1 || !e.location);
   const equipmentSuggestions = eqForFacility.filter(e=>{
     const q = equipmentSearch.trim().toLowerCase();
     if(!q) return false;
     const text = `${e.id||""} ${e.name||""} ${e.nomenclature||""} ${e.category||""}`.toLowerCase();
     return text.includes(q);
   }).slice(0,8);
-  const selectedEquipment = (state.equipment||[]).find(e=>e.id===requestForm.equipment);
+  const selectedEquipment = equipmentSource.find(e=>e.id===requestForm.equipment);
   const requests = (state.workOrderRequests||[]).filter(r=> statusFilter==="All" ? true : (r.status||"New")===statusFilter);
 
   const updateForm = (k,v) => setRequestForm(f=>({...f,[k]:v}));
@@ -6705,11 +6817,11 @@ function WorkOrderRequests({ state, dispatch }) {
     updateForm("equipment", e.id);
     setEquipmentSearch(`${e.id} — ${e.name||e.nomenclature||"Equipment"}`);
   };
-  const submitRequest = () => {
+  const submitRequest = async () => {
     if(!requestForm.requestedBy.trim()) { alert("Enter Requested By."); return; }
     if(!requestForm.equipment) { alert("Select equipment."); return; }
     if(!requestForm.description.trim()) { alert("Enter the problem description."); return; }
-    const eq = (state.equipment||[]).find(e=>e.id===requestForm.equipment) || {};
+    const eq = equipmentSource.find(e=>e.id===requestForm.equipment) || {};
     const req = {
       id:`WOR-${String(Date.now()).slice(-6)}`,
       facility: facility || eq.location || defaultFacility,
@@ -6722,8 +6834,15 @@ function WorkOrderRequests({ state, dispatch }) {
       description: requestForm.description.trim(),
       photos: requestForm.photos || [],
       status:"New",
+      portalToken,
+      ownerUserId: publicPortal?.owner_user_id || session?.user?.id || "",
     };
-    dispatch({type:"ADD_WO_REQUEST", payload:req});
+    if(isOperatorPortal && publicMode) {
+      const ok = await submitPublicWORequest(req);
+      if(!ok) return;
+    } else {
+      dispatch({type:"ADD_WO_REQUEST", payload:req});
+    }
     setRequestForm({ requestedBy:"", faultDate:today(), equipment:"", description:"", photos:[] });
     setEquipmentSearch("");
     alert("Work order request submitted.");
@@ -6755,11 +6874,16 @@ function WorkOrderRequests({ state, dispatch }) {
     };
     dispatch({type:"ADD_WO", payload:wo});
     dispatch({type:"UPDATE_WO_REQUEST", payload:{...req, status:"Converted", convertedWO:id, convertedDate:today()}});
+    if(req.publicRequest) {
+      try { supabase.from("wo_requests_public").update({ status:"Converted", converted_wo:id, converted_date:today() }).eq("id", req.id); } catch(e) {}
+    }
     setReviewRequest(null);
   };
 
-  const printQR = (fac) => {
+  const printQR = async (fac) => {
     const url = requestUrlForFacility(fac, settings);
+    const token = getFacilityQrToken(settings, fac);
+    await upsertWORequestPortal({ token, ownerUserId:session?.user?.id, facility:fac, settings, equipment:state.equipment||[] });
     const win = window.open("","_blank");
     if(!win) { alert("Pop-up blocked. Allow pop-ups to print the QR code."); return; }
     win.document.write(`<html><head><title>Work Order Request QR</title><style>
@@ -6791,7 +6915,7 @@ function WorkOrderRequests({ state, dispatch }) {
       {(r.photos||[]).length>0 ? <div><b>Pictures</b><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:10, marginTop:8 }}>{r.photos.map((p,i)=><a key={i} href={p.data} target="_blank" rel="noreferrer"><img src={p.data} alt={p.name||`Photo ${i+1}`} style={{ width:"100%", height:150, objectFit:"cover", borderRadius:12, border:`1px solid ${T.border}` }}/></a>)}</div></div> : <div style={{ color:T.muted }}>No pictures attached.</div>}
       <div style={{ display:"flex", gap:8, justifyContent:"flex-end", flexWrap:"wrap" }}>
         {(r.status||"New")==="New" && <Btn onClick={()=>convertToWO(r)}>Create Work Order</Btn>}
-        {(r.status||"New")==="New" && <Btn variant="secondary" onClick={()=>{ dispatch({type:"UPDATE_WO_REQUEST", payload:{...r,status:"Dismissed"}}); setReviewRequest(null); }}>Dismiss Request</Btn>}
+        {(r.status||"New")==="New" && <Btn variant="secondary" onClick={()=>{ dispatch({type:"UPDATE_WO_REQUEST", payload:{...r,status:"Dismissed"}}); if(r.publicRequest){ try { supabase.from("wo_requests_public").update({ status:"Dismissed" }).eq("id", r.id); } catch(e) {} } setReviewRequest(null); }}>Dismiss Request</Btn>}
         <Btn variant="secondary" onClick={()=>setReviewRequest(null)}>Close</Btn>
       </div>
     </div>
@@ -6835,7 +6959,7 @@ function WorkOrderRequests({ state, dispatch }) {
     {showQRPicker && <Modal title="Print QR Code" onClose={()=>setShowQRPicker(false)}>
       <div style={{ display:"grid", gap:10 }}>
         <div style={{ fontSize:13, color:T.muted, lineHeight:1.4 }}>Choose one facility. Only that facility QR code will be generated for printing. This QR code is permanent for that facility.</div>
-        {allFacilities.map(fac=><button key={fac} onClick={()=>{ printQR(fac); setShowQRPicker(false); }} style={{ textAlign:"left", padding:"14px 16px", borderRadius:12, border:`1px solid ${T.border}`, background:T.surface, cursor:"pointer", color:T.text }}>
+        {allFacilities.map(fac=><button key={fac} onClick={async()=>{ await printQR(fac); setShowQRPicker(false); }} style={{ textAlign:"left", padding:"14px 16px", borderRadius:12, border:`1px solid ${T.border}`, background:T.surface, cursor:"pointer", color:T.text }}>
           <div style={{ fontWeight:900, fontSize:15 }}>{fac}</div>
         </button>)}
       </div>
@@ -7665,10 +7789,26 @@ export default function App() {
   const [authError, setAuthError] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authInfoMsg, setAuthInfoMsg] = useState("");
+  const publicWORequestMode = isPublicWORequestPage();
+  const [publicPortal, setPublicPortal] = useState(null);
+  const [publicPortalLoading, setPublicPortalLoading] = useState(false);
 
   useEffect(() => {
+    if(publicWORequestMode) { setAuthLoading(false); return; }
     loadSession(setSession, setAuthLoading);
-  }, []);
+  }, [publicWORequestMode]);
+
+  useEffect(() => {
+    if(!publicWORequestMode) return;
+    let cancelled = false;
+    async function loadPortal(){
+      setPublicPortalLoading(true);
+      const portal = await loadWORequestPortal(getWORequestPortalToken());
+      if(!cancelled) { setPublicPortal(portal); setPublicPortalLoading(false); }
+    }
+    loadPortal();
+    return () => { cancelled = true; };
+  }, [publicWORequestMode]);
 
   useEffect(() => {
     let media;
@@ -7995,7 +8135,7 @@ export default function App() {
   const pages = {
     dashboard:        <Dashboard        state={state} dispatch={dispatch} setTab={setTab} onSettings={()=>setShowSettings(true)} />,
     workorders:       <WorkOrders       state={state} dispatch={dispatch} woSettings={state.woSettings} onWOSettings={()=>setShowWOSettings(true)} />,
-    wo_requests:      <WorkOrderRequests state={state} dispatch={dispatch} />,
+    wo_requests:      <WorkOrderRequests state={state} dispatch={dispatch} session={session} />,
     inspections:      <Inspections      state={state} dispatch={dispatch} />,
     equipment:        <Equipment        state={state} dispatch={dispatch} />,
     parts:            <Parts            state={state} dispatch={dispatch} />,
@@ -8026,6 +8166,12 @@ export default function App() {
     const next = order[(order.indexOf(selectedTheme) + 1) % order.length] || "light";
     setThemePreference(next);
   };
+
+  if (publicWORequestMode) {
+    if(publicPortalLoading) return <div style={{ padding:40, fontSize:20, fontFamily:T.sans }}>Loading request form...</div>;
+    if(!publicPortal) return <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", padding:18, fontFamily:T.sans, background:T.bg, color:T.text }}><div style={{ maxWidth:520, background:T.card, border:`1px solid ${T.border}`, borderRadius:16, padding:20, textAlign:"center" }}><h2>Request link not active</h2><p>This QR code is not connected to an active facility yet. Please contact maintenance.</p></div></div>;
+    return <div style={{ minHeight:"100vh", background:T.bg, padding:16 }}><WorkOrderRequests state={{...INIT, settings:{ companyName:publicPortal.company_name || "MaintForge", locations:[publicPortal.facility], facilityQrIds:{ [publicPortal.facility]:getWORequestPortalToken() } }, equipment:publicPortal.equipment_json || [], workOrderRequests:[]}} dispatch={()=>{}} session={null} publicPortal={publicPortal} publicMode={true} /></div>;
+  }
 
   if (authLoading) {
     return <div style={{ padding:40, fontSize:20, fontFamily:T.sans }}>Loading...</div>;
