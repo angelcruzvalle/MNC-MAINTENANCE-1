@@ -2501,9 +2501,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             {filtered.map((wo,i)=>{
               const eq = state.equipment.find(e=>e.id===wo.equipment);
               const eqLabel = eq?.name || wo.equipmentLabel || wo.equipment || "—";
-              const partsTotal = woPartsTotal(wo);
-              const outsideServicesSubtotal = outsideServicesTotal(wo.outsideServices);
-              const total = woTotalCost(wo);
+              const partsTotal = (wo.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
+              const total = (+wo.laborCost||0)+partsTotal;
               const typeInfo = WO_TYPES.find(t=>t.id===wo.woType);
               const rowStatus = wo.status==="Completed" ? "Fully Operational" : (wo.equipmentStatus || eq?.status || "Fully Operational");
               const isOpenInspection = wo.woType==="Inspection" && wo.status!=="Completed";
@@ -3372,7 +3371,7 @@ function Equipment({ state, dispatch }) {
               {[
                 ["Total WOs",    wos.length, T.text],
                 ["Open WOs",     wos.filter(w=>w.status==="Open").length, T.amber],
-                ["Total Spent",  "$"+wos.reduce((s,w)=>s+woTotalCost(w),0).toLocaleString(), T.accent],
+                ["Total Spent",  "$"+wos.reduce((s,w)=>s+(+w.laborCost||0)+(+(w.partsUsed||[]).reduce((ps,p)=>ps+(+(p.qty||1))*(+(p.unitCost||0)),0)),0).toLocaleString(), T.accent],
                 ["Labor Hours",  wos.reduce((s,w)=>s+(+w.laborHours||0),0)+"h", T.text],
               ].map(([k,v,c])=>(
                 <div key={k} style={{ background:T.grayLt, borderRadius:7, padding:"12px 14px", border:`1px solid ${T.border}` }}>
@@ -5289,13 +5288,12 @@ function Spending({ state }) {
   const wos = state.workOrders.filter(filterByPeriod);
   const totalCost = w => woTotalCost(w);
   const totLabor  = wos.reduce((s,w)=>s+(+w.laborCost||0),0);
-  const totParts  = wos.reduce((s,w)=>s+woPartsTotal(w),0);
-  const totOutside = wos.reduce((s,w)=>s+outsideServicesTotal(w.outsideServices),0);
-  const grand     = totLabor+totParts+totOutside;
+  const totParts  = wos.reduce((s,w)=>s+totalCost(w)-(+w.laborCost||0),0);
+  const grand     = totLabor+totParts;
 
   /* By Equipment */
   const byEq = {};
-  wos.forEach(w=>{ if(!byEq[w.equipment])byEq[w.equipment]={labor:0,parts:0,outside:0,count:0}; byEq[w.equipment].labor+=(+w.laborCost||0); byEq[w.equipment].parts+=woPartsTotal(w); byEq[w.equipment].outside+=outsideServicesTotal(w.outsideServices); byEq[w.equipment].count++; });
+  wos.forEach(w=>{ if(!byEq[w.equipment])byEq[w.equipment]={labor:0,parts:0,count:0}; byEq[w.equipment].labor+=(+w.laborCost||0); byEq[w.equipment].parts+=totalCost(w)-(+w.laborCost||0); byEq[w.equipment].count++; });
 
   /* By Category (equipment category) */
   const byCat = {};
@@ -5303,7 +5301,7 @@ function Spending({ state }) {
 
   /* By Month */
   const byMonth = {};
-  wos.forEach(w=>{ const m=(w.completed||w.created||"").slice(0,7); if(m){ if(!byMonth[m])byMonth[m]={labor:0,parts:0,outside:0}; byMonth[m].labor+=(+w.laborCost||0); byMonth[m].parts+=woPartsTotal(w); byMonth[m].outside+=outsideServicesTotal(w.outsideServices); }});
+  wos.forEach(w=>{ const m=(w.completed||w.created||"").slice(0,7); if(m){ if(!byMonth[m])byMonth[m]={labor:0,parts:0}; byMonth[m].labor+=(+w.laborCost||0); byMonth[m].parts+=totalCost(w)-(+w.laborCost||0); }});
 
   /* By WO Type */
   const byType = {};
@@ -5326,7 +5324,7 @@ function Spending({ state }) {
 
       {/* Summary cards */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12, marginBottom:20 }}>
-        {[["Total Labor","$"+totLabor.toLocaleString(),T.accent],["Total Parts","$"+totParts.toLocaleString(),"#7c3aed"],["Outside Services","$"+totOutside.toLocaleString(),T.green],["Grand Total","$"+grand.toLocaleString(),T.text],["Work Orders",wos.length,T.muted]].map(([l,v,c])=>(
+        {[["Total Labor","$"+totLabor.toLocaleString(),T.accent],["Total Parts","$"+totParts.toLocaleString(),"#7c3aed"],["Grand Total","$"+grand.toLocaleString(),T.text],["Work Orders",wos.length,T.muted]].map(([l,v,c])=>(
           <Card key={l} style={{ padding:"14px 16px" }}>
             <div style={{ fontFamily:T.sans, fontSize:22, fontWeight:700, color:c }}>{v}</div>
             <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{l}</div>
@@ -5338,9 +5336,9 @@ function Spending({ state }) {
         {/* By Equipment */}
         <Card>
           <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginBottom:14 }}>By Equipment</div>
-          {Object.entries(byEq).sort((a,b)=>(b[1].labor+b[1].parts+b[1].outside)-(a[1].labor+a[1].parts+a[1].outside)).slice(0,8).map(([eqId,d])=>{
+          {Object.entries(byEq).sort((a,b)=>(b[1].labor+b[1].parts)-(a[1].labor+a[1].parts)).slice(0,8).map(([eqId,d])=>{
             const eq=state.equipment.find(e=>e.id===eqId);
-            const tot=d.labor+d.parts+d.outside;
+            const tot=d.labor+d.parts;
             const pct=grand>0?tot/grand*100:0;
             return (
               <div key={eqId} style={{ marginBottom:12 }}>
@@ -5352,7 +5350,7 @@ function Spending({ state }) {
                   <Bar pct={pct} />
                   <span style={{ fontFamily:T.mono, fontSize:10, color:T.muted, minWidth:28 }}>{Math.round(pct)}%</span>
                 </div>
-                <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, marginTop:2 }}>{d.count} WOs · Labor ${d.labor.toFixed(0)} · Parts ${d.parts.toFixed(0)} · Outside ${d.outside.toFixed(0)}</div>
+                <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, marginTop:2 }}>{d.count} WOs · Labor ${d.labor.toFixed(0)} · Parts ${d.parts.toFixed(0)}</div>
               </div>
             );
           })}
@@ -5387,7 +5385,7 @@ function Spending({ state }) {
         <Card>
           <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginBottom:14 }}>Monthly Trend</div>
           {Object.entries(byMonth).sort().reverse().slice(0,12).map(([m,d])=>{
-            const tot=d.labor+d.parts+d.outside;
+            const tot=d.labor+d.parts;
             const pct=grand>0?tot/grand*100:0;
             return (
               <div key={m} style={{ marginBottom:12 }}>
@@ -6498,7 +6496,7 @@ function ReportSpending({ state }) {
       </head><body>${reportHeaderHTML(state, title)}
       <table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO #</th><th>Title</th><th>Mechanic</th><th>Date</th><th>Labor</th><th>Parts</th><th>Outside Services</th><th>Total</th></tr>
       ${list.map(w=>`<tr><td><b>${w.equipment||"—"}</b></td><td>${state.equipment.find(e=>e.id===w.equipment)?.name||"—"}</td><td>${w.id}</td><td>${w.title}</td><td>${w.tech||"—"}</td><td>${w.completed||w.created||"—"}</td><td>$${(+w.laborCost||0).toFixed(2)}</td><td>$${woPartsTotal(w).toFixed(2)}</td><td>$${outsideServicesTotal(w.outsideServices).toFixed(2)}</td><td><b>$${totalCost(w).toFixed(2)}</b></td></tr>`).join("")}
-      <tr style="font-weight:700;background:#f3f4f6"><td colspan="6">TOTAL</td><td>$${list.reduce((s,w)=>s+(+w.laborCost||0),0).toFixed(2)}</td><td>$${list.reduce((s,w)=>s+woPartsTotal(w),0).toFixed(2)}</td><td>$${list.reduce((s,w)=>s+outsideServicesTotal(w.outsideServices),0).toFixed(2)}</td><td>$${list.reduce((s,w)=>s+totalCost(w),0).toFixed(2)}</td></tr>
+      <tr style="font-weight:700;background:#f3f4f6"><td colspan="8">TOTAL</td><td>$${list.reduce((s,w)=>s+totalCost(w),0).toFixed(2)}</td></tr>
       </table>${reportButtonsHtml(rows)}</body></html>`);
     win.document.close();
   };
@@ -6551,7 +6549,7 @@ function ReportCombined({ state }) {
     if(selected.spending) {
       const wos = state.workOrders.filter(w=>w.completed);
       const total = wos.reduce((s,w)=>s+totalCost(w),0);
-      body += `<h2>Completed Work Orders — Total $${total.toFixed(2)}</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO#</th><th>Title</th><th>Description</th><th>Mechanic</th><th>Completed</th><th>Labor</th><th>Parts</th><th>Outside Services</th><th>Total</th></tr>${wos.map(w=>`<tr><td><b>${w.equipment||"—"}</b></td><td>${eqName(w.equipment)}</td><td>${w.id}</td><td>${w.title}</td><td>${htmlEscape(workOrderDescription(w)||"—")}</td><td>${w.tech||"—"}</td><td>${w.completed||"—"}</td><td>$${(+w.laborCost||0).toFixed(2)}</td><td>$${woPartsTotal(w).toFixed(2)}</td><td>$${outsideServicesTotal(w.outsideServices).toFixed(2)}</td><td>$${totalCost(w).toFixed(2)}</td></tr>`).join("")}</table>`;
+      body += `<h2>Completed Work Orders — Total $${total.toFixed(2)}</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO#</th><th>Title</th><th>Description</th><th>Mechanic</th><th>Completed</th><th>Total</th></tr>${wos.map(w=>`<tr><td><b>${w.equipment||"—"}</b></td><td>${eqName(w.equipment)}</td><td>${w.id}</td><td>${w.title}</td><td>${htmlEscape(workOrderDescription(w)||"—")}</td><td>${w.tech||"—"}</td><td>${w.completed||"—"}</td><td>$${totalCost(w).toFixed(2)}</td></tr>`).join("")}</table>`;
     }
     if(selected.parts) {
       const lowStock = state.parts.filter(p=>p.lowStockAlert!==false&&(+(p.qty||0))<=(+(p.minQty||0)));
@@ -6627,6 +6625,18 @@ function ReportCombined({ state }) {
 
 function SystemSettings({ state, dispatch, onClose }) {
   const s = state.settings || {};
+  const prof = state.profile || {};
+  const [profileForm, setProfileForm] = useState({
+    firstName: prof.firstName || "",
+    lastName: prof.lastName || "",
+    position: prof.position || "",
+    workLocation: prof.workLocation || "",
+    phone: prof.phone || "",
+    email: prof.email || "",
+    laborRate: prof.laborRate || "",
+    photo: prof.photo || "",
+  });
+  const PF = k => e => setProfileForm(f=>({...f,[k]:e.target.value}));
   const [form, setForm] = useState({
     companyName:   s.companyName   || "National Cemetery Administration",
     department:    s.department    || "Maintenance Department",
@@ -6669,10 +6679,18 @@ function SystemSettings({ state, dispatch, onClose }) {
     reader.readAsDataURL(file);
   };
 
+  const handleProfilePhoto = e => {
+    const file = e.target.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setProfileForm(f=>({...f, photo:ev.target.result}));
+    reader.readAsDataURL(file);
+  };
+
   const save = () => {
     const { _newLoc, ...cleanForm } = form;
     const cleanLocations = [...new Set((cleanForm.locations || []).map(l => String(l || "").trim()).filter(Boolean))];
     dispatch({ type:"UPDATE_SETTINGS", payload:{ ...cleanForm, locations: cleanLocations } });
+    dispatch({ type:"UPDATE_PROFILE", payload:{ ...profileForm, laborRate:+profileForm.laborRate||0 } });
     onClose();
   };
 
@@ -6710,6 +6728,32 @@ function SystemSettings({ state, dispatch, onClose }) {
               </label>
               {form.logo && <button onClick={()=>setForm(f=>({...f,logo:""}))} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>Remove</button>}
             </div>
+          </div>
+        </div>
+
+        {/* User Profile */}
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>User Profile</div>
+          <div style={{ display:"flex", gap:14, alignItems:"center", marginBottom:12 }}>
+            <div style={{ width:64, height:64, borderRadius:"50%", background:T.accentLt, border:`2px solid ${T.accent}`, overflow:"hidden", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+              {profileForm.photo ? <img src={profileForm.photo} alt="profile" style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : <span style={{ fontFamily:T.mono, fontSize:22, color:T.accent, fontWeight:700 }}>{profileForm.firstName?profileForm.firstName[0]:"?"}</span>}
+            </div>
+            <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+              <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.accent, cursor:"pointer", padding:"7px 14px", border:`1px solid ${T.accent}`, borderRadius:6 }}>
+                Upload Profile Photo
+                <input type="file" accept="image/*" onChange={handleProfilePhoto} style={{ display:"none" }} />
+              </label>
+              {profileForm.photo && <button onClick={()=>setProfileForm(f=>({...f,photo:""}))} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>Remove</button>}
+            </div>
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
+            <Field label="First Name" half><input style={inp} value={profileForm.firstName} onChange={PF("firstName")} placeholder="Juan" /></Field>
+            <Field label="Last Name" half><input style={inp} value={profileForm.lastName} onChange={PF("lastName")} placeholder="Martinez" /></Field>
+            <Field label="Position" half><input style={inp} value={profileForm.position} onChange={PF("position")} placeholder="Mechanic, Supervisor..." /></Field>
+            <Field label="Work Location" half><input style={inp} value={profileForm.workLocation} onChange={PF("workLocation")} placeholder="Main Shop, Section C..." /></Field>
+            <Field label="Phone" half><input style={inp} value={profileForm.phone} onChange={PF("phone")} /></Field>
+            <Field label="Email" half><input style={inp} type="email" value={profileForm.email} onChange={PF("email")} /></Field>
+            <Field label="Labor Rate ($/hr)" half><input style={inp} type="number" value={profileForm.laborRate} onChange={PF("laborRate")} placeholder="45.00" /></Field>
           </div>
         </div>
 
@@ -7722,16 +7766,12 @@ export default function App() {
 
   const [tab, setTab]       = useState("dashboard");
   const [menuOpen, setMenuOpen]           = useState(false);
-  const [showProfile, setShowProfile]     = useState(false);
   const [showWOSettings, setShowWOSettings] = useState(false);
   const [showSettings, setShowSettings]   = useState(false);
 
   const profile      = state.profile || {};
   const settings     = state.settings || {};
   const companyName  = settings.companyName || "NCA Maintenance";
-
-  const initials = profile.firstName&&profile.lastName ? `${profile.firstName[0]}${profile.lastName[0]}`.toUpperCase() : "JM";
-  const displayName = profile.firstName ? `${profile.firstName} ${profile.lastName}` : "J. Martinez";
 
   const pages = {
     dashboard:        <Dashboard        state={state} dispatch={dispatch} setTab={setTab} onSettings={()=>setShowSettings(true)} />,
@@ -8136,7 +8176,7 @@ export default function App() {
 
       <SlideMenu tab={tab} setTab={setTab} open={menuOpen} onClose={()=>setMenuOpen(false)} onSettings={()=>setShowSettings(true)} companyName={companyName} profile={profile} />
 
-      {/* Custom header with profile button */}
+      {/* Custom header */}
       <header className="no-print" style={{ position:"sticky", top:0, zIndex:1000, background:T.surface, borderBottom:`1px solid ${T.border}`, padding:"0 20px", height:56, display:"flex", alignItems:"center", justifyContent:"space-between", boxShadow:`0 1px 0 ${T.border}` }}>
         <div style={{ display:"flex", alignItems:"center", gap:14 }}>
           <button onClick={()=>setMenuOpen(v=>!v)} style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:7, padding:"7px 9px", cursor:"pointer", display:"flex", flexDirection:"column", gap:4, alignItems:"center" }}>
@@ -8176,13 +8216,6 @@ export default function App() {
           <button onClick={handleLogout} style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:T.surface, color:T.text, cursor:"pointer", fontSize:13 }}>
             Logout
           </button>
-          {/* User profile button */}
-          <button onClick={()=>setShowProfile(true)} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:T.surface, cursor:"pointer" }}>
-            <div style={{ width:24, height:24, borderRadius:"50%", background:T.accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, color:"#fff", fontWeight:700, fontFamily:T.mono, overflow:"hidden" }}>
-              {profile.photo ? <img src={profile.photo} alt="me" style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : initials}
-            </div>
-            <span style={{ fontFamily:T.sans, fontSize:13, fontWeight:500, color:T.text }}>{displayName}</span>
-          </button>
         </div>
       </header>
 
@@ -8194,7 +8227,6 @@ export default function App() {
         {pages[tab]}
       </main>
 
-      {showProfile    && <UserProfile    state={state} dispatch={dispatch} onClose={()=>setShowProfile(false)} />}
       {showWOSettings && <WOSettings     state={state} dispatch={dispatch} onClose={()=>setShowWOSettings(false)} />}
       {showSettings   && <SystemSettings state={state} dispatch={dispatch} onClose={()=>setShowSettings(false)} />}
     </div>
