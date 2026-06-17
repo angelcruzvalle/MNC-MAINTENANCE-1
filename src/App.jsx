@@ -6632,12 +6632,21 @@ function slugifyFacility(value="") {
   return String(value || "facility").toLowerCase().trim().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"") || "facility";
 }
 
-function requestUrlForFacility(facility="") {
+function makeStableFacilityQrToken() {
+  return `fac_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,10)}`;
+}
+
+function getFacilityQrToken(settings={}, facility="") {
+  const ids = settings.facilityQrIds || {};
+  return ids[facility] || slugifyFacility(facility);
+}
+
+function requestUrlForFacility(facility="", settings={}) {
   try {
     const base = window.location.origin + window.location.pathname;
-    const slug = slugifyFacility(facility);
-    return `${base}?woRequest=${encodeURIComponent(slug)}&facility=${encodeURIComponent(facility)}`;
-  } catch(e) { return `?woRequest=${slugifyFacility(facility)}&facility=${encodeURIComponent(facility)}`; }
+    const token = getFacilityQrToken(settings, facility);
+    return `${base}?woRequest=${encodeURIComponent(token)}`;
+  } catch(e) { return `?woRequest=${encodeURIComponent(getFacilityQrToken(settings, facility))}`; }
 }
 
 function qrUrlForText(text="") {
@@ -6646,17 +6655,43 @@ function qrUrlForText(text="") {
 
 function WorkOrderRequests({ state, dispatch }) {
   const params = (()=>{ try { return new URLSearchParams(window.location.search); } catch(e) { return new URLSearchParams(); } })();
-  const urlFacility = params.get("facility") || "";
+  const portalToken = params.get("woRequest") || "";
+  const isOperatorPortal = !!portalToken;
   const settings = state.settings || {};
   const facilities = [...new Set([...(settings.locations||[]), ...(state.equipment||[]).map(e=>e.location).filter(Boolean), settings.location, settings.siteName].filter(Boolean))];
-  const defaultFacility = urlFacility || facilities[0] || "Main Facility";
+  const allFacilities = facilities.length ? facilities : ["Main Facility"];
+  const facilityQrIds = settings.facilityQrIds || {};
+  const facilityFromToken = portalToken ? (allFacilities.find(f=>facilityQrIds[f]===portalToken) || allFacilities.find(f=>slugifyFacility(f)===portalToken) || allFacilities[0]) : "";
+  const defaultFacility = facilityFromToken || allFacilities[0] || "Main Facility";
   const [facility, setFacility] = useState(defaultFacility);
-  const [requestForm, setRequestForm] = useState({ requestedBy:"", contact:"", faultDate:today(), equipment:"", description:"", photos:[] });
-  const [showSubmit, setShowSubmit] = useState(!!params.get("woRequest"));
+  const [requestForm, setRequestForm] = useState({ requestedBy:"", faultDate:today(), equipment:"", description:"", photos:[] });
+  const [equipmentSearch, setEquipmentSearch] = useState("");
+  const [showSubmit, setShowSubmit] = useState(isOperatorPortal);
   const [statusFilter, setStatusFilter] = useState("New");
+  const [showQRPicker, setShowQRPicker] = useState(false);
+  const [reviewRequest, setReviewRequest] = useState(null);
 
-  const allFacilities = facilities.length ? facilities : [defaultFacility];
+  useEffect(()=>{
+    const missing = allFacilities.filter(f=>!facilityQrIds[f]);
+    if(missing.length && !isOperatorPortal) {
+      const nextIds = { ...facilityQrIds };
+      missing.forEach(f=>{ if(!nextIds[f]) nextIds[f] = makeStableFacilityQrToken(); });
+      dispatch({ type:"UPDATE_SETTINGS", payload:{ ...settings, facilityQrIds:nextIds } });
+    }
+  }, [allFacilities.join("|"), isOperatorPortal]);
+
+  useEffect(()=>{
+    if(isOperatorPortal && facilityFromToken && facility !== facilityFromToken) setFacility(facilityFromToken);
+  }, [portalToken, facilityFromToken]);
+
   const eqForFacility = (state.equipment||[]).filter(e=> !facility || String(e.location||"").toLowerCase()===String(facility||"").toLowerCase() || facilities.length<=1);
+  const equipmentSuggestions = eqForFacility.filter(e=>{
+    const q = equipmentSearch.trim().toLowerCase();
+    if(!q) return false;
+    const text = `${e.id||""} ${e.name||""} ${e.nomenclature||""} ${e.category||""}`.toLowerCase();
+    return text.includes(q);
+  }).slice(0,8);
+  const selectedEquipment = (state.equipment||[]).find(e=>e.id===requestForm.equipment);
   const requests = (state.workOrderRequests||[]).filter(r=> statusFilter==="All" ? true : (r.status||"New")===statusFilter);
 
   const updateForm = (k,v) => setRequestForm(f=>({...f,[k]:v}));
@@ -6665,6 +6700,10 @@ function WorkOrderRequests({ state, dispatch }) {
     if(!list.length) return;
     Promise.all(list.map(file=>new Promise(resolve=>{ const reader=new FileReader(); reader.onload=e=>resolve({name:file.name, data:e.target.result}); reader.readAsDataURL(file); })))
       .then(photos=>setRequestForm(f=>({...f, photos:[...(f.photos||[]), ...photos].slice(0,4)})));
+  };
+  const chooseEquipment = (e) => {
+    updateForm("equipment", e.id);
+    setEquipmentSearch(`${e.id} — ${e.name||e.nomenclature||"Equipment"}`);
   };
   const submitRequest = () => {
     if(!requestForm.requestedBy.trim()) { alert("Enter Requested By."); return; }
@@ -6678,7 +6717,6 @@ function WorkOrderRequests({ state, dispatch }) {
       createdAt: new Date().toISOString(),
       faultDate: requestForm.faultDate || today(),
       requestedBy: requestForm.requestedBy.trim(),
-      contact: requestForm.contact.trim(),
       equipment: requestForm.equipment,
       equipmentName: eq.name || eq.nomenclature || "",
       description: requestForm.description.trim(),
@@ -6686,7 +6724,8 @@ function WorkOrderRequests({ state, dispatch }) {
       status:"New",
     };
     dispatch({type:"ADD_WO_REQUEST", payload:req});
-    setRequestForm({ requestedBy:"", contact:"", faultDate:today(), equipment:"", description:"", photos:[] });
+    setRequestForm({ requestedBy:"", faultDate:today(), equipment:"", description:"", photos:[] });
+    setEquipmentSearch("");
     alert("Work order request submitted.");
   };
 
@@ -6706,7 +6745,7 @@ function WorkOrderRequests({ state, dispatch }) {
       requestId:req.id,
       description:req.description || "",
       faultDescription:req.description || "",
-      mechanicNotes:req.contact ? `Requestor contact: ${req.contact}` : "",
+      mechanicNotes:"",
       attachments:req.photos || [],
       partsUsed:[],
       outsideServices:[],
@@ -6716,55 +6755,96 @@ function WorkOrderRequests({ state, dispatch }) {
     };
     dispatch({type:"ADD_WO", payload:wo});
     dispatch({type:"UPDATE_WO_REQUEST", payload:{...req, status:"Converted", convertedWO:id, convertedDate:today()}});
+    setReviewRequest(null);
   };
 
   const printQR = (fac) => {
-    const url = requestUrlForFacility(fac);
+    const url = requestUrlForFacility(fac, settings);
     const win = window.open("","_blank");
     if(!win) { alert("Pop-up blocked. Allow pop-ups to print the QR code."); return; }
     win.document.write(`<html><head><title>Work Order Request QR</title><style>
-      body{font-family:Arial,sans-serif;text-align:center;padding:28px;color:#111;background:#fff}.sheet{max-width:520px;margin:0 auto;border:2px solid #111;border-radius:16px;padding:26px}.brand{font-size:24px;font-weight:800;margin:0 0 4px}.facility{font-size:18px;font-weight:700;margin:0 0 18px}.instructions{font-size:16px;line-height:1.35;margin:0 0 18px}.qr{width:300px;height:300px;max-width:88vw;background:#fff}.url{font-size:11px;margin:14px auto 0;word-break:break-all;max-width:420px;color:#555}.footer{font-size:12px;margin-top:18px;color:#555}button{margin-top:22px;padding:10px 18px;border:none;border-radius:8px;background:#111827;color:#fff;font-weight:700;cursor:pointer}@media print{button{display:none}body{padding:0}.sheet{border:2px solid #111;margin-top:20px}}
-    </style></head><body><div class="sheet"><div class="brand">${htmlEscape(settings.companyName||"MaintForge")}</div><div class="facility">${htmlEscape(fac)}</div><p class="instructions">Scan this QR code to submit a maintenance work order request.</p><img class="qr" src="${qrUrlForText(url)}"/><div class="url">${htmlEscape(url)}</div><div class="footer">MaintForge Work Order Requests</div></div><button onclick="window.print()">Print QR Code</button></body></html>`);
+      body{font-family:Arial,sans-serif;text-align:center;padding:28px;color:#111;background:#fff}.sheet{max-width:520px;margin:0 auto;border:2px solid #111;border-radius:16px;padding:26px}.brand{font-size:24px;font-weight:800;margin:0 0 4px}.facility{font-size:18px;font-weight:700;margin:0 0 18px}.instructions{font-size:16px;line-height:1.35;margin:0 0 18px}.qr{width:300px;height:300px;max-width:88vw;background:#fff}.footer{font-size:12px;margin-top:18px;color:#555}.note{font-size:12px;color:#555;margin-top:12px}button{margin-top:22px;padding:10px 18px;border:none;border-radius:8px;background:#111827;color:#fff;font-weight:700;cursor:pointer}@media print{button{display:none}body{padding:0}.sheet{border:2px solid #111;margin-top:20px}}
+    </style></head><body><div class="sheet"><div class="brand">${htmlEscape(settings.companyName||"MaintForge")}</div><div class="facility">${htmlEscape(fac)}</div><p class="instructions">Scan this QR code to submit a maintenance work order request.</p><img class="qr" src="${qrUrlForText(url)}"/><div class="note">This QR code is permanent for this facility. Do not replace unless intentionally regenerated by the owner.</div><div class="footer">MaintForge Work Order Requests</div></div><button onclick="window.print()">Print QR Code</button></body></html>`);
     win.document.close();
   };
 
   const RequestActions = ({ r }) => (
     <div className="wo-request-actions" style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+      <Btn small variant="secondary" onClick={()=>setReviewRequest(r)}>Review</Btn>
       {(r.status||"New")==="New" && <Btn small onClick={()=>convertToWO(r)}>Create WO</Btn>}
       {(r.status||"New")==="New" && <Btn small variant="secondary" onClick={()=>dispatch({type:"UPDATE_WO_REQUEST", payload:{...r,status:"Dismissed"}})}>Dismiss</Btn>}
       <Btn small variant="danger" onClick={()=>{ if(confirm("Delete this request?")) dispatch({type:"DELETE_WO_REQUEST", payload:r.id}); }}>Delete</Btn>
     </div>
   );
 
+  const RequestReview = ({ r }) => r ? <Modal title="Review Work Order Request" onClose={()=>setReviewRequest(null)}>
+    <div style={{ display:"grid", gap:14 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }}>
+        <div><b>Facility</b><br/>{r.facility}</div>
+        <div><b>Equipment</b><br/>{r.equipment}<br/><span style={{ color:T.muted }}>{r.equipmentName}</span></div>
+        <div><b>Requested By</b><br/>{r.requestedBy}</div>
+        <div><b>Fault Date</b><br/>{r.faultDate}</div>
+        <div><b>Submitted</b><br/>{r.submittedDate}</div>
+        <div><b>Status</b><br/>{r.status||"New"}</div>
+      </div>
+      <div style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:12, background:T.grayLt }}><b>Operator Statement</b><div style={{ marginTop:6, whiteSpace:"pre-wrap", lineHeight:1.45 }}>{r.description}</div></div>
+      {(r.photos||[]).length>0 ? <div><b>Pictures</b><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:10, marginTop:8 }}>{r.photos.map((p,i)=><a key={i} href={p.data} target="_blank" rel="noreferrer"><img src={p.data} alt={p.name||`Photo ${i+1}`} style={{ width:"100%", height:150, objectFit:"cover", borderRadius:12, border:`1px solid ${T.border}` }}/></a>)}</div></div> : <div style={{ color:T.muted }}>No pictures attached.</div>}
+      <div style={{ display:"flex", gap:8, justifyContent:"flex-end", flexWrap:"wrap" }}>
+        {(r.status||"New")==="New" && <Btn onClick={()=>convertToWO(r)}>Create Work Order</Btn>}
+        {(r.status||"New")==="New" && <Btn variant="secondary" onClick={()=>{ dispatch({type:"UPDATE_WO_REQUEST", payload:{...r,status:"Dismissed"}}); setReviewRequest(null); }}>Dismiss Request</Btn>}
+        <Btn variant="secondary" onClick={()=>setReviewRequest(null)}>Close</Btn>
+      </div>
+    </div>
+  </Modal> : null;
+
+  if(isOperatorPortal) {
+    return <div className="wo-requests-page operator-request-only" style={{ display:"grid", gap:16, maxWidth:720, margin:"0 auto" }}>
+      <Card>
+        <SectionHeading sub="Submit a maintenance request. No account is required.">Work Order Request</SectionHeading>
+        <div className="wo-request-form-grid" style={{ display:"grid", gridTemplateColumns:"1fr", gap:12 }}>
+          <Field label="Facility"><input style={inp} value={facility} disabled /></Field>
+          <Field label="Fault Date"><input style={inp} type="date" value={requestForm.faultDate} onChange={e=>updateForm("faultDate",e.target.value)} /></Field>
+          <Field label="Requested By"><input style={inp} value={requestForm.requestedBy} onChange={e=>updateForm("requestedBy",e.target.value)} placeholder="Your name" /></Field>
+          <Field label="Equipment">
+            <div style={{ position:"relative" }}>
+              <input style={inp} value={equipmentSearch} onChange={e=>{ setEquipmentSearch(e.target.value); updateForm("equipment",""); }} placeholder="Start typing equipment number or name" autoComplete="off" />
+              {equipmentSuggestions.length>0 && <div className="equipment-suggestion-box" style={{ position:"absolute", zIndex:50, top:"100%", left:0, right:0, background:T.surface, border:`1px solid ${T.border}`, borderRadius:12, boxShadow:"0 12px 28px rgba(0,0,0,.12)", marginTop:4, overflow:"hidden" }}>
+                {equipmentSuggestions.map(e=><button key={e.id} type="button" onClick={()=>chooseEquipment(e)} style={{ display:"block", width:"100%", textAlign:"left", padding:"12px 14px", border:"none", borderBottom:`1px solid ${T.border}`, background:T.surface, color:T.text, cursor:"pointer" }}><b>{e.id}</b> — {e.name||e.nomenclature||"Equipment"}<br/><span style={{ fontSize:12, color:T.muted }}>{e.category||""}</span></button>)}
+              </div>}
+            </div>
+            {selectedEquipment && <div style={{ fontSize:12, color:T.green, marginTop:6 }}>Selected: <b>{selectedEquipment.id}</b> — {selectedEquipment.name||selectedEquipment.nomenclature||"Equipment"}</div>}
+            {!eqForFacility.length && <div style={{ fontSize:12, color:T.red, marginTop:6 }}>No equipment found for this facility/location.</div>}
+          </Field>
+          <Field label="Photos (Optional)"><input style={inp} type="file" accept="image/*" capture="environment" multiple onChange={e=>handlePhotos(e.target.files)} /></Field>
+          <Field label="Problem / Fault Description"><textarea style={{...inp, minHeight:150}} value={requestForm.description} onChange={e=>updateForm("description",e.target.value)} placeholder="Describe what is wrong, where it is located, and what happened." /></Field>
+        </div>
+        {(requestForm.photos||[]).length>0 && <div className="wo-request-photo-strip" style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:10 }}>{requestForm.photos.map((p,i)=><div key={i} style={{ position:"relative" }}><img src={p.data} alt={p.name} style={{ width:82, height:82, objectFit:"cover", borderRadius:10, border:`1px solid ${T.border}` }}/><button onClick={()=>setRequestForm(f=>({...f,photos:f.photos.filter((_,x)=>x!==i)}))} style={{ position:"absolute", top:-6, right:-6, border:"none", borderRadius:10, background:T.red, color:"#fff", cursor:"pointer", width:22, height:22, fontWeight:900 }}>×</button></div>)}</div>}
+        <div className="wo-request-form-actions" style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:14 }}><Btn onClick={submitRequest}>Submit Request</Btn></div>
+      </Card>
+    </div>;
+  }
+
   return <div className="wo-requests-page" style={{ display:"grid", gap:16 }}>
     <Card>
-      <SectionHeading sub="Each facility gets its own request link. Use the print button to generate a QR code page for posting or laminating.">Work Order Request QR Codes</SectionHeading>
-      <div className="wo-request-facility-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))", gap:12 }}>
-        {allFacilities.map(fac=>{ const url=requestUrlForFacility(fac); return <div className="wo-request-facility-card" key={fac} style={{ border:`1px solid ${T.border}`, borderRadius:14, padding:14, background:T.grayLt }}>
-          <div style={{ fontWeight:900, color:T.text, marginBottom:4 }}>{fac}</div>
-          <div style={{ fontSize:12, color:T.muted, marginBottom:12, wordBreak:"break-all" }}>{url}</div>
-          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}><Btn small onClick={()=>printQR(fac)}>Print Request QR Code</Btn><Btn small variant="secondary" onClick={()=>{setFacility(fac); setShowSubmit(true);}}>Open Form</Btn></div>
-        </div>})}
+      <div className="wo-request-header-row" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, marginBottom:10 }}>
+        <SectionHeading sub="Owner/Admin request queue. QR codes are printed from the button in the corner and are permanent per facility.">Work Order Requests</SectionHeading>
+        <Btn small onClick={()=>setShowQRPicker(true)}>Print QR Code</Btn>
       </div>
     </Card>
 
-    {showSubmit && <Card>
-      <SectionHeading sub="Phone-friendly request form. Fault Date defaults to today, but can be changed if the fault started earlier.">Submit Work Order Request</SectionHeading>
-      <div className="wo-request-form-grid" style={{ display:"grid", gridTemplateColumns:"repeat(2,minmax(0,1fr))", gap:12 }}>
-        <Field label="Facility"><select style={sel} value={facility} onChange={e=>{setFacility(e.target.value); updateForm("equipment","");}}>{allFacilities.map(f=><option key={f} value={f}>{f}</option>)}</select></Field>
-        <Field label="Fault Date"><input style={inp} type="date" value={requestForm.faultDate} onChange={e=>updateForm("faultDate",e.target.value)} /></Field>
-        <Field label="Requested By"><input style={inp} value={requestForm.requestedBy} onChange={e=>updateForm("requestedBy",e.target.value)} placeholder="Operator name" /></Field>
-        <Field label="Contact Number (Optional)"><input style={inp} value={requestForm.contact} onChange={e=>updateForm("contact",e.target.value)} placeholder="Phone or radio" /></Field>
-        <Field label="Equipment"><select style={sel} value={requestForm.equipment} onChange={e=>updateForm("equipment",e.target.value)}><option value="">Select equipment...</option>{eqForFacility.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name||e.nomenclature||"Equipment"}</option>)}</select>{!eqForFacility.length && <div style={{ fontSize:12, color:T.red, marginTop:6 }}>No equipment found for this facility/location.</div>}</Field>
-        <Field label="Photos (Optional)"><input style={inp} type="file" accept="image/*" capture="environment" multiple onChange={e=>handlePhotos(e.target.files)} /></Field>
-        <div className="wo-request-full"><Field label="Problem / Fault Description"><textarea style={{...inp, minHeight:120}} value={requestForm.description} onChange={e=>updateForm("description",e.target.value)} placeholder="Describe what is wrong, where it is located, and what happened." /></Field></div>
+    {showQRPicker && <Modal title="Print QR Code" onClose={()=>setShowQRPicker(false)}>
+      <div style={{ display:"grid", gap:10 }}>
+        <div style={{ fontSize:13, color:T.muted, lineHeight:1.4 }}>Choose one facility. Only that facility QR code will be generated for printing. This QR code is permanent for that facility.</div>
+        {allFacilities.map(fac=><button key={fac} onClick={()=>{ printQR(fac); setShowQRPicker(false); }} style={{ textAlign:"left", padding:"14px 16px", borderRadius:12, border:`1px solid ${T.border}`, background:T.surface, cursor:"pointer", color:T.text }}>
+          <div style={{ fontWeight:900, fontSize:15 }}>{fac}</div>
+        </button>)}
       </div>
-      {(requestForm.photos||[]).length>0 && <div className="wo-request-photo-strip" style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:10 }}>{requestForm.photos.map((p,i)=><div key={i} style={{ position:"relative" }}><img src={p.data} alt={p.name} style={{ width:82, height:82, objectFit:"cover", borderRadius:10, border:`1px solid ${T.border}` }}/><button onClick={()=>setRequestForm(f=>({...f,photos:f.photos.filter((_,x)=>x!==i)}))} style={{ position:"absolute", top:-6, right:-6, border:"none", borderRadius:10, background:T.red, color:"#fff", cursor:"pointer", width:22, height:22, fontWeight:900 }}>×</button></div>)}</div>}
-      <div className="wo-request-form-actions" style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:14 }}><Btn variant="secondary" onClick={()=>setShowSubmit(false)}>Close Form</Btn><Btn onClick={submitRequest}>Submit Request</Btn></div>
-    </Card>}
+    </Modal>}
+
+    {reviewRequest && <RequestReview r={reviewRequest} />}
 
     <Card>
-      <SectionHeading sub="Review operator requests and convert approved items into Repair Work Orders.">Request Queue</SectionHeading>
+      <SectionHeading sub="Open a request to review the operator statement and pictures before creating a Repair Work Order.">Request Queue</SectionHeading>
       <div style={{ display:"flex", gap:8, marginBottom:10 }}><select style={{...sel, width:170}} value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}>{["New","Converted","Dismissed","All"].map(x=><option key={x}>{x}</option>)}</select></div>
 
       <div className="wo-request-mobile-list">
@@ -6777,17 +6857,18 @@ function WorkOrderRequests({ state, dispatch }) {
             <div><b>Fault Date</b><br/>{r.faultDate}</div>
             <div><b>Submitted</b><br/>{r.submittedDate}</div>
             <div><b>Facility</b><br/>{r.facility}</div>
-            <div><b>Requested By</b><br/>{r.requestedBy}{r.contact?<><br/><span style={{ color:T.muted }}>{r.contact}</span></>:null}</div>
+            <div><b>Requested By</b><br/>{r.requestedBy}</div>
           </div>
-          <div style={{ fontSize:13, lineHeight:1.4, marginBottom:12 }}><b>Description</b><br/>{r.description}</div>
+          <div style={{ fontSize:13, lineHeight:1.4, marginBottom:12 }}><b>Operator Statement</b><br/>{r.description}</div>
+          {(r.photos||[]).length>0 && <div style={{ display:"flex", gap:8, overflowX:"auto", marginBottom:12 }}>{r.photos.map((p,i)=><img key={i} src={p.data} alt={p.name||`Photo ${i+1}`} style={{ width:86, height:86, objectFit:"cover", borderRadius:10, border:`1px solid ${T.border}`, flex:"0 0 auto" }}/>)}</div>}
           {r.convertedWO && <div style={{ fontSize:13, marginBottom:10 }}><b>Converted WO:</b> {r.convertedWO}</div>}
           <RequestActions r={r} />
         </div>)}
         {!requests.length && <div style={{ padding:20, textAlign:"center", color:T.muted, border:`1px dashed ${T.border}`, borderRadius:12 }}>No requests found.</div>}
       </div>
 
-      <div className="wo-request-desktop-table mobile-x-scroll"><table style={{ width:"100%", borderCollapse:"collapse" }}><thead><tr>{["Submitted","Fault Date","Facility","Equipment","Requested By","Description","Status","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, color:T.muted }}>{h}</th>)}</tr></thead><tbody>
-        {requests.map(r=><tr key={r.id}><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.submittedDate}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, fontWeight:800 }}>{r.faultDate}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.facility}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}><b>{r.equipment}</b><br/><span style={{ color:T.muted, fontSize:12 }}>{r.equipmentName}</span></td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.requestedBy}{r.contact?<><br/><span style={{ color:T.muted, fontSize:12 }}>{r.contact}</span></>:null}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, maxWidth:340 }}>{r.description}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.status}{r.convertedWO?<><br/><b>{r.convertedWO}</b></>:null}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}><RequestActions r={r} /></td></tr>)}
+      <div className="wo-request-desktop-table mobile-x-scroll"><table style={{ width:"100%", borderCollapse:"collapse" }}><thead><tr>{["Submitted","Fault Date","Facility","Equipment","Requested By","Statement / Pictures","Status","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, color:T.muted }}>{h}</th>)}</tr></thead><tbody>
+        {requests.map(r=><tr key={r.id}><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.submittedDate}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, fontWeight:800 }}>{r.faultDate}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.facility}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}><b>{r.equipment}</b><br/><span style={{ color:T.muted, fontSize:12 }}>{r.equipmentName}</span></td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.requestedBy}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, maxWidth:360 }}><div style={{ marginBottom:6 }}>{r.description}</div>{(r.photos||[]).length>0?<span style={{ fontSize:12, color:T.accent, fontWeight:800 }}>{r.photos.length} picture{r.photos.length!==1?"s":""} attached</span>:<span style={{ fontSize:12, color:T.muted }}>No pictures</span>}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.status}{r.convertedWO?<><br/><b>{r.convertedWO}</b></>:null}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}><RequestActions r={r} /></td></tr>)}
         {!requests.length && <tr><td colSpan="8" style={{ padding:24, textAlign:"center", color:T.muted }}>No requests found.</td></tr>}
       </tbody></table></div>
     </Card>
@@ -8311,6 +8392,8 @@ export default function App() {
           .wo-requests-page { gap:12px !important; }
           .wo-requests-page > div { padding:14px !important; border-radius:14px !important; }
           .wo-request-facility-grid, .wo-request-form-grid { grid-template-columns:1fr !important; gap:12px !important; }
+          .wo-request-header-row { flex-direction:column !important; align-items:stretch !important; }
+          .wo-request-header-row button { width:100% !important; min-height:46px !important; }
           .wo-request-facility-card { padding:14px !important; }
           .wo-request-full { grid-column:auto !important; }
           .wo-request-form-grid input, .wo-request-form-grid select, .wo-request-form-grid textarea { width:100% !important; min-height:48px !important; border-radius:10px !important; }
