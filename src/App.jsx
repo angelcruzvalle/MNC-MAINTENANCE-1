@@ -6636,11 +6636,57 @@ function normalizeFacilityName(value="") {
   return String(value || "").toLowerCase().trim().replace(/\s+/g," ");
 }
 
+function equipmentFacilityValues(eq={}) {
+  return [
+    eq.location, eq.facility, eq.site, eq.siteName, eq.facilityName,
+    eq.assignedFacility, eq.baseLocation, eq.currentLocation, eq.shop, eq.department
+  ].map(normalizeFacilityName).filter(Boolean);
+}
+
 function equipmentMatchesFacility(eq={}, facility="") {
   const fac = normalizeFacilityName(facility);
   if(!fac) return true;
-  const candidates = [eq.location, eq.facility, eq.site, eq.siteName, eq.facilityName].map(normalizeFacilityName).filter(Boolean);
-  return candidates.includes(fac) || candidates.includes(slugifyFacility(facility));
+  const slug = normalizeFacilityName(slugifyFacility(facility));
+  const candidates = equipmentFacilityValues(eq);
+  if(!candidates.length) return false;
+  return candidates.some(c => c === fac || c === slug || slugifyFacility(c) === slugifyFacility(facility));
+}
+
+function equipmentPublicId(eq={}, idx=0) {
+  return String(eq.id || eq.equipment || eq.equipmentId || eq.eqId || eq.number || eq.equipmentNumber || eq.assetNumber || `EQ-${idx+1}`).trim();
+}
+
+function equipmentPublicName(eq={}) {
+  return String(eq.name || eq.nomenclature || eq.description || eq.title || eq.makeModel || "Equipment").trim();
+}
+
+function buildWORequestEquipmentList(equipment=[], facility="") {
+  const allEquipment = Array.isArray(equipment) ? equipment : [];
+  const exact = allEquipment.filter(e => equipmentMatchesFacility(e, facility));
+  const unassigned = allEquipment.filter(e => !equipmentFacilityValues(e).length);
+  const source = exact.length
+    ? [...exact, ...unassigned.filter(e=>!exact.some(x=>equipmentPublicId(x)===equipmentPublicId(e)))]
+    : allEquipment;
+  const seen = new Set();
+  return source.map((e, idx) => {
+    const id = equipmentPublicId(e, idx);
+    const item = {
+      id,
+      name: equipmentPublicName(e),
+      nomenclature: e.nomenclature || e.name || e.description || "",
+      category: e.category || e.type || "",
+      make: e.make || "",
+      model: e.model || "",
+      serial: e.serial || e.serialNumber || "",
+      location: e.location || e.facility || e.site || e.siteName || e.facilityName || facility || "",
+    };
+    return item;
+  }).filter(e => {
+    const key = String(e.id || "").toLowerCase();
+    if(!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function makeStableFacilityQrToken() {
@@ -6692,19 +6738,7 @@ async function upsertWORequestPortal({ token, ownerUserId, facility, settings, e
     owner_user_id: ownerUserId,
     facility,
     company_name: settings?.companyName || "MaintForge",
-    equipment_json: (() => {
-      const allEquipment = Array.isArray(equipment) ? equipment : [];
-      const exactFacilityEquipment = allEquipment.filter(e => equipmentMatchesFacility(e, facility));
-      const unassignedEquipment = allEquipment.filter(e => !e.location && !e.facility && !e.site && !e.siteName && !e.facilityName);
-      const source = exactFacilityEquipment.length ? [...exactFacilityEquipment, ...unassignedEquipment.filter(e=>!exactFacilityEquipment.some(x=>x.id===e.id))] : allEquipment;
-      return source.map(e => ({
-        id:e.id,
-        name:e.name || e.nomenclature || "",
-        nomenclature:e.nomenclature || e.name || "",
-        category:e.category || "",
-        location:e.location || e.facility || e.site || facility,
-      }));
-    })(),
+    equipment_json: buildWORequestEquipmentList(equipment, facility),
     updated_at: new Date().toISOString(),
   };
   try {
@@ -6723,21 +6757,27 @@ async function loadWORequestPortal(token) {
       .eq("token", token)
       .maybeSingle();
     if(error) throw error;
-    if(data) return data;
 
     // Fallback for older/permanent QR links that include owner + facility.
-    // This keeps an already printed QR useful even if the token record has to be re-synced.
+    // This keeps an already printed QR useful even if the token record has to be re-synced
+    // or if an older token row exists but has an empty equipment cache.
     const owner = getWORequestUrlParam("owner");
     const facility = getWORequestUrlParam("facility");
-    if(owner && facility) {
+    const dataHasEquipment = Array.isArray(data?.equipment_json) && data.equipment_json.length > 0;
+    if(owner && facility && !dataHasEquipment) {
       const res = await supabase
         .from("wo_request_portals")
-        .select("token,owner_user_id,facility,company_name,equipment_json")
+        .select("token,owner_user_id,facility,company_name,equipment_json,updated_at")
         .eq("owner_user_id", owner)
         .eq("facility", facility)
-        .maybeSingle();
-      if(!res.error && res.data) return res.data;
+        .order("updated_at", { ascending:false })
+        .limit(1);
+      const newer = Array.isArray(res.data) ? res.data[0] : res.data;
+      if(!res.error && newer && Array.isArray(newer.equipment_json) && newer.equipment_json.length > 0) {
+        return { ...newer, token:data?.token || token };
+      }
     }
+    if(data) return data;
     return null;
   } catch(e) {
     console.warn("WO request public portal load failed:", e);
@@ -6863,7 +6903,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
   const equipmentSuggestions = eqForFacility.filter(e=>{
     const q = equipmentSearch.trim().toLowerCase();
     if(!q) return false;
-    const text = `${e.id||""} ${e.name||""} ${e.nomenclature||""} ${e.category||""}`.toLowerCase();
+    const text = `${e.id||""} ${e.name||""} ${e.nomenclature||""} ${e.category||""} ${e.make||""} ${e.model||""} ${e.serial||""}`.toLowerCase();
     return text.includes(q);
   }).slice(0,8);
   const selectedEquipment = equipmentSource.find(e=>e.id===requestForm.equipment);
@@ -7001,7 +7041,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
               </div>}
             </div>
             {selectedEquipment && <div style={{ fontSize:12, color:T.green, marginTop:6 }}>Selected: <b>{selectedEquipment.id}</b> — {selectedEquipment.name||selectedEquipment.nomenclature||"Equipment"}</div>}
-            {!eqForFacility.length && <div style={{ fontSize:12, color:T.red, marginTop:6 }}>No equipment is connected to this request QR yet. Maintenance needs to open Work Order Requests once while signed in so the facility equipment list can sync.</div>}
+            {!eqForFacility.length && <div style={{ fontSize:12, color:T.amber, marginTop:6, lineHeight:1.4 }}>Equipment list is still syncing for this facility. You can still type the equipment number/name and submit the request.</div>}
           </Field>
           <Field label="Photos (Optional)"><input style={inp} type="file" accept="image/*" capture="environment" multiple onChange={e=>handlePhotos(e.target.files)} /></Field>
           <Field label="Problem / Fault Description"><textarea style={{...inp, minHeight:150}} value={requestForm.description} onChange={e=>updateForm("description",e.target.value)} placeholder="Describe what is wrong, where it is located, and what happened." /></Field>
