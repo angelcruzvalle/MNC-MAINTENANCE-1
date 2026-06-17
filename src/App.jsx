@@ -2501,8 +2501,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             {filtered.map((wo,i)=>{
               const eq = state.equipment.find(e=>e.id===wo.equipment);
               const eqLabel = eq?.name || wo.equipmentLabel || wo.equipment || "—";
-              const partsTotal = (wo.partsUsed||[]).reduce((s,p)=>s+(+(p.qty||1))*(+(p.unitCost||0)),0);
-              const total = (+wo.laborCost||0)+partsTotal;
+              const partsTotal = woPartsTotal(wo);
+              const outsideServicesSubtotal = outsideServicesTotal(wo.outsideServices);
+              const total = woTotalCost(wo);
               const typeInfo = WO_TYPES.find(t=>t.id===wo.woType);
               const rowStatus = wo.status==="Completed" ? "Fully Operational" : (wo.equipmentStatus || eq?.status || "Fully Operational");
               const isOpenInspection = wo.woType==="Inspection" && wo.status!=="Completed";
@@ -3371,7 +3372,7 @@ function Equipment({ state, dispatch }) {
               {[
                 ["Total WOs",    wos.length, T.text],
                 ["Open WOs",     wos.filter(w=>w.status==="Open").length, T.amber],
-                ["Total Spent",  "$"+wos.reduce((s,w)=>s+(+w.laborCost||0)+(+(w.partsUsed||[]).reduce((ps,p)=>ps+(+(p.qty||1))*(+(p.unitCost||0)),0)),0).toLocaleString(), T.accent],
+                ["Total Spent",  "$"+wos.reduce((s,w)=>s+woTotalCost(w),0).toLocaleString(), T.accent],
                 ["Labor Hours",  wos.reduce((s,w)=>s+(+w.laborHours||0),0)+"h", T.text],
               ].map(([k,v,c])=>(
                 <div key={k} style={{ background:T.grayLt, borderRadius:7, padding:"12px 14px", border:`1px solid ${T.border}` }}>
@@ -5288,12 +5289,13 @@ function Spending({ state }) {
   const wos = state.workOrders.filter(filterByPeriod);
   const totalCost = w => woTotalCost(w);
   const totLabor  = wos.reduce((s,w)=>s+(+w.laborCost||0),0);
-  const totParts  = wos.reduce((s,w)=>s+totalCost(w)-(+w.laborCost||0),0);
-  const grand     = totLabor+totParts;
+  const totParts  = wos.reduce((s,w)=>s+woPartsTotal(w),0);
+  const totOutside = wos.reduce((s,w)=>s+outsideServicesTotal(w.outsideServices),0);
+  const grand     = totLabor+totParts+totOutside;
 
   /* By Equipment */
   const byEq = {};
-  wos.forEach(w=>{ if(!byEq[w.equipment])byEq[w.equipment]={labor:0,parts:0,count:0}; byEq[w.equipment].labor+=(+w.laborCost||0); byEq[w.equipment].parts+=totalCost(w)-(+w.laborCost||0); byEq[w.equipment].count++; });
+  wos.forEach(w=>{ if(!byEq[w.equipment])byEq[w.equipment]={labor:0,parts:0,outside:0,count:0}; byEq[w.equipment].labor+=(+w.laborCost||0); byEq[w.equipment].parts+=woPartsTotal(w); byEq[w.equipment].outside+=outsideServicesTotal(w.outsideServices); byEq[w.equipment].count++; });
 
   /* By Category (equipment category) */
   const byCat = {};
@@ -5301,7 +5303,7 @@ function Spending({ state }) {
 
   /* By Month */
   const byMonth = {};
-  wos.forEach(w=>{ const m=(w.completed||w.created||"").slice(0,7); if(m){ if(!byMonth[m])byMonth[m]={labor:0,parts:0}; byMonth[m].labor+=(+w.laborCost||0); byMonth[m].parts+=totalCost(w)-(+w.laborCost||0); }});
+  wos.forEach(w=>{ const m=(w.completed||w.created||"").slice(0,7); if(m){ if(!byMonth[m])byMonth[m]={labor:0,parts:0,outside:0}; byMonth[m].labor+=(+w.laborCost||0); byMonth[m].parts+=woPartsTotal(w); byMonth[m].outside+=outsideServicesTotal(w.outsideServices); }});
 
   /* By WO Type */
   const byType = {};
@@ -5324,7 +5326,7 @@ function Spending({ state }) {
 
       {/* Summary cards */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12, marginBottom:20 }}>
-        {[["Total Labor","$"+totLabor.toLocaleString(),T.accent],["Total Parts","$"+totParts.toLocaleString(),"#7c3aed"],["Grand Total","$"+grand.toLocaleString(),T.text],["Work Orders",wos.length,T.muted]].map(([l,v,c])=>(
+        {[["Total Labor","$"+totLabor.toLocaleString(),T.accent],["Total Parts","$"+totParts.toLocaleString(),"#7c3aed"],["Outside Services","$"+totOutside.toLocaleString(),T.green],["Grand Total","$"+grand.toLocaleString(),T.text],["Work Orders",wos.length,T.muted]].map(([l,v,c])=>(
           <Card key={l} style={{ padding:"14px 16px" }}>
             <div style={{ fontFamily:T.sans, fontSize:22, fontWeight:700, color:c }}>{v}</div>
             <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{l}</div>
@@ -5336,9 +5338,9 @@ function Spending({ state }) {
         {/* By Equipment */}
         <Card>
           <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginBottom:14 }}>By Equipment</div>
-          {Object.entries(byEq).sort((a,b)=>(b[1].labor+b[1].parts)-(a[1].labor+a[1].parts)).slice(0,8).map(([eqId,d])=>{
+          {Object.entries(byEq).sort((a,b)=>(b[1].labor+b[1].parts+b[1].outside)-(a[1].labor+a[1].parts+a[1].outside)).slice(0,8).map(([eqId,d])=>{
             const eq=state.equipment.find(e=>e.id===eqId);
-            const tot=d.labor+d.parts;
+            const tot=d.labor+d.parts+d.outside;
             const pct=grand>0?tot/grand*100:0;
             return (
               <div key={eqId} style={{ marginBottom:12 }}>
@@ -5350,7 +5352,7 @@ function Spending({ state }) {
                   <Bar pct={pct} />
                   <span style={{ fontFamily:T.mono, fontSize:10, color:T.muted, minWidth:28 }}>{Math.round(pct)}%</span>
                 </div>
-                <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, marginTop:2 }}>{d.count} WOs · Labor ${d.labor.toFixed(0)} · Parts ${d.parts.toFixed(0)}</div>
+                <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, marginTop:2 }}>{d.count} WOs · Labor ${d.labor.toFixed(0)} · Parts ${d.parts.toFixed(0)} · Outside ${d.outside.toFixed(0)}</div>
               </div>
             );
           })}
@@ -5385,7 +5387,7 @@ function Spending({ state }) {
         <Card>
           <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginBottom:14 }}>Monthly Trend</div>
           {Object.entries(byMonth).sort().reverse().slice(0,12).map(([m,d])=>{
-            const tot=d.labor+d.parts;
+            const tot=d.labor+d.parts+d.outside;
             const pct=grand>0?tot/grand*100:0;
             return (
               <div key={m} style={{ marginBottom:12 }}>
@@ -6496,7 +6498,7 @@ function ReportSpending({ state }) {
       </head><body>${reportHeaderHTML(state, title)}
       <table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO #</th><th>Title</th><th>Mechanic</th><th>Date</th><th>Labor</th><th>Parts</th><th>Outside Services</th><th>Total</th></tr>
       ${list.map(w=>`<tr><td><b>${w.equipment||"—"}</b></td><td>${state.equipment.find(e=>e.id===w.equipment)?.name||"—"}</td><td>${w.id}</td><td>${w.title}</td><td>${w.tech||"—"}</td><td>${w.completed||w.created||"—"}</td><td>$${(+w.laborCost||0).toFixed(2)}</td><td>$${woPartsTotal(w).toFixed(2)}</td><td>$${outsideServicesTotal(w.outsideServices).toFixed(2)}</td><td><b>$${totalCost(w).toFixed(2)}</b></td></tr>`).join("")}
-      <tr style="font-weight:700;background:#f3f4f6"><td colspan="8">TOTAL</td><td>$${list.reduce((s,w)=>s+totalCost(w),0).toFixed(2)}</td></tr>
+      <tr style="font-weight:700;background:#f3f4f6"><td colspan="6">TOTAL</td><td>$${list.reduce((s,w)=>s+(+w.laborCost||0),0).toFixed(2)}</td><td>$${list.reduce((s,w)=>s+woPartsTotal(w),0).toFixed(2)}</td><td>$${list.reduce((s,w)=>s+outsideServicesTotal(w.outsideServices),0).toFixed(2)}</td><td>$${list.reduce((s,w)=>s+totalCost(w),0).toFixed(2)}</td></tr>
       </table>${reportButtonsHtml(rows)}</body></html>`);
     win.document.close();
   };
@@ -6549,7 +6551,7 @@ function ReportCombined({ state }) {
     if(selected.spending) {
       const wos = state.workOrders.filter(w=>w.completed);
       const total = wos.reduce((s,w)=>s+totalCost(w),0);
-      body += `<h2>Completed Work Orders — Total $${total.toFixed(2)}</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO#</th><th>Title</th><th>Description</th><th>Mechanic</th><th>Completed</th><th>Total</th></tr>${wos.map(w=>`<tr><td><b>${w.equipment||"—"}</b></td><td>${eqName(w.equipment)}</td><td>${w.id}</td><td>${w.title}</td><td>${htmlEscape(workOrderDescription(w)||"—")}</td><td>${w.tech||"—"}</td><td>${w.completed||"—"}</td><td>$${totalCost(w).toFixed(2)}</td></tr>`).join("")}</table>`;
+      body += `<h2>Completed Work Orders — Total $${total.toFixed(2)}</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO#</th><th>Title</th><th>Description</th><th>Mechanic</th><th>Completed</th><th>Labor</th><th>Parts</th><th>Outside Services</th><th>Total</th></tr>${wos.map(w=>`<tr><td><b>${w.equipment||"—"}</b></td><td>${eqName(w.equipment)}</td><td>${w.id}</td><td>${w.title}</td><td>${htmlEscape(workOrderDescription(w)||"—")}</td><td>${w.tech||"—"}</td><td>${w.completed||"—"}</td><td>$${(+w.laborCost||0).toFixed(2)}</td><td>$${woPartsTotal(w).toFixed(2)}</td><td>$${outsideServicesTotal(w.outsideServices).toFixed(2)}</td><td>$${totalCost(w).toFixed(2)}</td></tr>`).join("")}</table>`;
     }
     if(selected.parts) {
       const lowStock = state.parts.filter(p=>p.lowStockAlert!==false&&(+(p.qty||0))<=(+(p.minQty||0)));
