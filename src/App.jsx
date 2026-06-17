@@ -6632,6 +6632,17 @@ function slugifyFacility(value="") {
   return String(value || "facility").toLowerCase().trim().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"") || "facility";
 }
 
+function normalizeFacilityName(value="") {
+  return String(value || "").toLowerCase().trim().replace(/\s+/g," ");
+}
+
+function equipmentMatchesFacility(eq={}, facility="") {
+  const fac = normalizeFacilityName(facility);
+  if(!fac) return true;
+  const candidates = [eq.location, eq.facility, eq.site, eq.siteName, eq.facilityName].map(normalizeFacilityName).filter(Boolean);
+  return candidates.includes(fac) || candidates.includes(slugifyFacility(facility));
+}
+
 function makeStableFacilityQrToken() {
   return `fac_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,10)}`;
 }
@@ -6681,13 +6692,19 @@ async function upsertWORequestPortal({ token, ownerUserId, facility, settings, e
     owner_user_id: ownerUserId,
     facility,
     company_name: settings?.companyName || "MaintForge",
-    equipment_json: (equipment||[]).filter(e => !facility || String(e.location||"").toLowerCase()===String(facility||"").toLowerCase() || !e.location).map(e => ({
-      id:e.id,
-      name:e.name || e.nomenclature || "",
-      nomenclature:e.nomenclature || e.name || "",
-      category:e.category || "",
-      location:e.location || facility,
-    })),
+    equipment_json: (() => {
+      const allEquipment = Array.isArray(equipment) ? equipment : [];
+      const exactFacilityEquipment = allEquipment.filter(e => equipmentMatchesFacility(e, facility));
+      const unassignedEquipment = allEquipment.filter(e => !e.location && !e.facility && !e.site && !e.siteName && !e.facilityName);
+      const source = exactFacilityEquipment.length ? [...exactFacilityEquipment, ...unassignedEquipment.filter(e=>!exactFacilityEquipment.some(x=>x.id===e.id))] : allEquipment;
+      return source.map(e => ({
+        id:e.id,
+        name:e.name || e.nomenclature || "",
+        nomenclature:e.nomenclature || e.name || "",
+        category:e.category || "",
+        location:e.location || e.facility || e.site || facility,
+      }));
+    })(),
     updated_at: new Date().toISOString(),
   };
   try {
@@ -6841,7 +6858,8 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
   }, [isOperatorPortal, session?.user?.id, allFacilities.join("|"), JSON.stringify(facilityQrIds), (state.equipment||[]).length, settings.companyName]);
 
 
-  const eqForFacility = equipmentSource.filter(e=> !facility || String(e.location||"").toLowerCase()===String(facility||"").toLowerCase() || facilities.length<=1 || !e.location);
+  const exactEqForFacility = equipmentSource.filter(e=>equipmentMatchesFacility(e, facility));
+  const eqForFacility = exactEqForFacility.length ? exactEqForFacility : equipmentSource;
   const equipmentSuggestions = eqForFacility.filter(e=>{
     const q = equipmentSearch.trim().toLowerCase();
     if(!q) return false;
@@ -6983,7 +7001,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
               </div>}
             </div>
             {selectedEquipment && <div style={{ fontSize:12, color:T.green, marginTop:6 }}>Selected: <b>{selectedEquipment.id}</b> — {selectedEquipment.name||selectedEquipment.nomenclature||"Equipment"}</div>}
-            {!eqForFacility.length && <div style={{ fontSize:12, color:T.red, marginTop:6 }}>No equipment found for this facility/location.</div>}
+            {!eqForFacility.length && <div style={{ fontSize:12, color:T.red, marginTop:6 }}>No equipment is connected to this request QR yet. Maintenance needs to open Work Order Requests once while signed in so the facility equipment list can sync.</div>}
           </Field>
           <Field label="Photos (Optional)"><input style={inp} type="file" accept="image/*" capture="environment" multiple onChange={e=>handlePhotos(e.target.files)} /></Field>
           <Field label="Problem / Fault Description"><textarea style={{...inp, minHeight:150}} value={requestForm.description} onChange={e=>updateForm("description",e.target.value)} placeholder="Describe what is wrong, where it is located, and what happened." /></Field>
