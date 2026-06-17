@@ -274,6 +274,7 @@ const INIT = {
   categories: ["Mowers","Vehicles","Tractors","Irrigation","Tools","Trailers"],
   usageLogs: [],
   workOrders: [],
+  workOrderRequests: [],
   equipment: [],
   preventiveMaintenance: [],
   parts: [],
@@ -444,6 +445,9 @@ function reducer(state, { type, payload }) {
       return { ...state, parts, equipment, workOrders: updated };
     }
     case "DELETE_WO":     return { ...state, workOrders: state.workOrders.filter(w => w.id!==payload) };
+    case "ADD_WO_REQUEST": return { ...state, workOrderRequests:[payload, ...(state.workOrderRequests||[])], notifications:[makeNotification({id:`N${Date.now()}`,type:"wo",msg:`New work order request submitted for ${payload.equipment || "equipment"}`,read:false}), ...(state.notifications||[])] };
+    case "UPDATE_WO_REQUEST": return { ...state, workOrderRequests:(state.workOrderRequests||[]).map(r=>r.id===payload.id?{...r,...payload}:r) };
+    case "DELETE_WO_REQUEST": return { ...state, workOrderRequests:(state.workOrderRequests||[]).filter(r=>r.id!==payload) };
     case "ADD_EQ":        return { ...state, equipment: [payload,...state.equipment] };
     case "UPDATE_EQ": {
       const originalId = payload._originalId || payload.id;
@@ -1014,6 +1018,7 @@ function Header({ notifications, dispatch, currentPage, onMenuToggle }) {
 const NAV = [
   { id:"dashboard",  icon:"▦",  label:"Dashboard" },
   { id:"workorders", icon:"📋", label:"Work Orders" },
+  { id:"wo_requests", icon:"📲", label:"Work Order Requests" },
   { id:"inspections", icon:"🔍", label:"Inspections" },
   { id:"equipment",  icon:"🚜", label:"Equipment" },
   { id:"inventory",  icon:"📋", label:"Equipment Inventory" },
@@ -6623,20 +6628,144 @@ function ReportCombined({ state }) {
 
 
 
+function slugifyFacility(value="") {
+  return String(value || "facility").toLowerCase().trim().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"") || "facility";
+}
+
+function requestUrlForFacility(facility="") {
+  try {
+    const base = window.location.origin + window.location.pathname;
+    const slug = slugifyFacility(facility);
+    return `${base}?woRequest=${encodeURIComponent(slug)}&facility=${encodeURIComponent(facility)}`;
+  } catch(e) { return `?woRequest=${slugifyFacility(facility)}&facility=${encodeURIComponent(facility)}`; }
+}
+
+function qrUrlForText(text="") {
+  return `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(text)}`;
+}
+
+function WorkOrderRequests({ state, dispatch }) {
+  const params = (()=>{ try { return new URLSearchParams(window.location.search); } catch(e) { return new URLSearchParams(); } })();
+  const urlFacility = params.get("facility") || "";
+  const settings = state.settings || {};
+  const facilities = [...new Set([...(settings.locations||[]), ...(state.equipment||[]).map(e=>e.location).filter(Boolean), settings.location, settings.siteName].filter(Boolean))];
+  const defaultFacility = urlFacility || facilities[0] || "Main Facility";
+  const [facility, setFacility] = useState(defaultFacility);
+  const [requestForm, setRequestForm] = useState({ requestedBy:"", contact:"", faultDate:today(), equipment:"", description:"", photos:[] });
+  const [showSubmit, setShowSubmit] = useState(!!params.get("woRequest"));
+  const [statusFilter, setStatusFilter] = useState("New");
+
+  const eqForFacility = (state.equipment||[]).filter(e=> !facility || String(e.location||"").toLowerCase()===String(facility||"").toLowerCase() || facilities.length<=1);
+  const requests = (state.workOrderRequests||[]).filter(r=> statusFilter==="All" ? true : (r.status||"New")===statusFilter);
+
+  const updateForm = (k,v) => setRequestForm(f=>({...f,[k]:v}));
+  const handlePhotos = (files) => {
+    const list = Array.from(files||[]).slice(0,4);
+    if(!list.length) return;
+    Promise.all(list.map(file=>new Promise(resolve=>{ const reader=new FileReader(); reader.onload=e=>resolve({name:file.name, data:e.target.result}); reader.readAsDataURL(file); })))
+      .then(photos=>setRequestForm(f=>({...f, photos:[...(f.photos||[]), ...photos].slice(0,4)})));
+  };
+  const submitRequest = () => {
+    if(!requestForm.requestedBy.trim()) { alert("Enter Requested By."); return; }
+    if(!requestForm.equipment) { alert("Select equipment."); return; }
+    if(!requestForm.description.trim()) { alert("Enter the problem description."); return; }
+    const eq = (state.equipment||[]).find(e=>e.id===requestForm.equipment) || {};
+    const req = {
+      id:`WOR-${String(Date.now()).slice(-6)}`,
+      facility: facility || eq.location || defaultFacility,
+      submittedDate: today(),
+      createdAt: new Date().toISOString(),
+      faultDate: requestForm.faultDate || today(),
+      requestedBy: requestForm.requestedBy.trim(),
+      contact: requestForm.contact.trim(),
+      equipment: requestForm.equipment,
+      equipmentName: eq.name || eq.nomenclature || "",
+      description: requestForm.description.trim(),
+      photos: requestForm.photos || [],
+      status:"New",
+    };
+    dispatch({type:"ADD_WO_REQUEST", payload:req});
+    setRequestForm({ requestedBy:"", contact:"", faultDate:today(), equipment:"", description:"", photos:[] });
+    alert("Work order request submitted.");
+  };
+
+  const convertToWO = (req) => {
+    const id = genNextWOId(state.workOrders||[], req.equipment, "R");
+    const wo = {
+      id,
+      woType:"Repair",
+      title:`Request from ${req.requestedBy || "Operator"}`,
+      equipment:req.equipment,
+      status:"Open",
+      equipmentStatus:"Operational with Deficiencies",
+      priority:settings.defaultPriority || "Medium",
+      created:today(),
+      faultDate:req.faultDate || req.submittedDate || today(),
+      requestedBy:req.requestedBy || "",
+      requestId:req.id,
+      description:req.description || "",
+      faultDescription:req.description || "",
+      mechanicNotes:req.contact ? `Requestor contact: ${req.contact}` : "",
+      attachments:req.photos || [],
+      partsUsed:[],
+      outsideServices:[],
+      laborHours:0,
+      laborCost:0,
+      partsCost:0,
+    };
+    dispatch({type:"ADD_WO", payload:wo});
+    dispatch({type:"UPDATE_WO_REQUEST", payload:{...req, status:"Converted", convertedWO:id, convertedDate:today()}});
+  };
+
+  const printQR = (fac) => {
+    const url = requestUrlForFacility(fac);
+    const win = window.open("","_blank");
+    win.document.write(`<html><head><title>Work Order Request QR</title><style>body{font-family:Arial,sans-serif;text-align:center;padding:32px;color:#111}img{width:260px;height:260px}.box{border:2px solid #111;padding:22px;display:inline-block;border-radius:12px}h1{margin:0 0 6px}.url{font-size:11px;margin-top:12px;word-break:break-all;max-width:360px}</style></head><body><div class="box"><h1>${htmlEscape(settings.companyName||"MaintForge")}</h1><h2>${htmlEscape(fac)}</h2><p>Scan to submit a Work Order Request</p><img src="${qrUrlForText(url)}"/><div class="url">${htmlEscape(url)}</div></div><br/><br/><button onclick="window.print()">Print QR Code</button></body></html>`);
+    win.document.close();
+  };
+
+  return <div style={{ display:"grid", gap:16 }}>
+    <Card>
+      <SectionHeading sub="Facility-specific QR codes let operators submit repair requests from their phone. The equipment list is filtered to that facility.">Work Order Request QR Codes</SectionHeading>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))", gap:12 }}>
+        {(facilities.length?facilities:[defaultFacility]).map(fac=>{ const url=requestUrlForFacility(fac); return <div key={fac} style={{ border:`1px solid ${T.border}`, borderRadius:12, padding:14, background:T.grayLt }}>
+          <div style={{ fontWeight:900, color:T.text, marginBottom:4 }}>{fac}</div>
+          <div style={{ fontSize:12, color:T.muted, marginBottom:10, wordBreak:"break-all" }}>{url}</div>
+          <img alt={`QR ${fac}`} src={qrUrlForText(url)} style={{ width:132, height:132, background:"#fff", padding:6, borderRadius:8, border:`1px solid ${T.border}` }} />
+          <div style={{ display:"flex", gap:8, marginTop:10 }}><Btn small onClick={()=>printQR(fac)}>Print QR</Btn><Btn small variant="secondary" onClick={()=>{setFacility(fac); setShowSubmit(true);}}>Open Form</Btn></div>
+        </div>})}
+      </div>
+    </Card>
+
+    {showSubmit && <Card>
+      <SectionHeading sub="No priority field. Fault Date defaults to the date the request is created, but the operator can change it if the fault started earlier.">Submit Work Order Request</SectionHeading>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(2,minmax(0,1fr))", gap:12 }}>
+        <Field label="Facility"><select style={sel} value={facility} onChange={e=>{setFacility(e.target.value); updateForm("equipment","");}}>{(facilities.length?facilities:[defaultFacility]).map(f=><option key={f} value={f}>{f}</option>)}</select></Field>
+        <Field label="Fault Date"><input style={inp} type="date" value={requestForm.faultDate} onChange={e=>updateForm("faultDate",e.target.value)} /></Field>
+        <Field label="Requested By"><input style={inp} value={requestForm.requestedBy} onChange={e=>updateForm("requestedBy",e.target.value)} placeholder="Operator name" /></Field>
+        <Field label="Contact Number (Optional)"><input style={inp} value={requestForm.contact} onChange={e=>updateForm("contact",e.target.value)} placeholder="Phone or radio" /></Field>
+        <Field label="Equipment"><select style={sel} value={requestForm.equipment} onChange={e=>updateForm("equipment",e.target.value)}><option value="">Select equipment...</option>{eqForFacility.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name||e.nomenclature||"Equipment"}</option>)}</select>{!eqForFacility.length && <div style={{ fontSize:11, color:T.red, marginTop:4 }}>No equipment found for this facility/location.</div>}</Field>
+        <Field label="Photos (Optional)"><input style={inp} type="file" accept="image/*" multiple onChange={e=>handlePhotos(e.target.files)} /></Field>
+        <div style={{ gridColumn:"1 / -1" }}><Field label="Problem / Fault Description"><textarea style={{...inp, minHeight:100}} value={requestForm.description} onChange={e=>updateForm("description",e.target.value)} placeholder="Describe what is wrong, where it is located, and what happened." /></Field></div>
+      </div>
+      {(requestForm.photos||[]).length>0 && <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:8 }}>{requestForm.photos.map((p,i)=><div key={i} style={{ position:"relative" }}><img src={p.data} alt={p.name} style={{ width:72, height:72, objectFit:"cover", borderRadius:8, border:`1px solid ${T.border}` }}/><button onClick={()=>setRequestForm(f=>({...f,photos:f.photos.filter((_,x)=>x!==i)}))} style={{ position:"absolute", top:-6, right:-6, border:"none", borderRadius:10, background:T.red, color:"#fff", cursor:"pointer" }}>×</button></div>)}</div>}
+      <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:12 }}><Btn variant="secondary" onClick={()=>setShowSubmit(false)}>Close Form</Btn><Btn onClick={submitRequest}>Submit Request</Btn></div>
+    </Card>}
+
+    <Card>
+      <SectionHeading sub="Review operator requests and convert approved items into Repair Work Orders.">Request Queue</SectionHeading>
+      <div style={{ display:"flex", gap:8, marginBottom:10 }}><select style={{...sel, width:170}} value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}>{["New","Converted","Dismissed","All"].map(x=><option key={x}>{x}</option>)}</select></div>
+      <div className="mobile-x-scroll"><table style={{ width:"100%", borderCollapse:"collapse" }}><thead><tr>{["Submitted","Fault Date","Facility","Equipment","Requested By","Description","Status","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, color:T.muted }}>{h}</th>)}</tr></thead><tbody>
+        {requests.map(r=><tr key={r.id}><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.submittedDate}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, fontWeight:800 }}>{r.faultDate}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.facility}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}><b>{r.equipment}</b><br/><span style={{ color:T.muted, fontSize:12 }}>{r.equipmentName}</span></td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.requestedBy}{r.contact?<><br/><span style={{ color:T.muted, fontSize:12 }}>{r.contact}</span></>:null}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, maxWidth:340 }}>{r.description}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.status}{r.convertedWO?<><br/><b>{r.convertedWO}</b></>:null}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}><div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>{(r.status||"New")==="New" && <Btn small onClick={()=>convertToWO(r)}>Create WO</Btn>}{(r.status||"New")==="New" && <Btn small variant="secondary" onClick={()=>dispatch({type:"UPDATE_WO_REQUEST", payload:{...r,status:"Dismissed"}})}>Dismiss</Btn>}<Btn small variant="danger" onClick={()=>{ if(confirm("Delete this request?")) dispatch({type:"DELETE_WO_REQUEST", payload:r.id}); }}>Delete</Btn></div></td></tr>)}
+        {!requests.length && <tr><td colSpan="8" style={{ padding:24, textAlign:"center", color:T.muted }}>No requests found.</td></tr>}
+      </tbody></table></div>
+    </Card>
+  </div>;
+}
+
+
 function SystemSettings({ state, dispatch, onClose }) {
   const s = state.settings || {};
-  const prof = state.profile || {};
-  const [profileForm, setProfileForm] = useState({
-    firstName: prof.firstName || "",
-    lastName: prof.lastName || "",
-    position: prof.position || "",
-    workLocation: prof.workLocation || "",
-    phone: prof.phone || "",
-    email: prof.email || "",
-    laborRate: prof.laborRate || "",
-    photo: prof.photo || "",
-  });
-  const PF = k => e => setProfileForm(f=>({...f,[k]:e.target.value}));
   const [form, setForm] = useState({
     companyName:   s.companyName   || "National Cemetery Administration",
     department:    s.department    || "Maintenance Department",
@@ -6679,18 +6808,10 @@ function SystemSettings({ state, dispatch, onClose }) {
     reader.readAsDataURL(file);
   };
 
-  const handleProfilePhoto = e => {
-    const file = e.target.files[0]; if(!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => setProfileForm(f=>({...f, photo:ev.target.result}));
-    reader.readAsDataURL(file);
-  };
-
   const save = () => {
     const { _newLoc, ...cleanForm } = form;
     const cleanLocations = [...new Set((cleanForm.locations || []).map(l => String(l || "").trim()).filter(Boolean))];
     dispatch({ type:"UPDATE_SETTINGS", payload:{ ...cleanForm, locations: cleanLocations } });
-    dispatch({ type:"UPDATE_PROFILE", payload:{ ...profileForm, laborRate:+profileForm.laborRate||0 } });
     onClose();
   };
 
@@ -6728,32 +6849,6 @@ function SystemSettings({ state, dispatch, onClose }) {
               </label>
               {form.logo && <button onClick={()=>setForm(f=>({...f,logo:""}))} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>Remove</button>}
             </div>
-          </div>
-        </div>
-
-        {/* User Profile */}
-        <div style={{ marginBottom:16 }}>
-          <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>User Profile</div>
-          <div style={{ display:"flex", gap:14, alignItems:"center", marginBottom:12 }}>
-            <div style={{ width:64, height:64, borderRadius:"50%", background:T.accentLt, border:`2px solid ${T.accent}`, overflow:"hidden", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-              {profileForm.photo ? <img src={profileForm.photo} alt="profile" style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : <span style={{ fontFamily:T.mono, fontSize:22, color:T.accent, fontWeight:700 }}>{profileForm.firstName?profileForm.firstName[0]:"?"}</span>}
-            </div>
-            <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-              <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.accent, cursor:"pointer", padding:"7px 14px", border:`1px solid ${T.accent}`, borderRadius:6 }}>
-                Upload Profile Photo
-                <input type="file" accept="image/*" onChange={handleProfilePhoto} style={{ display:"none" }} />
-              </label>
-              {profileForm.photo && <button onClick={()=>setProfileForm(f=>({...f,photo:""}))} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>Remove</button>}
-            </div>
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
-            <Field label="First Name" half><input style={inp} value={profileForm.firstName} onChange={PF("firstName")} placeholder="Juan" /></Field>
-            <Field label="Last Name" half><input style={inp} value={profileForm.lastName} onChange={PF("lastName")} placeholder="Martinez" /></Field>
-            <Field label="Position" half><input style={inp} value={profileForm.position} onChange={PF("position")} placeholder="Mechanic, Supervisor..." /></Field>
-            <Field label="Work Location" half><input style={inp} value={profileForm.workLocation} onChange={PF("workLocation")} placeholder="Main Shop, Section C..." /></Field>
-            <Field label="Phone" half><input style={inp} value={profileForm.phone} onChange={PF("phone")} /></Field>
-            <Field label="Email" half><input style={inp} type="email" value={profileForm.email} onChange={PF("email")} /></Field>
-            <Field label="Labor Rate ($/hr)" half><input style={inp} type="number" value={profileForm.laborRate} onChange={PF("laborRate")} placeholder="45.00" /></Field>
           </div>
         </div>
 
@@ -7412,6 +7507,7 @@ function ReportFuel({ state }) {
 const PAGE_TITLES = {
   dashboard:        "Maintenance Dashboard",
   workorders:       "Work Orders",
+  wo_requests:      "Work Order Requests",
   equipment:        "Equipment",
   parts:            "Parts Inventory",
   pm:               "Preventive Maintenance",
@@ -7766,16 +7862,28 @@ export default function App() {
 
   const [tab, setTab]       = useState("dashboard");
   const [menuOpen, setMenuOpen]           = useState(false);
+  const [showProfile, setShowProfile]     = useState(false);
   const [showWOSettings, setShowWOSettings] = useState(false);
   const [showSettings, setShowSettings]   = useState(false);
+
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if(params.get("woRequest")) setTab("wo_requests");
+    } catch(e) {}
+  }, []);
 
   const profile      = state.profile || {};
   const settings     = state.settings || {};
   const companyName  = settings.companyName || "NCA Maintenance";
 
+  const initials = profile.firstName&&profile.lastName ? `${profile.firstName[0]}${profile.lastName[0]}`.toUpperCase() : "JM";
+  const displayName = profile.firstName ? `${profile.firstName} ${profile.lastName}` : "J. Martinez";
+
   const pages = {
     dashboard:        <Dashboard        state={state} dispatch={dispatch} setTab={setTab} onSettings={()=>setShowSettings(true)} />,
     workorders:       <WorkOrders       state={state} dispatch={dispatch} woSettings={state.woSettings} onWOSettings={()=>setShowWOSettings(true)} />,
+    wo_requests:      <WorkOrderRequests state={state} dispatch={dispatch} />,
     inspections:      <Inspections      state={state} dispatch={dispatch} />,
     equipment:        <Equipment        state={state} dispatch={dispatch} />,
     parts:            <Parts            state={state} dispatch={dispatch} />,
@@ -8176,7 +8284,7 @@ export default function App() {
 
       <SlideMenu tab={tab} setTab={setTab} open={menuOpen} onClose={()=>setMenuOpen(false)} onSettings={()=>setShowSettings(true)} companyName={companyName} profile={profile} />
 
-      {/* Custom header */}
+      {/* Custom header with profile button */}
       <header className="no-print" style={{ position:"sticky", top:0, zIndex:1000, background:T.surface, borderBottom:`1px solid ${T.border}`, padding:"0 20px", height:56, display:"flex", alignItems:"center", justifyContent:"space-between", boxShadow:`0 1px 0 ${T.border}` }}>
         <div style={{ display:"flex", alignItems:"center", gap:14 }}>
           <button onClick={()=>setMenuOpen(v=>!v)} style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:7, padding:"7px 9px", cursor:"pointer", display:"flex", flexDirection:"column", gap:4, alignItems:"center" }}>
@@ -8216,6 +8324,13 @@ export default function App() {
           <button onClick={handleLogout} style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:T.surface, color:T.text, cursor:"pointer", fontSize:13 }}>
             Logout
           </button>
+          {/* User profile button */}
+          <button onClick={()=>setShowProfile(true)} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:T.surface, cursor:"pointer" }}>
+            <div style={{ width:24, height:24, borderRadius:"50%", background:T.accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, color:"#fff", fontWeight:700, fontFamily:T.mono, overflow:"hidden" }}>
+              {profile.photo ? <img src={profile.photo} alt="me" style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : initials}
+            </div>
+            <span style={{ fontFamily:T.sans, fontSize:13, fontWeight:500, color:T.text }}>{displayName}</span>
+          </button>
         </div>
       </header>
 
@@ -8227,6 +8342,7 @@ export default function App() {
         {pages[tab]}
       </main>
 
+      {showProfile    && <UserProfile    state={state} dispatch={dispatch} onClose={()=>setShowProfile(false)} />}
       {showWOSettings && <WOSettings     state={state} dispatch={dispatch} onClose={()=>setShowWOSettings(false)} />}
       {showSettings   && <SystemSettings state={state} dispatch={dispatch} onClose={()=>setShowSettings(false)} />}
     </div>
