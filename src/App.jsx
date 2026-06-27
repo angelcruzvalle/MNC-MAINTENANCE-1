@@ -291,6 +291,38 @@ const INIT = {
   setupComplete: false,
 };
 
+function blankUserState(ownerUserId="") {
+  return {
+    ...INIT,
+    notifications: [],
+    technicians: [],
+    usageLogs: [],
+    workOrders: [],
+    workOrderRequests: [],
+    equipment: [],
+    preventiveMaintenance: [],
+    parts: [],
+    pmSchedules: [],
+    pmTasks: [],
+    inspectionTasks: [],
+    inspectionSchedules: [],
+    inventoryItems: [],
+    fuelContainers: [],
+    fuelReadings: [],
+    profile: null,
+    settings: null,
+    woSettings: null,
+    setupComplete: false,
+    ownerUserId: ownerUserId || "",
+  };
+}
+
+function normalizeLoadedUserState(data={}, ownerUserId="") {
+  if(!data || typeof data !== "object" || Array.isArray(data)) return blankUserState(ownerUserId);
+  if(data.ownerUserId && ownerUserId && data.ownerUserId !== ownerUserId) return blankUserState(ownerUserId);
+  return { ...blankUserState(ownerUserId), ...data, ownerUserId: ownerUserId || data.ownerUserId || "" };
+}
+
 function adjustInventoryForWO(parts=[], partsUsed=[], direction=-1) {
   // direction -1 consumes inventory, +1 restores inventory
   let next = [...(parts||[])];
@@ -333,6 +365,67 @@ function woPartsTotal(wo={}) {
 
 function woTotalCost(wo={}) {
   return (+wo.laborCost || 0) + woPartsTotal(wo) + outsideServicesTotal(wo.outsideServices);
+}
+
+function moneyFmt(value=0) {
+  return `$${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits:2, maximumFractionDigits:2 })}`;
+}
+
+function fiscalYearStartDate(now=new Date()) {
+  return new Date(now.getMonth() >= 9 ? now.getFullYear() : now.getFullYear() - 1, 9, 1);
+}
+
+function dateValue(raw) {
+  const d = raw ? new Date(String(raw) + (String(raw).includes('T') ? '' : 'T00:00:00')) : null;
+  return d && !Number.isNaN(d.getTime()) ? d : null;
+}
+
+function workOrderDate(wo={}) {
+  return wo.completed || wo.closedDate || wo.created || wo.date || wo.due || '';
+}
+
+function equipmentUsageSummary(state={}, eq={}) {
+  const eqId = String(eq.id || "");
+  const logs = (state.usageLogs || []).filter(l => String(l.equipmentId || l.equipment || l.eqId || "") === eqId);
+  const latestHours = Math.max(0, ...logs.map(l => +(l.hours || l.usageHours || 0)).filter(Number.isFinite));
+  const latestMiles = Math.max(0, ...logs.map(l => +(l.mileage || l.miles || l.usageMileage || 0)).filter(Number.isFinite));
+  const eqWos = (state.workOrders || []).filter(w => String(workOrderEquipmentId(w) || w.equipment || "") === eqId);
+  const woHours = Math.max(0, ...eqWos.map(w => +(w.usageHours || 0)).filter(Number.isFinite));
+  const woMiles = Math.max(0, ...eqWos.map(w => +(w.usageMileage || 0)).filter(Number.isFinite));
+  const currentHours = Math.max(latestHours, woHours, +(eq.currentHours || eq.hours || 0));
+  const currentMiles = Math.max(latestMiles, woMiles, +(eq.currentMileage || eq.mileage || 0));
+  const type = eq.usageType || (currentMiles > 0 && currentHours === 0 ? 'mileage' : 'hours');
+  return {
+    type,
+    value: type === 'mileage' ? currentMiles : currentHours,
+    label: type === 'mileage' ? 'Miles' : 'Hours',
+    hours: currentHours,
+    miles: currentMiles,
+  };
+}
+
+function equipmentFinancialSummary(state={}, eq={}) {
+  const fyStart = fiscalYearStartDate();
+  const eqId = String(eq.id || "");
+  const wos = (state.workOrders || []).filter(w => String(workOrderEquipmentId(w) || w.equipment || "") === eqId);
+  const byDate = wos.map(w => ({ wo:w, date:dateValue(workOrderDate(w)) }));
+  const fyWos = byDate.filter(x => x.date && x.date >= fyStart).map(x => x.wo);
+  const sumCost = rows => rows.reduce((sum,w) => sum + woTotalCost(w), 0);
+  const sumLabor = rows => rows.reduce((sum,w) => sum + (+w.laborHours || 0), 0);
+  const countType = (rows, name) => rows.filter(w => String(w.woType || w.type || '').toLowerCase().includes(name)).length;
+  return {
+    wos,
+    totalWOs: wos.length,
+    openWOs: wos.filter(w => w.status !== 'Completed').length,
+    completedWOs: wos.filter(w => w.status === 'Completed').length,
+    lifetimeSpent: sumCost(wos),
+    fySpent: sumCost(fyWos),
+    lifetimeLaborHours: sumLabor(wos),
+    fyLaborHours: sumLabor(fyWos),
+    repairWOs: countType(wos, 'repair'),
+    serviceWOs: wos.filter(w => /service|prevent/i.test(String(w.woType || w.type || ''))).length,
+    inspectionWOs: countType(wos, 'inspection'),
+  };
 }
 
 function formatNotificationTime(notification) {
@@ -2805,6 +2898,39 @@ function Equipment({ state, dispatch }) {
   const [newCat, setNewCat]     = useState("");
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
 
+  const printEquipmentSummary = (eq) => {
+    if(!eq) return;
+    const esc = htmlEscape;
+    const usage = equipmentUsageSummary(state, eq);
+    const fin = equipmentFinancialSummary(state, eq);
+    const settings = state.settings || {};
+    const wos = [...(fin.wos || [])].sort((a,b)=>String(workOrderDate(b)||"").localeCompare(String(workOrderDate(a)||"")));
+    const exportRows = [
+      { Item:"Equipment #", Value:eq.id || "" },
+      { Item:"Nomenclature", Value:eq.name || eq.nomenclature || "" },
+      { Item:"Year", Value:eq.year || "" },
+      { Item:`Current ${usage.label}`, Value:Number(usage.value||0).toLocaleString(undefined,{maximumFractionDigits:1}) },
+      { Item:"Lifetime Spent", Value:moneyFmt(fin.lifetimeSpent) },
+      { Item:"FY Spent", Value:moneyFmt(fin.fySpent) },
+      { Item:"Total Work Orders", Value:fin.totalWOs },
+      { Item:"Lifetime Labor Hours", Value:fin.lifetimeLaborHours.toFixed(1) },
+    ];
+    const win = window.open("","_blank","width=900,height=700");
+    if(!win) { alert("Please allow pop-ups to print the equipment summary."); return; }
+    const metric = (label, value) => `<div class="metric"><div class="metricValue">${esc(value)}</div><div class="metricLabel">${esc(label)}</div></div>`;
+    win.document.write(`<!DOCTYPE html><html><head><title>Equipment Summary ${esc(eq.id||"")}</title><style>
+      body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#111827;padding:24px;font-size:12px}h1{margin:0 0 4px;font-size:22px}p{margin:0 0 16px;color:#667085}.header{display:flex;align-items:flex-start;gap:14px;border-bottom:2px solid #111827;padding-bottom:14px;margin-bottom:16px}.logo{max-height:58px;max-width:120px;object-fit:contain}.titleBlock{flex:1}.eqNum{font-family:monospace;font-size:13px;font-weight:800;color:#334155}.subtitle{font-size:13px;color:#475467;margin-top:3px}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0 18px}.metric{border:1px solid #d0d5dd;background:#f9fafb;border-radius:10px;padding:12px}.metricValue{font-size:20px;font-weight:800;color:#111827}.metricLabel{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:#667085;margin-top:4px}.sectionTitle{background:#e5e7eb;padding:8px 10px;border-radius:8px;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.5px;margin:18px 0 8px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#111827;color:white;text-align:left;padding:7px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.4px}td{border-bottom:1px solid #e5e7eb;padding:7px 8px;vertical-align:top}.right{text-align:right}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px 20px}.field{border-bottom:1px solid #e5e7eb;padding:7px 0}.label{font-size:10px;text-transform:uppercase;color:#667085;font-weight:800}.value{font-size:13px;margin-top:2px}.actions{margin-top:18px;display:flex;gap:8px;justify-content:center}.actions button{padding:9px 18px;border:none;border-radius:8px;background:#111827;color:#fff;font-weight:800;cursor:pointer}@media print{.actions{display:none}.metric,.sectionTitle{break-inside:avoid}body{padding:18px}.metrics{grid-template-columns:repeat(4,1fr)}}@page{size:letter;margin:.35in}
+    </style></head><body>`);
+    win.document.write(`<div class="header">${settings.logo?`<img class="logo" src="${settings.logo}" alt="Logo">`:""}<div class="titleBlock"><h1>${esc(settings.companyName || "Maintenance Department")}</h1><div class="eqNum">Equipment Summary — ${esc(eq.id||"—")}</div><div class="subtitle">${esc(eq.name || eq.nomenclature || "—")} · ${esc([eq.year,eq.make,eq.model].filter(Boolean).join(" ") || "—")}</div></div><div style="text-align:right;color:#667085;font-size:11px">Generated: ${new Date().toLocaleDateString()}</div></div>`);
+    win.document.write(`<div class="metrics">${metric("Current " + usage.label, Number(usage.value||0).toLocaleString(undefined,{maximumFractionDigits:1}))}${metric("Lifetime Spent", moneyFmt(fin.lifetimeSpent))}${metric("FY Spent", moneyFmt(fin.fySpent))}${metric("Total WOs", fin.totalWOs)}${metric("Lifetime Labor", fin.lifetimeLaborHours.toFixed(1)+"h")}${metric("FY Labor", fin.fyLaborHours.toFixed(1)+"h")}${metric("Open WOs", fin.openWOs)}${metric("Completed WOs", fin.completedWOs)}</div>`);
+    win.document.write(`<div class="sectionTitle">Equipment Information</div><div class="grid">${[["Equipment #",eq.id],["Nomenclature",eq.name||eq.nomenclature],["Year",eq.year],["Make",eq.make],["Model",eq.model],["Serial #",eq.serial],["EIL #",eq.eilNumber],["Location",eq.location],["Category",eq.category||eq.type],["Acquisition Date",eq.acquisitionDate],["Purchase Price",eq.acquisitionCost?moneyFmt(eq.acquisitionCost):""],["Status",eq.status||"Fully Operational"]].map(([k,v])=>`<div class="field"><div class="label">${esc(k)}</div><div class="value">${esc(v||"—")}</div></div>`).join("")}</div>`);
+    win.document.write(`<div class="sectionTitle">Work Order Totals</div><table><tr><th>Type</th><th class="right">Count</th></tr><tr><td>Repair</td><td class="right">${fin.repairWOs}</td></tr><tr><td>Service / PM</td><td class="right">${fin.serviceWOs}</td></tr><tr><td>Inspection</td><td class="right">${fin.inspectionWOs}</td></tr></table>`);
+    win.document.write(`<div class="sectionTitle">Work Order History</div><table><tr><th>WO #</th><th>Type</th><th>Status</th><th>Date</th><th>Description</th><th class="right">Labor</th><th class="right">Cost</th></tr>${wos.map(w=>`<tr><td>${esc(w.id||"—")}</td><td>${esc(w.woType||w.type||"—")}</td><td>${esc(w.status||"—")}</td><td>${esc(workOrderDate(w)||"—")}</td><td>${esc(w.title||w.faultDescription||w.description||"—")}</td><td class="right">${esc((+w.laborHours||0).toFixed(1))}h</td><td class="right">${esc(moneyFmt(woTotalCost(w)))}</td></tr>`).join("")}${!wos.length?`<tr><td colspan="7" style="text-align:center;color:#667085;padding:18px">No work orders for this equipment.</td></tr>`:""}</table>`);
+    if(eq.notes) win.document.write(`<div class="sectionTitle">Notes</div><div style="white-space:pre-wrap;border:1px solid #e5e7eb;border-radius:8px;padding:10px">${esc(eq.notes)}</div>`);
+    win.document.write(`<div class="actions"><button onclick="window.print()">Print Equipment Summary</button></div>${reportButtonsHtml(exportRows)}</body></html>`);
+    win.document.close();
+  };
+
 
   const printHistoryWO = (wo) => {
     const eq = state.equipment.find(e => e.id === wo.equipment) || {};
@@ -2979,7 +3105,11 @@ function Equipment({ state, dispatch }) {
   const filtered = state.equipment.filter(e=>{
     /* Hide equipment that's been turned in or disposed - they live in Equipment Inventory only */
     if(["Turned-in","Disposed"].includes(e.turnInStatus)) return false;
-    const ms  = `${e.name} ${e.category||""} ${e.type||""} ${e.make} ${e.model} ${e.serial} ${e.eilNumber||""} ${e.location}`.toLowerCase().includes(search.toLowerCase());
+    const normalizeSearch = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const searchable = `${e.id||""} ${e.equipmentId||""} ${e.eqNumber||""} ${e.name||""} ${e.nomenclature||""} ${e.category||""} ${e.type||""} ${e.make||""} ${e.model||""} ${e.serial||""} ${e.eilNumber||""} ${e.location||""} ${e.year||""}`.toLowerCase();
+    const compactSearchable = normalizeSearch(searchable);
+    const terms = String(search||"").toLowerCase().trim().split(/\s+/).filter(Boolean);
+    const ms = terms.length === 0 || terms.every(term => searchable.includes(term) || compactSearchable.includes(normalizeSearch(term)));
     const mt  = typeF==="All"   || e.category===typeF;
     const ml  = locationF==="All" || e.location===locationF;
     return ms&&mt&&ml;
@@ -2989,7 +3119,7 @@ function Equipment({ state, dispatch }) {
     return String(a.id||"").localeCompare(String(b.id||""), undefined, { numeric:true, sensitivity:"base" });
   });
 
-  const woForEq  = eq => state.workOrders.filter(w=>w.equipment===eq.id);
+  const woForEq  = eq => state.workOrders.filter(w=>String(workOrderEquipmentId(w) || w.equipment || "")===String(eq.id||""));
   const openAdd  = () => { setForm({ status:"Fully Operational" }); setModal("add"); };
   const openEdit = eq => { setForm({...eq, _originalId:eq.id}); setModal("editing"); };
   const save = () => {
@@ -3342,7 +3472,8 @@ function Equipment({ state, dispatch }) {
                 <h2 style={{ margin:0, fontFamily:T.sans, fontSize:22, fontWeight:700, color:T.text }}>{eq.name}</h2>
                 <p style={{ margin:"4px 0 0", fontFamily:T.sans, fontSize:14, color:T.subtext }}>{eq.year} {eq.make} {eq.model} · Serial: {eq.serial}</p>
               </div>
-              <div style={{ display:"flex", gap:8 }}>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                <Btn small variant="secondary" onClick={()=>printEquipmentSummary(eq)}>🖨 Print Summary</Btn>
                 <Btn small onClick={()=>openEdit(eq)}>✏ Edit</Btn>
                 <Btn small variant="danger" onClick={()=>del(eq.id)}>Delete</Btn>
               </div>
@@ -3369,22 +3500,40 @@ function Equipment({ state, dispatch }) {
             )}
           </Card>
 
-          {/* Stats */}
+          {/* Equipment Summary */}
           <Card>
-            <h4 style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Service Stats</h4>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-              {[
-                ["Total WOs",    wos.length, T.text],
-                ["Open WOs",     wos.filter(w=>w.status==="Open").length, T.amber],
-                ["Total Spent",  "$"+wos.reduce((s,w)=>s+(+w.laborCost||0)+(+(w.partsUsed||[]).reduce((ps,p)=>ps+(+(p.qty||1))*(+(p.unitCost||0)),0)),0).toLocaleString(), T.accent],
-                ["Labor Hours",  wos.reduce((s,w)=>s+(+w.laborHours||0),0)+"h", T.text],
-              ].map(([k,v,c])=>(
-                <div key={k} style={{ background:T.grayLt, borderRadius:7, padding:"12px 14px", border:`1px solid ${T.border}` }}>
-                  <div style={{ fontFamily:T.sans, fontSize:22, fontWeight:700, color:c }}>{v}</div>
-                  <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:3 }}>{k}</div>
-                </div>
-              ))}
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, marginBottom:14 }}>
+              <h4 style={{ margin:0, fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Equipment Summary</h4>
+              <Btn small variant="secondary" onClick={()=>printEquipmentSummary(eq)}>Print</Btn>
             </div>
+            {(()=>{
+              const usage = equipmentUsageSummary(state, eq);
+              const fin = equipmentFinancialSummary(state, eq);
+              const summaryRows = [
+                ["Year", eq.year || "—", T.text],
+                [`Current ${usage.label}`, Number(usage.value||0).toLocaleString(undefined,{maximumFractionDigits:1}), T.text],
+                ["Lifetime Spent", moneyFmt(fin.lifetimeSpent), T.accent],
+                ["FY Spent", moneyFmt(fin.fySpent), T.accent],
+                ["Total Work Orders", fin.totalWOs, T.text],
+                ["Open Work Orders", fin.openWOs, T.amber],
+                ["Lifetime Labor", `${fin.lifetimeLaborHours.toFixed(1)}h`, T.text],
+                ["FY Labor", `${fin.fyLaborHours.toFixed(1)}h`, T.text],
+              ];
+              return <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:10 }}>
+                {summaryRows.map(([k,v,c])=>(
+                  <div key={k} style={{ background:T.grayLt, borderRadius:7, padding:"12px 14px", border:`1px solid ${T.border}` }}>
+                    <div style={{ fontFamily:T.sans, fontSize:20, fontWeight:800, color:c, lineHeight:1.15 }}>{v}</div>
+                    <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:4 }}>{k}</div>
+                  </div>
+                ))}
+                <div style={{ gridColumn:"1 / -1", display:"flex", gap:8, flexWrap:"wrap", paddingTop:2 }}>
+                  <Badge label={`Repair: ${fin.repairWOs}`} />
+                  <Badge label={`Service: ${fin.serviceWOs}`} />
+                  <Badge label={`Inspection: ${fin.inspectionWOs}`} />
+                  <Badge label={`Completed: ${fin.completedWOs}`} />
+                </div>
+              </div>;
+            })()}
           </Card>
 
           {/* Work Order History */}
@@ -3435,7 +3584,7 @@ function Equipment({ state, dispatch }) {
     <div>
       <Card style={{ marginBottom:16 }}>
         <div style={{ display:"flex", gap:10, marginBottom:14, flexWrap:"wrap" }}>
-          <input style={{ ...inp, flex:1, minWidth:200 }} placeholder="Search by nomenclature, make, model, serial, EIL #, location…" value={search} onChange={e=>setSearch(e.target.value)} />
+          <input style={{ ...inp, flex:1, minWidth:200 }} placeholder="Search by equipment #, nomenclature, make, model, serial, EIL #, location…" value={search} onChange={e=>setSearch(e.target.value)} />
           <Btn variant="secondary" onClick={()=>{
             const allEquipment = state.equipment || [];
             const esc = htmlEscape;
@@ -3699,17 +3848,20 @@ function Parts({ state, dispatch }) {
   const modelOptions = getEquipmentModelOptions(state.equipment);
   const cats     = ["All",...partCategories];
   const stockFilters = ["All", "In Stock", "Low Stock", "Out of Stock"];
-  const filtered = state.parts.filter(p=>{
+  const parts = Array.isArray(state.parts) ? state.parts : [];
+  const sortedParts = [...parts].sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||""));
+  const filtered = sortedParts.filter(p=>{
     const mc = catF==="All"||p.category===catF;
     const st = getPartStockStatus(p);
     const msf = stockF==="All"||st===stockF;
-    const ms = `${p.name} ${p.partNumber||""} ${p.vendor||""} ${p.modelFit||""} ${p.category||""}`.toLowerCase().includes(search.toLowerCase());
+    const ms = `${p.name||""} ${p.partNumber||""} ${p.vendor||""} ${p.modelFit||""} ${p.category||""} ${p.location||""}`.toLowerCase().includes(search.toLowerCase());
     return mc&&msf&&ms;
-  }).sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||""));
+  });
 
-  const totalVal = state.parts.reduce((s,p)=>s+(+p.qty*(+p.unitCost||0)),0);
-  const lowParts = state.parts.filter(p=>getPartStockStatus(p)==="Low Stock");
-  const outParts = state.parts.filter(p=>getPartStockStatus(p)==="Out of Stock");
+  const totalVal = parts.reduce((s,p)=>s+((+p.qty||0)*(+p.unitCost||0)),0);
+  const lowParts = parts.filter(p=>getPartStockStatus(p)==="Low Stock");
+  const outParts = parts.filter(p=>getPartStockStatus(p)==="Out of Stock");
+  const exportRows = sortedParts.map(p=>{ const eq = p.equipmentId ? (state.equipment||[]).find(e=>e.id===p.equipmentId) : null; return {"Part #":p.partNumber||"", Nomenclature:p.name||"", Category:p.category||"", Location:p.location||"", "Equipment / Model":eq?`${eq.id} - ${eq.name}`:(p.modelFit||""), "Unit $":(+p.unitCost||0).toFixed(2), "Unit Type":p.unit||"ea", Qty:p.qty||0, "Total $":((+p.qty||0)*(+p.unitCost||0)).toFixed(2)}; });
   const openAdd  = () => { setForm({qty:0,minQty:1,unit:"ea",unitCost:0,lowStockAlert:true,modelFit:"",equipmentId:""}); setModal("add"); };
   const openEdit = p  => { setForm({...p}); setModal(p); };
   const save = () => {
@@ -3724,7 +3876,7 @@ function Parts({ state, dispatch }) {
 
   const openInvUpdate = () => {
     const map = {};
-    state.parts.forEach(p=>{ map[p.id]=String(p.qty); });
+    parts.forEach(p=>{ map[p.id]=String(p.qty); });
     setInvUpdate(map);
   };
   const saveInvUpdate = () => {
@@ -3736,18 +3888,20 @@ function Parts({ state, dispatch }) {
   };
 
   const printInventory = () => {
+    const esc = htmlEscape;
     const win = window.open("","_blank","width=900,height=700");
     if(!win) return;
     win.document.write(`<!DOCTYPE html><html><head><title>Parts Inventory Report</title>
       <style>body{font-family:Arial,sans-serif;padding:24px}h1{font-size:18px;margin-bottom:4px}p{font-size:12px;color:#666;margin:0 0 16px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:10px;text-transform:uppercase}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}.low{background:#fff5f5}.total-row{font-weight:700;background:#f3f4f6}@media print{button{display:none}}</style>
       </head><body>
       ${reportHeaderHTML(state, "Parts Inventory Report")}
-      <p style="font-size:12px;color:#666;margin-bottom:12px">SKUs: ${state.parts.length} | Total Value: $${totalVal.toFixed(2)} | Low Stock: ${lowParts.length}</p>
+      <p style="font-size:12px;color:#666;margin-bottom:12px">SKUs: ${parts.length} | Total Value: $${totalVal.toFixed(2)} | Low Stock: ${lowParts.length}</p>
       <table>
         <tr><th>Part #</th><th>Nomenclature</th><th>Category</th><th>Location</th><th>Equipment / Model</th><th style="text-align:right">Unit $</th><th>Unit Type</th><th style="text-align:right">Qty</th><th style="text-align:right">Total $</th><th>New Count</th></tr>
-        ${state.parts.sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||"")).map(p=>{
-          const eq = p.equipmentId ? state.equipment.find(e=>e.id===p.equipmentId) : null;
-          return `<tr class="${p.qty<=(p.minQty||0)?"low":""}"><td>${p.partNumber||"—"}</td><td>${p.name}</td><td>${p.category||"—"}</td><td>${p.location||"—"}</td><td>${eq?`${eq.id} - ${eq.name}`:p.modelFit||"—"}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td>${p.unit||"ea"}</td><td style="text-align:right">${p.qty}</td><td style="text-align:right">$${(p.qty*(+p.unitCost||0)).toFixed(2)}</td><td style="border-bottom:1px solid #bbb;min-width:80px">&nbsp;</td></tr>`;
+        ${sortedParts.map(p=>{
+          const eq = p.equipmentId ? (state.equipment||[]).find(e=>e.id===p.equipmentId) : null;
+          const total = (+p.qty||0) * (+p.unitCost||0);
+          return `<tr class="${(+p.qty||0)<=(+p.minQty||0)?"low":""}"><td>${esc(p.partNumber||"—")}</td><td>${esc(p.name||"—")}</td><td>${esc(p.category||"—")}</td><td>${esc(p.location||"—")}</td><td>${esc(eq?`${eq.id} - ${eq.name}`:(p.modelFit||"—"))}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td>${esc(p.unit||"ea")}</td><td style="text-align:right">${(+p.qty||0).toLocaleString()}</td><td style="text-align:right">$${total.toFixed(2)}</td><td style="border-bottom:1px solid #bbb;min-width:80px">&nbsp;</td></tr>`;
         }).join("")}
         <tr class="total-row"><td colspan="8" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">$${totalVal.toFixed(2)}</td><td></td></tr>
       </table>
@@ -3773,7 +3927,7 @@ function Parts({ state, dispatch }) {
     <div>
       <datalist id="part-category-options">{partCategories.map(c=><option key={c} value={c} />)}</datalist>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12, marginBottom:16 }}>
-        {[["Inventory Value","$"+totalVal.toLocaleString("en-US",{minimumFractionDigits:2}),T.accent],["Total SKUs",state.parts.length,T.text],["Low Stock",lowParts.length,T.amber],["Out of Stock",outParts.length,T.red]].map(([l,v,c])=>(
+        {[["Inventory Value","$"+totalVal.toLocaleString("en-US",{minimumFractionDigits:2}),T.accent],["Total SKUs",parts.length,T.text],["Low Stock",lowParts.length,T.amber],["Out of Stock",outParts.length,T.red]].map(([l,v,c])=>(
           <Card key={l} style={{ padding:"14px 16px" }}>
             <div style={{ fontFamily:T.sans, fontSize:22, fontWeight:700, color:c }}>{v}</div>
             <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{l}</div>
@@ -6183,25 +6337,28 @@ function reportHeaderHTML(state, title) {
 }
 
 function ReportPartsInv({ state }) {
-  const totalVal = state.parts.reduce((s,p)=>s+(+p.qty*(+p.unitCost||0)),0);
-  const lowParts = state.parts.filter(p=>p.lowStockAlert!==false&&p.qty<=(p.minQty||0));
-  const sorted = [...state.parts].sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||""));
+  const parts = Array.isArray(state.parts) ? state.parts : [];
+  const totalVal = parts.reduce((s,p)=>s+((+p.qty||0)*(+p.unitCost||0)),0);
+  const lowParts = parts.filter(p=>p.lowStockAlert!==false&&(+p.qty||0)<=(+p.minQty||0));
+  const sorted = [...parts].sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||""));
   const exportRows = sorted.map(p=>{ const eq = p.equipmentId?state.equipment.find(e=>e.id===p.equipmentId):null; return {"Part #":p.partNumber||"", Name:p.name||"", Category:p.category||"", Location:p.location||"", "Equipment / Model":eq?`${eq.id} - ${eq.name}`:(p.modelFit||""), "Unit $":(+p.unitCost||0).toFixed(2), Qty:p.qty||0, "Total $":(p.qty*(+p.unitCost||0)).toFixed(2)}; });
 
   const print = () => {
+    const esc = htmlEscape;
     const win = window.open("","_blank","width=900,height=700");
     if(!win) return;
     win.document.write(`<!DOCTYPE html><html><head><title>Parts Inventory Report</title>
       <style>body{font-family:Arial,sans-serif;padding:24px}h1{font-size:18px;margin-bottom:2px}p{font-size:12px;color:#666;margin:0 0 14px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.5px}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}.low{background:#fff5f5}.total-row td{font-weight:700;background:#f3f4f6;font-size:13px;border-top:2px solid #1a1a2e}@media print{button{display:none}}</style>
       </head><body>
       <h1>Parts Inventory Report</h1>
-      <p>Generated: ${new Date().toLocaleDateString()} | Total SKUs: ${state.parts.length} | Total Value: $${totalVal.toFixed(2)} | Low Stock Items: ${lowParts.length}</p>
+      <p>Generated: ${new Date().toLocaleDateString()} | Total SKUs: ${parts.length} | Total Value: $${totalVal.toFixed(2)} | Low Stock Items: ${lowParts.length}</p>
       <table>
         <tr><th>Part #</th><th>Nomenclature</th><th>Category</th><th>Location</th><th>Equipment / Model</th><th style="text-align:right">Unit $</th><th>Unit Type</th><th style="text-align:right">Qty</th><th style="text-align:right">Total $</th><th>New Count</th></tr>
         ${sorted.map(p=>{
-          const eq = p.equipmentId?state.equipment.find(e=>e.id===p.equipmentId):null;
-          const low = p.qty<=(p.minQty||0)&&p.lowStockAlert!==false;
-          return `<tr class="${low?"low":""}"><td>${p.partNumber||"—"}</td><td>${p.name}${low?" &#9888;":""}</td><td>${p.category||"—"}</td><td>${p.location||"—"}</td><td>${eq?`${eq.id} - ${eq.name}`:p.modelFit||"—"}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td>${p.unit||"ea"}</td><td style="text-align:right">${p.qty}</td><td style="text-align:right">$${(p.qty*(+p.unitCost||0)).toFixed(2)}</td><td style="border-bottom:1px solid #999;min-width:80px">&nbsp;</td></tr>`;
+          const eq = p.equipmentId?(state.equipment||[]).find(e=>e.id===p.equipmentId):null;
+          const low = (+p.qty||0)<=(+p.minQty||0)&&p.lowStockAlert!==false;
+          const total = (+p.qty||0) * (+p.unitCost||0);
+          return `<tr class="${low?"low":""}"><td>${esc(p.partNumber||"—")}</td><td>${esc(p.name||"—")}${low?" &#9888;":""}</td><td>${esc(p.category||"—")}</td><td>${esc(p.location||"—")}</td><td>${esc(eq?`${eq.id} - ${eq.name}`:(p.modelFit||"—"))}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td>${esc(p.unit||"ea")}</td><td style="text-align:right">${(+p.qty||0).toLocaleString()}</td><td style="text-align:right">$${total.toFixed(2)}</td><td style="border-bottom:1px solid #999;min-width:80px">&nbsp;</td></tr>`;
         }).join("")}
         <tr class="total-row"><td colspan="8" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">$${totalVal.toFixed(2)}</td><td></td></tr>
       </table>
@@ -6213,7 +6370,7 @@ function ReportPartsInv({ state }) {
   return (
     <div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12, marginBottom:16 }}>
-        {[["Total SKUs",state.parts.length,T.text],["Total Value","$"+totalVal.toFixed(2),T.accent],["Low Stock",lowParts.length,T.red]].map(([l,v,c])=>(
+        {[["Total SKUs",parts.length,T.text],["Total Value","$"+totalVal.toFixed(2),T.accent],["Low Stock",lowParts.length,T.red]].map(([l,v,c])=>(
           <Card key={l} style={{ padding:"14px 16px" }}><div style={{ fontFamily:T.sans, fontSize:22, fontWeight:700, color:c }}>{v}</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{l}</div></Card>
         ))}
       </div>
@@ -6243,7 +6400,7 @@ function ReportPartsInv({ state }) {
               );
             })}
             <tr style={{ background:T.grayLt, borderTop:`2px solid ${T.border}` }}>
-              <td colSpan={8} style={{ padding:"10px 12px", fontFamily:T.sans, fontSize:13, fontWeight:700, textAlign:"right" }}>TOTAL VALUE</td>
+              <td colSpan={7} style={{ padding:"10px 12px", fontFamily:T.sans, fontSize:13, fontWeight:700, textAlign:"right" }}>TOTAL VALUE</td>
               <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:14, fontWeight:700, color:T.accent }}>${totalVal.toFixed(2)}</td>
             </tr>
           </tbody>
@@ -7877,7 +8034,7 @@ async function loadSession(setSession, setAuthLoading) {
 
 export default function App() {
   /* Start empty, then load the signed-in user's data from Supabase */
-  const emptyState = { ...INIT, inventoryItems:[], profile:null, woSettings:null };
+  const emptyState = blankUserState();
   const [state, dispatch] = useReducer(reducer, emptyState);
 
   const [dataLoaded, setDataLoaded] = useState(false);
@@ -7945,19 +8102,14 @@ export default function App() {
         if (cancelled) return;
         if (error) {
           console.error("Load error:", error);
-          const localData = localStorage.getItem("ncaState");
-          if (localData) {
-            try { dispatch({ type:"REPLACE_STATE", payload:JSON.parse(localData) }); }
-            catch(e) { console.warn("Local migration parse failed:", e); }
-          }
+          dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
         } else if (data && data.data && Object.keys(data.data).length > 0) {
-          dispatch({ type:"REPLACE_STATE", payload:data.data });
+          dispatch({ type:"REPLACE_STATE", payload:normalizeLoadedUserState(data.data, session.user.id) });
         } else {
-          const localData = localStorage.getItem("ncaState");
-          if (localData) {
-            try { dispatch({ type:"REPLACE_STATE", payload:JSON.parse(localData) }); }
-            catch(e) { console.warn("Migration parse failed:", e); }
-          }
+          // New users must start with a blank platform. Do not migrate browser localStorage,
+          // because that can contain another user's equipment, work orders, inventory, or reports.
+          dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
+          try { localStorage.removeItem("ncaState"); } catch(e) {}
         }
       } catch (e) {
         console.error("Load exception:", e);
@@ -7979,7 +8131,7 @@ export default function App() {
           .from("user_state")
           .upsert({
             user_id: session.user.id,
-            data: state,
+            data: normalizeLoadedUserState(state, session.user.id),
             updated_at: new Date().toISOString(),
           }, { onConflict:"user_id" });
 
@@ -7988,7 +8140,7 @@ export default function App() {
           setSyncStatus("error");
         } else {
           setSyncStatus("saved");
-          try { localStorage.setItem("ncaState", JSON.stringify(state)); } catch(e) {}
+          try { localStorage.setItem("ncaState", JSON.stringify(normalizeLoadedUserState(state, session.user.id))); localStorage.setItem("ncaState:lastUserId", session.user.id); } catch(e) {}
           setTimeout(() => setSyncStatus("idle"), 2000);
         }
       } catch (e) {
@@ -8189,6 +8341,7 @@ export default function App() {
     if(!authPassword) { setAuthError("Please enter a password."); return; }
     if(authPassword.length < 6) { setAuthError("Password must be at least 6 characters."); return; }
     if(authPassword !== authConfirmPassword) { setAuthError("Passwords do not match."); return; }
+    try { localStorage.removeItem("ncaState"); localStorage.removeItem("ncaState:lastUserId"); } catch(e) {}
     setAuthBusy(true);
     const { error, data } = await supabase.auth.signUp({
       email: authEmail.trim(),
@@ -8213,6 +8366,7 @@ export default function App() {
   }
 
   async function handleLogout() {
+    try { localStorage.removeItem("ncaState"); } catch(e) {}
     await supabase.auth.signOut();
   }
 
