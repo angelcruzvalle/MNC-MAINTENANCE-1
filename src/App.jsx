@@ -4942,7 +4942,8 @@ function Inspections({ state, dispatch }) {
   const schedules = state.inspectionSchedules || [];
   const [modal, setModal] = useState(null);
   const [taskForm, setTaskForm] = useState({ id:null, name:"", frequency:"Monthly", steps:"", notes:"", attachments:[] });
-  const [scheduleForm, setScheduleForm] = useState({ id:null, equipmentId:"", taskId:"", timeInterval:1, timeUnit:"months", lastInspectionDate:"", nextDueDate:today(), notes:"" });
+  const blankInspectionScheduleForm = () => ({ id:null, equipmentId:"", equipmentIds:[], taskId:"", taskIds:[], timeInterval:1, timeUnit:"months", lastInspectionDate:"", nextDueDate:today(), notes:"" });
+  const [scheduleForm, setScheduleForm] = useState(blankInspectionScheduleForm());
   const [selectedTask, setSelectedTask] = useState(null);
   const [showInspectionLibrary, setShowInspectionLibrary] = useState(false);
   const [inspectionEveryFilter, setInspectionEveryFilter] = useState("All");
@@ -4965,8 +4966,13 @@ function Inspections({ state, dispatch }) {
   };
 
   const openSchedule = (schedule=null) => {
-    const base = schedule || { id:null, equipmentId:"", taskId:"", timeInterval:1, timeUnit:"months", lastInspectionDate:"", nextDueDate:today(), notes:"" };
-    setScheduleForm({ ...base, lastInspectionDate:base.lastInspectionDate || base.lastDoneDate || base.lastTriggered || "" });
+    const base = schedule || blankInspectionScheduleForm();
+    setScheduleForm({
+      ...base,
+      equipmentIds:schedule ? [base.equipmentId].filter(Boolean) : [],
+      taskIds:schedule ? [base.taskId].filter(Boolean) : [],
+      lastInspectionDate:base.lastInspectionDate || base.lastDoneDate || base.lastTriggered || ""
+    });
     setModal("schedule");
   };
 
@@ -4979,25 +4985,59 @@ function Inspections({ state, dispatch }) {
     setModal(null);
   };
 
+  const getSelectedValues = (event) => Array.from(event.target.selectedOptions || []).map(o=>o.value).filter(Boolean);
+
   const saveSchedule = () => {
-    if(!scheduleForm.equipmentId || !scheduleForm.taskId) { alert("Choose equipment and an inspection task."); return; }
-    const selected = taskById(scheduleForm.taskId);
-    const inherited = intervalFromInspectionTask(selected);
-    const calculatedNextDue = scheduleForm.lastInspectionDate
-      ? nextDateFrom(scheduleForm.lastInspectionDate, inherited.timeInterval, inherited.timeUnit)
-      : (scheduleForm.nextDueDate || today());
-    const payload = {
-      ...scheduleForm,
-      ...inherited,
-      frequency:selected?.frequency || scheduleForm.frequency || "Monthly",
-      nextDueDate:calculatedNextDue,
-      lastDoneDate:scheduleForm.lastInspectionDate || scheduleForm.lastDoneDate || "",
-      lastTriggered:scheduleForm.lastTriggered || scheduleForm.lastInspectionDate || "",
-      id:scheduleForm.id || genId("IS"),
-      created:scheduleForm.created || today()
+    const isEditing = !!scheduleForm.id;
+    const equipmentIds = isEditing
+      ? [scheduleForm.equipmentId].filter(Boolean)
+      : ((scheduleForm.equipmentIds || []).length ? scheduleForm.equipmentIds : [scheduleForm.equipmentId].filter(Boolean));
+    const taskIds = isEditing
+      ? [scheduleForm.taskId].filter(Boolean)
+      : ((scheduleForm.taskIds || []).length ? scheduleForm.taskIds : [scheduleForm.taskId].filter(Boolean));
+    if(!equipmentIds.length || !taskIds.length) { alert("Choose at least one equipment item and one inspection task."); return; }
+
+    const makePayload = (equipmentId, taskId, existingId=null) => {
+      const selected = taskById(taskId);
+      const inherited = intervalFromInspectionTask(selected);
+      const calculatedNextDue = scheduleForm.lastInspectionDate
+        ? nextDateFrom(scheduleForm.lastInspectionDate, inherited.timeInterval, inherited.timeUnit)
+        : (scheduleForm.nextDueDate || today());
+      return {
+        ...scheduleForm,
+        equipmentId,
+        taskId,
+        equipmentIds:undefined,
+        taskIds:undefined,
+        ...inherited,
+        frequency:selected?.frequency || scheduleForm.frequency || "Monthly",
+        nextDueDate:calculatedNextDue,
+        lastDoneDate:scheduleForm.lastInspectionDate || scheduleForm.lastDoneDate || "",
+        lastTriggered:scheduleForm.lastTriggered || scheduleForm.lastInspectionDate || "",
+        id:existingId || genId("IS"),
+        created:scheduleForm.created || today(),
+        updated:today()
+      };
     };
-    dispatch({ type: scheduleForm.id ? "UPDATE_INSPECTION_SCHEDULE" : "ADD_INSPECTION_SCHEDULE", payload });
+
+    if(isEditing) {
+      dispatch({ type:"UPDATE_INSPECTION_SCHEDULE", payload:makePayload(equipmentIds[0], taskIds[0], scheduleForm.id) });
+    } else {
+      let added = 0;
+      let skipped = 0;
+      equipmentIds.forEach(equipmentId => {
+        taskIds.forEach(taskId => {
+          const exists = schedules.some(s => String(s.equipmentId) === String(equipmentId) && String(s.taskId) === String(taskId));
+          if(exists) { skipped += 1; return; }
+          dispatch({ type:"ADD_INSPECTION_SCHEDULE", payload:makePayload(equipmentId, taskId) });
+          added += 1;
+        });
+      });
+      if(!added) { alert("Those inspection task assignments already exist."); return; }
+      if(skipped) alert(`${added} inspection assignment${added===1?"":"s"} added. ${skipped} duplicate${skipped===1?"":"s"} skipped.`);
+    }
     setModal(null);
+    setScheduleForm(blankInspectionScheduleForm());
   };
 
   const addTaskFiles = async (files) => {
@@ -5030,6 +5070,7 @@ function Inspections({ state, dispatch }) {
     setScheduleForm(f=>({
       ...f,
       taskId,
+      taskIds:taskId ? [taskId] : [],
       ...inherited,
       frequency:selected?.frequency || f.frequency || "Monthly",
       nextDueDate:f.lastInspectionDate ? nextDateFrom(f.lastInspectionDate, inherited.timeInterval, inherited.timeUnit) : f.nextDueDate
@@ -5333,8 +5374,27 @@ function Inspections({ state, dispatch }) {
       {modal==="schedule" && (
         <Modal title={scheduleForm.id?"Edit Inspection Assignment":"Assign Inspection Task to Equipment"} maxWidth={880} onClose={()=>setModal(null)}>
           <div style={{ display:"grid", gap:12 }}>
-            <Field label="Equipment"><select style={inp} value={scheduleForm.equipmentId} onChange={e=>setScheduleForm(f=>({...f,equipmentId:e.target.value}))}><option value="">Choose equipment...</option>{equipment.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name || e.nomenclature}</option>)}</select></Field>
-            <Field label="Inspection Task"><select style={inp} value={scheduleForm.taskId} onChange={e=>setScheduleTask(e.target.value)}><option value="">Choose task...</option>{tasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></Field>
+            {scheduleForm.id ? (
+              <>
+                <Field label="Equipment"><select style={inp} value={scheduleForm.equipmentId} onChange={e=>setScheduleForm(f=>({...f,equipmentId:e.target.value,equipmentIds:e.target.value?[e.target.value]:[]}))}><option value="">Choose equipment...</option>{equipment.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name || e.nomenclature}</option>)}</select></Field>
+                <Field label="Inspection Task"><select style={inp} value={scheduleForm.taskId} onChange={e=>setScheduleTask(e.target.value)}><option value="">Choose task...</option>{tasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></Field>
+              </>
+            ) : (
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(260px, 1fr))", gap:12 }}>
+                <Field label={`Equipment (${(scheduleForm.equipmentIds||[]).length} selected)`}>
+                  <select multiple size={Math.min(8, Math.max(4, equipment.length || 4))} style={{...inp, minHeight:150}} value={scheduleForm.equipmentIds||[]} onChange={e=>{ const ids=getSelectedValues(e); setScheduleForm(f=>({...f,equipmentIds:ids,equipmentId:ids[0]||""})); }}>
+                    {equipment.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name || e.nomenclature}</option>)}
+                  </select>
+                  <div style={{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" }}><Btn variant="secondary" onClick={()=>setScheduleForm(f=>({...f,equipmentIds:equipment.map(e=>e.id),equipmentId:equipment[0]?.id||""}))}>Select All Equipment</Btn><Btn variant="secondary" onClick={()=>setScheduleForm(f=>({...f,equipmentIds:[],equipmentId:""}))}>Clear</Btn></div>
+                </Field>
+                <Field label={`Inspection Tasks (${(scheduleForm.taskIds||[]).length} selected)`}>
+                  <select multiple size={Math.min(8, Math.max(4, tasks.length || 4))} style={{...inp, minHeight:150}} value={scheduleForm.taskIds||[]} onChange={e=>{ const ids=getSelectedValues(e); const first=ids[0]||""; setScheduleForm(f=>({...f,taskIds:ids,taskId:first})); }}>
+                    {tasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                  <div style={{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" }}><Btn variant="secondary" onClick={()=>{ const ids=tasks.map(t=>t.id); setScheduleForm(f=>({...f,taskIds:ids,taskId:ids[0]||""})); }}>Select All Tasks</Btn><Btn variant="secondary" onClick={()=>setScheduleForm(f=>({...f,taskIds:[],taskId:""}))}>Clear</Btn></div>
+                </Field>
+              </div>
+            )}
             <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(180px, 1fr))", gap:10 }}>
               <Field label="Frequency From Task"><input style={{...inp, background:T.grayLt}} readOnly value={taskById(scheduleForm.taskId)?.frequency || "Choose task first"} /></Field>
               <Field label="Last Inspection Date"><input style={inp} type="date" value={scheduleForm.lastInspectionDate || ""} onChange={e=>setScheduleLastInspectionDate(e.target.value)} /></Field>
@@ -5343,10 +5403,13 @@ function Inspections({ state, dispatch }) {
             <div style={{ marginTop:-4, color:T.muted, fontSize:12 }}>
               Enter the last inspection date to auto-generate the next inspection date from the task frequency, or enter the next inspection date manually.
             </div>
+            {!scheduleForm.id && <div style={{ background:T.greenLt, border:`1px solid ${T.green}44`, borderRadius:10, padding:"10px 12px", fontFamily:T.sans, fontSize:12, color:T.subtext }}>
+              This will create <b>{((scheduleForm.equipmentIds||[]).length || (scheduleForm.equipmentId?1:0)) * ((scheduleForm.taskIds||[]).length || (scheduleForm.taskId?1:0))}</b> inspection assignment{(((scheduleForm.equipmentIds||[]).length || (scheduleForm.equipmentId?1:0)) * ((scheduleForm.taskIds||[]).length || (scheduleForm.taskId?1:0)))===1?"":"s"}. Existing duplicate equipment/task combinations will be skipped.
+            </div>}
             <Field label="Assignment Notes"><textarea style={{...inp,minHeight:70}} value={scheduleForm.notes||""} onChange={e=>setScheduleForm(f=>({...f,notes:e.target.value}))} placeholder="Optional notes for this equipment assignment" /></Field>
             <div style={{ display:"flex", justifyContent:"space-between", gap:8 }}>
               {scheduleForm.id ? <Btn variant="danger" onClick={()=>{ if(confirm("Delete this inspection assignment?")){ dispatch({type:"DELETE_INSPECTION_SCHEDULE", payload:scheduleForm.id}); setModal(null); } }}>Delete</Btn> : <span/>}
-              <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}><Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn><Btn onClick={saveSchedule}>Save Assignment</Btn></div>
+              <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}><Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn><Btn onClick={saveSchedule}>{scheduleForm.id?"Save Assignment":"Create Assignment(s)"}</Btn></div>
             </div>
           </div>
         </Modal>
@@ -5358,7 +5421,8 @@ function Inspections({ state, dispatch }) {
 function PM({ state, dispatch }) {
   const [modal, setModal]         = useState(null); /* null | "edit" | "schedule" | "manualTrigger" */
   const [form, setForm]           = useState({});
-  const [schForm, setSchForm]     = useState({ equipmentId:"", taskId:"", task:"", triggerType:"time", timeInterval:"", timeUnit:"months", usageInterval:"", usageType:"hours", lastDoneDate:today(), lastDoneUsage:"" });
+  const blankPMScheduleForm = () => ({ equipmentId:"", equipmentIds:[], taskId:"", taskIds:[], task:"", triggerType:"time", timeInterval:"", timeUnit:"months", usageInterval:"", usageType:"hours", lastDoneDate:today(), lastDoneUsage:"" });
+  const [schForm, setSchForm]     = useState(blankPMScheduleForm());
   const [manualForm, setManualForm] = useState({ equipmentId:"", taskId:"" });
   const [taskModal, setTaskModal] = useState(false);
   const [editTaskId, setEditTaskId] = useState(null);
@@ -5570,26 +5634,60 @@ function PM({ state, dispatch }) {
     }).join(" • ");
   };
 
+  const getSelectedValues = (event) => Array.from(event.target.selectedOptions || []).map(o=>o.value).filter(Boolean);
+
   const saveSchedule = () => {
-    if(!schForm.equipmentId) return alert("Select equipment.");
-    const selectedTask = pmTasks.find(t=>t.id===schForm.taskId);
-    if(!selectedTask) return alert("Pick a named PM task first. The trigger is controlled by the task.");
-    const trig = getTaskTriggerSettings(selectedTask);
-    const schedulePayload = { ...schForm, task:selectedTask.name, ...trig };
-    const nextTriggers = buildScheduleTriggers(schedulePayload.triggers, schedulePayload.lastDoneDate, schedulePayload.lastDoneUsage);
-    const nextDate  = nextTriggers.find(t=>t.type==="time")?.nextDueDate || "";
-    const nextUsage = nextTriggers.find(t=>t.type==="hours"||t.type==="mileage")?.nextDueUsage || "";
     const isEditingSchedule = !!schForm.id;
-    dispatch({type:isEditingSchedule ? "UPDATE_PM_SCHEDULE" : "ADD_PM_SCHEDULE", payload:{
-      ...schedulePayload,
-      id:isEditingSchedule ? schForm.id : genId("SCH"),
-      triggers:nextTriggers,
-      nextDueDate:nextDate, nextDueUsage:nextUsage,
-      created:schForm.created || today(),
-      updated:today(),
-    }});
+    const equipmentIds = isEditingSchedule
+      ? [schForm.equipmentId].filter(Boolean)
+      : ((schForm.equipmentIds || []).length ? schForm.equipmentIds : [schForm.equipmentId].filter(Boolean));
+    const taskIds = isEditingSchedule
+      ? [schForm.taskId].filter(Boolean)
+      : ((schForm.taskIds || []).length ? schForm.taskIds : [schForm.taskId].filter(Boolean));
+    if(!equipmentIds.length) return alert("Select at least one equipment item.");
+    if(!taskIds.length) return alert("Pick at least one named PM task first. The trigger is controlled by each task.");
+
+    const makePayload = (equipmentId, taskId, existingId=null) => {
+      const selectedTask = pmTasks.find(t=>t.id===taskId);
+      if(!selectedTask) return null;
+      const trig = getTaskTriggerSettings(selectedTask);
+      const schedulePayload = { ...schForm, equipmentId, taskId, equipmentIds:undefined, taskIds:undefined, task:selectedTask.name, ...trig };
+      const nextTriggers = buildScheduleTriggers(schedulePayload.triggers, schedulePayload.lastDoneDate, schedulePayload.lastDoneUsage);
+      const nextDate  = nextTriggers.find(t=>t.type==="time")?.nextDueDate || "";
+      const nextUsage = nextTriggers.find(t=>t.type==="hours"||t.type==="mileage")?.nextDueUsage || "";
+      return {
+        ...schedulePayload,
+        id:existingId || genId("SCH"),
+        triggers:nextTriggers,
+        nextDueDate:nextDate,
+        nextDueUsage:nextUsage,
+        created:schForm.created || today(),
+        updated:today(),
+      };
+    };
+
+    if(isEditingSchedule) {
+      const payload = makePayload(equipmentIds[0], taskIds[0], schForm.id);
+      if(!payload) return alert("Pick a valid PM task.");
+      dispatch({type:"UPDATE_PM_SCHEDULE", payload});
+    } else {
+      let added = 0;
+      let skipped = 0;
+      equipmentIds.forEach(equipmentId => {
+        taskIds.forEach(taskId => {
+          const payload = makePayload(equipmentId, taskId);
+          if(!payload) return;
+          const exists = schedules.some(s => String(s.equipmentId) === String(equipmentId) && String(s.taskId) === String(taskId));
+          if(exists) { skipped += 1; return; }
+          dispatch({type:"ADD_PM_SCHEDULE", payload});
+          added += 1;
+        });
+      });
+      if(!added) { alert("Those PM task assignments already exist."); return; }
+      if(skipped) alert(`${added} PM assignment${added===1?"":"s"} added. ${skipped} duplicate${skipped===1?"":"s"} skipped.`);
+    }
     setModal(null);
-    setSchForm({equipmentId:"",taskId:"",task:"",triggerType:"time",timeInterval:"",timeUnit:"months",usageInterval:"",usageType:"hours",lastDoneDate:today(),lastDoneUsage:""});
+    setSchForm(blankPMScheduleForm());
   };
 
   const buildTaskStepsText = (task) => buildNumberedStepsText(task?.steps);
@@ -5851,7 +5949,7 @@ function PM({ state, dispatch }) {
           Tasks Library ({pmTasks.length})
         </Btn>
         <div style={{ display:"flex", gap:8 }}><Btn variant="secondary" onClick={openNewTask}>+ Create New Task</Btn>{selectedLibraryTask&&<Btn variant="secondary" onClick={()=>copyPMTask(selectedLibraryTask)}>Copy Selected Task</Btn>}</div>
-        <Btn onClick={()=>setModal("schedule")}>Task-to-Equipment</Btn>
+        <Btn onClick={()=>{ setSchForm(blankPMScheduleForm()); setModal("schedule"); }}>Task-to-Equipment</Btn>
         <Btn variant="secondary" onClick={()=>setModal("manualTrigger")}>Manual Trigger</Btn>
       </div>
 
@@ -5916,7 +6014,7 @@ function PM({ state, dispatch }) {
                                     <td style={{ padding:"10px", whiteSpace:"nowrap" }}><span style={{ borderRadius:999, padding:"3px 9px", fontFamily:T.sans, fontSize:11, fontWeight:800, color:r.status==="Overdue"?T.red:r.status==="Due Soon"?T.amber:T.green, background:r.status==="Overdue"?"#fee2e2":r.status==="Due Soon"?"#fef3c7":"#dcfce7" }}>{r.status}</span></td>
                                     <td style={{ padding:"8px 10px", whiteSpace:"nowrap" }} onClick={e=>e.stopPropagation()}>
                                       <Btn small onClick={()=>createPMWorkOrderFromSchedule(r, true)}>Create WO</Btn>
-                                      <Btn small variant="secondary" onClick={()=>{ setSchForm({...r}); setModal("schedule"); }} style={{ marginLeft:6 }}>Edit</Btn>
+                                      <Btn small variant="secondary" onClick={()=>{ setSchForm({...r, equipmentIds:[r.equipmentId].filter(Boolean), taskIds:[r.taskId].filter(Boolean)}); setModal("schedule"); }} style={{ marginLeft:6 }}>Edit</Btn>
                                       <Btn small variant="danger" onClick={()=>delSchedule(r.id)} style={{ marginLeft:6 }}>Del</Btn>
                                     </td>
                                   </tr>
@@ -6181,27 +6279,56 @@ function PM({ state, dispatch }) {
           <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.subtext }}>
             Assign a PM task to equipment. The trigger comes from the task itself; this screen only links the task to the equipment.
           </p>
+          {!schForm.id && <div style={{ background:T.accentLt, border:`1px solid ${T.accent}44`, borderRadius:10, padding:"10px 12px", marginBottom:14, fontFamily:T.sans, fontSize:12, color:T.subtext }}>
+            Select multiple equipment items and multiple service tasks to create them all at once. This will create <b>{((schForm.equipmentIds||[]).length || (schForm.equipmentId?1:0)) * ((schForm.taskIds||[]).length || (schForm.taskId?1:0))}</b> assignment{(((schForm.equipmentIds||[]).length || (schForm.equipmentId?1:0)) * ((schForm.taskIds||[]).length || (schForm.taskId?1:0)))===1?"":"s"}; duplicates are skipped.
+          </div>}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
-            <div style={{ gridColumn:"span 2", marginBottom:14 }}>
-              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Equipment *</label>
-              <select style={sel} value={schForm.equipmentId} onChange={SF("equipmentId")}>
-                <option value="">-- Select Equipment --</option>
-                {state.equipment.map(e=><option key={e.id} value={e.id}>{e.name} ({e.id})</option>)}
-              </select>
-            </div>
-            <div style={{ gridColumn:"span 2", marginBottom:14 }}>
-              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Service Task</label>
-              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                <select style={{ ...sel, flex:1 }} value={schForm.taskId||""} onChange={e=>{
-                  const t = pmTasks.find(t=>t.id===e.target.value);
-                  if(t) setSchForm(f=>({...f, taskId:t.id, task:t.name, ...getTaskTriggerSettings(t)}));
-                  else  setSchForm(f=>({...f,taskId:"",task:""}));
-                }}>
-                  <option value="">-- Pick from Tasks Library --</option>
-                  {pmTasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
+            {schForm.id ? (
+              <>
+                <div style={{ gridColumn:"span 2", marginBottom:14 }}>
+                  <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Equipment *</label>
+                  <select style={sel} value={schForm.equipmentId} onChange={e=>setSchForm(f=>({...f,equipmentId:e.target.value,equipmentIds:e.target.value?[e.target.value]:[]}))}>
+                    <option value="">-- Select Equipment --</option>
+                    {state.equipment.map(e=><option key={e.id} value={e.id}>{e.name} ({e.id})</option>)}
+                  </select>
+                </div>
+                <div style={{ gridColumn:"span 2", marginBottom:14 }}>
+                  <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Service Task</label>
+                  <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                    <select style={{ ...sel, flex:1 }} value={schForm.taskId||""} onChange={e=>{
+                      const t = pmTasks.find(t=>t.id===e.target.value);
+                      if(t) setSchForm(f=>({...f, taskId:t.id, taskIds:[t.id], task:t.name, ...getTaskTriggerSettings(t)}));
+                      else  setSchForm(f=>({...f,taskId:"",taskIds:[],task:""}));
+                    }}>
+                      <option value="">-- Pick from Tasks Library --</option>
+                      {pmTasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div style={{ gridColumn:"span 2", display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(280px, 1fr))", gap:14, marginBottom:14 }}>
+                <div>
+                  <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Equipment * ({(schForm.equipmentIds||[]).length} selected)</label>
+                  <select multiple size={Math.min(9, Math.max(5, state.equipment.length || 5))} style={{...sel, minHeight:165}} value={schForm.equipmentIds||[]} onChange={e=>{ const ids=getSelectedValues(e); setSchForm(f=>({...f,equipmentIds:ids,equipmentId:ids[0]||""})); }}>
+                    {state.equipment.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name || e.nomenclature}</option>)}
+                  </select>
+                  <div style={{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" }}><Btn variant="secondary" onClick={()=>setSchForm(f=>({...f,equipmentIds:state.equipment.map(e=>e.id),equipmentId:state.equipment[0]?.id||""}))}>Select All Equipment</Btn><Btn variant="secondary" onClick={()=>setSchForm(f=>({...f,equipmentIds:[],equipmentId:""}))}>Clear</Btn></div>
+                </div>
+                <div>
+                  <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Service Tasks ({(schForm.taskIds||[]).length} selected)</label>
+                  <select multiple size={Math.min(9, Math.max(5, pmTasks.length || 5))} style={{...sel, minHeight:165}} value={schForm.taskIds||[]} onChange={e=>{
+                    const ids=getSelectedValues(e);
+                    const first=ids[0]||"";
+                    const t = pmTasks.find(t=>t.id===first);
+                    setSchForm(f=>({...f,taskIds:ids,taskId:first,task:t?.name||"",...(t?getTaskTriggerSettings(t):{})}));
+                  }}>
+                    {pmTasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                  <div style={{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" }}><Btn variant="secondary" onClick={()=>{ const ids=pmTasks.map(t=>t.id); const first=ids[0]||""; const t=pmTasks.find(x=>x.id===first); setSchForm(f=>({...f,taskIds:ids,taskId:first,task:t?.name||"",...(t?getTaskTriggerSettings(t):{})})); }}>Select All Tasks</Btn><Btn variant="secondary" onClick={()=>setSchForm(f=>({...f,taskIds:[],taskId:"",task:""}))}>Clear</Btn></div>
+                </div>
               </div>
-            </div>
+            )}
             {schForm.taskId && (()=>{ const selectedTask = pmTasks.find(t=>t.id===schForm.taskId); return (
               <div style={{ gridColumn:"span 2", marginBottom:14, background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 12px" }}>
                 <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:4 }}>Trigger controlled by the selected task</div>
@@ -6225,7 +6352,7 @@ function PM({ state, dispatch }) {
           )}
           <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
             <Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn>
-            <Btn onClick={saveSchedule}>Create Schedule</Btn>
+            <Btn onClick={saveSchedule}>{schForm.id?"Save Schedule":"Create Assignment(s)"}</Btn>
           </div>
         </Modal>
       )}
