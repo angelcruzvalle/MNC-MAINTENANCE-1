@@ -1568,6 +1568,20 @@ const statusStyle = {
   "Due Soon":                      { color:T.amber, bg:"#fffbeb",  border:"#fcd34d" },
   "Overdue":                       { color:"#7f1d1d", bg:"#fef2f2",  border:"#fca5a5" },
 };
+const equipmentStatusTipColor = (status) => {
+  const normalized = status || "Fully Operational";
+  if(normalized === "Out of Service / Deadline" || normalized === "Out of Service") return "#ef4444";
+  if(normalized === "Operational with Deficiencies") return "#f59e0b";
+  if(normalized === "Fully Operational") return "#22c55e";
+  return T.borderHi;
+};
+const EquipmentStatusTip = ({ status, label }) => {
+  const color = equipmentStatusTipColor(status);
+  return (
+    <span title={label || status || "Equipment status"} style={{ display:"inline-block", width:6, height:22, borderRadius:999, background:color, flexShrink:0, boxShadow:`0 0 0 1px ${color}22` }} />
+  );
+};
+
 const priorityStyle = {
   "High":   { color:"#7f1d1d", bg:"#fef2f2", border:"#fca5a5" },
   "Medium": { color:"#78350f", bg:"#fff7ed", border:"#fdba74" },
@@ -3348,13 +3362,18 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               // Keep work order rows neutral in dark/light mode. Equipment status is shown only by the small left color tab.
               const rowBg = isDarkMode ? (i%2===0 ? T.card : T.grayLt) : (i%2===0 ? "#fff" : T.grayLt);
               const rowHover = isDarkMode ? T.accentLt : T.grayLt;
-              const rowBorder = isOpenInspection ? "4px solid #7dd3fc" : rowStatus==="Out of Service / Deadline" ? "4px solid #ef4444" : rowStatus==="Operational with Deficiencies" ? "4px solid #f59e0b" : "4px solid transparent";
+              const rowBorder = isOpenInspection ? "4px solid #7dd3fc" : "4px solid transparent";
               const completedDate = wo.completed || wo.completedDate || wo.dateCompleted || wo.closedDate || wo.closedAt || wo.completedAt || "";
               return (
                 <tr key={wo.id} onClick={()=>openEdit(wo)} style={{ borderBottom:`1px solid ${T.border}`, borderLeft:rowBorder, background:rowBg, cursor:"pointer", transition:"background .12s" }}
                   onMouseEnter={e=>e.currentTarget.style.background=rowHover}
                   onMouseLeave={e=>e.currentTarget.style.background=rowBg}>
-                  <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:T.subtext, whiteSpace:"nowrap" }}>{wo.equipment || "—"}</td>
+                  <td style={{ padding:"11px 14px", whiteSpace:"nowrap" }}>
+                    <div style={{ display:"inline-flex", alignItems:"center", gap:7 }}>
+                      <EquipmentStatusTip status={rowStatus} label={rowStatus} />
+                      <span style={{ fontFamily:T.mono, fontSize:12, color:T.subtext }}>{wo.equipment || "—"}</span>
+                    </div>
+                  </td>
                   <td style={{ padding:"11px 14px", color:T.subtext, whiteSpace:"nowrap" }}>
                     <div style={{ fontWeight:600, color:T.text }}>{eqLabel}</div>
                     {wo.parentName && <div style={{ fontSize:11, color:T.muted }}>on: {wo.parentName}</div>}
@@ -3887,8 +3906,8 @@ function Equipment({ state, dispatch }) {
     setHistoryEdit(false);
   };
 
-  /* Equipment tab is inventory-focused: no operational status colors shown here */
-  const rowStyle = () => ({ bg:"#fff", borderColor:T.border, leftBorder:`4px solid ${T.border}` });
+  /* Equipment tab stays neutral; operational status is shown by the small color tip beside Equipment #. */
+  const rowStyle = () => ({ bg:T.card, borderColor:T.border, leftBorder:`4px solid transparent` });
 
   /* EqForm as a render function (NOT a component) to fix the typing/remount bug */
   const addCategory = () => {
@@ -4420,7 +4439,10 @@ function Equipment({ state, dispatch }) {
 
                     <div style={{ width:90, flexShrink:0, marginRight:20 }}>
                       <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Equip #</div>
-                      <div style={{ fontFamily:T.mono, fontSize:12, color:T.subtext, marginTop:3 }}>{eq.id}</div>
+                      <div style={{ display:"flex", alignItems:"center", gap:7, marginTop:3 }}>
+                        <EquipmentStatusTip status={eq.status} label={eq.status || "Fully Operational"} />
+                        <span style={{ fontFamily:T.mono, fontSize:12, color:T.subtext }}>{eq.id}</span>
+                      </div>
                     </div>
 
                     <div style={{ flex:1, minWidth:180, marginRight:20 }}>
@@ -6678,12 +6700,10 @@ function UsageTracking({ state, dispatch }) {
           const totM  = currentOf(eq.id,"mileage");
           const totF  = totalFuelOf(eq.id);
           const e     = eqEntry(eq.id);
-          const rs    = eq.status==="Out of Service / Deadline" ? {bg:"#fff5f5",left:"3px solid #ef4444"} :
-                        eq.status==="Operational with Deficiencies" ? {bg:"#fffdf0",left:"3px solid #f59e0b"} :
-                        {bg:"#fff",left:"3px solid #22c55e"};
+          const rs    = { bg:idx%2===0 ? T.card : T.grayLt, left:"3px solid transparent" };
 
           return (
-            <div key={eq.id} style={{ borderBottom:`1px solid ${T.border}`, background:idx%2===0?rs.bg:"#fafbfc", borderLeft:rs.left }}>
+            <div key={eq.id} style={{ borderBottom:`1px solid ${T.border}`, background:rs.bg, borderLeft:rs.left }}>
 
               {/* Data row */}
               <div style={{ display:"grid", gridTemplateColumns:"220px 80px 120px 120px 80px 1fr 110px 110px 76px", padding:"10px 16px", gap:8, alignItems:"center" }}>
@@ -6695,7 +6715,10 @@ function UsageTracking({ state, dispatch }) {
                 </button>
 
                 {/* Equip # */}
-                <div style={{ fontFamily:T.mono, fontSize:11, color:T.subtext }}>{eq.id}</div>
+                <div style={{ display:"flex", alignItems:"center", gap:7 }}>
+                  <EquipmentStatusTip status={eq.status} label={eq.status || "Fully Operational"} />
+                  <span style={{ fontFamily:T.mono, fontSize:11, color:T.subtext }}>{eq.id}</span>
+                </div>
 
                 {/* Current Hours */}
                 <div>
@@ -8215,12 +8238,14 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
     e.target.value = "";
   };
 
+  const [settingsSavedNotice, setSettingsSavedNotice] = useState("");
   const save = () => {
     const { _newLoc, _newArea, _newAreaFacilityId, _areaFacilityId, _selectedFacilityId, ...cleanForm } = form;
     const cleanLocations = normalizeMaintForgeLocations({ ...state, settings:cleanForm, locations:cleanForm.locations });
     const cleanAreas = normalizeMaintForgeAreas({ ...state, settings:cleanForm, locations:cleanLocations, areas:cleanForm.areas || [] });
     dispatch({ type:"UPDATE_SETTINGS", payload:{ ...cleanForm, brandLogoMode:cleanForm.logoMode, locations: cleanLocations, areas: cleanAreas } });
-    onClose();
+    setSettingsSavedNotice("Settings saved. Admin Center stayed open so you can keep working.");
+    window.setTimeout(()=>setSettingsSavedNotice(""), 3200);
   };
 
   return (
@@ -8543,7 +8568,9 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
 
 
       <div className="mf-admin-footer" style={{ display:"flex", gap:10, justifyContent:"space-between", alignItems:"center", marginTop:16, padding:"14px", border:`1px solid ${T.border}`, borderRadius:14, background:T.surface, boxShadow:"none", position:"static", zIndex:1, flexWrap:"wrap" }}>
-        <div style={{ fontSize:12, color:T.muted, minWidth:220, lineHeight:1.35 }}>Admin Center changes stay local until you click Save Settings.</div>
+        <div style={{ fontSize:12, color:settingsSavedNotice ? T.green : T.muted, minWidth:220, lineHeight:1.35, fontWeight:settingsSavedNotice ? 800 : 400 }}>
+          {settingsSavedNotice || "Admin Center changes stay local until you click Save Settings."}
+        </div>
         <div className="mf-admin-footer-actions" style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end" }}>
           <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
           <Btn onClick={save}>Save Settings</Btn>
