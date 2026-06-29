@@ -1042,6 +1042,61 @@ function reducer(state, { type, payload }) {
         inventoryItems: (state.inventoryItems||[]).map(i => String(i.equipmentId)===String(originalId) ? { ...i, equipmentId:newId } : i),
       };
     }
+    case "TRANSFER_EQUIPMENT": {
+      const equipmentId = payload?.equipmentId;
+      const targetFacilityId = payload?.targetFacilityId;
+      const transferAttachments = payload?.transferAttachments !== false;
+      if(!equipmentId || !targetFacilityId) return state;
+      const facilities = normalizeMaintForgeLocations(state);
+      const target = facilities.find(f => String(f.id) === String(targetFacilityId) || String(f.name) === String(targetFacilityId));
+      if(!target) return state;
+      const eq = (state.equipment || []).find(e => String(e.id) === String(equipmentId));
+      if(!eq) return state;
+      const oldFacilityId = eq.locationId || eq.facilityId || "";
+      const oldFacilityName = eq.locationName || eq.facilityName || eq.location || eq.facility || locationNameForId(state, oldFacilityId) || "Unassigned Inventory";
+      const targetStamp = { locationId:target.id, facilityId:target.id, locationName:target.name, facilityName:target.name, location:target.name, facility:target.name };
+      const stampLinkedRecord = (record={}) => ({ ...record, ...targetStamp });
+      const attachments = Array.isArray(eq.attachments) ? eq.attachments : [];
+      const transferredAttachments = transferAttachments ? attachments.map(a => ({ ...a, ...targetStamp, location:target.name, facility:target.name })) : [];
+      const detachedAttachments = transferAttachments ? [] : attachments.map(a => ({
+        ...a,
+        id:a.id || genId("INV"),
+        name:a.name || a.nomenclature || `Attachment from ${eq.id}`,
+        eilNumber:a.eilNumber || "",
+        serial:a.serial || "",
+        category:a.category || "Attachment / Implement",
+        turnInStatus:a.turnInStatus || "Active",
+        condition:a.condition || "Good",
+        locationId:oldFacilityId,
+        facilityId:oldFacilityId,
+        locationName:oldFacilityName,
+        facilityName:oldFacilityName,
+        location:oldFacilityName,
+        facility:oldFacilityName,
+        parentEquipmentId:"",
+        parentEquipmentName:"",
+        detachedFromEquipmentId:eq.id,
+        detachedFromEquipmentName:eq.name || eq.nomenclature || eq.id,
+        detachedOn:today(),
+        transferNote:`Detached from ${eq.id} during transfer to ${target.name}`,
+      }));
+      const matchesEquipment = (value) => String(value || "") === String(equipmentId);
+      return {
+        ...state,
+        equipment:(state.equipment || []).map(e => matchesEquipment(e.id) ? { ...e, ...targetStamp, attachments:transferredAttachments } : e),
+        workOrders:(state.workOrders || []).map(w => matchesEquipment(workOrderEquipmentId(w) || w.equipment || w.equipmentId) ? stampLinkedRecord(w) : w),
+        usageLogs:(state.usageLogs || []).map(l => matchesEquipment(l.equipmentId || l.equipment || l.eqId) ? stampLinkedRecord(l) : l),
+        pmSchedules:(state.pmSchedules || []).map(s => matchesEquipment(s.equipmentId || s.equipment) ? stampLinkedRecord(s) : s),
+        inspectionSchedules:(state.inspectionSchedules || []).map(s => matchesEquipment(s.equipmentId || s.equipment) ? stampLinkedRecord(s) : s),
+        preventiveMaintenance:(state.preventiveMaintenance || []).map(pm => matchesEquipment(pm.equipmentId || pm.equipment) ? stampLinkedRecord(pm) : pm),
+        pmTasks:(state.pmTasks || []).map(t => matchesEquipment(t.equipmentId || t.equipment) ? stampLinkedRecord(t) : t),
+        inspectionTasks:(state.inspectionTasks || []).map(t => matchesEquipment(t.equipmentId || t.equipment) ? stampLinkedRecord(t) : t),
+        workOrderRequests:(state.workOrderRequests || []).map(r => matchesEquipment(r.equipmentId || r.equipment) ? stampLinkedRecord(r) : r),
+        parts:(state.parts || []).map(part => matchesEquipment(part.equipmentId || part.equipment) ? stampLinkedRecord(part) : part),
+        inventoryItems:[...(state.inventoryItems || []).map(i => matchesEquipment(i.equipmentId || i.equipment || i.parentEquipmentId) ? stampLinkedRecord(i) : i), ...detachedAttachments],
+        notifications:[makeNotification({ id:`N${Date.now()}`, type:"equipment", msg:`${eq.id} transferred to ${target.name}${transferAttachments ? " with attachments" : "; attachments stayed in prior facility inventory"}.`, read:false }), ...(state.notifications || [])],
+      };
+    }
     case "DELETE_EQ":     return { ...state, equipment: state.equipment.filter(e => e.id!==payload) };
     case "ADD_PART":      return { ...state, parts: [payload,...state.parts] };
     case "UPDATE_PART":   return { ...state, parts: state.parts.map(p => p.id===payload.id ? payload : p) };
@@ -2051,241 +2106,95 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
 }
 
 function Dashboard({ state, dispatch, setTab, onSettings }) {
-  const { workOrders:wos=[], equipment:eqs=[], preventiveMaintenance:pms=[], parts=[] } = state;
-  const settings = state.settings || {};
-  const today_s = today();
-  const monthKey = today_s.slice(0,7);
-  const openWOs = wos.filter(w=>w.status==="Open").length;
-  const inProgWOs = wos.filter(w=>w.status==="In Progress").length;
-  const awaitParts = wos.filter(w=>w.status==="Awaiting Parts").length;
-  const onHoldWOs = wos.filter(w=>w.status==="On Hold").length;
-  const activeWOs = wos.filter(w=>w.status!=="Completed").length;
-  const highPriority = wos.filter(w=>w.status!=="Completed" && w.priority==="High").length;
-  const completedMo = wos.filter(w=>w.status==="Completed" && (w.completed||"").slice(0,7)===monthKey).length;
-  const outOfSvc = eqs.filter(e=>e.status==="Out of Service / Deadline").length;
-  const withDefic = eqs.filter(e=>e.status==="Operational with Deficiencies").length;
-  const readyAssets = Math.max(0, eqs.length - outOfSvc - withDefic);
-  const readiness = eqs.length ? Math.round((readyAssets / eqs.length) * 100) : 100;
-  const pmOverdue = pms.filter(p=>p.status==="Overdue").length;
-  const pmDueSoon = pms.filter(p=>p.status==="Due Soon").length;
-  const lowStock = parts.filter(p=>p.lowStockAlert!==false && (+p.qty||0)<=(+p.minQty||0)).length;
-  const totalCost = w => woTotalCost(w);
-  const spendMo = wos.filter(w=>w.status==="Completed" && (w.completed||"").slice(0,7)===monthKey).reduce((s,w)=>s+totalCost(w),0);
-  const urgentWOs = wos.filter(w=>w.status!=="Completed").sort((a,b)=>({High:0,Medium:1,Low:2}[a.priority]??3)-({High:0,Medium:1,Low:2}[b.priority]??3)).slice(0,5);
-  const servicesDue = pms.filter(p=>p.status==="Overdue"||p.status==="Due Soon").map(pm=>({...pm, eqName:eqs.find(e=>e.id===pm.equipment)?.name||pm.equipment})).sort((a,b)=>(a.nextDue||"").localeCompare(b.nextDue||"")).slice(0,5);
-  const deadlineEqs = eqs.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies").slice(0,5);
-  const criticalParts = parts.filter(p=>p.lowStockAlert!==false && (+p.qty||0)<=(+p.minQty||0)).slice(0,5);
-  const recentWOs = [...wos].sort((a,b)=>(b.created||"").localeCompare(a.created||"")).slice(0,5);
+  const wos = state.workOrders || [];
+  const eqs = state.equipment || [];
+  const parts = state.parts || [];
+  const pmSchedules = state.pmSchedules || [];
+  const inspectionSchedules = state.inspectionSchedules || [];
+  const requests = state.workOrderRequests || [];
+  const todayStr = today();
+  const soon = new Date(); soon.setDate(soon.getDate() + 14);
+  const soonStr = soon.toISOString().split("T")[0];
+  const activeWOs = wos.filter(w=>w.status !== "Completed");
+  const highPriority = activeWOs.filter(w=>w.priority === "High");
+  const awaitingParts = activeWOs.filter(w=>w.status === "Awaiting Parts");
+  const deadlineEqs = eqs.filter(e=>e.status === "Out of Service / Deadline");
+  const deficientEqs = eqs.filter(e=>e.status === "Operational with Deficiencies");
+  const readyEqs = eqs.filter(e=>(e.status || "Fully Operational") === "Fully Operational");
+  const readiness = eqs.length ? Math.round((readyEqs.length / eqs.length) * 100) : 100;
+  const duePM = pmSchedules.filter(s => (s.nextDueDate && s.nextDueDate <= soonStr) || s.status === "Overdue" || s.status === "Due Soon");
+  const dueInspections = inspectionSchedules.filter(s => (s.nextDueDate && s.nextDueDate <= soonStr) || s.status === "Overdue" || s.status === "Due Soon");
+  const lowStock = parts.filter(p=>p.lowStockAlert !== false && (+p.qty || 0) <= (+p.minQty || 0));
+  const openRequests = requests.filter(r=>!["Converted","Dismissed","Completed"].includes(r.status));
+  const completedThisMonth = wos.filter(w=>w.status === "Completed" && String(w.completed || w.completedDate || "").slice(0,7) === todayStr.slice(0,7));
+  const monthSpend = completedThisMonth.reduce((sum,w)=>sum + woTotalCost(w), 0);
 
-  const [customize, setCustomize] = useState(false);
-  const defaultLayout = ["focus","today","workorders","pm","equipment","inventory","activity","costs"];
-  const presetMap = {
-    calm:{ label:"Calm Operations", layout:["focus","today","workorders","pm","equipment","inventory","activity","costs"], hidden:[], sizes:{ focus:"hero", today:"wide", workorders:"large", pm:"large", equipment:"large", inventory:"medium", activity:"wide", costs:"medium" } },
-    mechanic:{ label:"Mechanic Daily Board", layout:["today","focus","workorders","pm","inventory","equipment","activity","costs"], hidden:["costs"], sizes:{ today:"hero", focus:"wide", workorders:"large", pm:"large", inventory:"medium", equipment:"medium", activity:"wide" } },
-    manager:{ label:"Manager Console", layout:["focus","costs","equipment","workorders","pm","inventory","activity","today"], hidden:[], sizes:{ focus:"wide", costs:"large", equipment:"large", workorders:"medium", pm:"medium", inventory:"medium", activity:"wide", today:"medium" } },
-    simple:{ label:"Simple Clean", layout:["today","workorders","pm","equipment","inventory","activity","focus","costs"], hidden:[], sizes:{ today:"wide", workorders:"wide", pm:"wide", equipment:"wide", inventory:"wide", activity:"wide", focus:"wide", costs:"wide" } }
+  const eqName = id => {
+    const eq = eqs.find(e=>String(e.id)===String(id));
+    return eq ? `${eq.id} — ${eq.name || eq.nomenclature || "Equipment"}` : (id || "No equipment");
   };
-  const activePreset = settings.dashboardPreset || "calm";
-  const savedLayout = settings.dashboardLayout?.length ? settings.dashboardLayout : presetMap.calm.layout;
-  const layout = savedLayout.filter(id=>defaultLayout.includes(id));
-  const fullLayout = [...layout, ...defaultLayout.filter(id=>!layout.includes(id))];
-  const hidden = settings.dashboardHidden || [];
-  const sizes = settings.dashboardWidgetSizes || presetMap.calm.sizes;
-  const saveDash = (patch, mode="custom") => {
-    const next = { ...settings, ...patch };
-    if(mode === "custom") {
-      next.dashboardPreset = "custom";
-      next.dashboardCustomPreset = {
-        dashboardLayout: next.dashboardLayout?.length ? next.dashboardLayout : fullLayout,
-        dashboardHidden: next.dashboardHidden || [],
-        dashboardWidgetSizes: next.dashboardWidgetSizes || sizes
-      };
-    }
-    dispatch({ type:"UPDATE_SETTINGS", payload:next });
-  };
-  const applyPreset = preset => {
-    if(preset === "custom") {
-      if(settings.dashboardCustomPreset) saveDash({ ...settings.dashboardCustomPreset, dashboardPreset:"custom" }, "preset");
-      else saveDash({ dashboardPreset:"custom" }, "preset");
-      return;
-    }
-    const p = presetMap[preset] || presetMap.calm;
-    saveDash({ dashboardPreset:preset, dashboardLayout:p.layout, dashboardHidden:p.hidden, dashboardWidgetSizes:p.sizes }, "preset");
-  };
-  const moveWidget = (id, dir) => {
-    const arr = [...fullLayout];
-    const i = arr.indexOf(id), j = i + dir;
-    if(i<0 || j<0 || j>=arr.length) return;
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-    saveDash({ dashboardLayout:arr });
-  };
-  const setWidgetSize = (id, size) => saveDash({ dashboardWidgetSizes:{ ...sizes, [id]:size } });
-  const toggleWidget = id => saveDash({ dashboardHidden:hidden.includes(id) ? hidden.filter(x=>x!==id) : [...hidden, id] });
-  const lockIfEditing = e => {
-    if(!customize) return;
-    if(e.target.closest?.("[data-dash-control]")) return;
-    e.preventDefault();
-    e.stopPropagation();
-  };
-  const go = tab => { if(!customize && tab) setTab(tab); };
-  const sizeStyle = id => {
-    const size = sizes[id] || "large";
-    if(size==="small") return { gridColumn:"span 1", minHeight:130 };
-    if(size==="medium") return { gridColumn:"span 2", minHeight:175 };
-    if(size==="large") return { gridColumn:"span 3", minHeight:220 };
-    if(size==="wide") return { gridColumn:"span 6", minHeight:190 };
-    return { gridColumn:"1 / -1", minHeight:245 };
-  };
-
-  const ActionBtn = ({ icon, label, tab, accent=T.accent, onClick }) => (
-    <button onClick={()=>{ if(customize) return; if(onClick) onClick(); else go(tab); }} disabled={customize} style={{ display:"flex", alignItems:"center", gap:10, border:`1px solid ${T.border}`, background:T.card, borderRadius:16, padding:"13px 14px", cursor:customize?"default":"pointer", opacity:customize ? .85 : 1, textAlign:"left", boxShadow:"0 8px 20px rgba(15,23,42,.06)" }}>
-      <span style={{ width:34, height:34, borderRadius:12, background:accent+"18", color:accent, display:"grid", placeItems:"center", fontSize:17 }}>{icon}</span>
-      <span style={{ display:"flex", flexDirection:"column", lineHeight:1.15 }}><b style={{ fontSize:13 }}>{label}</b><small style={{ color:T.muted, marginTop:3 }}>Open</small></span>
-    </button>
-  );
-  const Metric = ({ label, value, sub, color=T.accent }) => (
-    <div style={{ border:`1px solid ${T.border}`, borderRadius:18, padding:14, background:"linear-gradient(180deg,#fff,#fbfcff)", minWidth:0 }}>
-      <div style={{ color:T.muted, fontSize:11, fontWeight:800, textTransform:"uppercase", letterSpacing:.45 }}>{label}</div>
-      <div style={{ color, fontSize:28, fontWeight:950, letterSpacing:-.8, marginTop:3 }}>{value}</div>
-      {sub && <div style={{ color:T.muted, fontSize:12, marginTop:2 }}>{sub}</div>}
-    </div>
-  );
-  const MiniRow = ({ title, sub, badge, color=T.accent, tab }) => (
-    <button onClick={()=>go(tab)} disabled={customize} style={{ width:"100%", border:"none", background:"transparent", borderBottom:`1px solid ${T.border}`, padding:"10px 0", display:"flex", justifyContent:"space-between", gap:10, textAlign:"left", cursor:customize?"default":"pointer" }}>
-      <span style={{ minWidth:0 }}><b style={{ display:"block", fontSize:13, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{title}</b><small style={{ color:T.muted, display:"block", marginTop:2, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{sub}</small></span>
-      {badge && <span style={{ alignSelf:"center", border:`1px solid ${color}`, color, borderRadius:999, padding:"3px 8px", fontSize:11, fontWeight:900, whiteSpace:"nowrap" }}>{badge}</span>}
-    </button>
-  );
-
-  const cardHidden = settings.dashboardCardHidden || {};
-  const itemCatalog = {
-    focus:{ quick:"Quick actions", metrics:"Status summary" },
-    today:{ plan:"Daily game plan" },
-    workorders:{ metrics:"Work order counts", list:"Work order list" },
-    pm:{ metrics:"PM counts", list:"PM due list" },
-    equipment:{ metrics:"Equipment counts", list:"Equipment alert list" },
-    inventory:{ metrics:"Inventory counts", list:"Low stock list" },
-    activity:{ list:"Recent activity list" },
-    costs:{ metrics:"Cost metrics", note:"Export reminder" }
-  };
-  const isItemHidden = (card,item) => (cardHidden[card] || []).includes(item);
-  const setItemHidden = (card,item,hide=true) => {
-    const current = cardHidden[card] || [];
-    const nextList = hide ? [...new Set([...current,item])] : current.filter(x=>x!==item);
-    saveDash({ dashboardCardHidden:{ ...cardHidden, [card]:nextList } });
-  };
-  const DashItem = ({ card, item, children }) => {
-    if(isItemHidden(card,item)) return null;
-    return <div style={{ position:"relative", paddingTop:customize?6:0 }}>
-      {customize && <button data-dash-control="true" title="Remove this item from this card" onClick={()=>setItemHidden(card,item,true)} style={{ position:"absolute", top:-6, right:-6, width:22, height:22, borderRadius:999, border:`1px solid ${T.border}`, background:T.card, color:T.red, fontWeight:950, cursor:"pointer", lineHeight:"18px", boxShadow:"0 4px 12px rgba(15,23,42,.12)" }}>×</button>}
+  const click = (tab) => setTab && setTab(tab);
+  const CardButton = ({ title, value, sub, color=T.accent, tab, children }) => (
+    <button type="button" onClick={()=>tab && click(tab)} style={{ textAlign:"left", border:`1px solid ${T.border}`, background:T.card, borderRadius:20, padding:16, cursor:tab?"pointer":"default", boxShadow:"0 10px 24px rgba(15,23,42,.07)", minHeight:116, display:"flex", flexDirection:"column", justifyContent:"space-between", overflow:"hidden" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"flex-start" }}>
+        <div style={{ minWidth:0 }}><div style={{ color:T.muted, fontSize:12, fontWeight:900, textTransform:"uppercase", letterSpacing:.45 }}>{title}</div><div style={{ fontSize:34, fontWeight:950, color:T.text, lineHeight:1, marginTop:8 }}>{value}</div>{sub && <div style={{ color:T.muted, fontSize:12, marginTop:6, lineHeight:1.35, overflowWrap:"anywhere" }}>{sub}</div>}</div>
+        <span style={{ width:12, minWidth:12, height:52, borderRadius:99, background:color }} />
+      </div>
       {children}
-    </div>;
-  };
-  const Widget = ({ id, title, subtitle, children, accent=T.accent }) => {
-    const hiddenItems = cardHidden[id] || [];
-    const addable = Object.entries(itemCatalog[id] || {}).filter(([key])=>hiddenItems.includes(key));
-    return <Card style={{ ...sizeStyle(id), padding:0, overflow:"hidden", borderRadius:22, border:`1px solid ${T.border}`, background:T.card, boxShadow:"0 12px 30px rgba(15,23,42,.08)", position:"relative" }}>
-      <div style={{ height:5, background:accent }} />
-      <div style={{ padding:18 }}>
-        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:10, marginBottom:14 }}>
-          <div><h3 style={{ margin:0, fontSize:17, letterSpacing:-.35 }}>{title}</h3>{subtitle && <div style={{ color:T.muted, fontSize:12, marginTop:3 }}>{subtitle}</div>}</div>
-          {customize && <div data-dash-control="true" style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap", justifyContent:"flex-end" }}>
-            <button onClick={()=>moveWidget(id,-1)} style={{ ...smallControl }}>↑</button>
-            <button onClick={()=>moveWidget(id,1)} style={{ ...smallControl }}>↓</button>
-            <select value={sizes[id] || "large"} onChange={e=>setWidgetSize(id,e.target.value)} style={{ ...smallControl, width:86 }}>
-              <option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option><option value="wide">Wide</option><option value="hero">Hero</option>
-            </select>
-            <select value="" onChange={e=>{ if(e.target.value) setItemHidden(id,e.target.value,false); e.target.value=""; }} title="Add hidden item back to this card" style={{ ...smallControl, width:96 }}>
-              <option value="">+ Add</option>
-              {addable.map(([key,label])=><option key={key} value={key}>{label}</option>)}
-            </select>
-            <button onClick={()=>toggleWidget(id)} style={{ ...smallControl }}>Hide</button>
-          </div>}
-        </div>
-        {children}
-      </div>
-    </Card>;
-  };
-  const smallControl = { height:28, border:`1px solid ${T.border}`, background:T.card, borderRadius:9, padding:"0 8px", fontSize:11, fontWeight:900, cursor:"pointer" };
+    </button>
+  );
+  const ActionRow = ({ title, sub, badge, color=T.accent, tab }) => (
+    <button type="button" onClick={()=>tab && click(tab)} style={{ width:"100%", display:"grid", gridTemplateColumns:"1fr auto", gap:10, alignItems:"center", border:"none", borderBottom:`1px solid ${T.border}`, background:"transparent", padding:"12px 2px", cursor:tab?"pointer":"default", textAlign:"left" }}>
+      <div style={{ minWidth:0 }}><div style={{ fontWeight:900, color:T.text, overflowWrap:"anywhere" }}>{title}</div><div style={{ fontSize:12, color:T.muted, marginTop:3, overflowWrap:"anywhere" }}>{sub}</div></div>
+      {badge && <span style={{ border:`1px solid ${color}`, color, background:T.card, borderRadius:999, padding:"4px 8px", fontSize:11, fontWeight:900, whiteSpace:"nowrap" }}>{badge}</span>}
+    </button>
+  );
+  const Panel = ({ title, action, children }) => <Card style={{ padding:18, borderRadius:22, boxShadow:"0 10px 24px rgba(15,23,42,.06)", overflow:"hidden" }}><div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginBottom:8 }}><h3 style={{ margin:0, fontSize:16, color:T.text }}>{title}</h3>{action}</div>{children}</Card>;
 
-  const quickActions = <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))", gap:10 }}>
-    <ActionBtn icon="➕" label="New Work Order" tab="workorders" accent="#2563eb" />
-    <ActionBtn icon="🚜" label="Add Equipment" tab="equipment" accent="#16a34a" />
-    <ActionBtn icon="🛠️" label="PM Schedule" tab="pm" accent="#d97706" />
-    <ActionBtn icon="📦" label="Parts" tab="parts" accent="#7c3aed" />
-    <ActionBtn icon="📊" label="Reports" tab="reports_combined" accent="#0f766e" />
-    <ActionBtn icon="⚙️" label="Settings" onClick={onSettings} accent="#475569" />
-  </div>;
+  const priorityList = activeWOs.slice().sort((a,b)=>({High:0,Medium:1,Low:2}[a.priority]??3)-({High:0,Medium:1,Low:2}[b.priority]??3) || String(a.due||"").localeCompare(String(b.due||""))).slice(0,6);
+  const equipmentWatch = [...deadlineEqs, ...deficientEqs].slice(0,6);
+  const scheduleList = [
+    ...duePM.map(s=>({ type:"PM", name:s.task || s.taskName || "PM Service", equipmentId:s.equipmentId, due:s.nextDueDate || "", color:T.accent })),
+    ...dueInspections.map(s=>({ type:"Inspection", name:s.task || s.taskName || "Inspection", equipmentId:s.equipmentId, due:s.nextDueDate || "", color:T.green })),
+  ].sort((a,b)=>String(a.due||"").localeCompare(String(b.due||""))).slice(0,6);
 
-  const widgets = {
-    focus:<Widget id="focus" title="Shop Pulse" subtitle="A calm snapshot of what needs attention" accent={highPriority||pmOverdue||outOfSvc?T.red:T.green}>
-      <DashItem card="focus" item="quick">{quickActions}</DashItem>
-      <DashItem card="focus" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))", gap:10, marginTop:14 }}>
-        <Metric label="Readiness" value={`${readiness}%`} sub={`${readyAssets}/${eqs.length || 0} ready`} color={readiness>=85?T.green:readiness>=70?T.amber:T.red}/>
-        <Metric label="Active WOs" value={activeWOs} sub={`${highPriority} high priority`} color={highPriority?T.red:T.accent}/>
-        <Metric label="PM Attention" value={pmOverdue+pmDueSoon} sub={`${pmOverdue} overdue`} color={pmOverdue?T.red:T.amber}/>
-        <Metric label="Low Stock" value={lowStock} sub="parts to review" color={lowStock?T.amber:T.green}/>
-      </div></DashItem>
-    </Widget>,
-    today:<Widget id="today" title="Today’s Game Plan" subtitle="Simple order of work for the day" accent="#0f766e">
-      <DashItem card="today" item="plan"><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:10 }}>
-        {[{n:"1",t:"Protect uptime",d:`Check ${outOfSvc} deadline assets and ${withDefic} deficiencies.`},{n:"2",t:"Clear PM risk",d:`Handle ${pmOverdue} overdue and ${pmDueSoon} due soon services.`},{n:"3",t:"Unblock repairs",d:`Review ${awaitParts} awaiting-parts work orders.`},{n:"4",t:"Close the loop",d:`Update notes, parts used, labor, and completed jobs.`}].map(x=><div key={x.n} style={{ border:`1px solid ${T.border}`, borderRadius:18, padding:14, background:T.card }}><div style={{ display:"flex", gap:10 }}><b style={{ width:28, height:28, borderRadius:10, background:T.accentLt, color:T.accent, display:"grid", placeItems:"center" }}>{x.n}</b><div><b>{x.t}</b><div style={{ color:T.muted, fontSize:12, marginTop:4 }}>{x.d}</div></div></div></div>)}
-      </div></DashItem>
-    </Widget>,
-    workorders:<Widget id="workorders" title="Work Orders" subtitle="Current workload without digging" accent={highPriority?T.red:T.accent}>
-      <DashItem card="workorders" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(90px,1fr))", gap:8, marginBottom:12 }}><Metric label="Open" value={openWOs}/><Metric label="In Prog" value={inProgWOs}/><Metric label="Parts" value={awaitParts}/><Metric label="On Hold" value={onHoldWOs} color={onHoldWOs?T.red:T.green}/></div></DashItem>
-      <DashItem card="workorders" item="list">{(urgentWOs.length ? urgentWOs : recentWOs).map(w=><MiniRow key={w.id} title={`${w.woNumber||w.id} — ${w.title||w.type||"Work Order"}`} sub={`${w.equipmentName||w.equipment||"No equipment"} • ${w.status||"Open"}`} badge={w.priority||w.status} color={w.priority==="High"?T.red:T.accent} tab="workorders" />)}</DashItem>
-    </Widget>,
-    pm:<Widget id="pm" title="Preventive Maintenance" subtitle="Due services and inspections" accent={pmOverdue?T.red:T.amber}>
-      <DashItem card="pm" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:12 }}><Metric label="Overdue" value={pmOverdue} color={pmOverdue?T.red:T.green}/><Metric label="Due Soon" value={pmDueSoon} color={pmDueSoon?T.amber:T.green}/></div></DashItem>
-      <DashItem card="pm" item="list">{servicesDue.length ? servicesDue.map(p=><MiniRow key={p.id} title={p.title||p.service||"PM Item"} sub={`${p.eqName||"Equipment"} • Due ${p.nextDue||"N/A"}`} badge={p.status} color={p.status==="Overdue"?T.red:T.amber} tab="pm" />) : <div style={{ color:T.muted, fontSize:13 }}>No PM due right now.</div>}</DashItem>
-    </Widget>,
-    equipment:<Widget id="equipment" title="Equipment Health" subtitle="Readiness and problem assets" accent={outOfSvc?T.red:T.green}>
-      <DashItem card="equipment" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom:12 }}><Metric label="Total" value={eqs.length}/><Metric label="Deadline" value={outOfSvc} color={outOfSvc?T.red:T.green}/><Metric label="Deficient" value={withDefic} color={withDefic?T.amber:T.green}/></div></DashItem>
-      <DashItem card="equipment" item="list">{deadlineEqs.length ? deadlineEqs.map(e=><MiniRow key={e.id} title={`${e.id} — ${e.name}`} sub={`${e.make||""} ${e.model||""} • ${e.location||"No location"}`} badge={e.status?.replace("Out of Service / ","")} color={e.status==="Out of Service / Deadline"?T.red:T.amber} tab="equipment" />) : <div style={{ color:T.muted, fontSize:13 }}>No deadline or deficient equipment.</div>}</DashItem>
-    </Widget>,
-    inventory:<Widget id="inventory" title="Parts & Inventory" subtitle="Stock issues before they delay work" accent={lowStock?T.amber:T.green}>
-      <DashItem card="inventory" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:12 }}><Metric label="Tracked" value={parts.length}/><Metric label="Low Stock" value={lowStock} color={lowStock?T.amber:T.green}/></div></DashItem>
-      <DashItem card="inventory" item="list">{criticalParts.length ? criticalParts.map(p=><MiniRow key={p.id} title={p.name||p.partNumber||"Part"} sub={`${p.partNumber||"No part #"} • Qty ${p.qty??0} / Min ${p.minQty??0}`} badge="Reorder" color={T.amber} tab="parts" />) : <div style={{ color:T.muted, fontSize:13 }}>Inventory looks good.</div>}</DashItem>
-    </Widget>,
-    activity:<Widget id="activity" title="Recent Activity" subtitle="Latest movement in the shop" accent="#64748b">
-      <DashItem card="activity" item="list">{recentWOs.length ? recentWOs.map(w=><MiniRow key={w.id} title={w.title||w.type||"Work Order"} sub={`${w.woNumber||w.id} • ${w.status||"Open"} • ${w.created||"No date"}`} badge={w.priority||w.status} color={w.priority==="High"?T.red:T.accent} tab="workorders" />) : <div style={{ color:T.muted, fontSize:13 }}>No recent work order activity.</div>}</DashItem>
-    </Widget>,
-    costs:<Widget id="costs" title="Cost Snapshot" subtitle="Basic monthly maintenance awareness" accent="#2563eb">
-      <DashItem card="costs" item="metrics"><div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10 }}><Metric label="Month Spend" value={`$${spendMo.toFixed(2)}`} color="#2563eb"/><Metric label="Completed" value={completedMo} sub="this month" color={T.green}/></div></DashItem>
-      <DashItem card="costs" item="note"><div style={{ marginTop:12, color:T.muted, fontSize:12 }}>Use Reports to export PDF, Excel, or Word documents.</div></DashItem>
-    </Widget>
-  };
-
-  return <div style={{ display:"flex", flexDirection:"column", gap:16, background:"linear-gradient(135deg,#f8fafc 0%,#eef6ff 46%,#fff7ed 100%)", margin:-4, padding:customize?16:6, borderRadius:24 }}>
-    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap" }}>
-      <div><h2 style={{ margin:"0 0 4px", fontSize:30, letterSpacing:-.8 }}>Dashboard</h2><div style={{ color:T.muted, fontSize:13 }}>A clean home base for maintenance work, decisions, and quick actions.</div></div>
-      <div data-dash-control="true" style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-        <select value={activePreset} onChange={e=>applyPreset(e.target.value)} style={{ height:38, border:`1px solid ${T.border}`, borderRadius:12, padding:"0 12px", background:T.card, fontWeight:900 }}>
-          <option value="calm">Calm Operations</option>
-          <option value="mechanic">Mechanic Daily Board</option>
-          <option value="manager">Manager Console</option>
-          <option value="simple">Simple Clean</option>
-          <option value="custom">My Custom Dashboard</option>
-        </select>
-        <Btn onClick={()=>setCustomize(v=>!v)}>{customize?"Done Customizing":"Customize Dashboard"}</Btn>
-      </div>
+  return <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+    <style>{`@media (max-width: 780px){ .mf-dashboard-grid{ grid-template-columns:1fr !important; } }`}</style>
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:14, flexWrap:"wrap", padding:"18px 20px", borderRadius:26, background:"linear-gradient(135deg,#0f172a,#1d4ed8 55%,#38bdf8)", color:"white", boxShadow:"0 18px 40px rgba(15,23,42,.18)" }}>
+      <div style={{ minWidth:240 }}><div style={{ fontSize:12, fontWeight:900, letterSpacing:.6, textTransform:"uppercase", opacity:.78 }}>Maintenance Command Center</div><h2 style={{ margin:"6px 0 8px", fontSize:32, lineHeight:1, letterSpacing:-.8 }}>Today’s Work</h2><div style={{ opacity:.86, fontSize:14, maxWidth:620 }}>Click any card or row to jump straight to the section that needs attention.</div></div>
+      <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}><Btn onClick={()=>click("workorders")}>Open Work Orders</Btn><Btn variant="secondary" onClick={()=>click("inventory")}>Equipment Inventory</Btn><Btn variant="secondary" onClick={onSettings}>Admin Center</Btn></div>
     </div>
 
-    {customize && <Card style={{ padding:16, border:`2px dashed ${T.accent}`, borderRadius:20, background:T.card }}>
-      <div style={{ fontSize:16, fontWeight:950, marginBottom:4 }}>Dashboard edit mode</div>
-      <div style={{ fontSize:12, color:T.muted, marginBottom:12 }}>Cards are locked while editing. Pick a preset, move cards, resize them, or hide what you do not use. Your changes save as “My Custom Dashboard.”</div>
-      <div data-dash-control="true" style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:12 }}>
-        <Btn small onClick={()=>applyPreset("calm")}>Calm Operations</Btn>
-        <Btn small variant="secondary" onClick={()=>applyPreset("mechanic")}>Mechanic Daily Board</Btn>
-        <Btn small variant="secondary" onClick={()=>applyPreset("manager")}>Manager Console</Btn>
-        <Btn small variant="secondary" onClick={()=>applyPreset("simple")}>Simple Clean</Btn>
-      </div>
-      <div data-dash-control="true" style={{ display:"flex", flexWrap:"wrap", gap:8 }}>{fullLayout.map(id=><Btn key={id} small variant={hidden.includes(id)?"secondary":"primary"} onClick={()=>toggleWidget(id)}>{hidden.includes(id)?"Show":"Hide"} {id}</Btn>)}</div>
-    </Card>}
+    <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:12 }}>
+      <CardButton title="Operational Ready" value={`${readiness}%`} sub={`${readyEqs.length} of ${eqs.length} assets fully operational`} color={readiness>=85?T.green:readiness>=65?T.amber:T.red} tab="equipment" />
+      <CardButton title="Active Work" value={activeWOs.length} sub={`${highPriority.length} high priority • ${awaitingParts.length} awaiting parts`} color={highPriority.length?T.red:T.accent} tab="workorders" />
+      <CardButton title="Deadline" value={deadlineEqs.length} sub="Out of service equipment" color={deadlineEqs.length?T.red:T.green} tab="equipment" />
+      <CardButton title="PM / Inspections" value={duePM.length + dueInspections.length} sub="Due now or within 14 days" color={(duePM.length + dueInspections.length)?T.amber:T.green} tab="pm" />
+      <CardButton title="Requests" value={openRequests.length} sub="Operator QR requests waiting review" color={openRequests.length?T.amber:T.green} tab="wo_requests" />
+      <CardButton title="Low Stock" value={lowStock.length} sub="Parts at or below minimum" color={lowStock.length?T.red:T.green} tab="parts" />
+    </div>
 
-    <div onClickCapture={lockIfEditing} onMouseDownCapture={lockIfEditing} style={{ display:"grid", gridTemplateColumns:"repeat(6,minmax(130px,1fr))", gap:14, alignItems:"stretch" }}>
-      {fullLayout.filter(id=>!hidden.includes(id)).map(id=>widgets[id])}
+    <div style={{ display:"grid", gridTemplateColumns:"minmax(280px,1.35fr) minmax(280px,1fr)", gap:14 }} className="mf-dashboard-grid">
+      <Panel title="Priority Work Queue" action={<Btn small onClick={()=>click("workorders")}>View All</Btn>}>
+        {priorityList.length ? priorityList.map(w=><ActionRow key={w.id} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "Work Order"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • Due ${w.due || "No due date"} • ${w.status || "Open"}`} badge={w.priority || "Normal"} color={w.priority==="High"?T.red:w.priority==="Medium"?T.amber:T.accent} tab="workorders" />) : <div style={{ padding:14, color:T.muted }}>No active work orders. Great time to review PM and inventory.</div>}
+      </Panel>
+      <Panel title="Equipment Watch" action={<Btn small variant="secondary" onClick={()=>click("equipment")}>Equipment</Btn>}>
+        {equipmentWatch.length ? equipmentWatch.map(e=><ActionRow key={e.id} title={`${e.id} — ${e.name || e.nomenclature || "Equipment"}`} sub={`${e.locationName || e.location || "No facility"} • ${e.category || e.type || "No category"}`} badge={e.status || "Status"} color={equipmentStatusTipColor(e.status)} tab="equipment" />) : <div style={{ padding:14, color:T.muted }}>No deadline or deficient equipment in this view.</div>}
+      </Panel>
+      <Panel title="Scheduled Maintenance Coming Due" action={<Btn small variant="secondary" onClick={()=>click("pm")}>PM</Btn>}>
+        {scheduleList.length ? scheduleList.map((s,i)=><ActionRow key={`${s.type}-${s.equipmentId}-${i}`} title={`${s.type}: ${s.name}`} sub={`${eqName(s.equipmentId)} • Due ${s.due || "No date"}`} badge={s.type} color={s.color} tab={s.type==="Inspection"?"inspections":"pm"} />) : <div style={{ padding:14, color:T.muted }}>No PM or inspection schedules due in the next 14 days.</div>}
+      </Panel>
+      <Panel title="Inventory & Requests" action={<Btn small variant="secondary" onClick={()=>click("parts")}>Parts</Btn>}>
+        {openRequests.slice(0,3).map(r=><ActionRow key={r.id} title={r.equipment || r.equipmentId || "Request"} sub={r.description || r.faultDescription || "Operator request waiting review"} badge="Request" color={T.amber} tab="wo_requests" />)}
+        {lowStock.slice(0,4).map(p=><ActionRow key={p.id} title={p.name || p.partNumber || "Part"} sub={`${p.partNumber || "No part #"} • Qty ${p.qty || 0} / Min ${p.minQty || 0}`} badge="Low" color={T.red} tab="parts" />)}
+        {!openRequests.length && !lowStock.length && <div style={{ padding:14, color:T.muted }}>No open requests or low-stock parts.</div>}
+      </Panel>
+    </div>
+
+    <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:12 }}>
+      <CardButton title="Completed This Month" value={completedThisMonth.length} sub="Closed work orders" color={T.green} tab="workorders" />
+      <CardButton title="Month Spend" value={`$${monthSpend.toFixed(2)}`} sub="Completed work order costs" color={T.accent} tab="spending" />
+      <CardButton title="Deficiencies" value={deficientEqs.length} sub="Operational with deficiencies" color={deficientEqs.length?T.amber:T.green} tab="equipment" />
     </div>
   </div>;
 }
@@ -6827,6 +6736,7 @@ function EquipmentInventory({ state, dispatch }) {
   const [modal, setModal]   = useState(null); /* "add" | "turnin" | item-object */
   const [form, setForm]     = useState({});
   const [turnInForm, setTurnInForm] = useState({ equipmentId:"", reason:"", date:today(), paperwork:"" });
+  const [transferForm, setTransferForm] = useState({ equipmentId:"", targetFacilityId:"", transferAttachments:true });
   const [search, setSearch] = useState("");
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
   const isDark = T.bg === DARK_THEME.bg;
@@ -6868,6 +6778,7 @@ function EquipmentInventory({ state, dispatch }) {
   })));
   const invOnly = (state.inventoryItems||[]).map(i=>({...i, _source:"inventory"}));
   const items    = [...eqAsInventory, ...attachmentAsInventory, ...invOnly];
+  const orgLocations = normalizeMaintForgeLocations(state).filter(l=>l.active!==false);
   const active   = items.filter(i=>!["Turned-in","Disposed"].includes(i.turnInStatus));
   const archived = items.filter(i=>["Turned-in","Disposed"].includes(i.turnInStatus));
 
@@ -6882,6 +6793,13 @@ function EquipmentInventory({ state, dispatch }) {
 
   const openAdd = () => { setForm({ condition:"Good", date:today() }); setModal("add"); };
   const openTurnIn = () => { setTurnInForm({ equipmentId:"", reason:"", date:today(), paperwork:"" }); setModal("turnin"); };
+  const openTransfer = (item=null) => {
+    const selected = item?._source === "equipment" ? item : null;
+    const currentFacilityId = selected?.locationId || selected?.facilityId || state.activeLocationId || "";
+    const firstTarget = orgLocations.find(l=>String(l.id)!==String(currentFacilityId)) || orgLocations[0] || null;
+    setTransferForm({ equipmentId:selected?.id || "", targetFacilityId:firstTarget?.id || "", transferAttachments:true });
+    setModal("transfer");
+  };
   const openItem = item => { setForm({...item}); setModal(item); };
 
   const save = () => {
@@ -6930,6 +6848,18 @@ function EquipmentInventory({ state, dispatch }) {
     setModal(null);
   };
 
+  const saveTransfer = () => {
+    const item = (state.equipment||[]).find(e=>String(e.id)===String(transferForm.equipmentId));
+    if(!item) return alert("Select equipment to transfer.");
+    if(!transferForm.targetFacilityId) return alert("Select the facility receiving this equipment.");
+    const targetName = locationNameForId(state, transferForm.targetFacilityId);
+    const attachmentCount = (item.attachments||[]).length;
+    const attachmentText = attachmentCount ? (transferForm.transferAttachments ? `\n\n${attachmentCount} attachment(s) will transfer with this equipment.` : `\n\n${attachmentCount} attachment(s) will stay in the current facility inventory with no parent equipment.`) : "";
+    if(!confirm(`Transfer ${item.id} — ${item.name || item.nomenclature || "Equipment"} to ${targetName}?\n\nThis will also move related work orders, PM, inspections, schedules, usage logs, requests, and linked records.${attachmentText}`)) return;
+    dispatch({ type:"TRANSFER_EQUIPMENT", payload:{ equipmentId:item.id, targetFacilityId:transferForm.targetFacilityId, transferAttachments:transferForm.transferAttachments } });
+    setModal(null);
+  };
+
   const updateStatus = (item, status) => {
     if(item._source==="equipment") {
       const orig = state.equipment.find(e=>e.id===item.id);
@@ -6973,6 +6903,7 @@ function EquipmentInventory({ state, dispatch }) {
         <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
           <input style={{ ...inp, maxWidth:220 }} placeholder="Search inventory..." value={search} onChange={e=>setSearch(e.target.value)} />
           <button type="button" onClick={()=>setMissingEeOnly(v=>!v)} style={{ padding:"7px 12px", borderRadius:7, border:`1px solid ${missingEeOnly?T.red:T.border}`, background:missingEeOnly?(isDark?"rgba(239,68,68,.16)":"#fee2e2"):(isDark?T.surface:"#fff"), color:missingEeOnly?T.red:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:700 }}>No EE ({items.filter(i=>!String(i.eilNumber||"").trim()).length})</button>
+          {tab==="active" && <Btn variant="secondary" onClick={()=>openTransfer()}>Transfer Equipment</Btn>}
           {tab==="active" && <Btn variant="secondary" onClick={openTurnIn}>Turn In Equipment</Btn>}
           {tab==="active" && <Btn onClick={openAdd}>+ Add Item</Btn>}
         </div>
@@ -7009,7 +6940,10 @@ function EquipmentInventory({ state, dispatch }) {
                 </td>
                 <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12 }}>${(+(item.acquisitionCost||0)).toLocaleString()}</td>
                 <td style={{ padding:"10px 12px" }} onClick={e=>e.stopPropagation()}>
-                  <Btn small variant="danger" onClick={()=>del(item.id)}>Del</Btn>
+                  <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                    {tab==="active" && item._source==="equipment" && <Btn small variant="secondary" onClick={()=>openTransfer(item)}>Transfer</Btn>}
+                    <Btn small variant="danger" onClick={()=>del(item.id)}>Del</Btn>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -7067,6 +7001,55 @@ function EquipmentInventory({ state, dispatch }) {
           </div>
         </Modal>
       )}
+
+      {/* Transfer modal */}
+      {modal==="transfer"&&(() => {
+        const selectedEq = (state.equipment||[]).find(e=>String(e.id)===String(transferForm.equipmentId));
+        const selectedAttachments = selectedEq?.attachments || [];
+        const relatedCounts = selectedEq ? {
+          workOrders:(state.workOrders||[]).filter(w=>String(workOrderEquipmentId(w)||w.equipment||w.equipmentId)===String(selectedEq.id)).length,
+          pmSchedules:(state.pmSchedules||[]).filter(s=>String(s.equipmentId||s.equipment)===String(selectedEq.id)).length,
+          inspections:(state.inspectionSchedules||[]).filter(s=>String(s.equipmentId||s.equipment)===String(selectedEq.id)).length,
+          usageLogs:(state.usageLogs||[]).filter(l=>String(l.equipmentId||l.equipment||l.eqId)===String(selectedEq.id)).length,
+        } : { workOrders:0, pmSchedules:0, inspections:0, usageLogs:0 };
+        const currentFacilityId = selectedEq?.locationId || selectedEq?.facilityId || "";
+        return <Modal title="Transfer Equipment Between Facilities" onClose={()=>setModal(null)}>
+          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+            <div style={{ padding:14, border:`1px solid ${T.border}`, borderRadius:14, background:T.grayLt }}>
+              <div style={{ fontWeight:900, color:T.text, marginBottom:4 }}>Safe transfer</div>
+              <div style={{ color:T.muted, fontSize:12, lineHeight:1.45 }}>This moves the equipment and all linked records to the selected facility: work orders, usage logs, PM schedules, inspection schedules, requests, and linked records. Attachments can move with the equipment or stay behind as inventory items with no parent equipment.</div>
+            </div>
+            <Field label="Equipment to transfer">
+              <select style={sel} value={transferForm.equipmentId} onChange={e=>{
+                const eq = (state.equipment||[]).find(x=>String(x.id)===String(e.target.value));
+                const fromId = eq?.locationId || eq?.facilityId || "";
+                const firstTarget = orgLocations.find(l=>String(l.id)!==String(fromId)) || orgLocations[0] || null;
+                setTransferForm(f=>({...f,equipmentId:e.target.value,targetFacilityId:firstTarget?.id||""}));
+              }}>
+                <option value="">-- Select Equipment --</option>
+                {(state.equipment||[]).filter(e=>!["Turned-in","Disposed"].includes(e.turnInStatus)).map(e=><option key={e.id} value={e.id}>{e.id} — {e.name || e.nomenclature || "Equipment"} ({e.locationName || e.location || "No facility"})</option>)}
+              </select>
+            </Field>
+            <Field label="Receiving facility">
+              <select style={sel} value={transferForm.targetFacilityId} onChange={e=>setTransferForm(f=>({...f,targetFacilityId:e.target.value}))}>
+                <option value="">-- Select Receiving Facility --</option>
+                {orgLocations.filter(l=>String(l.id)!==String(currentFacilityId)).map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            </Field>
+            {selectedEq && <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:10 }}>
+              {[ ["Work Orders", relatedCounts.workOrders], ["PM Schedules", relatedCounts.pmSchedules], ["Inspections", relatedCounts.inspections], ["Usage Logs", relatedCounts.usageLogs], ["Attachments", selectedAttachments.length] ].map(([label,value])=><div key={label} style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:12, background:T.card }}><div style={{ fontSize:20, fontWeight:950, color:T.text }}>{value}</div><div style={{ fontSize:11, color:T.muted, fontWeight:800, textTransform:"uppercase" }}>{label}</div></div>)}
+            </div>}
+            {!!selectedAttachments.length && <label style={{ display:"flex", gap:10, alignItems:"flex-start", padding:12, border:`1px solid ${T.border}`, borderRadius:12, background:T.card, cursor:"pointer" }}>
+              <input type="checkbox" checked={transferForm.transferAttachments!==false} onChange={e=>setTransferForm(f=>({...f,transferAttachments:e.target.checked}))} />
+              <span><b>Transfer attachments with this equipment</b><br/><span style={{ color:T.muted, fontSize:12 }}>If unchecked, attachments stay in the current facility inventory with no parent equipment.</span></span>
+            </label>}
+          </div>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+            <Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn>
+            <Btn onClick={saveTransfer}>Transfer Equipment</Btn>
+          </div>
+        </Modal>;
+      })()}
 
       {/* Turn-in modal */}
       {modal==="turnin"&&(
