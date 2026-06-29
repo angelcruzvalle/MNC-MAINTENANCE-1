@@ -294,7 +294,6 @@ const INIT = {
   activeLocationId: "__all",
   userRole: "owner",
   userInvites: [],
-  orgUsers: [],
   areas: [],
 };
 
@@ -325,153 +324,16 @@ function blankUserState(ownerUserId="") {
     activeLocationId: "__all",
     userRole: "owner",
     userInvites: [],
-    orgUsers: [],
     areas: [],
     ownerUserId: ownerUserId || "",
   };
 }
 
-function emergencySignedInState(ownerUserId="", email="") {
-  const base = blankUserState(ownerUserId);
-  const facility = { id:"FAC-DEFAULT", name:"Default Facility", address:"", cityState:"", phone:"", email:"", manager:"", active:true };
-  return {
-    ...base,
-    setupComplete:true,
-    profile:{ email: email || "", name:"" },
-    settings:{
-      companyName:"MaintForge", department:"Maintenance", phone:"", email:email || "", region:"", siteName:"Default Facility",
-      address:"", cityState:"", laborRateDefault:0, requireTech:false, showCostsOnWO:true, locations:[facility], areas:[]
-    },
-    woSettings: base.woSettings || {},
-    organization:{ ...(base.organization||{}), name:"MaintForge" },
-    locations:[facility],
-    activeLocationId:"FAC-DEFAULT",
-    orgUsers:[{ id:ownerUserId || "owner", email:email || "", name:"Owner", role:"owner", facilityIds:["__all"], active:true }],
-    userInvites:[],
-  };
-}
-
-const ROLE_DEFINITIONS = {
-  owner: { label:"Organization Owner", level:100, description:"Full control over the organization and every facility." },
-  org_manager: { label:"Organization Manager", level:90, description:"Runs operations across all facilities and manages users below Owner." },
-  facility_manager: { label:"Facility Manager", level:70, description:"Manages assigned facilities only." },
-  supervisor: { label:"Supervisor / Lead Mechanic", level:60, description:"Assigns and closes work, manages shop activity." },
-  mechanic: { label:"Mechanic / Technician", level:40, description:"Works assigned jobs, labor, parts, notes, and inspections." },
-  viewer: { label:"Read Only", level:10, description:"Can view and print permitted information, but cannot edit." },
-};
-const ROLE_OPTIONS = Object.entries(ROLE_DEFINITIONS).map(([value, meta]) => ({ value, ...meta }));
-const ROLE_PERMISSIONS = {
-  owner: ["all"],
-  org_manager: ["manageUsers","inviteUsers","removeUsers","editRoles","manageFacilities","manageSettings","manageEquipment","manageWorkOrders","assignWorkOrders","closeWorkOrders","manageInventory","managePM","manageInspections","viewReports","printReports"],
-  facility_manager: ["manageEquipment","manageWorkOrders","assignWorkOrders","closeWorkOrders","manageInventory","managePM","manageInspections","viewReports","printReports","manageFacilityBranding"],
-  supervisor: ["manageWorkOrders","assignWorkOrders","closeWorkOrders","manageInventory","managePM","manageInspections","viewReports","printReports"],
-  mechanic: ["viewAssignedWork","updateWorkOrders","addLabor","addParts","completeInspections","uploadAttachments"],
-  viewer: ["viewReports","printReports"],
-};
-function roleLabel(role="viewer") { return ROLE_DEFINITIONS[role]?.label || role || "Read Only"; }
-function roleLevel(role="viewer") { return ROLE_DEFINITIONS[role]?.level || 0; }
-function hasPermission(role="viewer", permission="") {
-  const list = ROLE_PERMISSIONS[role] || [];
-  return list.includes("all") || list.includes(permission);
-}
-function currentUserRole(state={}) { return state.userRole || state.profile?.role || "owner"; }
-function canManageRole(managerRole="viewer", targetRole="viewer") {
-  if(managerRole === "owner") return true;
-  if(managerRole === "org_manager") return roleLevel(targetRole) < roleLevel("org_manager");
-  return false;
-}
-function userFacilitiesLabel(user={}, locations=[]) {
-  const ids = Array.isArray(user.facilityIds) ? user.facilityIds : (user.locationId ? [user.locationId] : []);
-  if(user.role === "owner" || user.role === "org_manager" || ids.includes("__all")) return "All facilities";
-  const names = ids.map(id => (locations||[]).find(l=>l.id===id)?.name || id).filter(Boolean);
-  return names.length ? names.join(", ") : "No facility assigned";
-}
-
-function inviteTokenFromUrl() {
-  try {
-    const params = new URLSearchParams(window.location.search || "");
-    return String(params.get("invite") || params.get("invitation") || "").trim();
-  } catch(e) { return ""; }
-}
-function clearInviteTokenFromUrl() {
-  try {
-    const url = new URL(window.location.href);
-    url.searchParams.delete("invite");
-    url.searchParams.delete("invitation");
-    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
-  } catch(e) {}
-}
-function withTimeout(promise, ms=9000) {
-  return Promise.race([
-    promise,
-    new Promise(resolve => setTimeout(() => resolve({ timedOut:true }), ms))
-  ]);
-}
-function normalizeInviteRecord(inv={}) {
-  const data = inv.data || inv.invite_data || inv;
-  let facilityIds = data.facilityIds || data.facility_ids || data.facilities || [];
-  if(typeof facilityIds === "string") { try { facilityIds = JSON.parse(facilityIds); } catch(e) { facilityIds = facilityIds ? [facilityIds] : []; } }
-  if(!Array.isArray(facilityIds)) facilityIds = [];
-  return {
-    id: data.id || inv.id || `INV-${Date.now()}`,
-    email: String(data.email || inv.email || "").trim().toLowerCase(),
-    name: data.name || inv.name || "",
-    role: data.role || inv.role || "mechanic",
-    facilityIds,
-    locationId: data.locationId || data.location_id || inv.location_id || facilityIds[0] || "",
-    token: data.token || inv.token || "",
-    organizationId: data.organizationId || data.organization_id || inv.organization_id || "",
-    organizationName: data.organizationName || data.organization_name || inv.organization_name || "",
-    ownerUserId: data.ownerUserId || data.owner_user_id || inv.owner_user_id || inv.created_by || "",
-  };
-}
-
-function normalizeLoadedUserState(data={}, currentUserId="") {
-  if(!data || typeof data !== "object" || Array.isArray(data)) return blankUserState(currentUserId);
-  // Do not throw away valid organization/member data when ownerUserId is different from the signed-in user.
-  // Members invited to an organization must keep the original ownerUserId while still loading under their own login.
-  const effectiveOwnerUserId = data.ownerUserId || currentUserId || "";
-  const merged = {
-    ...blankUserState(effectiveOwnerUserId),
-    ...data,
-    ownerUserId: effectiveOwnerUserId,
-    currentUserId: currentUserId || data.currentUserId || effectiveOwnerUserId,
-  };
+function normalizeLoadedUserState(data={}, ownerUserId="") {
+  if(!data || typeof data !== "object" || Array.isArray(data)) return blankUserState(ownerUserId);
+  if(data.ownerUserId && ownerUserId && data.ownerUserId !== ownerUserId) return blankUserState(ownerUserId);
+  const merged = { ...blankUserState(ownerUserId), ...data, ownerUserId: ownerUserId || data.ownerUserId || "" };
   return migrateLegacyDataToMorovis(autoAssignLegacyDataToDefaultFacility(merged));
-}
-
-function loadLocalUserBackup(currentUserId="") {
-  try {
-    const raw = localStorage.getItem("ncaState");
-    if(!raw) return null;
-    const lastUserId = localStorage.getItem("ncaState:lastUserId") || "";
-    if(lastUserId && currentUserId && lastUserId !== currentUserId) return null;
-    const parsed = JSON.parse(raw);
-    if(!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    // Only trust local backup if it looks like a real configured account, not an empty first-run state.
-    const hasRealSetup = parsed.setupComplete || parsed.settings || (Array.isArray(parsed.equipment) && parsed.equipment.length) || (Array.isArray(parsed.workOrders) && parsed.workOrders.length);
-    if(!hasRealSetup) return null;
-    return normalizeLoadedUserState(parsed, currentUserId || parsed.currentUserId || parsed.ownerUserId || "");
-  } catch(e) {
-    console.error("Local backup load failed:", e);
-    return null;
-  }
-}
-
-function hasConfiguredUserState(data={}) {
-  if(!data || typeof data !== "object" || Array.isArray(data)) return false;
-  const settings = data.settings || {};
-  const org = data.organization || {};
-  return !!(
-    data.setupComplete ||
-    settings.companyName ||
-    org.name ||
-    (Array.isArray(data.locations) && data.locations.length) ||
-    (Array.isArray(data.equipment) && data.equipment.length) ||
-    (Array.isArray(data.workOrders) && data.workOrders.length) ||
-    (Array.isArray(data.parts) && data.parts.length) ||
-    (Array.isArray(data.technicians) && data.technicians.length)
-  );
 }
 
 
@@ -1193,27 +1055,8 @@ function reducer(state, { type, payload }) {
       return { ...state, locations:nextLocations, settings:{ ...(state.settings||{}), locations:nextLocations } };
     }
     case "ADD_USER_INVITE": {
-      const invite = { id:`INV-${Date.now()}`, created:today(), ...payload };
+      const invite = { id:`INV-${Date.now()}`, status:"Pending", created:today(), ...payload };
       return { ...state, userInvites:[invite, ...(state.userInvites||[])] };
-    }
-    case "UPDATE_USER_INVITE": {
-      return { ...state, userInvites:(state.userInvites||[]).map(inv=>inv.id===payload.id ? { ...inv, ...payload } : inv) };
-    }
-    case "REMOVE_USER_INVITE": {
-      return { ...state, userInvites:(state.userInvites||[]).filter(inv=>inv.id!==payload) };
-    }
-    case "ADD_ORG_USER": {
-      const email = String(payload?.email||"").trim().toLowerCase();
-      if(!email) return state;
-      const exists = (state.orgUsers||[]).some(u=>String(u.email||"").trim().toLowerCase()===email);
-      const user = { id:`USER-${Date.now()}`, status:"Active", created:today(), ...payload, email };
-      return { ...state, orgUsers: exists ? (state.orgUsers||[]).map(u=>String(u.email||"").trim().toLowerCase()===email ? { ...u, ...payload, email } : u) : [user, ...(state.orgUsers||[])] };
-    }
-    case "UPDATE_ORG_USER": {
-      return { ...state, orgUsers:(state.orgUsers||[]).map(u=>u.id===payload.id ? { ...u, ...payload } : u) };
-    }
-    case "REMOVE_ORG_USER": {
-      return { ...state, orgUsers:(state.orgUsers||[]).filter(u=>u.id!==payload) };
     }
     case "MIGRATE_TEMPLATES": {
       const fromId = payload?.fromId; const toId = payload?.toId;
@@ -1702,14 +1545,14 @@ function HelpCenter({ state, onClose }) {
     ["Organization", "The top-level company/account. Organization Owners can manage all facilities and company-wide reports."],
     ["Facility", "A separate shop, cemetery, branch, or site. Facility data is isolated from other facilities."],
     ["Area", "A building, department, zone, section, or physical area inside one facility."],
-    ["Foundation", "The Settings section where the Organization, Facilities, Areas, Users, Roles, Numbering, and Migration Center are managed."],
+    ["Foundation", "The Settings section where the Organization, Facilities, Areas, Users, Roles, Invitations, Numbering, and Migration Center are managed."],
     ["Migration", "Copies PM tasks, inspection tasks, and task templates from one facility to another. The copy is independent and can be edited without changing the original."],
     ["Legacy Unassigned Data", "Older records created before the facility system existed. Use the repair banner to assign them to the correct facility."],
   ];
   const topics = [
     isOwner && ["Create and manage facilities", "Go to Settings → Foundation → Facilities. Add the facility name, address, contact info, and save. Use the facility switcher in the header to work inside that facility."],
     isOwner && ["Fix records showing only under Organization", "Switch to the correct facility, use the unassigned data repair banner, and assign the old records to that facility. After that, the records show inside the facility and reports filter correctly."],
-    isOwner && ["Invite users", "Invitations are temporarily disabled. Edit existing users from Admin Center → Users & Roles."],
+    isOwner && ["Invite users", "Go to Settings → Foundation → Invitations. Enter the user's email, choose the role, assign the facility, and send the invite. The user creates their own account from the invite."],
     isOwner && ["Migrate templates", "Go to Settings → Foundation → Migration Center. Choose From Facility and To Facility, select PM task library, inspection task library, or general tasks, then Copy Selected. The destination facility receives independent copies."],
     isAdmin && ["Manage equipment", "Open Equipment, add or edit equipment for the active facility, assign the Facility and Area, add usage type, status, attachments, and inventory-related details."],
     isAdmin && ["Manage inventory", "Open Parts or Equipment Inventory. Add parts, quantities, units, reorder levels, vendors, and link parts to models/equipment where needed."],
@@ -8055,11 +7898,8 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
 }
 
 
-function SystemSettings({ state, dispatch, onClose, session }) {
+function SystemSettings({ state, dispatch, onClose }) {
   const s = state.settings || {};
-  const initialLocations = normalizeMaintForgeLocations(state);
-  const initialAreas = normalizeMaintForgeAreas(state);
-  const [activeSection, setActiveSection] = useState("organization");
   const [form, setForm] = useState({
     companyName:   s.companyName   || "National Cemetery Administration",
     department:    s.department    || "Maintenance Department",
@@ -8070,12 +7910,12 @@ function SystemSettings({ state, dispatch, onClose, session }) {
     region:        s.region        || "",
     address:       s.address       || "",
     cityState:     s.cityState     || "",
-    locations:     initialLocations,
-    areas:         initialAreas,
-    _selectedFacilityId: state.activeLocationId && state.activeLocationId !== "__all" ? state.activeLocationId : (initialLocations[0]?.id || ""),
+    locations:     normalizeMaintForgeLocations(state),
+    areas:         normalizeMaintForgeAreas(state),
+    _selectedFacilityId: state.activeLocationId && state.activeLocationId !== "__all" ? state.activeLocationId : (normalizeMaintForgeLocations(state)[0]?.id || ""),
     _newLoc:       "",
     _newArea:      "",
-    _areaFacilityId: state.activeLocationId && state.activeLocationId !== "__all" ? state.activeLocationId : (initialLocations[0]?.id || ""),
+    _areaFacilityId: state.activeLocationId && state.activeLocationId !== "__all" ? state.activeLocationId : (normalizeMaintForgeLocations(state)[0]?.id || ""),
     _newAreaFacilityId: "",
     accentColor:   s.accentColor   || "#0052cc",
     theme:         s.theme         || "light",
@@ -8091,64 +7931,79 @@ function SystemSettings({ state, dispatch, onClose, session }) {
   const foundationState = { ...state, settings:form, locations:normalizeMaintForgeLocations({ ...state, settings:form }) };
   const orgLocations = normalizeMaintForgeLocations(foundationState);
   const orgAreas = normalizeMaintForgeAreas(foundationState);
-  const managerRole = currentUserRole(state);
-  const canManageUsers = hasPermission(managerRole, "manageUsers") || managerRole === "owner";
-  const [inviteForm, setInviteForm] = useState({ email:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] });
-  const [inviteSending, setInviteSending] = useState(false);
+  const [inviteForm, setInviteForm] = useState({ email:"", name:"", role:"Facility Administrator", locationId:orgLocations[0]?.id || "" });
   const [migrationForm, setMigrationForm] = useState({ fromId:orgLocations[0]?.id || "", toId:orgLocations[1]?.id || orgLocations[0]?.id || "", pmTasks:true, inspectionTasks:true, tasks:true });
+  const createInvitePayload = () => {
+    const token = `INVITE-${Date.now()}-${Math.random().toString(36).slice(2,8).toUpperCase()}`;
+    const locName = locationNameForId(foundationState, inviteForm.locationId);
+    let inviteUrl = token;
+    try {
+      inviteUrl = `${window.location.origin}${window.location.pathname}?invite=${encodeURIComponent(token)}`;
+    } catch(e) {}
+    return { ...inviteForm, token, inviteUrl, locationName:locName, organizationId:state.organization?.id || "", organizationName:form.companyName || state.organization?.name || "" };
+  };
   const currentMigrationCounts = migrationTemplateCounts(foundationState, migrationForm.fromId);
   const selectedMigrationTotal = (migrationForm.pmTasks ? currentMigrationCounts.pmTasks : 0) + (migrationForm.inspectionTasks ? currentMigrationCounts.inspectionTasks : 0) + (migrationForm.tasks ? currentMigrationCounts.tasks : 0);
+  const copySelectedTemplates = () => {
+    if(migrationForm.fromId===migrationForm.toId) return alert("Choose two different facilities.");
+    if(!migrationForm.pmTasks && !migrationForm.inspectionTasks && !migrationForm.tasks) return alert("Choose at least one template type to copy.");
+    if(selectedMigrationTotal <= 0) return alert("No templates were found in the source facility. If the templates were just created, save Settings first and make sure you are copying from the correct Facility.");
+    dispatch({type:"MIGRATE_TEMPLATES", payload:migrationForm});
+    alert(`Copied ${selectedMigrationTotal} independent template${selectedMigrationTotal===1?"":"s"} to ${locationNameForId(foundationState, migrationForm.toId)}. They can now be edited there without changing the originals.`);
+  };
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
   const facilityListForForm = () => normalizeMaintForgeLocations({ ...state, settings:form, locations:form.locations });
   const selectedFacility = facilityListForForm().find(l => l.id === form._selectedFacilityId) || facilityListForForm()[0] || null;
   const selectedAreaFacilityId = form._areaFacilityId || selectedFacility?.id || orgLocations[0]?.id || "";
   const selectedAreaFacilityName = locationNameForId(foundationState, selectedAreaFacilityId);
   const areasForSelectedFacility = normalizeMaintForgeAreas({ ...foundationState, settings:{ ...form, areas:form.areas || [] }, areas:form.areas || [] }, selectedAreaFacilityId);
-  const effectiveUsers = (() => {
-    const users = Array.isArray(state.orgUsers) ? state.orgUsers : [];
-    const ownerEmail = state.profile?.email || "owner@maintforge.local";
-    const hasOwner = users.some(u => (u.role||"") === "owner");
-    return (hasOwner ? users : [{ id:"OWNER-CURRENT", name:state.profile?.name || "Organization Owner", email:ownerEmail, role:"owner", facilityIds:["__all"] }, ...users]).map(u => ({ ...u, status:"Active" }));
-  })();
-  const navItems = [
-    ["organization","🏢","Organization","Company info and defaults"],
-    ["users","👥","Users & Roles","Access and permissions"],
-    ["roles","🛡️","Role Management","Permission matrix and role rules"],
-    ["activitylog","🧾","Activity Log","Recent admin and data changes"],
-    ["facilities","🏭","Facilities & Areas","Facility details and areas"],
-    ["workorders","🛠","Work Orders","Defaults and printing"],
-    ["branding","🖨","Branding & Printing","Company and facility logos"],
-    ["reports","📊","Reports","Fiscal year and print defaults"],
-    ["security","🔒","Security","Access and audit controls"],
-    ["backup","💾","Backup & Restore","Data tools and setup"],
-  ];
   const updateSelectedFacility = (patch) => setForm(f => {
     const list = normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations });
     const id = f._selectedFacilityId || list[0]?.id || "";
     const next = list.map(l => l.id === id ? { ...l, ...patch } : l);
     return { ...f, locations:next };
   });
+  // Keep Settings inputs mounted while typing.
+  // This is a render helper, not a nested React component, because nested component
+  // definitions are recreated on every keystroke and can cause the input to lose focus.
   const facilityField = (key, label, placeholder="") => (
     <div style={{ marginBottom:10 }}>
       <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>{label}</label>
-      <input style={{ ...inp, width:"100%", boxSizing:"border-box" }} value={selectedFacility?.[key] || ""} onChange={e=>updateSelectedFacility({ [key]:e.target.value })} placeholder={placeholder} />
+      <input
+        style={{ ...inp, width:"100%", boxSizing:"border-box" }}
+        value={selectedFacility?.[key] || ""}
+        onChange={e=>updateSelectedFacility({ [key]:e.target.value })}
+        placeholder={placeholder}
+      />
     </div>
   );
   const Toggle = ({label, k, sub}) => (
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 0", borderBottom:`1px solid ${T.border}` }}>
-      <div><div style={{ fontFamily:T.sans, fontSize:13, color:T.text, fontWeight:600 }}>{label}</div>{sub && <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:2 }}>{sub}</div>}</div>
-      <button type="button" onClick={()=>setForm(f=>({...f,[k]:!f[k]}))} style={{ width:44, height:24, borderRadius:12, border:"none", background:form[k]?T.accent:"#d1d5db", cursor:"pointer", position:"relative", flexShrink:0 }}><span style={{ position:"absolute", top:3, left:form[k]?22:3, width:18, height:18, borderRadius:"50%", background:T.card, display:"block", boxShadow:"0 1px 3px rgba(0,0,0,.2)" }}/></button>
+      <div>
+        <div style={{ fontFamily:T.sans, fontSize:13, color:T.text, fontWeight:500 }}>{label}</div>
+        {sub && <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:2 }}>{sub}</div>}
+      </div>
+      <button type="button" onClick={()=>setForm(f=>({...f,[k]:!f[k]}))} style={{ width:44, height:24, borderRadius:12, border:"none", background:form[k]?T.accent:"#d1d5db", cursor:"pointer", position:"relative", transition:"background .2s", flexShrink:0 }}>
+        <span style={{ position:"absolute", top:3, left:form[k]?22:3, width:18, height:18, borderRadius:"50%", background:T.card, transition:"left .2s", display:"block", boxShadow:"0 1px 3px rgba(0,0,0,.2)" }}/>
+      </button>
     </div>
   );
-  const handleLogo = e => { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = ev => setForm(f=>({...f, logo:ev.target.result})); reader.readAsDataURL(file); };
-  const handleSelectedFacilityLogo = e => { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = ev => updateSelectedFacility({ logo:ev.target.result, facilityLogo:ev.target.result }); reader.readAsDataURL(file); e.target.value = ""; };
-  const createInvitePayload = () => null;
-  const handleCreateInvite = async () => {
-    alert("User invitations are temporarily disabled while the login flow is being stabilized. Use the existing user row to edit roles, or add users later after invite is rebuilt safely.");
+
+  const handleLogo = e => {
+    const file = e.target.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setForm(f=>({...f, logo:ev.target.result}));
+    reader.readAsDataURL(file);
   };
-  const toggleInviteFacility = () => {};
-  const addFacilityFromInput = () => setForm(f=>{ const name=(f._newLoc||"").trim(); if(!name) return f; const list=normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations }); const exists=list.some(x=>x.name.toLowerCase()===name.toLowerCase()); const next=exists?list:[...list,{ id:`FAC-${Date.now()}`, name, address:"", cityState:"", phone:"", email:"", manager:"", active:true }]; const selectedId=exists?(f._selectedFacilityId||list[0]?.id||""):next[next.length-1].id; return {...f,locations:next,_selectedFacilityId:selectedId,_areaFacilityId:selectedId,_newAreaFacilityId:selectedId,_newLoc:""}; });
-  const copySelectedTemplates = () => { if(migrationForm.fromId===migrationForm.toId) return alert("Choose two different facilities."); if(!migrationForm.pmTasks && !migrationForm.inspectionTasks && !migrationForm.tasks) return alert("Choose at least one template type to copy."); if(selectedMigrationTotal <= 0) return alert("No templates were found in the source facility. Save Admin Center first and make sure you are copying from the correct Facility."); dispatch({type:"MIGRATE_TEMPLATES", payload:migrationForm}); alert(`Copied ${selectedMigrationTotal} template${selectedMigrationTotal===1?"":"s"} to ${locationNameForId(foundationState, migrationForm.toId)}.`); };
+
+  const handleSelectedFacilityLogo = e => {
+    const file = e.target.files[0]; if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => updateSelectedFacility({ logo:ev.target.result, facilityLogo:ev.target.result });
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
   const save = () => {
     const { _newLoc, _newArea, _newAreaFacilityId, _areaFacilityId, _selectedFacilityId, ...cleanForm } = form;
     const cleanLocations = normalizeMaintForgeLocations({ ...state, settings:cleanForm, locations:cleanForm.locations });
@@ -8156,130 +8011,231 @@ function SystemSettings({ state, dispatch, onClose, session }) {
     dispatch({ type:"UPDATE_SETTINGS", payload:{ ...cleanForm, brandLogoMode:cleanForm.logoMode, locations: cleanLocations, areas: cleanAreas } });
     onClose();
   };
-  const PanelTitle = ({title, sub, action}) => <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, marginBottom:16 }}><div><h3 style={{ margin:0, fontFamily:T.sans, fontSize:18, color:T.text }}>{title}</h3>{sub && <p style={{ margin:"4px 0 0", fontFamily:T.sans, fontSize:12, color:T.muted }}>{sub}</p>}</div>{action}</div>;
-  const PermissionDot = ({yes}) => <span style={{ color:yes?T.green:T.muted, fontWeight:900 }}>{yes?"✓":"—"}</span>;
-  const permissionRows = [
-    ["Invite users","inviteUsers"],["Edit roles","editRoles"],["Remove users","removeUsers"],["Manage facilities","manageFacilities"],["Manage equipment","manageEquipment"],["Create/Edit WOs","manageWorkOrders"],["Assign WOs","assignWorkOrders"],["Close WOs","closeWorkOrders"],["Inventory","manageInventory"],["Reports","viewReports"]
-  ];
-  const adminActivityRows = [
-    ...(state.activityLog || []),
-    ...(effectiveUsers || []).filter(u=>u.role !== "owner").map(u => ({ id:`user-${u.id}`, date:u.updated || u.created || today(), actor:state.profile?.name || "Admin", action:"User access active", target:u.email, detail:`${roleLabel(u.role)} • ${userFacilitiesLabel(u, orgLocations)}` })),
-    ...(state.workOrders || []).slice(-8).reverse().map(w => ({ id:`wo-${w.id}`, date:w.completedDate || w.created || w.date || today(), actor:w.mechanic || w.assignedTo || "System", action:`Work order ${w.status || "updated"}`, target:w.woNumber || w.id, detail:w.description || w.title || w.type || "Work order activity" })),
-  ].filter(Boolean).slice(0, 30);
 
   return (
-    <Modal title="Admin Center" onClose={onClose} maxWidth={1180}>
-      <div style={{ display:"flex", flexDirection:"column", maxHeight:"calc(92vh - 90px)", minHeight:620 }}>
-      <div style={{ display:"grid", gridTemplateColumns:"260px 1fr", flex:"1 1 auto", minHeight:0 }}>
-        <aside style={{ borderRight:`1px solid ${T.border}`, padding:16, background:T.grayLt, overflowY:"auto" }}>
-          <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, fontWeight:900, letterSpacing:.8, textTransform:"uppercase", marginBottom:10 }}>Admin Center</div>
-          <div style={{ display:"grid", gap:6 }}>
-            {navItems.map(([id,icon,title,sub])=>(
-              <button key={id} onClick={()=>setActiveSection(id)} style={{ display:"flex", gap:10, textAlign:"left", alignItems:"flex-start", padding:"10px 12px", borderRadius:8, border:`1px solid ${activeSection===id?T.accent:"transparent"}`, background:activeSection===id?T.accentLt:"transparent", color:T.text, cursor:"pointer", fontFamily:T.sans }}>
-                <span>{icon}</span><span><b style={{ display:"block", fontSize:13 }}>{title}</b><small style={{ color:T.muted, fontSize:11 }}>{sub}</small></span>
-              </button>
-            ))}
+    <Modal title="System Settings" onClose={onClose} maxWidth={920}>
+      <div style={{ display:"flex", flexDirection:"column", gap:0, maxHeight:"70vh", overflowY:"auto" }}>
+
+        {/* Organization */}
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Organization</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
+            <Field label="Company / Organization Name">
+              <input style={inp} value={form.companyName} onChange={F("companyName")} placeholder="National Cemetery Administration" />
+            </Field>
+            <Field label="Department" half>
+              <input style={inp} value={form.department} onChange={F("department")} placeholder="Maintenance Department" />
+            </Field>
+            <Field label="Location / Site" half>
+              <input style={inp} value={form.location} onChange={F("location")} placeholder="e.g. VA Cemetery - Miami" />
+            </Field>
+            <Field label="Phone" half>
+              <input style={inp} value={form.phone} onChange={F("phone")} placeholder="(555) 000-0000" />
+            </Field>
+            <Field label="Email" half>
+              <input style={inp} value={form.email} onChange={F("email")} placeholder="maintenance@example.gov" />
+            </Field>
           </div>
-        </aside>
-        <main style={{ padding:20, overflowY:"auto", minHeight:0 }}>
-          {activeSection==="organization" && <div>
-            <PanelTitle title="Organization" sub="Company identity and organization-wide defaults." />
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
-              <Field label="Company / Organization Name"><input style={inp} value={form.companyName} onChange={F("companyName")} /></Field>
-              <Field label="Department" half><input style={inp} value={form.department} onChange={F("department")} /></Field>
-              <Field label="Main Phone" half><input style={inp} value={form.phone} onChange={F("phone")} /></Field>
-              <Field label="Main Email" half><input style={inp} value={form.email} onChange={F("email")} /></Field>
-              <Field label="Region / District" half><input style={inp} value={form.region} onChange={F("region")} /></Field>
-              <Field label="Default Site / Facility Name"><input style={inp} value={form.siteName||""} onChange={F("siteName")} /></Field>
-              <Field label="Address"><input style={inp} value={form.address||""} onChange={F("address")} /></Field>
-              <Field label="City, State" half><input style={inp} value={form.cityState||""} onChange={F("cityState")} /></Field>
-              <Field label="Default Labor Rate" half><input type="number" style={inp} value={form.laborRateDefault} onChange={F("laborRateDefault")} /></Field>
+          <div style={{ marginBottom:14 }}>
+            <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:6 }}>Company / Organization Logo</label>
+            <div style={{ display:"flex", gap:12, alignItems:"center", flexWrap:"wrap" }}>
+              {form.logo && <img src={form.logo} alt="logo" style={{ height:48, objectFit:"contain", border:`1px solid ${T.border}`, borderRadius:6, padding:4, background:T.surface }} />}
+              <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.accent, cursor:"pointer", padding:"7px 14px", border:`1px solid ${T.accent}`, borderRadius:6 }}>
+                Upload Company Logo
+                <input type="file" accept="image/*" onChange={handleLogo} style={{ display:"none" }} />
+              </label>
+              {form.logo && <button type="button" onClick={()=>setForm(f=>({...f,logo:""}))} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>Remove</button>}
             </div>
-            <Toggle label="Require mechanic on work orders" k="requireTech" sub="Prevents incomplete work orders from being saved without a mechanic." />
-            <Toggle label="Show costs on work order printouts" k="showCostsOnWO" sub="Turn this off when printing customer or leadership copies without labor/parts totals." />
-          </div>}
+          </div>
+          <div style={{ marginBottom:14, padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
+            <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:8 }}>Logo Display Mode</label>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+              <button type="button" onClick={()=>setForm(f=>({...f,logoMode:"company"}))} style={{ textAlign:"left", padding:10, borderRadius:8, border:`1px solid ${form.logoMode === "company" ? T.accent : T.border}`, background:form.logoMode === "company" ? T.accentLt : T.surface, color:T.text, cursor:"pointer" }}>
+                <b>Use company logo everywhere</b><br/><span style={{ fontSize:11, color:T.muted }}>One main logo shows across all facilities, work orders, reports, and headers.</span>
+              </button>
+              <button type="button" onClick={()=>setForm(f=>({...f,logoMode:"facility"}))} style={{ textAlign:"left", padding:10, borderRadius:8, border:`1px solid ${form.logoMode === "facility" ? T.accent : T.border}`, background:form.logoMode === "facility" ? T.accentLt : T.surface, color:T.text, cursor:"pointer" }}>
+                <b>Use facility logos when available</b><br/><span style={{ fontSize:11, color:T.muted }}>Each selected facility can show its own logo. If missing, it falls back to the company logo.</span>
+              </button>
+            </div>
+          </div>
+        </div>
 
-          {activeSection==="users" && <div>
-            <PanelTitle title="Users & Roles" sub="Edit roles, facility access, and remove users. Invitations are disabled for now to stop the login loop." />
-            {!canManageUsers && <div style={{ padding:10, border:`1px solid ${T.amber}`, borderRadius:8, background:T.amberLt, color:T.amber, fontFamily:T.sans, fontSize:12, marginBottom:12 }}>Your current role can view this page, but cannot manage users.</div>}
-            <div style={{ padding:14, border:`1px solid ${T.amber}`, borderRadius:10, background:T.amberLt, color:T.amber, marginBottom:16, fontFamily:T.sans, fontSize:13 }}>
-              <b>Invites temporarily removed.</b> Existing users can sign in normally. Role editing stays available here, and the invite system can be rebuilt later without touching the login flow.
-            </div>
-            <div style={{ display:"grid", gap:10 }}>
-              {effectiveUsers.map(u => <div key={u.id} style={{ display:"grid", gridTemplateColumns:"1.2fr 210px 1fr 110px", gap:10, alignItems:"center", padding:12, border:`1px solid ${T.border}`, borderRadius:10, background:T.card }}>
-                <div><div style={{ fontFamily:T.sans, fontWeight:800, color:T.text }}>{u.name || u.email}</div><div style={{ fontFamily:T.mono, fontSize:11, color:T.muted }}>{u.email}</div></div>
-                <select style={sel} disabled={!canManageUsers || u.role==="owner" || !canManageRole(managerRole,u.role)} value={u.role || "viewer"} onChange={e=>dispatch({type:"UPDATE_ORG_USER", payload:{...u, role:e.target.value, facilityIds:e.target.value==="org_manager"?["__all"]:(u.facilityIds||[])}})}>{ROLE_OPTIONS.map(r=><option key={r.value} value={r.value}>{r.label}</option>)}</select>
-                <div style={{ fontFamily:T.sans, fontSize:12, color:T.subtext }}>{userFacilitiesLabel(u, orgLocations)}</div>
-                <div style={{ display:"flex", gap:6, justifyContent:"flex-end" }}><Btn small variant="danger" onClick={()=>{ if(u.role==="owner") return alert("Owner cannot be removed."); if(!canManageUsers) return alert("You do not have permission to remove users."); if(confirm(`Remove ${u.email}?`)) dispatch({type:"REMOVE_ORG_USER", payload:u.id}); }}>Remove</Btn></div>
-              </div>)}
-            </div>
-            <div style={{ marginTop:18 }}><PanelTitle title="Permission Matrix" sub="This is the single source of truth for what each role can do." />
-              <div style={{ overflowX:"auto", border:`1px solid ${T.border}`, borderRadius:10 }}><table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:12 }}><thead><tr style={{ background:T.grayLt }}><th style={{ textAlign:"left", padding:8 }}>Permission</th>{ROLE_OPTIONS.map(r=><th key={r.value} style={{ padding:8 }}>{r.label.replace("Organization ","Org ").replace(" / Technician","")}</th>)}</tr></thead><tbody>{permissionRows.map(([label,key])=><tr key={key} style={{ borderTop:`1px solid ${T.border}` }}><td style={{ padding:8, color:T.text, fontWeight:700 }}>{label}</td>{ROLE_OPTIONS.map(r=><td key={r.value} style={{ textAlign:"center", padding:8 }}><PermissionDot yes={hasPermission(r.value,key)} /></td>)}</tr>)}</tbody></table></div>
-            </div>
-          </div>}
+        {/* Preferences */}
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Preferences</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
+            <Field label="Appearance / Theme" half>
+              <select style={sel} value={form.theme} onChange={F("theme")}>
+                <option value="light">☀️ Light Mode</option>
+                <option value="dark">🌙 Dark Mode</option>
+                <option value="system">💻 System Default</option>
+              </select>
+            </Field>
+            <Field label="Default Work Order Priority" half>
+              <select style={sel} value={form.defaultPriority} onChange={F("defaultPriority")}>
+                {["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}
+              </select>
+            </Field>
+            <Field label="Default Labor Rate ($/hr)" half>
+              <input style={inp} type="number" value={form.laborRateDefault} onChange={F("laborRateDefault")} />
+            </Field>
+            <Field label="Date Format" half>
+              <select style={sel} value={form.dateFormat} onChange={F("dateFormat")}>
+                {["MM/DD/YYYY","DD/MM/YYYY","YYYY-MM-DD"].map(d=><option key={d}>{d}</option>)}
+              </select>
+            </Field>
+            <Field label="Currency" half>
+              <select style={sel} value={form.currency} onChange={F("currency")}>
+                {["USD","EUR","GBP","CAD"].map(c=><option key={c}>{c}</option>)}
+              </select>
+            </Field>
+          </div>
+          <Toggle label="Show costs on printed work order" k="showCostsOnWO" sub="Labor and parts costs visible on printed WOs" />
+          <Toggle label="Require mechanic on work orders" k="requireTech" sub="Work orders cannot be saved without a mechanic assigned" />
+        </div>
 
-          {activeSection==="roles" && <div>
-            <PanelTitle title="Role Management" sub="Control what each role can do. Owner is protected and cannot be removed or downgraded from here." />
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(220px, 1fr))", gap:10, marginBottom:16 }}>
-              {ROLE_OPTIONS.map(r => <Card key={r.value}><div style={{ fontFamily:T.sans, fontSize:14, fontWeight:900, color:T.text }}>{r.label}</div><div style={{ fontSize:12, color:T.muted, marginTop:4 }}>{r.description}</div><div style={{ marginTop:8 }}><Badge label={`Level ${r.level}`} /></div></Card>)}
-            </div>
-            <PanelTitle title="Permission Matrix" sub="This table is what the app uses to decide who can see, edit, assign, close, invite, and manage data." />
-            <div style={{ overflowX:"auto", border:`1px solid ${T.border}`, borderRadius:10, background:T.card }}><table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:12 }}><thead><tr style={{ background:T.grayLt }}><th style={{ textAlign:"left", padding:8 }}>Permission</th>{ROLE_OPTIONS.map(r=><th key={r.value} style={{ padding:8 }}>{r.label.replace("Organization ","Org ").replace(" / Technician","")}</th>)}</tr></thead><tbody>{permissionRows.map(([label,key])=><tr key={key} style={{ borderTop:`1px solid ${T.border}` }}><td style={{ padding:8, color:T.text, fontWeight:700 }}>{label}</td>{ROLE_OPTIONS.map(r=><td key={r.value} style={{ textAlign:"center", padding:8 }}><PermissionDot yes={hasPermission(r.value,key)} /></td>)}</tr>)}</tbody></table></div>
-            <div style={{ marginTop:12, padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt, color:T.subtext, fontFamily:T.sans, fontSize:12 }}>Role editing is done in <b>Users & Roles</b>. This page explains and verifies the permissions so the buttons do something useful instead of being dead cards.</div>
-          </div>}
-
-          {activeSection==="activitylog" && <div>
-            <PanelTitle title="Activity Log" sub="Recent access changes, invites, and work order activity. This works now using current app data; database audit history can be connected later." />
-            <div style={{ display:"grid", gap:8 }}>
-              {adminActivityRows.length ? adminActivityRows.map(row => <div key={row.id} style={{ display:"grid", gridTemplateColumns:"120px 1fr", gap:12, padding:12, border:`1px solid ${T.border}`, borderRadius:10, background:T.card }}>
-                <div style={{ fontFamily:T.mono, fontSize:11, color:T.muted }}>{row.date}</div>
-                <div><div style={{ fontFamily:T.sans, fontWeight:900, color:T.text }}>{row.action}</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.subtext }}>{row.target}</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{row.detail}</div><div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:4 }}>By {row.actor}</div></div>
-              </div>) : <div style={{ padding:18, textAlign:"center", color:T.muted, border:`1px dashed ${T.border}`, borderRadius:10 }}>No activity has been recorded yet.</div>}
-            </div>
-          </div>}
-
-          {activeSection==="facilities" && <div>
-            <PanelTitle title="Facilities & Areas" sub="Each facility keeps its own address, contact information, logo, QR code, and area list." />
-            <div style={{ display:"flex", gap:8, marginBottom:12 }}><input style={{ ...inp, flex:1 }} placeholder="Add facility..." value={form._newLoc||""} onChange={e=>setForm(f=>({...f,_newLoc:e.target.value}))} onKeyDown={e=>{ if(e.key==="Enter"){ e.preventDefault(); addFacilityFromInput(); } }} /><Btn onClick={addFacilityFromInput}>Add Facility</Btn></div>
-            <div style={{ display:"grid", gridTemplateColumns:"240px 1fr", gap:14 }}>
-              <div style={{ display:"grid", gap:6 }}>{orgLocations.map(l=><button key={l.id} onClick={()=>setForm(f=>({...f,_selectedFacilityId:l.id,_areaFacilityId:l.id}))} style={{ textAlign:"left", padding:10, borderRadius:8, border:`1px solid ${form._selectedFacilityId===l.id?T.accent:T.border}`, background:form._selectedFacilityId===l.id?T.accentLt:T.card, color:T.text, cursor:"pointer", fontFamily:T.sans }}>{l.name}</button>)}</div>
-              <div style={{ border:`1px solid ${T.border}`, borderRadius:10, padding:14, background:T.card }}>
-                {selectedFacility ? <><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>{facilityField("name","Facility Name")}{facilityField("manager","Facility Manager")}{facilityField("address","Address")}{facilityField("cityState","City, State")}{facilityField("phone","Phone")}{facilityField("email","Email")}</div>
-                <div style={{ marginTop:10 }}><label style={{ fontFamily:T.sans, fontSize:12, color:T.subtext, fontWeight:700 }}>Facility Logo</label><input type="file" accept="image/*" onChange={handleSelectedFacilityLogo} style={{ ...inp, marginTop:5 }} />{(selectedFacility.logo||selectedFacility.facilityLogo) && <img src={selectedFacility.logo||selectedFacility.facilityLogo} style={{ maxHeight:60, marginTop:8 }} />}</div>
-                <div style={{ marginTop:14, paddingTop:12, borderTop:`1px solid ${T.border}` }}><div style={{ fontFamily:T.sans, fontWeight:800, color:T.text, marginBottom:8 }}>Areas inside this facility</div><div style={{ display:"flex", gap:8 }}><input style={inp} placeholder="Add area..." value={form._newArea||""} onChange={e=>setForm(f=>({...f,_newArea:e.target.value}))}/><Btn onClick={()=>setForm(f=>{ const name=(f._newArea||"").trim(); if(!name) return f; const facilityId=selectedAreaFacilityId; const area={ id:`AREA-${Date.now()}`, name, facilityId, facilityName:locationNameForId(foundationState, facilityId), active:true }; return { ...f, areas:[...(f.areas||[]), area], _newArea:"" }; })}>Add Area</Btn></div><div style={{ display:"grid", gap:6, marginTop:8 }}>{areasForSelectedFacility.length?areasForSelectedFacility.map((a,i)=><div key={a.id||i} style={{ display:"flex", justifyContent:"space-between", padding:8, border:`1px solid ${T.border}`, borderRadius:7 }}><span style={{ color:T.text }}>{a.name}</span><button onClick={()=>setForm(f=>({...f,areas:(f.areas||[]).filter(area=>(area.id||area.name)!==(a.id||a.name))}))} style={{ border:"none", background:"transparent", color:T.red, cursor:"pointer" }}>×</button></div>):<div style={{ color:T.muted, fontSize:12 }}>No areas defined for this facility yet.</div>}</div></div></> : <div style={{ color:T.muted }}>Add a facility to begin.</div>}
+        {/* Accent color */}
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Foundation — Facilities & Areas</div>
+          <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginBottom:10 }}>Create separate Facilities for independent shops/sites. Add Areas for buildings, departments, zones, or sections inside a Facility.</div>
+          <div style={{ display:"flex", gap:8, marginBottom:10 }}>
+            <input style={{ ...inp, flex:1 }} placeholder="Add facility (e.g. MNC, PRNC, San Juan Shop)..." value={form._newLoc||""} onChange={e=>setForm(f=>({...f,_newLoc:e.target.value}))} onKeyDown={e=>{ if(e.key==="Enter"&&form._newLoc?.trim()){ e.preventDefault(); setForm(f=>{ const name=f._newLoc.trim(); const list=normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations }); const exists=list.some(x=>x.name.toLowerCase()===name.toLowerCase()); const next=exists?list:[...list,{ id:`FAC-${Date.now()}`, name, address:"", cityState:"", phone:"", email:"", manager:"", active:true }]; const selectedId=exists?(f._selectedFacilityId||list[0]?.id||""):next[next.length-1].id; return {...f,locations:next,_selectedFacilityId:selectedId,_areaFacilityId:selectedId,_newAreaFacilityId:selectedId,_newLoc:""}; }); }}} />
+            <Btn small onClick={()=>{ if(form._newLoc?.trim()) setForm(f=>{ const name=f._newLoc.trim(); const list=normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations }); const exists=list.some(x=>x.name.toLowerCase()===name.toLowerCase()); const next=exists?list:[...list,{ id:`FAC-${Date.now()}`, name, address:"", cityState:"", phone:"", email:"", manager:"", active:true }]; const selectedId=exists?(f._selectedFacilityId||list[0]?.id||""):next[next.length-1].id; return {...f,locations:next,_selectedFacilityId:selectedId,_areaFacilityId:selectedId,_newAreaFacilityId:selectedId,_newLoc:""}; }); }}>Add Facility</Btn>
+          </div>
+          {facilityListForForm().length===0 ? (
+            <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, fontStyle:"italic", padding:"8px 0" }}>No facilities defined. Add one above.</div>
+          ) : (
+            <div style={{ display:"grid", gridTemplateColumns:"260px 1fr", gap:12, alignItems:"start" }}>
+              <div style={{ display:"flex", flexDirection:"column", gap:4, maxHeight:260, overflowY:"auto" }}>
+                {facilityListForForm().map((loc)=>(
+                  <button key={loc.id} type="button" onClick={()=>setForm(f=>({...f,_selectedFacilityId:loc.id,_areaFacilityId:loc.id,_newAreaFacilityId:loc.id}))} style={{ textAlign:"left", padding:"9px 12px", background:form._selectedFacilityId===loc.id?T.accentLt:T.grayLt, border:`1px solid ${form._selectedFacilityId===loc.id?T.accent:T.border}`, borderRadius:6, color:T.text, cursor:"pointer", fontFamily:T.sans, fontSize:13 }}>
+                    <b>{loc.name}</b><br/><span style={{ color:T.muted, fontSize:11 }}>{loc.address || "No address"}</span>
+                  </button>
+                ))}
+              </div>
+              <div style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.surface }}>
+                <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:8 }}>Edit Selected Facility</div>
+                <div style={{ fontSize:11, color:T.muted, marginBottom:10 }}>Organization Owners choose which Facility to edit here. Facility Administrators should only see their assigned Facility.</div>
+                <div style={{ marginBottom:12, padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
+                  <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:6 }}>Facility Logo</label>
+                  <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                    {selectedFacility?.logo ? <img src={selectedFacility.logo} alt="facility logo" style={{ height:46, maxWidth:110, objectFit:"contain", border:`1px solid ${T.border}`, borderRadius:6, padding:4, background:T.surface }} /> : <span style={{ fontSize:11, color:T.muted }}>No facility logo uploaded.</span>}
+                    <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.accent, cursor:"pointer", padding:"7px 12px", border:`1px solid ${T.accent}`, borderRadius:6, background:T.surface }}>
+                      Upload Facility Logo
+                      <input type="file" accept="image/*" onChange={handleSelectedFacilityLogo} style={{ display:"none" }} />
+                    </label>
+                    {selectedFacility?.logo && <button type="button" onClick={()=>updateSelectedFacility({ logo:"", facilityLogo:"" })} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:700 }}>Remove</button>}
+                  </div>
+                  <div style={{ fontSize:11, color:T.muted, marginTop:6 }}>{form.logoMode === "facility" ? "This logo will show when this Facility is selected. It falls back to the company logo if blank." : "Company logo mode is currently on, so this facility logo is stored but not displayed until facility logo mode is selected."}</div>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 12px" }}>
+                  <div style={{ gridColumn:"span 2" }}>{facilityField("name", "Facility Name")}</div>
+                  {facilityField("manager", "Manager")}
+                  <div style={{ gridColumn:"span 2" }}>{facilityField("address", "Address")}</div>
+                  {facilityField("cityState", "City, State")}
+                  {facilityField("phone", "Phone")}
+                  {facilityField("email", "Email")}
+                </div>
+                <button type="button" onClick={()=>setForm(f=>{ const list=facilityListForForm(); const removeId=f._selectedFacilityId; if(!removeId) return f; if(list.length<=1) { alert("At least one facility is required. Create another facility before deleting this one."); return f; } if(!confirm("Delete this facility from Foundation? Records are not deleted, but unassigned records may need reassignment.")) return f; const next=list.filter(l=>l.id!==removeId); return {...f,locations:next,areas:(f.areas||[]).filter(a=>(typeof a==="string"?"":(a.facilityId||a.locationId||""))!==removeId),_selectedFacilityId:next[0]?.id||"",_areaFacilityId:next[0]?.id||"",_newAreaFacilityId:next[0]?.id||""}; })} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:700, padding:0 }}>Delete selected facility</button>
               </div>
             </div>
-          </div>}
+          )}
 
-          {activeSection==="branding" && <div><PanelTitle title="Branding & Printing" sub="Choose whether reports and work orders use one company logo or each facility's logo." />
-            <Field label="Company Logo"><input type="file" accept="image/*" onChange={handleLogo} style={inp} />{form.logo && <img src={form.logo} style={{ maxHeight:70, marginTop:10 }} />}</Field>
-            <Field label="Logo Mode"><select style={sel} value={form.logoMode} onChange={F("logoMode")}><option value="company">Use company logo everywhere</option><option value="facility">Use each facility logo</option></select></Field>
-            <Field label="Accent Color"><div style={{ display:"flex", gap:10, alignItems:"center" }}><input type="color" value={form.accentColor} onChange={F("accentColor")} style={{ width:44, height:36 }} /><span style={{ fontFamily:T.mono, color:T.muted }}>{form.accentColor}</span></div></Field>
-            <Field label="Theme"><select style={sel} value={form.theme} onChange={F("theme")}><option value="light">Light</option><option value="dark">Dark</option><option value="system">System</option></select></Field>
-          </div>}
+          <div style={{ marginTop:14, padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
+            <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:8 }}>Areas Inside a Facility</div>
+            <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginBottom:8 }}>Use Areas for Administration Building, Maintenance Building, Warehouse, Fuel Station, sections, or other places inside one Facility. Areas are saved separately per Facility.</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr auto", gap:8, alignItems:"center" }}>
+              <select style={sel} value={selectedAreaFacilityId} onChange={e=>setForm(f=>({...f,_areaFacilityId:e.target.value,_newAreaFacilityId:e.target.value}))}>
+                {orgLocations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+              <input style={inp} placeholder={`Add area for ${selectedAreaFacilityName}...`} value={form._newArea||""} onChange={e=>setForm(f=>({...f,_newArea:e.target.value}))} onKeyDown={e=>{ if(e.key==="Enter"&&form._newArea?.trim()){ e.preventDefault(); setForm(f=>{ const facId=f._areaFacilityId || f._newAreaFacilityId || selectedAreaFacilityId || orgLocations[0]?.id || ""; const facName=locationNameForId({ ...state, settings:f }, facId); const next={ id:`AREA-${Date.now()}`, name:f._newArea.trim(), facilityId:facId, locationId:facId, facilityName:facName }; const exists=normalizeMaintForgeAreas({ ...state, settings:f, areas:f.areas||[] }, facId).some(a=>String(a.name||"").toLowerCase()===next.name.toLowerCase()); return exists ? {...f,_newArea:"",_areaFacilityId:facId,_newAreaFacilityId:facId} : {...f,areas:[...(f.areas||[]),next],_newArea:"",_areaFacilityId:facId,_newAreaFacilityId:facId}; }); }}} />
+              <Btn small onClick={()=>{ if(form._newArea?.trim()) setForm(f=>{ const facId=f._areaFacilityId || f._newAreaFacilityId || selectedAreaFacilityId || orgLocations[0]?.id || ""; const facName=locationNameForId({ ...state, settings:f }, facId); const next={ id:`AREA-${Date.now()}`, name:f._newArea.trim(), facilityId:facId, locationId:facId, facilityName:facName }; const exists=normalizeMaintForgeAreas({ ...state, settings:f, areas:f.areas||[] }, facId).some(a=>String(a.name||"").toLowerCase()===next.name.toLowerCase()); return exists ? {...f,_newArea:"",_areaFacilityId:facId,_newAreaFacilityId:facId} : {...f,areas:[...(f.areas||[]),next],_newArea:"",_areaFacilityId:facId,_newAreaFacilityId:facId}; }); }}>Add Area</Btn>
+            </div>
+            <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:8 }}>Showing areas for <b>{selectedAreaFacilityName}</b> only.</div>
+            {areasForSelectedFacility.length===0 ? <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, fontStyle:"italic", padding:"8px 0" }}>No areas defined for this facility yet.</div> : (
+              <div style={{ display:"flex", flexDirection:"column", gap:4, maxHeight:180, overflowY:"auto", marginTop:10 }}>
+                {areasForSelectedFacility.map((a,i)=>(
+                  <div key={a.id||i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"7px 12px", background:T.surface, borderRadius:6, border:`1px solid ${T.border}` }}>
+                    <span style={{ fontFamily:T.sans, fontSize:13, color:T.text }}><b>{a.name}</b><span style={{ color:T.muted }}> — {a.facilityName || selectedAreaFacilityName}</span></span>
+                    <button onClick={()=>setForm(f=>({...f,areas:(f.areas||[]).filter(area=>{ const item=typeof area==="string"?{name:area,facilityId:orgLocations[0]?.id||""}:area; const sameId=a.id && item.id===a.id; const sameNameFacility=String(item.name||"").toLowerCase()===String(a.name||"").toLowerCase() && String(item.facilityId||item.locationId||"")===String(a.facilityId||""); return !(sameId || sameNameFacility); })}))} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:16, lineHeight:1, padding:"0 4px" }}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
-          {activeSection==="workorders" && <div><PanelTitle title="Work Order Settings" sub="Defaults used when creating, closing, and printing work orders." />
-            <Field label="Default Priority" half><select style={sel} value={form.defaultPriority} onChange={F("defaultPriority")}><option>Low</option><option>Medium</option><option>High</option></select></Field>
-            <Field label="Default Labor Rate" half><input type="number" style={inp} value={form.laborRateDefault} onChange={F("laborRateDefault")} /></Field>
-            <Toggle label="Require mechanic before saving" k="requireTech" />
-            <Toggle label="Show costs on printable work orders" k="showCostsOnWO" />
-            <div style={{ padding:12, background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:8, color:T.muted, fontFamily:T.sans, fontSize:12 }}>Detailed work order print layout controls remain in the Work Orders page under ⚙ WO Settings.</div>
-          </div>}
+          <div style={{ marginTop:14, padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
+            <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:8 }}>Invite User to a Facility</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+              <input style={inp} placeholder="Mechanic name" value={inviteForm.name} onChange={e=>setInviteForm(f=>({...f,name:e.target.value}))} />
+              <input style={inp} placeholder="Mechanic email" value={inviteForm.email} onChange={e=>setInviteForm(f=>({...f,email:e.target.value}))} />
+              <select style={sel} value={inviteForm.role} onChange={e=>setInviteForm(f=>({...f,role:e.target.value}))}><option>Facility Administrator</option><option>Mechanic</option><option>Read Only</option></select>
+              <select style={sel} value={inviteForm.locationId} onChange={e=>setInviteForm(f=>({...f,locationId:e.target.value}))}>{orgLocations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginTop:8, alignItems:"center" }}>
+              <div style={{ fontSize:11, color:T.muted }}>Invite is saved with a secure token. Until email service is connected, copy the invite link shown below and send it to the user.</div>
+              <Btn small onClick={()=>{ if(!inviteForm.email.trim()) return alert("Enter an email first."); if(!inviteForm.locationId) return alert("Create/select a facility first."); const payload=createInvitePayload(); dispatch({type:"ADD_USER_INVITE", payload}); alert("Invite created. Send the invite link to the user so they can create their account for only this facility."); setInviteForm(f=>({...f,email:"",name:""})); }}>Create Invite</Btn>
+            </div>
+            {(state.userInvites||[]).length>0 && <div style={{ marginTop:8, display:"grid", gap:6 }}>{(state.userInvites||[]).slice(0,5).map(inv=><div key={inv.id} style={{ fontSize:12, color:T.subtext, padding:8, border:`1px solid ${T.border}`, borderRadius:6, background:T.surface }}><b style={{ color:T.text }}>{inv.email}</b> — {inv.role} — {inv.locationName || locationNameForId(foundationState, inv.locationId)} — {inv.status}<div style={{ marginTop:4, fontFamily:T.mono, fontSize:10, color:T.muted, wordBreak:"break-all" }}>{inv.inviteUrl || inv.token || "Invite token saved"}</div></div>)}</div>}
+          </div>
 
-          {activeSection==="reports" && <div><PanelTitle title="Reports" sub="Report defaults and migration tools." />
-            <div style={{ marginTop:14, padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}><div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:8 }}>Migrate / Copy Templates Between Facilities</div><div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}><Field label="From Facility" half><select style={sel} value={migrationForm.fromId} onChange={e=>setMigrationForm(f=>({...f,fromId:e.target.value}))}>{orgLocations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></Field><Field label="To Facility" half><select style={sel} value={migrationForm.toId} onChange={e=>setMigrationForm(f=>({...f,toId:e.target.value}))}>{orgLocations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></Field></div><div style={{ display:"flex", gap:12, flexWrap:"wrap", fontSize:12, color:T.text }}><label><input type="checkbox" checked={migrationForm.pmTasks} onChange={e=>setMigrationForm(f=>({...f,pmTasks:e.target.checked}))}/> PM task library</label><label><input type="checkbox" checked={migrationForm.inspectionTasks} onChange={e=>setMigrationForm(f=>({...f,inspectionTasks:e.target.checked}))}/> Inspection task library</label><label><input type="checkbox" checked={migrationForm.tasks} onChange={e=>setMigrationForm(f=>({...f,tasks:e.target.checked}))}/> General task library</label></div><div style={{ display:"flex", justifyContent:"space-between", gap:8, marginTop:8, alignItems:"center" }}><div style={{ fontSize:11, color:T.muted }}>Found in source: PM {currentMigrationCounts.pmTasks}, Inspections {currentMigrationCounts.inspectionTasks}, General {currentMigrationCounts.tasks}.</div><Btn small onClick={copySelectedTemplates}>Copy Selected</Btn></div>{state.lastMigrationResult && <div style={{ marginTop:8, fontSize:12, color:T.subtext, padding:8, border:`1px solid ${T.border}`, borderRadius:6, background:T.surface }}>Last migration: <b style={{ color:T.text }}>{state.lastMigrationResult.total}</b> copied from {state.lastMigrationResult.fromName} to {state.lastMigrationResult.toName}.</div>}</div>
-          </div>}
+          <div style={{ marginTop:14, padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
+            <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:8 }}>Migrate / Copy Templates Between Facilities</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+              <Field label="From Facility" half><select style={sel} value={migrationForm.fromId} onChange={e=>setMigrationForm(f=>({...f,fromId:e.target.value}))}>{orgLocations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
+              <Field label="To Facility" half><select style={sel} value={migrationForm.toId} onChange={e=>setMigrationForm(f=>({...f,toId:e.target.value}))}>{orgLocations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
+            </div>
+            <div style={{ display:"flex", gap:12, flexWrap:"wrap", fontSize:12, color:T.text }}>
+              <label><input type="checkbox" checked={migrationForm.pmTasks} onChange={e=>setMigrationForm(f=>({...f,pmTasks:e.target.checked}))}/> PM task library</label>
+              <label><input type="checkbox" checked={migrationForm.inspectionTasks} onChange={e=>setMigrationForm(f=>({...f,inspectionTasks:e.target.checked}))}/> Inspection task library</label>
+              <label><input type="checkbox" checked={migrationForm.tasks} onChange={e=>setMigrationForm(f=>({...f,tasks:e.target.checked}))}/> General task library</label>
+            </div>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginTop:8, alignItems:"center" }}>
+              <div style={{ fontSize:11, color:T.muted }}>This creates independent copies in the destination facility. Found in source: PM {currentMigrationCounts.pmTasks}, Inspections {currentMigrationCounts.inspectionTasks}, General {currentMigrationCounts.tasks}. The destination mechanic can edit their copy without changing the original templates.</div>
+              <Btn small onClick={copySelectedTemplates}>Copy Selected</Btn>
+            </div>
+            {state.lastMigrationResult && <div style={{ marginTop:8, fontSize:12, color:T.subtext, padding:8, border:`1px solid ${T.border}`, borderRadius:6, background:T.surface }}>Last migration: <b style={{ color:T.text }}>{state.lastMigrationResult.total}</b> copied from {state.lastMigrationResult.fromName} to {state.lastMigrationResult.toName} — PM {state.lastMigrationResult.pmTasks}, Inspections {state.lastMigrationResult.inspectionTasks}, General {state.lastMigrationResult.tasks}.</div>}
+          </div>
 
-          {activeSection==="security" && <div><PanelTitle title="Security" sub="Role-based access control and audit features." />
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(240px, 1fr))", gap:10 }}><button type="button" onClick={()=>setActiveSection("roles")} style={{ textAlign:"left", padding:14, border:`1px solid ${T.border}`, borderRadius:10, background:T.card, color:T.text, cursor:"pointer", fontFamily:T.sans }}><b>Role Management</b><p style={{ color:T.muted, fontSize:12, marginBottom:0 }}>Open the permission matrix and role rules.</p></button><button type="button" onClick={()=>setActiveSection("activitylog")} style={{ textAlign:"left", padding:14, border:`1px solid ${T.border}`, borderRadius:10, background:T.card, color:T.text, cursor:"pointer", fontFamily:T.sans }}><b>Activity Log</b><p style={{ color:T.muted, fontSize:12, marginBottom:0 }}>Open recent access, invite, and work order activity.</p></button></div>
-          </div>}
+          <div style={{ marginTop:14 }}>
+            <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:8, paddingBottom:6, borderBottom:`1px solid ${T.border}` }}>Organization Default / Fallback Site Info</div>
+            <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginBottom:8 }}>Daily screens and reports use the active Facility information above. These fields are only fallback defaults when no Facility is selected.</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
+              <Field label="Site / Facility Name">
+                <input style={inp} value={form.siteName||""} onChange={e=>setForm(f=>({...f,siteName:e.target.value}))} placeholder="e.g. Miami National Cemetery" />
+              </Field>
+              <Field label="Region / District" half>
+                <input style={inp} value={form.region||""} onChange={e=>setForm(f=>({...f,region:e.target.value}))} placeholder="e.g. Southeast Region" />
+              </Field>
+              <Field label="Address">
+                <input style={inp} value={form.address||""} onChange={e=>setForm(f=>({...f,address:e.target.value}))} />
+              </Field>
+              <Field label="City, State" half>
+                <input style={inp} value={form.cityState||""} onChange={e=>setForm(f=>({...f,cityState:e.target.value}))} placeholder="Miami, FL" />
+              </Field>
+            </div>
+          </div>
 
-          {activeSection==="backup" && <div><PanelTitle title="Backup & Restore" sub="Data reset and setup tools." />
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}><Btn variant="danger" onClick={()=>{ if(confirm("⚠ This will permanently delete ALL data from this browser. Continue?")){ localStorage.removeItem("ncaState"); window.location.reload(); } }}>Reset All Data</Btn><Btn variant="secondary" onClick={()=>{ if(confirm("Restart the setup wizard? Your data will be kept.")){ dispatch({type:"RESET_SETUP"}); onClose(); }}}>Restart Setup Wizard</Btn></div>
-          </div>}
-        </main>
+          <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}`, marginTop:8 }}>Appearance</div>
+          <Field label="Accent Color">
+            <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+              <input type="color" value={form.accentColor} onChange={F("accentColor")} style={{ width:44, height:36, border:`1px solid ${T.border}`, borderRadius:6, cursor:"pointer", padding:2 }} />
+              <span style={{ fontFamily:T.mono, fontSize:12, color:T.muted }}>{form.accentColor}</span>
+              <div style={{ flex:1, height:8, borderRadius:4, background:form.accentColor }}/>
+            </div>
+          </Field>
+        </div>
       </div>
-      <div style={{ display:"flex", gap:8, justifyContent:"flex-end", alignItems:"center", padding:"12px 0 0", marginTop:12, borderTop:`1px solid ${T.border}`, background:T.card, flexShrink:0 }}><Btn variant="secondary" onClick={onClose}>Cancel</Btn><Btn onClick={save}>Save Admin Center</Btn></div>
+
+      <div style={{ display:"flex", gap:8, justifyContent:"space-between", alignItems:"center", marginTop:16, paddingTop:12, borderTop:`1px solid ${T.border}` }}>
+        <div style={{ display:"flex", gap:8 }}>
+          <Btn variant="danger" onClick={()=>{ if(confirm("⚠ This will permanently delete ALL data (work orders, equipment, parts, etc.) from this browser. Continue?")){ localStorage.removeItem("ncaState"); window.location.reload(); } }}>Reset All Data</Btn>
+          <Btn variant="secondary" onClick={()=>{ if(confirm("Restart the setup wizard? Your data will be kept but you'll be taken through the introduction again.")){ dispatch({type:"RESET_SETUP"}); onClose(); }}}>Restart Setup Wizard</Btn>
+        </div>
+        <div style={{ display:"flex", gap:8 }}>
+          <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
+          <Btn onClick={save}>Save Settings</Btn>
+        </div>
       </div>
     </Modal>
   );
@@ -8885,9 +8841,6 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authMode, setAuthMode] = useState("login");
-  const [authScreenTouched, setAuthScreenTouched] = useState(false);
-  const [showCreateAccount, setShowCreateAccount] = useState(false);
-  const hasInviteToken = (() => { try { return !!inviteTokenFromUrl(); } catch(e) { return false; } })();
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authConfirmPassword, setAuthConfirmPassword] = useState("");
@@ -8897,27 +8850,11 @@ export default function App() {
   const publicWORequestMode = isPublicWORequestPage();
   const [publicPortal, setPublicPortal] = useState(null);
   const [publicPortalLoading, setPublicPortalLoading] = useState(false);
-  const skipNextCloudSaveRef = useRef(false);
-  const [accountRecovery, setAccountRecovery] = useState(null);
-  const [allowSetupWizard, setAllowSetupWizard] = useState(false);
 
   useEffect(() => {
     if(publicWORequestMode) { setAuthLoading(false); return; }
-    try { clearInviteTokenFromUrl(); } catch(e) {}
-    setAuthMode("login");
-    setAuthScreenTouched(false);
-    setShowCreateAccount(false);
     loadSession(setSession, setAuthLoading);
   }, [publicWORequestMode]);
-
-  useEffect(() => {
-    if(!authLoading && !session && !showCreateAccount) {
-      // Existing users must always land on Sign In after refresh.
-      // The old account creation flow is disabled in this recovery build.
-      if(authMode !== "login") setAuthMode("login");
-      if(authScreenTouched) setAuthScreenTouched(false);
-    }
-  }, [authLoading, session, showCreateAccount, authMode, authScreenTouched]);
 
   useEffect(() => {
     if(!publicWORequestMode) return;
@@ -8948,69 +8885,31 @@ export default function App() {
   useEffect(() => {
     if (!session) {
       setDataLoaded(false);
-      setAccountRecovery(null);
-      setAllowSetupWizard(false);
       return;
     }
     let cancelled = false;
     async function loadData() {
       try {
-        // Invite acceptance is fully disabled for now.
-        // Normal login should never be routed through invite records or invite URL parameters.
-        try { clearInviteTokenFromUrl(); } catch(e) {}
-
-        const result = await withTimeout(
-          supabase.from("user_state").select("data").eq("user_id", session.user.id).maybeSingle(),
-          9000
-        );
+        const { data, error } = await supabase
+          .from("user_state")
+          .select("data")
+          .eq("user_id", session.user.id)
+          .maybeSingle();
 
         if (cancelled) return;
-        const useFallback = async (message) => {
-          const localBackup = loadLocalUserBackup(session.user.id);
-          skipNextCloudSaveRef.current = true;
-          if(localBackup) {
-            setAccountRecovery(null);
-            setAuthError(`${message} I loaded your saved local backup instead and will not overwrite the cloud until you make another change.`);
-            dispatch({ type:"REPLACE_STATE", payload:localBackup });
-            return true;
-          }
-
-          // Important: do not auto-route an existing login through a pending invitation just because the email matches.
-          // Invites are only accepted from an explicit invite link. Existing users must load their own account data.
-
-          setAccountRecovery(null);
-          setAuthError(message + " MaintForge opened a safe owner workspace instead of the create-account setup screen.");
-          dispatch({ type:"REPLACE_STATE", payload:emergencySignedInState(session.user.id, session.user?.email || "") });
-          return false;
-        };
-
-        if (result?.timedOut) {
-          console.error("Load timed out");
-          await useFallback("Cloud loading timed out.");
+        if (error) {
+          console.error("Load error:", error);
+          dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
+        } else if (data && data.data && Object.keys(data.data).length > 0) {
+          dispatch({ type:"REPLACE_STATE", payload:normalizeLoadedUserState(data.data, session.user.id) });
         } else {
-          const { data, error } = result;
-          if (error) {
-            console.error("Load error:", error);
-            await useFallback("Cloud loading returned an error.");
-          } else if (data && data.data && Object.keys(data.data).length > 0 && hasConfiguredUserState(data.data)) {
-            setAccountRecovery(null);
-            dispatch({ type:"REPLACE_STATE", payload:normalizeLoadedUserState(data.data, session.user.id) });
-          } else {
-            await useFallback(data && data.data ? "Your cloud account data looks blank or unfinished." : "No cloud account data was found for this login.");
-          }
+          // New users must start with a blank platform. Do not migrate browser localStorage,
+          // because that can contain another user's equipment, work orders, inventory, or reports.
+          dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
+          try { localStorage.removeItem("ncaState"); } catch(e) {}
         }
       } catch (e) {
         console.error("Load exception:", e);
-        const localBackup = loadLocalUserBackup(session.user.id);
-        skipNextCloudSaveRef.current = true;
-        if(localBackup) {
-          setAuthError("Cloud loading failed. I loaded your saved local backup instead and will not overwrite the cloud until you make another change.");
-          dispatch({ type:"REPLACE_STATE", payload:localBackup });
-        } else {
-          setAccountRecovery(null);
-          setAuthError("Cloud loading failed. MaintForge opened a safe owner workspace instead of the create-account setup screen.");
-          dispatch({ type:"REPLACE_STATE", payload:emergencySignedInState(session.user.id, session.user?.email || "") });
-        }
       } finally {
         if (!cancelled) setDataLoaded(true);
       }
@@ -9019,34 +8918,9 @@ export default function App() {
     return () => { cancelled = true; };
   }, [session]);
 
-  /* Safety net: never leave the app stuck on "Loading your data from the cloud".
-     If Supabase or an invite lookup hangs, open a safe session and show a message. */
-  useEffect(() => {
-    if(!session || dataLoaded) return;
-    const timer = setTimeout(() => {
-      const localBackup = loadLocalUserBackup(session.user.id);
-      skipNextCloudSaveRef.current = true;
-      if(localBackup) {
-        setAuthError("Cloud loading took too long. I loaded your saved local backup and will not overwrite the cloud until you make another change.");
-        dispatch({ type:"REPLACE_STATE", payload:localBackup });
-      } else {
-        setAccountRecovery(null);
-        setAuthError("Cloud loading took too long. MaintForge opened a safe owner workspace instead of the create-account setup screen.");
-        dispatch({ type:"REPLACE_STATE", payload:emergencySignedInState(session.user.id, session.user?.email || "") });
-      }
-      setDataLoaded(true);
-    }, 12000);
-    return () => clearTimeout(timer);
-  }, [session, dataLoaded]);
-
   /* Save state to Supabase, debounced */
   useEffect(() => {
     if (!session || !dataLoaded) return;
-    if (skipNextCloudSaveRef.current) {
-      skipNextCloudSaveRef.current = false;
-      setSyncStatus("idle");
-      return;
-    }
     setSyncStatus("saving");
     const timer = setTimeout(async () => {
       try {
@@ -9276,8 +9150,6 @@ export default function App() {
     } else if (data.user && !data.session) {
       setAuthInfoMsg("✓ Account created! Check your email to confirm your address, then log in.");
       setAuthMode("login");
-      setShowCreateAccount(false);
-      setAuthScreenTouched(false);
       setAuthPassword(""); setAuthConfirmPassword("");
     } else {
       setAuthInfoMsg("✓ Account created and signed in!");
@@ -9285,19 +9157,12 @@ export default function App() {
   }
 
   function switchAuthMode(mode) {
-    // Signup/invitation flow is temporarily disabled while we stabilize existing-user login.
-    setAuthScreenTouched(false);
-    setShowCreateAccount(false);
-    setAuthMode("login");
+    setAuthMode(mode);
     setAuthError(""); setAuthInfoMsg("");
     setAuthPassword(""); setAuthConfirmPassword("");
   }
 
   async function handleLogout() {
-    setAccountRecovery(null);
-    setAllowSetupWizard(false);
-    setShowCreateAccount(false);
-    setAuthMode("login");
     try { localStorage.removeItem("ncaState"); } catch(e) {}
     await supabase.auth.signOut();
   }
@@ -9397,7 +9262,7 @@ export default function App() {
   }
 
   if (!session) {
-    const isSignup = false; // Recovery build: existing-account sign-in only. // Invite/signup flow temporarily disabled: existing-account login only.
+    const isSignup = authMode==="signup";
     return (
       <div style={{
         minHeight:"100vh",
@@ -9427,26 +9292,10 @@ export default function App() {
             </p>
           </div>
 
-          {isSignup && (
+          {/* Tab switcher */}
+          <div style={{ display:"flex", background:"#111827", borderRadius:8, padding:4, marginBottom:20 }}>
             <button
-              type="button"
               onClick={()=>switchAuthMode("login")}
-              disabled={authBusy}
-              style={{
-                width:"100%", margin:"0 0 12px", padding:"11px 12px", borderRadius:8,
-                border:"1px solid #60a5fa", background:"rgba(37,99,235,.16)", color:"#bfdbfe",
-                cursor:authBusy ? "wait" : "pointer", fontWeight:800, fontSize:14, fontFamily:T.sans
-              }}>
-              ← I already have an account — Sign In
-            </button>
-          )}
-
-          {/* Auth mode header */}
-          <div style={{ display:"flex", background:"#111827", borderRadius:8, padding:4, marginBottom:20, border:"1px solid #374151" }}>
-            <button
-              type="button"
-              onClick={()=>switchAuthMode("login")}
-              disabled={authBusy}
               style={{
                 flex:1, padding:"10px", borderRadius:6, border:"none", cursor:"pointer",
                 background: !isSignup ? "#3b82f6" : "transparent",
@@ -9454,6 +9303,16 @@ export default function App() {
                 fontWeight:600, fontSize:13, transition:"all .15s"
               }}>
               Sign In
+            </button>
+            <button
+              onClick={()=>switchAuthMode("signup")}
+              style={{
+                flex:1, padding:"10px", borderRadius:6, border:"none", cursor:"pointer",
+                background: isSignup ? "#3b82f6" : "transparent",
+                color: isSignup ? "white" : "#9ca3af",
+                fontWeight:600, fontSize:13, transition:"all .15s"
+              }}>
+              Create Account
             </button>
           </div>
 
@@ -9546,7 +9405,11 @@ export default function App() {
                 </button>
               </>
             ) : (
-              <>Use your existing MaintForge account to sign in.</>
+              <>Don't have an account?{" "}
+                <button onClick={()=>switchAuthMode("signup")} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontWeight:600, padding:0, fontSize:13 }}>
+                  Create one
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -9554,55 +9417,34 @@ export default function App() {
     );
   }
 
-  /* While Supabase loads the user's data, show a loading screen with a built-in watchdog above. */
+  /* First-run setup wizard */
+  /* While Supabase loads the user's data, show a brief loading screen */
   if (session && !dataLoaded) {
     return (
       <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, fontFamily:T.sans, color:T.text }}>
-        <div style={{ textAlign:"center", maxWidth:420, padding:20 }}>
+        <div style={{ textAlign:"center" }}>
           <div style={{ fontSize:32, marginBottom:12 }}>⟳</div>
           <div style={{ fontSize:14, color:T.muted }}>Loading your data from the cloud...</div>
-          <div style={{ fontSize:12, color:T.muted, marginTop:8 }}>If the cloud does not answer, MaintForge will open automatically in safe mode.</div>
         </div>
       </div>
     );
   }
 
-  if(accountRecovery && session) {
+
+  /* First-run setup wizard */
+  if (session && !dataLoaded) {
     return (
-      <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, color:T.text, fontFamily:T.sans, padding:20 }}>
-        <div style={{ maxWidth:560, width:"100%", background:T.card, border:`1px solid ${T.border}`, borderRadius:16, padding:24, boxShadow:"0 12px 32px rgba(0,0,0,.18)" }}>
-          <div style={{ fontSize:34, marginBottom:8 }}>🔐</div>
-          <h2 style={{ margin:"0 0 8px" }}>Signed in, but account data was not found</h2>
-          <p style={{ color:T.muted, lineHeight:1.5, margin:"0 0 12px" }}>You are logged in as <b>{accountRecovery.email}</b>, but MaintForge could not find your saved organization data for this login. I stopped the app from opening the old first-run setup flow because that can overwrite existing data.</p>
-          <div style={{ background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:10, padding:12, fontSize:13, color:T.subtext, marginBottom:16 }}>
-            <b>Reason:</b> {accountRecovery.message}<br/>
-            <b>User ID:</b> <span style={{ wordBreak:"break-all" }}>{accountRecovery.userId}</span>
-          </div>
-          <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-            <Btn onClick={()=>window.location.reload()}>Try Loading Again</Btn>
-            <Btn variant="secondary" onClick={handleLogout}>Sign Out and Sign In Again</Btn>
-            <Btn variant="danger" onClick={()=>{ if(confirm("Only use this if you truly want to start a new empty MaintForge workspace for this login. Continue?")){ setAccountRecovery(null); setAllowSetupWizard(true); dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) }); }}}>Start Empty Workspace</Btn>
-          </div>
-          <p style={{ margin:"14px 0 0", fontSize:12, color:T.muted }}>If this happened after inviting yourself, this version no longer uses invite status to decide login. Use Edit Role on your existing user instead of inviting the same email.</p>
+      <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, fontFamily:T.sans, color:T.text }}>
+        <div style={{ textAlign:"center" }}>
+          <div style={{ fontSize:32, marginBottom:12 }}>⟳</div>
+          <div style={{ fontSize:14, color:T.muted }}>Loading your data from the cloud...</div>
         </div>
       </div>
     );
   }
 
   if(!state.setupComplete) {
-    return (
-      <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, color:T.text, fontFamily:T.sans, padding:20 }}>
-        <div style={{ maxWidth:560, width:"100%", background:T.card, border:`1px solid ${T.border}`, borderRadius:16, padding:24, boxShadow:"0 12px 32px rgba(0,0,0,.18)" }}>
-          <div style={{ fontSize:34, marginBottom:8 }}>🔐</div>
-          <h2 style={{ margin:"0 0 8px" }}>MaintForge login recovery</h2>
-          <p style={{ color:T.muted, lineHeight:1.5, margin:"0 0 12px" }}>You are signed in, but this browser received an unfinished workspace. The invite and first-run setup flow is disabled in this recovery build.</p>
-          <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-            <Btn onClick={()=>dispatch({ type:"REPLACE_STATE", payload:emergencySignedInState(session?.user?.id || "", session?.user?.email || "") })}>Open MaintForge</Btn>
-            <Btn variant="secondary" onClick={handleLogout}>Sign Out</Btn>
-          </div>
-        </div>
-      </div>
-    );
+    return <SetupWizard onComplete={(setupData)=>dispatch({type:"COMPLETE_SETUP",payload:setupData})} />;
   }
 
   return (
@@ -9869,7 +9711,7 @@ export default function App() {
 
       {showProfile    && <UserProfile    state={state} dispatch={dispatch} onClose={()=>setShowProfile(false)} />}
       {showWOSettings && <WOSettings     state={state} dispatch={dispatch} onClose={()=>setShowWOSettings(false)} />}
-      {showSettings   && <SystemSettings state={state} dispatch={dispatch} onClose={()=>setShowSettings(false)} session={session} />}
+      {showSettings   && <SystemSettings state={state} dispatch={dispatch} onClose={()=>setShowSettings(false)} />}
       {showHelp       && <HelpCenter state={state} onClose={()=>setShowHelp(false)} />}
     </div>
   );
