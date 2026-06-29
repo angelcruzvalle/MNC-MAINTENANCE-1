@@ -295,7 +295,81 @@ const INIT = {
   userRole: "owner",
   userInvites: [],
   areas: [],
+  organizationUsers: [],
 };
+
+const ROLE_OPTIONS = [
+  { value:"organization_admin", label:"Organization Administrator", summary:"Full control of the organization, settings, users, facilities, work orders, reports, inventory, PM, and inspections." },
+  { value:"facility_admin", label:"Facility Administrator", summary:"Manage assigned facilities, equipment, work orders, PM, inspections, inventory, reports, and facility settings." },
+  { value:"supervisor", label:"Supervisor / Lead Mechanic", summary:"Create, assign, edit, and close work orders. Manage PM/inspection execution for assigned facilities." },
+  { value:"mechanic", label:"Mechanic / Technician", summary:"Work assigned jobs, add labor/parts/notes/photos, and complete service or inspection tasks." },
+  { value:"viewer", label:"Viewer / Read Only", summary:"View records and reports only. No edits, deletes, settings, or user management." },
+];
+
+function normalizeEmail(value="") {
+  return String(value || "").trim().toLowerCase();
+}
+
+function roleLabel(value="") {
+  return ROLE_OPTIONS.find(r => r.value === value || r.label === value)?.label || value || "Viewer / Read Only";
+}
+
+function normalizeRole(value="") {
+  const raw = String(value || "").trim().toLowerCase().replace(/\s+/g,"_");
+  if(["owner","organization_owner","administrator","admin","organization_manager","organization_administrator"].includes(raw)) return "organization_admin";
+  if(["facility_administrator","facility_manager","facility_admin"].includes(raw)) return "facility_admin";
+  if(["lead_mechanic","supervisor"].includes(raw)) return "supervisor";
+  if(["technician","mechanic"].includes(raw)) return "mechanic";
+  if(["read_only","readonly","viewer"].includes(raw)) return "viewer";
+  return ROLE_OPTIONS.some(r => r.value === raw) ? raw : "viewer";
+}
+
+function normalizeOrgUsers(state={}, currentUser=null) {
+  const users = Array.isArray(state.organizationUsers) ? state.organizationUsers : [];
+  const byEmail = new Map();
+  users.forEach(u => {
+    const email = normalizeEmail(u.email);
+    if(!email) return;
+    byEmail.set(email, {
+      ...u,
+      email,
+      name:u.name || u.displayName || email,
+      role:normalizeRole(u.role || u.userRole),
+      facilityIds:Array.isArray(u.facilityIds) ? u.facilityIds : (u.locationId ? [u.locationId] : []),
+      status:u.status || "Active",
+    });
+  });
+  const currentEmail = normalizeEmail(currentUser?.email);
+  if(currentEmail) {
+    const existing = byEmail.get(currentEmail) || {};
+    byEmail.set(currentEmail, {
+      ...existing,
+      id:existing.id || currentUser?.id || `USER-${Date.now()}`,
+      userId:currentUser?.id || existing.userId || "",
+      email:currentEmail,
+      name:existing.name || currentUser?.user_metadata?.name || currentEmail,
+      role:"organization_admin",
+      facilityIds:existing.facilityIds || [],
+      status:"Active",
+      isCurrentUser:true,
+    });
+  }
+  return Array.from(byEmail.values()).sort((a,b)=>{
+    const rank = { organization_admin:0, facility_admin:1, supervisor:2, mechanic:3, viewer:4 };
+    return (rank[a.role]??9) - (rank[b.role]??9) || String(a.email).localeCompare(String(b.email));
+  });
+}
+
+function ensureCurrentOrganizationAdmin(state={}, currentUser=null) {
+  const currentEmail = normalizeEmail(currentUser?.email);
+  if(!currentEmail) return state;
+  const users = normalizeOrgUsers(state, currentUser);
+  return {
+    ...state,
+    userRole:"organization_admin",
+    organizationUsers:users,
+  };
+}
 
 function blankUserState(ownerUserId="") {
   return {
@@ -322,8 +396,9 @@ function blankUserState(ownerUserId="") {
     organization: { id:`ORG-${ownerUserId || Date.now()}`, name:"" },
     locations: [],
     activeLocationId: "__all",
-    userRole: "owner",
+    userRole: "organization_admin",
     userInvites: [],
+    organizationUsers: [],
     areas: [],
     ownerUserId: ownerUserId || "",
   };
@@ -331,7 +406,8 @@ function blankUserState(ownerUserId="") {
 
 function normalizeLoadedUserState(data={}, ownerUserId="") {
   if(!data || typeof data !== "object" || Array.isArray(data)) return blankUserState(ownerUserId);
-  if(data.ownerUserId && ownerUserId && data.ownerUserId !== ownerUserId) return blankUserState(ownerUserId);
+  // Never discard real saved data just because the owner id changed or an invite/test account touched it.
+  // Keep the records and attach them to the currently signed-in account during save.
   const merged = { ...blankUserState(ownerUserId), ...data, ownerUserId: ownerUserId || data.ownerUserId || "" };
   return migrateLegacyDataToMorovis(autoAssignLegacyDataToDefaultFacility(merged));
 }
@@ -1054,9 +1130,42 @@ function reducer(state, { type, payload }) {
       const nextLocations = [...existing, loc];
       return { ...state, locations:nextLocations, settings:{ ...(state.settings||{}), locations:nextLocations } };
     }
+    case "ENSURE_CURRENT_ORG_ADMIN": {
+      return ensureCurrentOrganizationAdmin(state, payload);
+    }
+    case "UPSERT_ORG_USER": {
+      const email = normalizeEmail(payload?.email);
+      if(!email) return state;
+      const nextUser = {
+        id:payload.id || payload.userId || `USER-${Date.now()}`,
+        ...payload,
+        email,
+        role:normalizeRole(payload.role),
+        status:payload.status || "Active",
+        facilityIds:Array.isArray(payload.facilityIds) ? payload.facilityIds : (payload.locationId ? [payload.locationId] : []),
+        updatedAt:new Date().toISOString(),
+      };
+      const users = normalizeOrgUsers(state).filter(u => normalizeEmail(u.email) !== email);
+      return { ...state, organizationUsers:[nextUser, ...users] };
+    }
+    case "REMOVE_ORG_USER": {
+      const email = normalizeEmail(payload?.email || payload);
+      if(!email) return state;
+      const users = normalizeOrgUsers(state).filter(u => normalizeEmail(u.email) !== email);
+      return { ...state, organizationUsers:users };
+    }
     case "ADD_USER_INVITE": {
-      const invite = { id:`INV-${Date.now()}`, status:"Pending", created:today(), ...payload };
-      return { ...state, userInvites:[invite, ...(state.userInvites||[])] };
+      const email = normalizeEmail(payload?.email);
+      if(!email) return state;
+      const existingUser = normalizeOrgUsers(state).some(u => normalizeEmail(u.email) === email);
+      if(existingUser) return state;
+      const invite = { id:`INV-${Date.now()}`, status:"Pending", created:today(), ...payload, email, role:normalizeRole(payload?.role) };
+      const existingInvites = (state.userInvites||[]).filter(inv => normalizeEmail(inv.email) !== email);
+      return { ...state, userInvites:[invite, ...existingInvites] };
+    }
+    case "DELETE_USER_INVITE": {
+      const idOrEmail = String(payload || "");
+      return { ...state, userInvites:(state.userInvites||[]).filter(inv => inv.id !== idOrEmail && normalizeEmail(inv.email) !== normalizeEmail(idOrEmail)) };
     }
     case "MIGRATE_TEMPLATES": {
       const fromId = payload?.fromId; const toId = payload?.toId;
@@ -7898,7 +8007,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
 }
 
 
-function SystemSettings({ state, dispatch, onClose }) {
+function SystemSettings({ state, dispatch, onClose, currentUser }) {
   const s = state.settings || {};
   const [form, setForm] = useState({
     companyName:   s.companyName   || "National Cemetery Administration",
@@ -7931,105 +8040,105 @@ function SystemSettings({ state, dispatch, onClose }) {
   const foundationState = { ...state, settings:form, locations:normalizeMaintForgeLocations({ ...state, settings:form }) };
   const orgLocations = normalizeMaintForgeLocations(foundationState);
   const orgAreas = normalizeMaintForgeAreas(foundationState);
-  const [inviteForm, setInviteForm] = useState({ email:"", name:"", role:"Facility Administrator", locationId:orgLocations[0]?.id || "" });
-  const [migrationForm, setMigrationForm] = useState({ fromId:orgLocations[0]?.id || "", toId:orgLocations[1]?.id || orgLocations[0]?.id || "", pmTasks:true, inspectionTasks:true, tasks:true });
+  const [inviteForm, setInviteForm] = useState({ email:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] });
+  const organizationUsers = normalizeOrgUsers(state, currentUser);
+  const currentUserEmail = normalizeEmail(currentUser?.email);
+  const inviteEmail = normalizeEmail(inviteForm.email);
+  const existingUserForInvite = organizationUsers.find(u => normalizeEmail(u.email) === inviteEmail);
+  const existingInviteForEmail = (state.userInvites||[]).find(inv => normalizeEmail(inv.email) === inviteEmail);
   const backupFileInputRef = useRef(null);
-  const backupCounts = (data={}) => ({
-    equipment: data.equipment?.length || 0,
-    workOrders: data.workOrders?.length || 0,
-    parts: data.parts?.length || 0,
-    facilities: data.locations?.length || 0,
-    areas: data.areas?.length || 0,
-    pmSchedules: data.pmSchedules?.length || 0,
-    inspectionSchedules: data.inspectionSchedules?.length || 0,
-    fuelContainers: data.fuelContainers?.length || 0,
-  });
-  const downloadMaintForgeBackup = () => {
+  const backupCounts = {
+    equipment:(state.equipment||[]).length,
+    workOrders:(state.workOrders||[]).length,
+    parts:(state.parts||[]).length,
+    facilities:orgLocations.length,
+  };
+  const downloadDataBackup = () => {
     try {
-      const safeState = normalizeLoadedUserState(state, state.ownerUserId || "");
-      const payload = {
-        maintForgeBackup: true,
-        version: "1.0",
-        exportedAt: new Date().toISOString(),
-        source: "MaintForge Browser Backup",
-        counts: backupCounts(safeState),
-        state: safeState,
-      };
-      const dateStamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,"-");
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type:"application/json" });
-      const url = URL.createObjectURL(blob);
+      const backup = ensureCurrentOrganizationAdmin(normalizeLoadedUserState(state, currentUser?.id || state.ownerUserId || ""), currentUser);
+      const stamp = new Date().toISOString().replace(/[:.]/g,"-");
+      const name = `MaintForge_BACKUP_${stamp}.json`;
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type:"application/json" });
       const a = document.createElement("a");
-      a.href = url;
-      a.download = `MaintForge_BACKUP_${dateStamp}.json`;
-      document.body.appendChild(a);
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
       a.click();
-      a.remove();
-      setTimeout(()=>URL.revokeObjectURL(url), 1000);
-      alert(`Backup downloaded.\n\nEquipment: ${payload.counts.equipment}\nWork Orders: ${payload.counts.workOrders}\nParts: ${payload.counts.parts}\nFacilities: ${payload.counts.facilities}`);
-    } catch(err) {
-      console.error("Backup export failed:", err);
-      alert("Backup export failed. Open the browser console for details.");
+      URL.revokeObjectURL(a.href);
+    } catch(e) {
+      console.error(e);
+      alert("Could not download backup. Check the console for details.");
     }
   };
-  const restoreMaintForgeBackupFile = (event) => {
+  const loadDataBackup = (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
     if(!file) return;
     const reader = new FileReader();
-    reader.onload = ev => {
+    reader.onload = () => {
       try {
-        const parsed = JSON.parse(String(ev.target.result || "{}"));
-        const importedState = parsed.maintForgeBackup && parsed.state ? parsed.state : parsed;
-        const counts = backupCounts(importedState);
-        if(counts.equipment === 0 && counts.workOrders === 0 && counts.parts === 0 && counts.facilities === 0) {
+        const parsed = JSON.parse(String(reader.result || "{}"));
+        const counts = {
+          equipment:(parsed.equipment||[]).length,
+          workOrders:(parsed.workOrders||[]).length,
+          parts:(parsed.parts||[]).length,
+          facilities:(parsed.locations||[]).length,
+        };
+        if(counts.equipment === 0 && counts.workOrders === 0 && counts.parts === 0) {
           alert("This backup looks empty. Restore cancelled.");
           return;
         }
-        const message =
-          `Restore this MaintForge backup?\n\n` +
-          `Equipment: ${counts.equipment}\n` +
-          `Work Orders: ${counts.workOrders}\n` +
-          `Parts: ${counts.parts}\n` +
-          `Facilities: ${counts.facilities}\n` +
-          `PM Schedules: ${counts.pmSchedules}\n` +
-          `Inspection Schedules: ${counts.inspectionSchedules}\n\n` +
-          `This replaces the data currently loaded in the app. A local emergency copy of the current data will be saved first.`;
-        if(!confirm(message)) return;
-        const emergencyName = `ncaState:beforeRestore:${new Date().toISOString()}`;
+        const msg = `Restore this backup?\n\nEquipment: ${counts.equipment}\nWork Orders: ${counts.workOrders}\nParts: ${counts.parts}\nFacilities: ${counts.facilities}\n\nA safety copy of the current data will be saved in this browser first.`;
+        if(!confirm(msg)) return;
         try {
-          localStorage.setItem(emergencyName, JSON.stringify(normalizeLoadedUserState(state, state.ownerUserId || "")));
-        } catch(e) {
-          console.warn("Could not save local emergency backup before restore:", e);
-        }
-        const restored = normalizeLoadedUserState({
-          ...importedState,
-          ownerUserId: state.ownerUserId || importedState.ownerUserId || "",
-        }, state.ownerUserId || importedState.ownerUserId || "");
-        try {
-          localStorage.setItem("ncaState", JSON.stringify(restored));
-          if(restored.ownerUserId) localStorage.setItem("ncaState:lastUserId", restored.ownerUserId);
-        } catch(e) {
-          console.warn("Could not update localStorage during restore:", e);
-        }
-        dispatch({ type:"REPLACE_STATE", payload:restored });
-        alert("Backup loaded. The app will sync this restored data to the cloud automatically. Do not close the browser for a few seconds.");
-        onClose();
-      } catch(err) {
-        console.error("Backup restore failed:", err);
+          localStorage.setItem(`MaintForge_emergency_before_restore_${Date.now()}`, JSON.stringify(state));
+        } catch(e) {}
+        dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(normalizeLoadedUserState(parsed, currentUser?.id || state.ownerUserId || ""), currentUser) });
+        alert("Backup loaded. Click Save Settings or make one small change so the cloud sync saves it, then refresh to confirm.");
+      } catch(e) {
+        console.error(e);
         alert("Could not read this backup file. Make sure it is a MaintForge JSON backup.");
       }
     };
     reader.readAsText(file);
   };
 
+  const [migrationForm, setMigrationForm] = useState({ fromId:orgLocations[0]?.id || "", toId:orgLocations[1]?.id || orgLocations[0]?.id || "", pmTasks:true, inspectionTasks:true, tasks:true });
+  const toggleInviteFacility = (id) => setInviteForm(f => {
+    const set = new Set(Array.isArray(f.facilityIds) ? f.facilityIds : []);
+    if(set.has(id)) set.delete(id); else set.add(id);
+    return { ...f, facilityIds:Array.from(set) };
+  });
   const createInvitePayload = () => {
     const token = `INVITE-${Date.now()}-${Math.random().toString(36).slice(2,8).toUpperCase()}`;
-    const locName = locationNameForId(foundationState, inviteForm.locationId);
-    let inviteUrl = token;
-    try {
-      inviteUrl = `${window.location.origin}${window.location.pathname}?invite=${encodeURIComponent(token)}`;
-    } catch(e) {}
-    return { ...inviteForm, token, inviteUrl, locationName:locName, organizationId:state.organization?.id || "", organizationName:form.companyName || state.organization?.name || "" };
+    const facilityIds = Array.isArray(inviteForm.facilityIds) && inviteForm.facilityIds.length ? inviteForm.facilityIds : (orgLocations[0]?.id ? [orgLocations[0].id] : []);
+    const locationNames = facilityIds.map(id => locationNameForId(foundationState, id)).filter(Boolean);
+    return {
+      ...inviteForm,
+      email:normalizeEmail(inviteForm.email),
+      role:normalizeRole(inviteForm.role),
+      token,
+      facilityIds,
+      locationId:facilityIds[0] || "",
+      locationName:locationNames.join(", "),
+      organizationId:state.organization?.id || "",
+      organizationName:form.companyName || state.organization?.name || "",
+      note:"Invite is only a saved admin record right now. It does not change login routing or force account creation.",
+    };
+  };
+  const saveRegisteredUserRole = (user, patch={}) => {
+    const next = { ...user, ...patch, role:normalizeRole(patch.role || user.role), status:"Active" };
+    dispatch({ type:"UPSERT_ORG_USER", payload:next });
+  };
+  const createSafeInvite = () => {
+    if(!inviteEmail) return alert("Enter an email first.");
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inviteEmail)) return alert("Enter a valid email address.");
+    if(inviteEmail === currentUserEmail) return alert("That is your current account. You are already the Organization Administrator. Use the registered user list to change roles, but do not invite yourself.");
+    if(existingUserForInvite) return alert(`${existingUserForInvite.email} is already registered in this organization. Change their role in the Registered Users list instead of inviting them again.`);
+    if(existingInviteForEmail && !confirm("There is already a pending invite for this email. Replace it with a new invite?")) return;
+    const payload = createInvitePayload();
+    dispatch({ type:"ADD_USER_INVITE", payload });
+    alert("Invite record created safely. It will not affect existing login. When email delivery is added later, this record can be used to send the invite.");
+    setInviteForm(f=>({...f,email:"",name:""}));
   };
   const currentMigrationCounts = migrationTemplateCounts(foundationState, migrationForm.fromId);
   const selectedMigrationTotal = (migrationForm.pmTasks ? currentMigrationCounts.pmTasks : 0) + (migrationForm.inspectionTasks ? currentMigrationCounts.inspectionTasks : 0) + (migrationForm.tasks ? currentMigrationCounts.tasks : 0);
@@ -8254,18 +8363,65 @@ function SystemSettings({ state, dispatch, onClose }) {
           </div>
 
           <div style={{ marginTop:14, padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
-            <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:8 }}>Invite User to a Facility</div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-              <input style={inp} placeholder="Mechanic name" value={inviteForm.name} onChange={e=>setInviteForm(f=>({...f,name:e.target.value}))} />
-              <input style={inp} placeholder="Mechanic email" value={inviteForm.email} onChange={e=>setInviteForm(f=>({...f,email:e.target.value}))} />
-              <select style={sel} value={inviteForm.role} onChange={e=>setInviteForm(f=>({...f,role:e.target.value}))}><option>Facility Administrator</option><option>Mechanic</option><option>Read Only</option></select>
-              <select style={sel} value={inviteForm.locationId} onChange={e=>setInviteForm(f=>({...f,locationId:e.target.value}))}>{orgLocations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"flex-start", marginBottom:10 }}>
+              <div>
+                <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text }}>Users & Roles</div>
+                <div style={{ fontSize:11, color:T.muted, marginTop:3 }}>The signed-in creator is automatically the Organization Administrator. Existing registered users cannot be invited again; update their role here instead.</div>
+              </div>
+              <span style={{ fontSize:11, fontWeight:800, color:T.green, background:T.greenLt, border:`1px solid ${T.border}`, borderRadius:999, padding:"5px 9px", whiteSpace:"nowrap" }}>Current Admin: {currentUserEmail || "Signed-in user"}</span>
             </div>
-            <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginTop:8, alignItems:"center" }}>
-              <div style={{ fontSize:11, color:T.muted }}>Invite is saved with a secure token. Until email service is connected, copy the invite link shown below and send it to the user.</div>
-              <Btn small onClick={()=>{ if(!inviteForm.email.trim()) return alert("Enter an email first."); if(!inviteForm.locationId) return alert("Create/select a facility first."); const payload=createInvitePayload(); dispatch({type:"ADD_USER_INVITE", payload}); alert("Invite created. Send the invite link to the user so they can create their account for only this facility."); setInviteForm(f=>({...f,email:"",name:""})); }}>Create Invite</Btn>
+
+            <div style={{ display:"grid", gap:8, marginBottom:12 }}>
+              {organizationUsers.map(user => (
+                <div key={user.email} style={{ display:"grid", gridTemplateColumns:"minmax(180px,1.2fr) minmax(160px,.9fr) minmax(160px,1fr) auto", gap:8, alignItems:"center", padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.surface }}>
+                  <div style={{ minWidth:0 }}>
+                    <div style={{ fontSize:13, fontWeight:800, color:T.text, overflow:"hidden", textOverflow:"ellipsis" }}>{user.name || user.email}</div>
+                    <div style={{ fontSize:11, color:T.muted, overflow:"hidden", textOverflow:"ellipsis" }}>{user.email}{user.email===currentUserEmail ? " — you" : ""}</div>
+                  </div>
+                  <select style={sel} value={normalizeRole(user.role)} onChange={e=>saveRegisteredUserRole(user, { role:e.target.value })}>
+                    {ROLE_OPTIONS.map(r=><option key={r.value} value={r.value}>{r.label}</option>)}
+                  </select>
+                  <div style={{ fontSize:11, color:T.muted }}>
+                    {(user.facilityIds||[]).length ? (user.facilityIds||[]).map(id=>locationNameForId(foundationState,id)).filter(Boolean).join(", ") : "All facilities / organization level"}
+                  </div>
+                  <div style={{ display:"flex", gap:6, justifyContent:"flex-end" }}>
+                    {user.email!==currentUserEmail && <Btn small variant="danger" onClick={()=>confirm(`Remove ${user.email} from this organization list?`)&&dispatch({type:"REMOVE_ORG_USER", payload:user.email})}>Remove</Btn>}
+                  </div>
+                </div>
+              ))}
             </div>
-            {(state.userInvites||[]).length>0 && <div style={{ marginTop:8, display:"grid", gap:6 }}>{(state.userInvites||[]).slice(0,5).map(inv=><div key={inv.id} style={{ fontSize:12, color:T.subtext, padding:8, border:`1px solid ${T.border}`, borderRadius:6, background:T.surface }}><b style={{ color:T.text }}>{inv.email}</b> — {inv.role} — {inv.locationName || locationNameForId(foundationState, inv.locationId)} — {inv.status}<div style={{ marginTop:4, fontFamily:T.mono, fontSize:10, color:T.muted, wordBreak:"break-all" }}>{inv.inviteUrl || inv.token || "Invite token saved"}</div></div>)}</div>}
+
+            <div style={{ padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.card }}>
+              <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:8 }}>Invite New User</div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                <input style={inp} placeholder="Full name" value={inviteForm.name} onChange={e=>setInviteForm(f=>({...f,name:e.target.value}))} />
+                <input style={inp} placeholder="Email to invite" value={inviteForm.email} onChange={e=>setInviteForm(f=>({...f,email:e.target.value}))} />
+                <select style={sel} value={inviteForm.role} onChange={e=>setInviteForm(f=>({...f,role:e.target.value}))}>{ROLE_OPTIONS.filter(r=>r.value!=="organization_admin").map(r=><option key={r.value} value={r.value}>{r.label}</option>)}</select>
+                <div style={{ fontSize:11, color:existingUserForInvite?T.red:T.muted, alignSelf:"center" }}>
+                  {existingUserForInvite ? `Already registered as ${roleLabel(existingUserForInvite.role)}. Do not invite again.` : existingInviteForEmail ? "Pending invite already exists. Creating a new one will replace it." : "New users can be invited after you assign role and facility access."}
+                </div>
+              </div>
+              <div style={{ marginTop:10, display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:6 }}>
+                {orgLocations.map(loc=><label key={loc.id} style={{ display:"flex", gap:7, alignItems:"center", fontSize:12, color:T.text, border:`1px solid ${T.border}`, borderRadius:8, padding:"7px 8px", background:T.surface }}>
+                  <input type="checkbox" checked={(inviteForm.facilityIds||[]).includes(loc.id)} onChange={()=>toggleInviteFacility(loc.id)} />
+                  <span>{loc.name}</span>
+                </label>)}
+              </div>
+              <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginTop:10, alignItems:"center", flexWrap:"wrap" }}>
+                <div style={{ fontSize:11, color:T.muted }}>Safe mode: invites are saved as admin records only. They do not redirect login or overwrite user data.</div>
+                <Btn small onClick={createSafeInvite}>Create Invite</Btn>
+              </div>
+            </div>
+
+            {(state.userInvites||[]).length>0 && <div style={{ marginTop:10, display:"grid", gap:6 }}>
+              <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text }}>Pending Invite Records</div>
+              {(state.userInvites||[]).slice(0,8).map(inv=><div key={inv.id} style={{ display:"grid", gridTemplateColumns:"minmax(190px,1fr) minmax(140px,.8fr) minmax(160px,1fr) auto", gap:8, alignItems:"center", fontSize:12, color:T.subtext, padding:8, border:`1px solid ${T.border}`, borderRadius:6, background:T.surface }}>
+                <div><b style={{ color:T.text }}>{inv.email}</b><div style={{ color:T.muted, fontSize:11 }}>{inv.name || "No name entered"}</div></div>
+                <div>{roleLabel(normalizeRole(inv.role))}</div>
+                <div>{inv.locationName || (inv.facilityIds||[]).map(id=>locationNameForId(foundationState,id)).join(", ") || "No facility selected"}</div>
+                <Btn small variant="danger" onClick={()=>dispatch({type:"DELETE_USER_INVITE", payload:inv.id})}>Remove</Btn>
+              </div>)}
+            </div>}
           </div>
 
           <div style={{ marginTop:14, padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
@@ -8317,25 +8473,18 @@ function SystemSettings({ state, dispatch, onClose }) {
       </div>
 
 
-      <div style={{ marginTop:14, padding:14, border:`1px solid ${T.border}`, borderRadius:10, background:T.grayLt }}>
+      <div style={{ marginTop:16, padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
         <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"flex-start", flexWrap:"wrap" }}>
-          <div style={{ flex:"1 1 280px" }}>
-            <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:900, color:T.text, textTransform:"uppercase", letterSpacing:.5 }}>Data Backup & Restore</div>
-            <div style={{ fontFamily:T.sans, fontSize:12, color:T.subtext, lineHeight:1.45, marginTop:6 }}>
-              Download a full MaintForge JSON backup to your computer. If cloud data ever loads blank again, use Load Backup to restore the last good file.
-            </div>
-            <div style={{ fontFamily:T.mono, fontSize:11, color:T.muted, marginTop:8 }}>
-              Current loaded data: {backupCounts(state).equipment} equipment · {backupCounts(state).workOrders} work orders · {backupCounts(state).parts} parts · {backupCounts(state).facilities} facilities
-            </div>
+          <div>
+            <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text }}>Data Backup & Restore</div>
+            <div style={{ fontSize:11, color:T.muted, marginTop:3 }}>Download a full local JSON backup before major changes. Restore only from a backup file you trust.</div>
+            <div style={{ fontSize:11, color:T.muted, marginTop:5 }}>Current counts: Equipment {backupCounts.equipment}, Work Orders {backupCounts.workOrders}, Parts {backupCounts.parts}, Facilities {backupCounts.facilities}</div>
           </div>
-          <div style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end" }}>
-            <Btn onClick={downloadMaintForgeBackup}>Download Data Backup</Btn>
-            <Btn variant="secondary" onClick={()=>backupFileInputRef.current?.click()}>Load Last Backup</Btn>
-            <input ref={backupFileInputRef} type="file" accept=".json,application/json" onChange={restoreMaintForgeBackupFile} style={{ display:"none" }} />
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            <Btn variant="secondary" onClick={downloadDataBackup}>Download Data Backup</Btn>
+            <Btn variant="secondary" onClick={()=>backupFileInputRef.current?.click()}>Load Backup File</Btn>
+            <input ref={backupFileInputRef} type="file" accept="application/json,.json" onChange={loadDataBackup} style={{ display:"none" }} />
           </div>
-        </div>
-        <div style={{ marginTop:10, padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.surface, fontFamily:T.sans, fontSize:11, color:T.muted, lineHeight:1.45 }}>
-          Safety note: Loading a backup first saves a local emergency copy of the current data, then replaces the app data with the selected backup and lets the normal cloud sync save it.
         </div>
       </div>
 
@@ -9013,11 +9162,12 @@ export default function App() {
           console.error("Load error:", error);
           dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
         } else if (data && data.data && Object.keys(data.data).length > 0) {
-          dispatch({ type:"REPLACE_STATE", payload:normalizeLoadedUserState(data.data, session.user.id) });
+          const loadedState = normalizeLoadedUserState(data.data, session.user.id);
+          dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(loadedState, session.user) });
         } else {
-          // New users must start with a blank platform. Do not migrate browser localStorage,
-          // because that can contain another user's equipment, work orders, inventory, or reports.
-          dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
+          // New users start with a clean platform, and the first signed-in account
+          // becomes the Organization Administrator automatically.
+          dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(blankUserState(session.user.id), session.user) });
           try { localStorage.removeItem("ncaState"); } catch(e) {}
         }
       } catch (e) {
@@ -9040,7 +9190,7 @@ export default function App() {
           .from("user_state")
           .upsert({
             user_id: session.user.id,
-            data: normalizeLoadedUserState(state, session.user.id),
+            data: ensureCurrentOrganizationAdmin(normalizeLoadedUserState(state, session.user.id), session.user),
             updated_at: new Date().toISOString(),
           }, { onConflict:"user_id" });
 
@@ -9049,7 +9199,7 @@ export default function App() {
           setSyncStatus("error");
         } else {
           setSyncStatus("saved");
-          try { localStorage.setItem("ncaState", JSON.stringify(normalizeLoadedUserState(state, session.user.id))); localStorage.setItem("ncaState:lastUserId", session.user.id); } catch(e) {}
+          try { localStorage.setItem("ncaState", JSON.stringify(ensureCurrentOrganizationAdmin(normalizeLoadedUserState(state, session.user.id), session.user))); localStorage.setItem("ncaState:lastUserId", session.user.id); } catch(e) {}
           setTimeout(() => setSyncStatus("idle"), 2000);
         }
       } catch (e) {
@@ -9823,7 +9973,7 @@ export default function App() {
 
       {showProfile    && <UserProfile    state={state} dispatch={dispatch} onClose={()=>setShowProfile(false)} />}
       {showWOSettings && <WOSettings     state={state} dispatch={dispatch} onClose={()=>setShowWOSettings(false)} />}
-      {showSettings   && <SystemSettings state={state} dispatch={dispatch} onClose={()=>setShowSettings(false)} />}
+      {showSettings   && <SystemSettings state={state} dispatch={dispatch} currentUser={session?.user} onClose={()=>setShowSettings(false)} />}
       {showHelp       && <HelpCenter state={state} onClose={()=>setShowHelp(false)} />}
     </div>
   );
