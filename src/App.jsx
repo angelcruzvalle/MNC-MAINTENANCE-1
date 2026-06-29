@@ -8053,6 +8053,19 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
     parts:(state.parts||[]).length,
     facilities:orgLocations.length,
   };
+  const adminSections = [
+    { id:"admin-safety", label:"Data Safety", icon:"🛡️", sub:"Backups and restore" },
+    { id:"admin-organization", label:"Organization", icon:"🏢", sub:"Company info and logos" },
+    { id:"admin-preferences", label:"Work Order Defaults", icon:"🛠️", sub:"Theme, costs, priority" },
+    { id:"admin-facilities", label:"Facilities & Areas", icon:"🏭", sub:"Facility scope and areas" },
+    { id:"admin-users", label:"Users & Roles", icon:"👥", sub:"Access and invitations" },
+    { id:"admin-appearance", label:"Appearance", icon:"🎨", sub:"Accent color" },
+    { id:"admin-danger", label:"Danger Zone", icon:"⚠️", sub:"Reset tools" },
+  ];
+  const goAdminSection = (id) => {
+    const el = document.getElementById(id);
+    if(el) el.scrollIntoView({ behavior:"smooth", block:"start" });
+  };
   const downloadDataBackup = () => {
     try {
       const backup = ensureCurrentOrganizationAdmin(normalizeLoadedUserState(state, currentUser?.id || state.ownerUserId || ""), currentUser);
@@ -8087,7 +8100,7 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
           alert("This backup looks empty. Restore cancelled.");
           return;
         }
-        const msg = `Restore this backup?\n\nEquipment: ${counts.equipment}\nWork Orders: ${counts.workOrders}\nParts: ${counts.parts}\nFacilities: ${counts.facilities}\n\nA safety copy of the current data will be saved in this browser first.`;
+        const msg = `Restore this backup?\n\nBACKUP FILE\nEquipment: ${counts.equipment}\nWork Orders: ${counts.workOrders}\nParts: ${counts.parts}\nFacilities: ${counts.facilities}\n\nCURRENT APP\nEquipment: ${backupCounts.equipment}\nWork Orders: ${backupCounts.workOrders}\nParts: ${backupCounts.parts}\nFacilities: ${backupCounts.facilities}\n\nA safety copy of the current data will be saved in this browser first.`;
         if(!confirm(msg)) return;
         try {
           localStorage.setItem(`MaintForge_emergency_before_restore_${Date.now()}`, JSON.stringify(state));
@@ -8211,11 +8224,41 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
   };
 
   return (
-    <Modal title="System Settings" onClose={onClose} maxWidth={920}>
-      <div style={{ display:"flex", flexDirection:"column", gap:0, maxHeight:"70vh", overflowY:"auto" }}>
+    <Modal title="Admin Center" onClose={onClose} maxWidth={1080}>
+      <div style={{ display:"grid", gridTemplateColumns:"240px minmax(0,1fr)", gap:16, maxHeight:"72vh" }}>
+        <div style={{ border:`1px solid ${T.border}`, borderRadius:14, background:T.grayLt, padding:10, overflowY:"auto" }}>
+          <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:900, color:T.text, marginBottom:8 }}>Admin Center</div>
+          <div style={{ display:"grid", gap:6 }}>
+            {adminSections.map(sec => (
+              <button key={sec.id} type="button" onClick={()=>goAdminSection(sec.id)} style={{ textAlign:"left", border:`1px solid ${T.border}`, borderRadius:10, padding:"9px 10px", background:T.surface, color:T.text, cursor:"pointer", fontFamily:T.sans }}>
+                <div style={{ display:"flex", gap:8, alignItems:"center", fontSize:12, fontWeight:900 }}><span>{sec.icon}</span><span>{sec.label}</span></div>
+                <div style={{ marginLeft:24, fontSize:10, color:T.muted, marginTop:2 }}>{sec.sub}</div>
+              </button>
+            ))}
+          </div>
+          <div style={{ marginTop:12, padding:10, border:`1px solid ${T.border}`, borderRadius:10, background:T.card, fontSize:11, color:T.muted, lineHeight:1.35 }}>
+            Tip: download a backup before roles, facilities, or restore changes.
+          </div>
+        </div>
+        <div style={{ display:"flex", flexDirection:"column", gap:0, overflowY:"auto", paddingRight:4 }}>
+
+          <div id="admin-safety" style={{ marginBottom:16, padding:14, border:`1px solid ${T.border}`, borderRadius:14, background:T.greenLt }}>
+            <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"flex-start", flexWrap:"wrap" }}>
+              <div>
+                <div style={{ fontFamily:T.sans, fontSize:15, fontWeight:900, color:T.text }}>🛡️ Data Safety</div>
+                <div style={{ fontSize:12, color:T.subtext, marginTop:4 }}>Download a full local JSON backup before major changes. Restore only from a backup file you trust.</div>
+                <div style={{ fontSize:11, color:T.muted, marginTop:6 }}>Current loaded data: Equipment {backupCounts.equipment}, Work Orders {backupCounts.workOrders}, Parts {backupCounts.parts}, Facilities {backupCounts.facilities}</div>
+              </div>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                <Btn onClick={downloadDataBackup}>Download Backup</Btn>
+                <Btn variant="secondary" onClick={()=>backupFileInputRef.current?.click()}>Restore From File</Btn>
+                <input ref={backupFileInputRef} type="file" accept="application/json,.json" onChange={loadDataBackup} style={{ display:"none" }} />
+              </div>
+            </div>
+          </div>
 
         {/* Organization */}
-        <div style={{ marginBottom:16 }}>
+        <div id="admin-organization" style={{ marginBottom:16, padding:14, border:`1px solid ${T.border}`, borderRadius:14, background:T.card }}>
           <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Organization</div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
             <Field label="Company / Organization Name">
@@ -8259,7 +8302,7 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
         </div>
 
         {/* Preferences */}
-        <div style={{ marginBottom:16 }}>
+        <div id="admin-preferences" style={{ marginBottom:16, padding:14, border:`1px solid ${T.border}`, borderRadius:14, background:T.card }}>
           <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Preferences</div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
             <Field label="Appearance / Theme" half>
@@ -8292,8 +8335,8 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
           <Toggle label="Require mechanic on work orders" k="requireTech" sub="Work orders cannot be saved without a mechanic assigned" />
         </div>
 
-        {/* Accent color */}
-        <div style={{ marginBottom:16 }}>
+        {/* Foundation */}
+        <div id="admin-facilities" style={{ marginBottom:16, padding:14, border:`1px solid ${T.border}`, borderRadius:14, background:T.card }}>
           <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Foundation — Facilities & Areas</div>
           <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginBottom:10 }}>Create separate Facilities for independent shops/sites. Add Areas for buildings, departments, zones, or sections inside a Facility.</div>
           <div style={{ display:"flex", gap:8, marginBottom:10 }}>
@@ -8362,15 +8405,31 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
             )}
           </div>
 
-          <div style={{ marginTop:14, padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
+          <div id="admin-users" style={{ marginTop:14, padding:14, border:`1px solid ${T.border}`, borderRadius:14, background:T.grayLt }}>
             <div style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"flex-start", marginBottom:10 }}>
               <div>
-                <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text }}>Users & Roles</div>
+                <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:900, color:T.text }}>👥 Users & Roles</div>
                 <div style={{ fontSize:11, color:T.muted, marginTop:3 }}>The signed-in creator is automatically the Organization Administrator. Existing registered users cannot be invited again; update their role here instead.</div>
               </div>
               <span style={{ fontSize:11, fontWeight:800, color:T.green, background:T.greenLt, border:`1px solid ${T.border}`, borderRadius:999, padding:"5px 9px", whiteSpace:"nowrap" }}>Current Admin: {currentUserEmail || "Signed-in user"}</span>
             </div>
 
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:8, marginBottom:12 }}>
+              {ROLE_OPTIONS.map(r => (
+                <div key={r.value} style={{ padding:9, border:`1px solid ${T.border}`, borderRadius:10, background:T.surface }}>
+                  <div style={{ fontSize:12, fontWeight:900, color:T.text }}>{r.label}</div>
+                  <div style={{ fontSize:10, color:T.muted, lineHeight:1.35, marginTop:3 }}>
+                    {r.value === "organization_admin" ? "Full organization access, users, roles, settings, reports, and all facilities." :
+                     r.value === "facility_manager" ? "Manages assigned facilities, equipment, work orders, PM, inspections, and reports." :
+                     r.value === "supervisor" ? "Shop lead access for work orders, PM, inspections, assignments, labor, and parts." :
+                     r.value === "mechanic" ? "Updates assigned work, labor, parts, notes, photos, and inspections." :
+                     "Read-only access for leadership, audits, and reporting."}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:900, color:T.text, marginBottom:8 }}>Registered Users</div>
             <div style={{ display:"grid", gap:8, marginBottom:12 }}>
               {organizationUsers.map(user => (
                 <div key={user.email} style={{ display:"grid", gridTemplateColumns:"minmax(180px,1.2fr) minmax(160px,.9fr) minmax(160px,1fr) auto", gap:8, alignItems:"center", padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.surface }}>
@@ -8413,7 +8472,7 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
               </div>
             </div>
 
-            {(state.userInvites||[]).length>0 && <div style={{ marginTop:10, display:"grid", gap:6 }}>
+            {(state.userInvites||[]).length===0 ? <div style={{ marginTop:10, padding:10, border:`1px dashed ${T.border}`, borderRadius:8, background:T.surface, fontSize:12, color:T.muted }}>No pending invite records. When you create an invite, it will appear here without affecting login.</div> : <div style={{ marginTop:10, display:"grid", gap:6 }}>
               <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text }}>Pending Invite Records</div>
               {(state.userInvites||[]).slice(0,8).map(inv=><div key={inv.id} style={{ display:"grid", gridTemplateColumns:"minmax(190px,1fr) minmax(140px,.8fr) minmax(160px,1fr) auto", gap:8, alignItems:"center", fontSize:12, color:T.subtext, padding:8, border:`1px solid ${T.border}`, borderRadius:6, background:T.surface }}>
                 <div><b style={{ color:T.text }}>{inv.email}</b><div style={{ color:T.muted, fontSize:11 }}>{inv.name || "No name entered"}</div></div>
@@ -8461,7 +8520,7 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
             </div>
           </div>
 
-          <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}`, marginTop:8 }}>Appearance</div>
+          <div id="admin-appearance" style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}`, marginTop:8 }}>Appearance</div>
           <Field label="Accent Color">
             <div style={{ display:"flex", gap:10, alignItems:"center" }}>
               <input type="color" value={form.accentColor} onChange={F("accentColor")} style={{ width:44, height:36, border:`1px solid ${T.border}`, borderRadius:6, cursor:"pointer", padding:2 }} />
@@ -8470,29 +8529,21 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
             </div>
           </Field>
         </div>
-      </div>
 
-
-      <div style={{ marginTop:16, padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
-        <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"flex-start", flexWrap:"wrap" }}>
-          <div>
-            <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text }}>Data Backup & Restore</div>
-            <div style={{ fontSize:11, color:T.muted, marginTop:3 }}>Download a full local JSON backup before major changes. Restore only from a backup file you trust.</div>
-            <div style={{ fontSize:11, color:T.muted, marginTop:5 }}>Current counts: Equipment {backupCounts.equipment}, Work Orders {backupCounts.workOrders}, Parts {backupCounts.parts}, Facilities {backupCounts.facilities}</div>
-          </div>
-          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            <Btn variant="secondary" onClick={downloadDataBackup}>Download Data Backup</Btn>
-            <Btn variant="secondary" onClick={()=>backupFileInputRef.current?.click()}>Load Backup File</Btn>
-            <input ref={backupFileInputRef} type="file" accept="application/json,.json" onChange={loadDataBackup} style={{ display:"none" }} />
+        <div id="admin-danger" style={{ marginBottom:16, padding:14, border:`1px solid ${T.red}`, borderRadius:14, background:T.redLt }}>
+          <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:900, color:T.red }}>⚠️ Danger Zone</div>
+          <div style={{ fontSize:12, color:T.subtext, marginTop:4 }}>These actions can affect your data or setup. Download a backup first.</div>
+          <div style={{ display:"flex", gap:8, marginTop:10, flexWrap:"wrap" }}>
+            <Btn variant="danger" onClick={()=>{ const ok=prompt('Type RESET to delete local browser data. This does not delete your downloaded backups.'); if(ok === 'RESET'){ localStorage.removeItem('ncaState'); window.location.reload(); } }}>Reset Local Browser Data</Btn>
+            <Btn variant="secondary" onClick={()=>{ const ok=prompt('Type SETUP to restart the setup wizard. Your data will be kept.'); if(ok === 'SETUP'){ dispatch({type:'RESET_SETUP'}); onClose(); }}}>Restart Setup Wizard</Btn>
           </div>
         </div>
       </div>
+      </div>
 
-      <div style={{ display:"flex", gap:8, justifyContent:"space-between", alignItems:"center", marginTop:16, paddingTop:12, borderTop:`1px solid ${T.border}` }}>
-        <div style={{ display:"flex", gap:8 }}>
-          <Btn variant="danger" onClick={()=>{ if(confirm("⚠ This will permanently delete ALL data (work orders, equipment, parts, etc.) from this browser. Continue?")){ localStorage.removeItem("ncaState"); window.location.reload(); } }}>Reset All Data</Btn>
-          <Btn variant="secondary" onClick={()=>{ if(confirm("Restart the setup wizard? Your data will be kept but you'll be taken through the introduction again.")){ dispatch({type:"RESET_SETUP"}); onClose(); }}}>Restart Setup Wizard</Btn>
-        </div>
+
+      <div style={{ display:"flex", gap:8, justifyContent:"space-between", alignItems:"center", marginTop:12, padding:"12px 0 0", borderTop:`1px solid ${T.border}`, background:T.card, position:"sticky", bottom:0, zIndex:5 }}>
+        <div style={{ fontSize:11, color:T.muted }}>Admin Center changes stay local until you click Save Settings.</div>
         <div style={{ display:"flex", gap:8 }}>
           <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
           <Btn onClick={save}>Save Settings</Btn>
