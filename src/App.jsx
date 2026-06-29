@@ -8225,8 +8225,8 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
 
   return (
     <Modal title="Admin Center" onClose={onClose} maxWidth={1080}>
-      <div style={{ display:"grid", gridTemplateColumns:"240px minmax(0,1fr)", gap:16, maxHeight:"72vh" }}>
-        <div style={{ border:`1px solid ${T.border}`, borderRadius:14, background:T.grayLt, padding:10, overflowY:"auto" }}>
+      <div className="mf-admin-shell" style={{ display:"grid", gridTemplateColumns:"240px minmax(0,1fr)", gap:16, maxHeight:"72vh", minHeight:0 }}>
+        <div className="mf-admin-nav" style={{ border:`1px solid ${T.border}`, borderRadius:14, background:T.grayLt, padding:10, overflowY:"auto", minWidth:0 }}>
           <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:900, color:T.text, marginBottom:8 }}>Admin Center</div>
           <div style={{ display:"grid", gap:6 }}>
             {adminSections.map(sec => (
@@ -8240,7 +8240,7 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
             Tip: download a backup before roles, facilities, or restore changes.
           </div>
         </div>
-        <div style={{ display:"flex", flexDirection:"column", gap:0, overflowY:"auto", paddingRight:4 }}>
+        <div className="mf-admin-content" style={{ display:"flex", flexDirection:"column", gap:0, overflowY:"auto", paddingRight:4, minWidth:0 }}>
 
           <div id="admin-safety" style={{ marginBottom:16, padding:14, border:`1px solid ${T.border}`, borderRadius:14, background:T.greenLt }}>
             <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"flex-start", flexWrap:"wrap" }}>
@@ -8542,9 +8542,9 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
       </div>
 
 
-      <div style={{ display:"flex", gap:8, justifyContent:"space-between", alignItems:"center", marginTop:12, padding:"12px 0 0", borderTop:`1px solid ${T.border}`, background:T.card, position:"sticky", bottom:0, zIndex:5 }}>
-        <div style={{ fontSize:11, color:T.muted }}>Admin Center changes stay local until you click Save Settings.</div>
-        <div style={{ display:"flex", gap:8 }}>
+      <div className="mf-admin-footer" style={{ display:"flex", gap:10, justifyContent:"space-between", alignItems:"center", marginTop:16, padding:"14px", border:`1px solid ${T.border}`, borderRadius:14, background:T.surface, boxShadow:"none", position:"static", zIndex:1, flexWrap:"wrap" }}>
+        <div style={{ fontSize:12, color:T.muted, minWidth:220, lineHeight:1.35 }}>Admin Center changes stay local until you click Save Settings.</div>
+        <div className="mf-admin-footer-actions" style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end" }}>
           <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
           <Btn onClick={save}>Save Settings</Btn>
         </div>
@@ -9776,6 +9776,30 @@ export default function App() {
         img, svg, canvas, video { max-width:100%; height:auto; }
         input, select, textarea, button { max-width:100%; }
         textarea { resize:vertical; line-height:1.45; }
+        /* Modern responsive UI polish - visual only, no data/auth logic changes */
+        * { box-sizing:border-box; }
+        html { -webkit-text-size-adjust:100%; }
+        body { background:${T.bg} !important; }
+        .mf-main { background:linear-gradient(180deg, ${T.bg} 0%, ${T.surface} 100%) !important; }
+        .mf-card { border-radius:20px !important; box-shadow:0 10px 30px rgba(15,23,42,.07) !important; border-color:${T.border} !important; }
+        .mf-card:hover { box-shadow:0 14px 38px rgba(15,23,42,.09) !important; }
+        .mf-btn, button { touch-action:manipulation; -webkit-tap-highlight-color:transparent; }
+        .mf-btn { border-radius:14px !important; min-height:44px; white-space:normal; text-align:center; }
+        input, select, textarea { font-size:16px; max-width:100%; }
+        textarea { line-height:1.45; }
+        table { border-collapse:separate !important; border-spacing:0 !important; width:100%; }
+        th { background:${T.grayLt}; font-size:12px !important; text-transform:uppercase; letter-spacing:.04em; }
+        td, th { vertical-align:top; }
+        td, th, label, p, span, div { overflow-wrap:anywhere; }
+        .mf-modal-panel { display:flex !important; flex-direction:column !important; overflow:hidden !important; }
+        .mf-modal-body { flex:1 1 auto !important; overflow:auto !important; -webkit-overflow-scrolling:touch; }
+        .mf-admin-shell { height:min(72vh, 760px); overflow:hidden; }
+        .mf-admin-nav { height:100%; }
+        .mf-admin-nav button { transition:transform .12s ease, box-shadow .12s ease, border-color .12s ease; }
+        .mf-admin-nav button:hover { transform:translateY(-1px); box-shadow:0 8px 20px rgba(15,23,42,.08); border-color:${T.accent} !important; }
+        .mf-admin-content { height:100%; padding-bottom:8px; scroll-padding-top:12px; }
+        .mf-admin-footer { position:static !important; flex-shrink:0; }
+        .mf-admin-footer-actions .mf-btn { min-width:132px; }
         .mf-admin-content > div { min-width:0; }
         .mf-admin-content [style*="grid-template-columns"] { min-width:0; }
         .mf-admin-content label, .mf-admin-content p, .mf-admin-content div, .mf-admin-content span { overflow-wrap:anywhere; }
@@ -9968,12 +9992,15 @@ export default function App() {
           .mf-modal-panel { max-width:100vw !important; width:100vw !important; height:100dvh !important; max-height:100dvh !important; border-radius:0 !important; border:none !important; }
           .mf-modal-header { padding:calc(12px + env(safe-area-inset-top)) 14px 12px !important; }
           .mf-modal-body { padding:14px 14px calc(96px + env(safe-area-inset-bottom)) !important; }
-          .mf-admin-shell { display:block !important; }
-          .mf-admin-nav { position:sticky !important; top:0 !important; z-index:7 !important; flex-direction:row !important; overflow-x:auto !important; padding:8px 0 10px !important; margin:-4px 0 12px !important; background:${T.card} !important; border-bottom:1px solid ${T.border} !important; scroll-snap-type:x proximity; -webkit-overflow-scrolling:touch; }
-          .mf-admin-nav button { min-width:168px !important; flex:0 0 auto !important; scroll-snap-align:start; }
-          .mf-admin-content { gap:12px !important; }
+          .mf-admin-shell { display:block !important; height:auto !important; max-height:none !important; overflow:visible !important; }
+          .mf-admin-nav { position:sticky !important; top:0 !important; z-index:7 !important; display:flex !important; flex-direction:row !important; gap:8px !important; overflow-x:auto !important; overflow-y:hidden !important; padding:8px 0 10px !important; margin:-4px 0 12px !important; background:${T.card} !important; border:0 !important; border-bottom:1px solid ${T.border} !important; border-radius:0 !important; scroll-snap-type:x proximity; -webkit-overflow-scrolling:touch; }
+          .mf-admin-nav > div:first-child, .mf-admin-nav > div:last-child { display:none !important; }
+          .mf-admin-nav button { min-width:168px !important; flex:0 0 auto !important; scroll-snap-align:start; min-height:52px !important; }
+          .mf-admin-content { height:auto !important; overflow:visible !important; gap:12px !important; padding-right:0 !important; padding-bottom:0 !important; }
           .mf-admin-content > div { border-radius:16px !important; padding:14px !important; }
-          .mf-admin-footer { left:0 !important; right:0 !important; margin:14px -14px -14px !important; padding:12px 14px calc(12px + env(safe-area-inset-bottom)) !important; box-shadow:0 -10px 30px rgba(15,23,42,.12) !important; }
+          .mf-admin-footer { position:static !important; margin:16px 0 0 !important; padding:14px !important; box-shadow:none !important; }
+          .mf-admin-footer-actions { width:100% !important; display:grid !important; grid-template-columns:1fr 1fr !important; }
+          .mf-admin-footer-actions button { width:100% !important; }
         }
         @media (max-width: 768px) {
           .mf-header { display:grid !important; grid-template-columns:44px minmax(0,1fr) !important; height:auto !important; min-height:64px !important; padding:8px 10px !important; gap:8px !important; align-items:center !important; }
@@ -10001,7 +10028,8 @@ export default function App() {
           .mobile-x-scroll::before { content:"Swipe sideways to see all columns"; display:block; margin:0 0 8px; padding:7px 10px; border-radius:999px; background:${T.accentLt}; color:${T.accent}; font:700 12px ${T.sans}; width:max-content; max-width:100%; }
           main table { min-width:920px !important; border-radius:14px !important; }
           main th, main td { padding:10px 12px !important; line-height:1.35 !important; }
-          main td div, main td span, main td b { max-width:none !important; }
+          main td div, main td span, main td b { max-width:none !important; white-space:normal !important; }
+          main td, main th { white-space:normal !important; }
           div[style*="display:flex"] { min-width:0; }
           div[style*="grid-template-columns"] { min-width:0; }
           [style*="grid-template-columns:1fr 1fr"], [style*="grid-template-columns: 1fr 1fr"], [style*="grid-template-columns:2fr"], [style*="grid-template-columns: 2fr"], [style*="grid-template-columns:230px"], [style*="grid-template-columns: 230px"] { grid-template-columns:1fr !important; }
