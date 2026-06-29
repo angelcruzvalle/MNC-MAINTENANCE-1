@@ -2106,15 +2106,30 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
 }
 
 function Dashboard({ state, dispatch, setTab, onSettings }) {
-  const wos = state.workOrders || [];
-  const eqs = state.equipment || [];
-  const parts = state.parts || [];
-  const pmSchedules = state.pmSchedules || [];
-  const inspectionSchedules = state.inspectionSchedules || [];
-  const requests = state.workOrderRequests || [];
-  const fuelContainers = state.fuelContainers || [];
-  const usageLogs = state.usageLogs || [];
+  const allWos = state.workOrders || [];
+  const allEqs = state.equipment || [];
+  const allParts = state.parts || [];
+  const allPmSchedules = state.pmSchedules || [];
+  const allInspectionSchedules = state.inspectionSchedules || [];
+  const allRequests = state.workOrderRequests || [];
+  const allFuelContainers = state.fuelContainers || [];
+  const allUsageLogs = state.usageLogs || [];
   const notifications = state.notifications || [];
+  const activeFacility = activeMaintForgeLocation(state);
+  const facilityScopeLabel = activeFacility?.name || "All Facilities";
+  const eqs = allEqs.filter(e => recordMatchesActiveLocation(e, state));
+  const scopedEqIds = new Set(eqs.map(e => String(e.id || e.equipmentId || "")).filter(Boolean));
+  const belongsToScopedEquipment = (record={}) => {
+    const id = workOrderEquipmentId(record) || record.equipmentId || record.equipment || record.parentEquipmentId || record.parentId || "";
+    return id && scopedEqIds.has(String(id));
+  };
+  const wos = allWos.filter(w => recordMatchesActiveLocation(w, state) || belongsToScopedEquipment(w));
+  const parts = allParts.filter(p => recordMatchesActiveLocation(p, state) || belongsToScopedEquipment(p));
+  const pmSchedules = allPmSchedules.filter(s => recordMatchesActiveLocation(s, state) || belongsToScopedEquipment(s));
+  const inspectionSchedules = allInspectionSchedules.filter(s => recordMatchesActiveLocation(s, state) || belongsToScopedEquipment(s));
+  const requests = allRequests.filter(r => recordMatchesActiveLocation(r, state) || belongsToScopedEquipment(r));
+  const fuelContainers = allFuelContainers.filter(c => recordMatchesActiveLocation(c, state));
+  const usageLogs = allUsageLogs.filter(u => recordMatchesActiveLocation(u, state) || belongsToScopedEquipment(u));
   const todayStr = today();
   const soon = new Date(); soon.setDate(soon.getDate() + 14);
   const soonStr = soon.toISOString().split("T")[0];
@@ -2131,13 +2146,31 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   const openRequests = requests.filter(r=>!["Converted","Dismissed","Completed"].includes(r.status));
   const completedThisMonth = wos.filter(w=>w.status === "Completed" && String(w.completed || w.completedDate || "").slice(0,7) === todayStr.slice(0,7));
   const monthSpend = completedThisMonth.reduce((sum,w)=>sum + woTotalCost(w), 0);
+  const overdueWOs = activeWOs.filter(w => w.due && w.due < todayStr);
+  const dueTodayWOs = activeWOs.filter(w => w.due === todayStr);
+  const dueSoonWOs = activeWOs.filter(w => w.due && w.due >= todayStr && w.due <= soonStr);
+  const inProgressWOs = activeWOs.filter(w => w.status === "In Progress");
+  const openWOs = activeWOs.filter(w => !w.status || w.status === "Open");
+  const onHoldWOs = activeWOs.filter(w => w.status === "On Hold");
+  const pendingDiagnostic = activeWOs.filter(w => w.status === "Pending Diagnostic");
+  const repairsOpen = activeWOs.filter(w => w.woType === "Repair");
+  const serviceOpen = activeWOs.filter(w => w.woType === "Service");
+  const inspectionOpen = activeWOs.filter(w => w.woType === "Inspection");
   const role = normalizeRole(state.userRole || "organization_admin");
   const profileName = state.profile?.firstName ? `${state.profile.firstName} ${state.profile.lastName || ""}`.trim() : "";
   const assignedToMe = activeWOs.filter(w => profileName && String(w.tech || "").toLowerCase() === profileName.toLowerCase());
-  const lowFuel = fuelContainers.filter(c => {
-    const percent = +c.percentFull || +c.percent || +c.levelPercent || 0;
-    return percent > 0 && percent <= 25;
-  });
+  const fuelPercentFor = (c={}) => {
+    const raw = c.percentFull ?? c.percent ?? c.levelPercent ?? c.currentPercent ?? c.percentUsed;
+    const n = Number(raw);
+    if(Number.isFinite(n) && n > 0) return Math.max(0, Math.min(100, n));
+    const gallons = Number(c.currentGallons ?? c.gallons ?? c.currentLevel ?? c.levelGallons ?? 0);
+    const capacity = Number(c.capacity ?? c.maxGallons ?? c.sizeGallons ?? 0);
+    if(capacity > 0 && gallons >= 0) return Math.max(0, Math.min(100, Math.round((gallons / capacity) * 100)));
+    return 0;
+  };
+  const fuelGallonsFor = (c={}) => Number(c.currentGallons ?? c.gallons ?? c.currentLevel ?? c.levelGallons ?? 0);
+  const fuelLevels = fuelContainers.map(c => ({ ...c, _percent:fuelPercentFor(c), _gallons:fuelGallonsFor(c) })).sort((a,b)=>a._percent-b._percent);
+  const lowFuel = fuelLevels.filter(c => c._percent > 0 && c._percent <= 25);
   const recentActivity = [...notifications].sort((a,b)=>String(b.createdAt||b.time||"").localeCompare(String(a.createdAt||a.time||""))).slice(0,6);
 
   const eqName = id => {
@@ -2157,12 +2190,12 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   ].sort((a,b)=>String(a.due||"").localeCompare(String(b.due||""))).slice(0,6);
 
   const defaultLayoutForRole = (r) => {
-    if(r === "mechanic") return ["my_work","active_work","schedule_due_count","equipment_watch","schedule_due","recent_activity"];
-    if(r === "viewer") return ["readiness","active_work","deadline","schedule_due_count","equipment_watch","recent_activity"];
-    if(r === "supervisor") return ["active_work","high_priority","deadline","schedule_due_count","priority_queue","equipment_watch","schedule_due","awaiting_parts"];
-    return ["readiness","active_work","deadline","schedule_due_count","requests","low_stock","priority_queue","equipment_watch","schedule_due","inventory_requests","completed_month","month_spend"];
+    if(r === "mechanic") return ["my_work","active_work","due_today","schedule_due_count","equipment_watch","schedule_due","recent_activity"];
+    if(r === "viewer") return ["readiness","active_work","deadline","fuel_low","schedule_due_count","readiness_breakdown","equipment_watch","fuel_levels","recent_activity"];
+    if(r === "supervisor") return ["readiness","active_work","overdue_work","deadline","due_today","schedule_due_count","today_focus","priority_queue","equipment_watch","schedule_due","awaiting_parts","low_stock"];
+    return ["readiness","active_work","overdue_work","deadline","fuel_low","schedule_due_count","requests","low_stock","today_focus","readiness_breakdown","fuel_levels","priority_queue","schedule_due","equipment_watch","month_spend"];
   };
-  const layoutKey = `maintforge_dashboard_layout_v2_${role}`;
+  const layoutKey = `maintforge_dashboard_layout_v3_facility_manager_${role}`;
   const loadLayout = () => {
     try {
       const saved = JSON.parse(localStorage.getItem(layoutKey) || "null");
@@ -2212,6 +2245,12 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     month_spend: { title:"Month Spend", size:"small", tab:"spending", roles:["organization_admin","facility_admin"], render:()=> <SmallCard title="Month Spend" value={`$${monthSpend.toFixed(2)}`} sub="Completed work order costs" color={T.accent} tab="spending" /> },
     fuel_low: { title:"Low Fuel", size:"small", tab:"fuel", roles:["organization_admin","facility_admin","supervisor"], render:()=> <SmallCard title="Low Fuel" value={lowFuel.length} sub="Fuel containers at or below 25%" color={lowFuel.length?T.red:T.green} tab="fuel" /> },
     usage_updates: { title:"Usage Updates", size:"small", tab:"usage", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="Usage Logs" value={usageLogs.length} sub="Equipment usage entries on record" color={T.accent} tab="usage" /> },
+    overdue_work: { title:"Overdue Work", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="Overdue Work" value={overdueWOs.length} sub={`${dueTodayWOs.length} due today • ${dueSoonWOs.length} due within 14 days`} color={overdueWOs.length?T.red:dueTodayWOs.length?T.amber:T.green} tab="workorders" /> },
+    due_today: { title:"Due Today", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="Due Today" value={dueTodayWOs.length} sub={`${inProgressWOs.length} in progress • ${openWOs.length} open`} color={dueTodayWOs.length?T.amber:T.green} tab="workorders" /> },
+    work_mix: { title:"Work Mix", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <SmallCard title="Work Mix" value={`${repairsOpen}/${serviceOpen}/${inspectionOpen}`} sub="Repair / Service / Inspection active WOs" color={repairsOpen?T.red:serviceOpen?T.amber:T.green} tab="workorders" /> },
+    readiness_breakdown: { title:"Readiness Breakdown", size:"wide", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <Panel title={`Readiness Breakdown — ${facilityScopeLabel}`} action={<Btn small variant="secondary" onClick={()=>click("equipment")}>Equipment</Btn>}><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(135px,1fr))", gap:10, marginTop:8 }}><SmallCard title="Ready" value={readyEqs.length} sub="Fully operational" color={T.green} tab="equipment" /><SmallCard title="Deficient" value={deficientEqs.length} sub="Can work, needs attention" color={T.amber} tab="equipment" /><SmallCard title="Deadline" value={deadlineEqs.length} sub="Out of service" color={T.red} tab="equipment" /></div></Panel> },
+    fuel_levels: { title:"Fuel Levels", size:"wide", tab:"fuel", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <Panel title={`Fuel Levels — ${facilityScopeLabel}`} action={<Btn small variant="secondary" onClick={()=>click("fuel")}>Fuel</Btn>}>{fuelLevels.length ? fuelLevels.slice(0,6).map(c=><ActionRow key={c.id || c.name} title={c.name || c.containerName || "Fuel Container"} sub={`${Math.round(c._percent || 0)}% full${c._gallons ? ` • ${Math.round(c._gallons).toLocaleString()} gallons` : ""}${c.latestInches || c.inches ? ` • ${c.latestInches || c.inches} in` : ""}`} badge={c._percent <= 25 && c._percent > 0 ? "Low" : c._percent >= 75 ? "Full" : "OK"} color={c._percent <= 25 && c._percent > 0 ? T.red : c._percent >= 75 ? T.green : T.amber} tab="fuel" />) : <div style={{ padding:14, color:T.muted }}>No fuel containers found for this facility.</div>}</Panel> },
+    today_focus: { title:"Facility Manager Focus", size:"wide", tab:"workorders", roles:["organization_admin","facility_admin","supervisor"], render:()=> <Panel title={`Facility Manager Focus — ${facilityScopeLabel}`} action={<Btn small onClick={()=>click("workorders")}>Work Orders</Btn>}>{overdueWOs.slice(0,3).map(w=><ActionRow key={`od-${w.id}`} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "Overdue Work Order"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • Due ${w.due || "No due date"} • ${w.status || "Open"}`} badge="Overdue" color={T.red} tab="workorders" />)}{highPriority.slice(0,3).map(w=><ActionRow key={`hp-${w.id}`} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "High Priority"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • ${w.status || "Open"}${w.due ? ` • Due ${w.due}` : ""}`} badge="High" color={T.red} tab="workorders" />)}{deadlineEqs.slice(0,3).map(e=><ActionRow key={`dl-${e.id}`} title={`${e.id} — ${e.name || e.nomenclature || "Deadline Equipment"}`} sub={`${e.locationName || e.location || facilityScopeLabel} • ${e.category || e.type || "Equipment"}`} badge="Deadline" color={T.red} tab="equipment" />)}{!overdueWOs.length && !highPriority.length && !deadlineEqs.length && <div style={{ padding:14, color:T.muted }}>No urgent overdue work, high-priority WOs, or deadline equipment right now.</div>}</Panel> },
     my_work: { title:"My Work", size:"wide", tab:"workorders", roles:["mechanic","supervisor","facility_admin","organization_admin"], render:()=> <Panel title="My Work / Assigned Work" action={<Btn small onClick={()=>click("workorders")}>Open</Btn>}>{(assignedToMe.length ? assignedToMe : activeWOs.slice(0,4)).slice(0,6).map(w=><ActionRow key={w.id} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "Work Order"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • ${w.status || "Open"}`} badge={w.priority || "Normal"} color={w.priority==="High"?T.red:w.priority==="Medium"?T.amber:T.accent} tab="workorders" />)}{!activeWOs.length && <div style={{ padding:14, color:T.muted }}>No active assigned work.</div>}</Panel> },
     priority_queue: { title:"Priority Work Queue", size:"wide", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <Panel title="Priority Work Queue" action={<Btn small onClick={()=>click("workorders")}>View All</Btn>}>{priorityList.length ? priorityList.map(w=><ActionRow key={w.id} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "Work Order"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • Due ${w.due || "No due date"} • ${w.status || "Open"}`} badge={w.priority || "Normal"} color={w.priority==="High"?T.red:w.priority==="Medium"?T.amber:T.accent} tab="workorders" />) : <div style={{ padding:14, color:T.muted }}>No active work orders. Great time to review PM and inventory.</div>}</Panel> },
     equipment_watch: { title:"Equipment Watch", size:"wide", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title="Equipment Watch" action={<Btn small variant="secondary" onClick={()=>click("equipment")}>Equipment</Btn>}>{equipmentWatch.length ? equipmentWatch.map(e=><ActionRow key={e.id} title={`${e.id} — ${e.name || e.nomenclature || "Equipment"}`} sub={`${e.locationName || e.location || "No facility"} • ${e.category || e.type || "No category"}`} badge={e.status || "Status"} color={equipmentStatusTipColor(e.status)} tab="equipment" />) : <div style={{ padding:14, color:T.muted }}>No deadline or deficient equipment in this view.</div>}</Panel> },
@@ -2256,7 +2295,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
       }
     `}</style>
     <div className="mf-dashboard-hero" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:14, flexWrap:"wrap", padding:"18px 20px", borderRadius:26, background:"linear-gradient(135deg,#0f172a,#1d4ed8 55%,#38bdf8)", color:"white", boxShadow:"0 18px 40px rgba(15,23,42,.18)" }}>
-      <div style={{ minWidth:240 }}><div style={{ fontSize:12, fontWeight:900, letterSpacing:.6, textTransform:"uppercase", opacity:.78 }}>Maintenance Command Center</div><h2 style={{ margin:"6px 0 8px", fontSize:32, lineHeight:1, letterSpacing:-.8 }}>Today’s Work</h2><div style={{ opacity:.86, fontSize:14, maxWidth:680 }}>Role-aware dashboard for {roleLabel(role)}. Click cards to jump to the page. Turn on customize mode to rearrange or add widgets.</div></div>
+      <div style={{ minWidth:240 }}><div style={{ fontSize:12, fontWeight:900, letterSpacing:.6, textTransform:"uppercase", opacity:.78 }}>Maintenance Command Center</div><h2 style={{ margin:"6px 0 8px", fontSize:32, lineHeight:1, letterSpacing:-.8 }}>Today’s Work</h2><div style={{ opacity:.86, fontSize:14, maxWidth:680 }}>Facility manager view for {facilityScopeLabel} • {roleLabel(role)}. Click any card to jump to the page. Customize lets you add, remove, or reorder widgets.</div></div>
       <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}><Btn onClick={()=>setEditDashboard(v=>!v)}>{editDashboard ? "Done Customizing" : "Customize Dashboard"}</Btn><Btn variant="secondary" onClick={()=>click("workorders")}>Open Work Orders</Btn>{roleAtLeast("facility_admin") && <Btn variant="secondary" onClick={onSettings}>Admin Center</Btn>}</div>
     </div>
 
