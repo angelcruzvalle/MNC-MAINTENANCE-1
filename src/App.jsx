@@ -368,6 +368,46 @@ function userFacilitiesLabel(user={}, locations=[]) {
   return names.length ? names.join(", ") : "No facility assigned";
 }
 
+function inviteTokenFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search || "");
+    return String(params.get("invite") || params.get("invitation") || "").trim();
+  } catch(e) { return ""; }
+}
+function clearInviteTokenFromUrl() {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("invite");
+    url.searchParams.delete("invitation");
+    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+  } catch(e) {}
+}
+function withTimeout(promise, ms=9000) {
+  return Promise.race([
+    promise,
+    new Promise(resolve => setTimeout(() => resolve({ timedOut:true }), ms))
+  ]);
+}
+function normalizeInviteRecord(inv={}) {
+  const data = inv.data || inv.invite_data || inv;
+  let facilityIds = data.facilityIds || data.facility_ids || data.facilities || [];
+  if(typeof facilityIds === "string") { try { facilityIds = JSON.parse(facilityIds); } catch(e) { facilityIds = facilityIds ? [facilityIds] : []; } }
+  if(!Array.isArray(facilityIds)) facilityIds = [];
+  return {
+    id: data.id || inv.id || `INV-${Date.now()}`,
+    email: String(data.email || inv.email || "").trim().toLowerCase(),
+    name: data.name || inv.name || "",
+    role: data.role || inv.role || "mechanic",
+    facilityIds,
+    locationId: data.locationId || data.location_id || inv.location_id || facilityIds[0] || "",
+    token: data.token || inv.token || "",
+    organizationId: data.organizationId || data.organization_id || inv.organization_id || "",
+    organizationName: data.organizationName || data.organization_name || inv.organization_name || "",
+    ownerUserId: data.ownerUserId || data.owner_user_id || inv.owner_user_id || inv.created_by || "",
+    status: data.status || inv.status || "Pending",
+  };
+}
+
 function normalizeLoadedUserState(data={}, ownerUserId="") {
   if(!data || typeof data !== "object" || Array.isArray(data)) return blankUserState(ownerUserId);
   if(data.ownerUserId && ownerUserId && data.ownerUserId !== ownerUserId) return blankUserState(ownerUserId);
@@ -7956,7 +7996,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
 }
 
 
-function SystemSettings({ state, dispatch, onClose }) {
+function SystemSettings({ state, dispatch, onClose, session }) {
   const s = state.settings || {};
   const initialLocations = normalizeMaintForgeLocations(state);
   const initialAreas = normalizeMaintForgeAreas(state);
@@ -7995,6 +8035,7 @@ function SystemSettings({ state, dispatch, onClose }) {
   const managerRole = currentUserRole(state);
   const canManageUsers = hasPermission(managerRole, "manageUsers") || managerRole === "owner";
   const [inviteForm, setInviteForm] = useState({ email:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] });
+  const [inviteSending, setInviteSending] = useState(false);
   const [migrationForm, setMigrationForm] = useState({ fromId:orgLocations[0]?.id || "", toId:orgLocations[1]?.id || orgLocations[0]?.id || "", pmTasks:true, inspectionTasks:true, tasks:true });
   const currentMigrationCounts = migrationTemplateCounts(foundationState, migrationForm.fromId);
   const selectedMigrationTotal = (migrationForm.pmTasks ? currentMigrationCounts.pmTasks : 0) + (migrationForm.inspectionTasks ? currentMigrationCounts.inspectionTasks : 0) + (migrationForm.tasks ? currentMigrationCounts.tasks : 0);
@@ -8013,6 +8054,8 @@ function SystemSettings({ state, dispatch, onClose }) {
   const navItems = [
     ["organization","🏢","Organization","Company info and defaults"],
     ["users","👥","Users & Roles","Invites, access, permissions"],
+    ["roles","🛡️","Role Management","Permission matrix and role rules"],
+    ["activitylog","🧾","Activity Log","Recent admin and data changes"],
     ["facilities","🏭","Facilities & Areas","Facility details and areas"],
     ["workorders","🛠","Work Orders","Defaults and printing"],
     ["branding","🖨","Branding & Printing","Company and facility logos"],
@@ -8045,9 +8088,44 @@ function SystemSettings({ state, dispatch, onClose }) {
     let inviteUrl = token;
     try { inviteUrl = `${window.location.origin}${window.location.pathname}?invite=${encodeURIComponent(token)}`; } catch(e) {}
     const facilityIds = inviteForm.role === "org_manager" ? ["__all"] : (inviteForm.facilityIds || []);
-    return { ...inviteForm, locationId:facilityIds[0]||"", facilityIds, token, inviteUrl, organizationId:state.organization?.id || "", organizationName:form.companyName || state.organization?.name || "" };
+    return { ...inviteForm, email:String(inviteForm.email||"").trim().toLowerCase(), locationId:facilityIds[0]||"", facilityIds, token, inviteUrl, organizationId:state.organization?.id || `ORG-${state.ownerUserId || session?.user?.id || Date.now()}`, organizationName:form.companyName || state.organization?.name || "", ownerUserId: state.ownerUserId || session?.user?.id || "", ownerEmail: session?.user?.email || state.profile?.email || "" };
   };
-  const addFacilityFromInput = () => setForm(f=>{ const name=(f._newLoc||"").trim(); if(!name) return f; const list=normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations }); const exists=list.some(x=>x.name.toLowerCase()===name.toLowerCase()); const next=exists?list:[...list,{ id:`FAC-${Date.now()}`, name, address:"", cityState:"", phone:"", email:"", manager:"", active:true }]; const selectedId=exists?(f._selectedFacilityId||list[0]?.id||""):next[next.length-1].id; return {...f,locations:next,_selectedFacilityId:selectedId,_areaFacilityId:selectedId,_newAreaFacilityId:selectedId,_newLoc:""}; });
+  const handleCreateInvite = async () => {
+    if(!inviteForm.email.trim()) return alert("Enter an email first.");
+    if(!validateEmail(inviteForm.email.trim())) return alert("Enter a valid email address.");
+    if(!canManageUsers) return alert("Only Organization Owner or Organization Manager can invite users.");
+    if(inviteForm.role!=="org_manager" && !(inviteForm.facilityIds||[]).length) return alert("Choose at least one facility.");
+    const invite = createInvitePayload();
+    setInviteSending(true);
+    let cloudSaved = false;
+    try {
+      const row = {
+        token: invite.token,
+        email: invite.email,
+        role: invite.role,
+        status: "Pending",
+        owner_user_id: invite.ownerUserId,
+        organization_id: invite.organizationId,
+        organization_name: invite.organizationName,
+        facility_ids: invite.facilityIds,
+        invite_data: invite,
+        created_at: new Date().toISOString(),
+      };
+      const { error } = await supabase.from("user_invitations").insert(row);
+      if(error) throw error;
+      cloudSaved = true;
+    } catch(e) {
+      console.warn("Invite cloud save skipped:", e);
+    }
+    dispatch({type:"ADD_USER_INVITE", payload:{ ...invite, status: cloudSaved ? "Pending" : "Pending - local only" }});
+    setInviteSending(false);
+    setInviteForm({ email:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] });
+    const message = cloudSaved
+      ? `Invite created. Copy this link and send it to the user:\n\n${invite.inviteUrl}`
+      : `Invite created locally, but it could not be saved to the cloud invitation table yet. Copy this link for now:\n\n${invite.inviteUrl}\n\nRun the Supabase SQL I will provide so invite links work from other devices.`;
+    alert(message);
+  };
+    const addFacilityFromInput = () => setForm(f=>{ const name=(f._newLoc||"").trim(); if(!name) return f; const list=normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations }); const exists=list.some(x=>x.name.toLowerCase()===name.toLowerCase()); const next=exists?list:[...list,{ id:`FAC-${Date.now()}`, name, address:"", cityState:"", phone:"", email:"", manager:"", active:true }]; const selectedId=exists?(f._selectedFacilityId||list[0]?.id||""):next[next.length-1].id; return {...f,locations:next,_selectedFacilityId:selectedId,_areaFacilityId:selectedId,_newAreaFacilityId:selectedId,_newLoc:""}; });
   const copySelectedTemplates = () => { if(migrationForm.fromId===migrationForm.toId) return alert("Choose two different facilities."); if(!migrationForm.pmTasks && !migrationForm.inspectionTasks && !migrationForm.tasks) return alert("Choose at least one template type to copy."); if(selectedMigrationTotal <= 0) return alert("No templates were found in the source facility. Save Admin Center first and make sure you are copying from the correct Facility."); dispatch({type:"MIGRATE_TEMPLATES", payload:migrationForm}); alert(`Copied ${selectedMigrationTotal} template${selectedMigrationTotal===1?"":"s"} to ${locationNameForId(foundationState, migrationForm.toId)}.`); };
   const toggleInviteFacility = (id) => setInviteForm(f => ({ ...f, facilityIds:(f.facilityIds||[]).includes(id) ? (f.facilityIds||[]).filter(x=>x!==id) : [...(f.facilityIds||[]), id] }));
   const save = () => {
@@ -8062,11 +8140,18 @@ function SystemSettings({ state, dispatch, onClose }) {
   const permissionRows = [
     ["Invite users","inviteUsers"],["Edit roles","editRoles"],["Remove users","removeUsers"],["Manage facilities","manageFacilities"],["Manage equipment","manageEquipment"],["Create/Edit WOs","manageWorkOrders"],["Assign WOs","assignWorkOrders"],["Close WOs","closeWorkOrders"],["Inventory","manageInventory"],["Reports","viewReports"]
   ];
+  const adminActivityRows = [
+    ...(state.activityLog || []),
+    ...(state.userInvites || []).map(inv => ({ id:`invite-${inv.id}`, date:inv.created || today(), actor:state.profile?.name || "Admin", action:"Created user invite", target:inv.email, detail:`${roleLabel(inv.role)} • ${userFacilitiesLabel(inv, orgLocations)}` })),
+    ...(effectiveUsers || []).filter(u=>u.role !== "owner").map(u => ({ id:`user-${u.id}`, date:u.updated || u.created || today(), actor:state.profile?.name || "Admin", action:"User access active", target:u.email, detail:`${roleLabel(u.role)} • ${userFacilitiesLabel(u, orgLocations)}` })),
+    ...(state.workOrders || []).slice(-8).reverse().map(w => ({ id:`wo-${w.id}`, date:w.completedDate || w.created || w.date || today(), actor:w.mechanic || w.assignedTo || "System", action:`Work order ${w.status || "updated"}`, target:w.woNumber || w.id, detail:w.description || w.title || w.type || "Work order activity" })),
+  ].filter(Boolean).slice(0, 30);
 
   return (
     <Modal title="Admin Center" onClose={onClose} maxWidth={1180}>
-      <div style={{ display:"grid", gridTemplateColumns:"260px 1fr", minHeight:620, maxHeight:"75vh" }}>
-        <aside style={{ borderRight:`1px solid ${T.border}`, padding:16, background:T.grayLt }}>
+      <div style={{ display:"flex", flexDirection:"column", maxHeight:"calc(92vh - 90px)", minHeight:620 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"260px 1fr", flex:"1 1 auto", minHeight:0 }}>
+        <aside style={{ borderRight:`1px solid ${T.border}`, padding:16, background:T.grayLt, overflowY:"auto" }}>
           <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, fontWeight:900, letterSpacing:.8, textTransform:"uppercase", marginBottom:10 }}>Admin Center</div>
           <div style={{ display:"grid", gap:6 }}>
             {navItems.map(([id,icon,title,sub])=>(
@@ -8076,7 +8161,7 @@ function SystemSettings({ state, dispatch, onClose }) {
             ))}
           </div>
         </aside>
-        <main style={{ padding:20, overflowY:"auto" }}>
+        <main style={{ padding:20, overflowY:"auto", minHeight:0 }}>
           {activeSection==="organization" && <div>
             <PanelTitle title="Organization" sub="Company identity and organization-wide defaults." />
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
@@ -8095,7 +8180,7 @@ function SystemSettings({ state, dispatch, onClose }) {
           </div>}
 
           {activeSection==="users" && <div>
-            <PanelTitle title="Users & Roles" sub="Invite users, assign facility access, edit roles, and remove users." action={<Btn onClick={()=>{ if(!inviteForm.email.trim()) return alert("Enter an email first."); if(!canManageUsers) return alert("Only Organization Owner or Organization Manager can invite users."); if(inviteForm.role!=="org_manager" && !(inviteForm.facilityIds||[]).length) return alert("Choose at least one facility."); dispatch({type:"ADD_USER_INVITE", payload:createInvitePayload()}); alert("Invite created. Copy the invite link and send it to the user until email service is connected."); setInviteForm({ email:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] }); }}>+ Create Invite</Btn>} />
+            <PanelTitle title="Users & Roles" sub="Invite users, assign facility access, edit roles, and remove users." action={<Btn onClick={handleCreateInvite} disabled={inviteSending}>{inviteSending ? "Creating..." : "+ Create Invite"}</Btn>} />
             {!canManageUsers && <div style={{ padding:10, border:`1px solid ${T.amber}`, borderRadius:8, background:T.amberLt, color:T.amber, fontFamily:T.sans, fontSize:12, marginBottom:12 }}>Your current role can view this page, but cannot manage users.</div>}
             <div style={{ padding:14, border:`1px solid ${T.border}`, borderRadius:10, background:T.grayLt, marginBottom:16 }}>
               <div style={{ fontFamily:T.sans, fontWeight:800, fontSize:13, color:T.text, marginBottom:10 }}>Invite User</div>
@@ -8119,6 +8204,26 @@ function SystemSettings({ state, dispatch, onClose }) {
             {(state.userInvites||[]).length>0 && <div style={{ marginTop:18 }}><PanelTitle title="Pending Invitations" sub="Copy invite links or cancel pending access." />{(state.userInvites||[]).map(inv=><div key={inv.id} style={{ padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.surface, marginBottom:8, fontFamily:T.sans, fontSize:12 }}><b style={{ color:T.text }}>{inv.email}</b> — {roleLabel(inv.role)} — {userFacilitiesLabel(inv, orgLocations)} — {inv.status}<div style={{ fontFamily:T.mono, color:T.muted, wordBreak:"break-all", marginTop:4 }}>{inv.inviteUrl || inv.token}</div><Btn small variant="danger" style={{ marginTop:6 }} onClick={()=>dispatch({type:"REMOVE_USER_INVITE", payload:inv.id})}>Cancel Invite</Btn></div>)}</div>}
             <div style={{ marginTop:18 }}><PanelTitle title="Permission Matrix" sub="This is the single source of truth for what each role can do." />
               <div style={{ overflowX:"auto", border:`1px solid ${T.border}`, borderRadius:10 }}><table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:12 }}><thead><tr style={{ background:T.grayLt }}><th style={{ textAlign:"left", padding:8 }}>Permission</th>{ROLE_OPTIONS.map(r=><th key={r.value} style={{ padding:8 }}>{r.label.replace("Organization ","Org ").replace(" / Technician","")}</th>)}</tr></thead><tbody>{permissionRows.map(([label,key])=><tr key={key} style={{ borderTop:`1px solid ${T.border}` }}><td style={{ padding:8, color:T.text, fontWeight:700 }}>{label}</td>{ROLE_OPTIONS.map(r=><td key={r.value} style={{ textAlign:"center", padding:8 }}><PermissionDot yes={hasPermission(r.value,key)} /></td>)}</tr>)}</tbody></table></div>
+            </div>
+          </div>}
+
+          {activeSection==="roles" && <div>
+            <PanelTitle title="Role Management" sub="Control what each role can do. Owner is protected and cannot be removed or downgraded from here." />
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(220px, 1fr))", gap:10, marginBottom:16 }}>
+              {ROLE_OPTIONS.map(r => <Card key={r.value}><div style={{ fontFamily:T.sans, fontSize:14, fontWeight:900, color:T.text }}>{r.label}</div><div style={{ fontSize:12, color:T.muted, marginTop:4 }}>{r.description}</div><div style={{ marginTop:8 }}><Badge label={`Level ${r.level}`} /></div></Card>)}
+            </div>
+            <PanelTitle title="Permission Matrix" sub="This table is what the app uses to decide who can see, edit, assign, close, invite, and manage data." />
+            <div style={{ overflowX:"auto", border:`1px solid ${T.border}`, borderRadius:10, background:T.card }}><table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:12 }}><thead><tr style={{ background:T.grayLt }}><th style={{ textAlign:"left", padding:8 }}>Permission</th>{ROLE_OPTIONS.map(r=><th key={r.value} style={{ padding:8 }}>{r.label.replace("Organization ","Org ").replace(" / Technician","")}</th>)}</tr></thead><tbody>{permissionRows.map(([label,key])=><tr key={key} style={{ borderTop:`1px solid ${T.border}` }}><td style={{ padding:8, color:T.text, fontWeight:700 }}>{label}</td>{ROLE_OPTIONS.map(r=><td key={r.value} style={{ textAlign:"center", padding:8 }}><PermissionDot yes={hasPermission(r.value,key)} /></td>)}</tr>)}</tbody></table></div>
+            <div style={{ marginTop:12, padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt, color:T.subtext, fontFamily:T.sans, fontSize:12 }}>Role editing is done in <b>Users & Roles</b>. This page explains and verifies the permissions so the buttons do something useful instead of being dead cards.</div>
+          </div>}
+
+          {activeSection==="activitylog" && <div>
+            <PanelTitle title="Activity Log" sub="Recent access changes, invites, and work order activity. This works now using current app data; database audit history can be connected later." />
+            <div style={{ display:"grid", gap:8 }}>
+              {adminActivityRows.length ? adminActivityRows.map(row => <div key={row.id} style={{ display:"grid", gridTemplateColumns:"120px 1fr", gap:12, padding:12, border:`1px solid ${T.border}`, borderRadius:10, background:T.card }}>
+                <div style={{ fontFamily:T.mono, fontSize:11, color:T.muted }}>{row.date}</div>
+                <div><div style={{ fontFamily:T.sans, fontWeight:900, color:T.text }}>{row.action}</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.subtext }}>{row.target}</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{row.detail}</div><div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:4 }}>By {row.actor}</div></div>
+              </div>) : <div style={{ padding:18, textAlign:"center", color:T.muted, border:`1px dashed ${T.border}`, borderRadius:10 }}>No activity has been recorded yet.</div>}
             </div>
           </div>}
 
@@ -8155,7 +8260,7 @@ function SystemSettings({ state, dispatch, onClose }) {
           </div>}
 
           {activeSection==="security" && <div><PanelTitle title="Security" sub="Role-based access control and audit features." />
-            <div style={{ display:"grid", gap:10 }}><Card><b>Role Management</b><p style={{ color:T.muted, fontSize:12, marginBottom:0 }}>Owner and Organization Manager can invite users, edit roles below them, and remove users.</p></Card><Card><b>Activity Log</b><p style={{ color:T.muted, fontSize:12, marginBottom:0 }}>Prepared for future database audit history: who changed what, when, and from which facility.</p></Card></div>
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(240px, 1fr))", gap:10 }}><button type="button" onClick={()=>setActiveSection("roles")} style={{ textAlign:"left", padding:14, border:`1px solid ${T.border}`, borderRadius:10, background:T.card, color:T.text, cursor:"pointer", fontFamily:T.sans }}><b>Role Management</b><p style={{ color:T.muted, fontSize:12, marginBottom:0 }}>Open the permission matrix and role rules.</p></button><button type="button" onClick={()=>setActiveSection("activitylog")} style={{ textAlign:"left", padding:14, border:`1px solid ${T.border}`, borderRadius:10, background:T.card, color:T.text, cursor:"pointer", fontFamily:T.sans }}><b>Activity Log</b><p style={{ color:T.muted, fontSize:12, marginBottom:0 }}>Open recent access, invite, and work order activity.</p></button></div>
           </div>}
 
           {activeSection==="backup" && <div><PanelTitle title="Backup & Restore" sub="Data reset and setup tools." />
@@ -8163,7 +8268,8 @@ function SystemSettings({ state, dispatch, onClose }) {
           </div>}
         </main>
       </div>
-      <div style={{ display:"flex", gap:8, justifyContent:"flex-end", alignItems:"center", paddingTop:12, marginTop:12, borderTop:`1px solid ${T.border}` }}><Btn variant="secondary" onClick={onClose}>Cancel</Btn><Btn onClick={save}>Save Admin Center</Btn></div>
+      <div style={{ display:"flex", gap:8, justifyContent:"flex-end", alignItems:"center", padding:"12px 0 0", marginTop:12, borderTop:`1px solid ${T.border}`, background:T.card, flexShrink:0 }}><Btn variant="secondary" onClick={onClose}>Cancel</Btn><Btn onClick={save}>Save Admin Center</Btn></div>
+      </div>
     </Modal>
   );
 }
@@ -8817,26 +8923,90 @@ export default function App() {
     let cancelled = false;
     async function loadData() {
       try {
-        const { data, error } = await supabase
-          .from("user_state")
-          .select("data")
-          .eq("user_id", session.user.id)
-          .maybeSingle();
+        const inviteToken = inviteTokenFromUrl();
+
+        if(inviteToken) {
+          try {
+            const inviteResult = await withTimeout(
+              supabase.from("user_invitations").select("*").eq("token", inviteToken).maybeSingle(),
+              9000
+            );
+            if(inviteResult?.timedOut) throw new Error("Invite lookup timed out");
+            if(inviteResult?.data) {
+              const invite = normalizeInviteRecord(inviteResult.data);
+              const signedEmail = String(session.user.email || "").trim().toLowerCase();
+              if(invite.email && signedEmail && invite.email !== signedEmail) {
+                setAuthError(`This invite was sent to ${invite.email}. Sign in with that email to accept it.`);
+              } else if(invite.ownerUserId) {
+                const ownerResult = await withTimeout(
+                  supabase.from("user_state").select("data").eq("user_id", invite.ownerUserId).maybeSingle(),
+                  9000
+                );
+                if(ownerResult?.timedOut) throw new Error("Organization load timed out");
+                const ownerData = ownerResult?.data?.data || blankUserState(invite.ownerUserId);
+                const base = normalizeLoadedUserState(ownerData, invite.ownerUserId);
+                const acceptedUser = {
+                  id: session.user.id,
+                  name: invite.name || signedEmail,
+                  email: signedEmail || invite.email,
+                  role: invite.role || "mechanic",
+                  facilityIds: invite.facilityIds || [],
+                  locationId: invite.locationId || (invite.facilityIds || [])[0] || "",
+                  status: "Active",
+                  accepted: today(),
+                };
+                const existingUsers = Array.isArray(base.orgUsers) ? base.orgUsers : [];
+                const nextUsers = existingUsers.some(u => String(u.email||"").toLowerCase() === String(acceptedUser.email||"").toLowerCase())
+                  ? existingUsers.map(u => String(u.email||"").toLowerCase() === String(acceptedUser.email||"").toLowerCase() ? { ...u, ...acceptedUser } : u)
+                  : [acceptedUser, ...existingUsers];
+                const acceptedState = {
+                  ...base,
+                  ownerUserId: invite.ownerUserId,
+                  userRole: acceptedUser.role,
+                  activeLocationId: acceptedUser.role === "org_manager" ? "__all" : (acceptedUser.facilityIds[0] || base.activeLocationId || "__all"),
+                  profile:{ ...(base.profile||{}), email:acceptedUser.email, name:acceptedUser.name, role:acceptedUser.role },
+                  orgUsers: nextUsers,
+                  userInvites:(base.userInvites||[]).map(i => i.token === inviteToken ? { ...i, status:"Accepted", accepted:today() } : i),
+                };
+                dispatch({ type:"REPLACE_STATE", payload:acceptedState });
+                try {
+                  await supabase.from("user_invitations").update({ status:"Accepted", accepted_user_id:session.user.id, accepted_at:new Date().toISOString() }).eq("token", inviteToken);
+                } catch(e) {}
+                clearInviteTokenFromUrl();
+                return;
+              }
+            }
+          } catch(inviteErr) {
+            console.error("Invite accept error:", inviteErr);
+            setAuthError("The invite link could not be loaded. The app will open your own account data instead.");
+          }
+        }
+
+        const result = await withTimeout(
+          supabase.from("user_state").select("data").eq("user_id", session.user.id).maybeSingle(),
+          9000
+        );
 
         if (cancelled) return;
-        if (error) {
-          console.error("Load error:", error);
+        if (result?.timedOut) {
+          console.error("Load timed out");
+          setAuthError("Cloud loading timed out. I opened a safe local session so the app does not stay stuck.");
           dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
-        } else if (data && data.data && Object.keys(data.data).length > 0) {
-          dispatch({ type:"REPLACE_STATE", payload:normalizeLoadedUserState(data.data, session.user.id) });
         } else {
-          // New users must start with a blank platform. Do not migrate browser localStorage,
-          // because that can contain another user's equipment, work orders, inventory, or reports.
-          dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
-          try { localStorage.removeItem("ncaState"); } catch(e) {}
+          const { data, error } = result;
+          if (error) {
+            console.error("Load error:", error);
+            dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
+          } else if (data && data.data && Object.keys(data.data).length > 0) {
+            dispatch({ type:"REPLACE_STATE", payload:normalizeLoadedUserState(data.data, session.user.id) });
+          } else {
+            dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
+            try { localStorage.removeItem("ncaState"); } catch(e) {}
+          }
         }
       } catch (e) {
         console.error("Load exception:", e);
+        dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
       } finally {
         if (!cancelled) setDataLoaded(true);
       }
@@ -9638,7 +9808,7 @@ export default function App() {
 
       {showProfile    && <UserProfile    state={state} dispatch={dispatch} onClose={()=>setShowProfile(false)} />}
       {showWOSettings && <WOSettings     state={state} dispatch={dispatch} onClose={()=>setShowWOSettings(false)} />}
-      {showSettings   && <SystemSettings state={state} dispatch={dispatch} onClose={()=>setShowSettings(false)} />}
+      {showSettings   && <SystemSettings state={state} dispatch={dispatch} onClose={()=>setShowSettings(false)} session={session} />}
       {showHelp       && <HelpCenter state={state} onClose={()=>setShowHelp(false)} />}
     </div>
   );
