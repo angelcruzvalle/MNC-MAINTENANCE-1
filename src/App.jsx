@@ -345,30 +345,37 @@ function normalizeMaintForgeLocations(state={}) {
     if(typeof item === "object" && !Array.isArray(item)) return item;
     return null;
   };
-  const names = [
-    ...(Array.isArray(state.locations) ? state.locations.map(toFacilityObject) : []),
+  // Settings/form locations must be read first. During Settings edits, state.locations
+  // still contains the old saved facility object; reading state first can make address,
+  // phone, and logo changes look like they saved, then disappear after normalization.
+  const rawLocations = [
     ...(Array.isArray(settings.locations) ? settings.locations.map(toFacilityObject) : []),
+    ...(Array.isArray(state.locations) ? state.locations.map(toFacilityObject) : []),
     settings.location ? { name:settings.location, address:settings.address||"", cityState:settings.cityState||"", phone:settings.phone||"", email:settings.email||"" } : null,
     settings.siteName ? { name:settings.siteName, address:settings.address||"", cityState:settings.cityState||"", phone:settings.phone||"", email:settings.email||"" } : null,
   ].filter(Boolean);
-  const seen = new Set();
+  const seenIds = new Set();
+  const seenNames = new Set();
   const list = [];
-  names.forEach((loc, idx) => {
+  rawLocations.forEach((loc, idx) => {
     const rawName = loc.name || loc.facilityName || loc.location || loc.siteName || loc.title || "";
     const name = String(rawName).trim();
     if(!name || name === "[object Object]") return;
-    const key = name.toLowerCase();
-    if(seen.has(key)) return;
-    seen.add(key);
+    const id = loc.id || loc.locationId || loc.facilityId || `FAC-${idx+1}-${slugifyFacility(name)}`;
+    const idKey = String(id).toLowerCase();
+    const nameKey = name.toLowerCase();
+    if(seenIds.has(idKey) || seenNames.has(nameKey)) return;
+    seenIds.add(idKey);
+    seenNames.add(nameKey);
     list.push({
       ...loc,
-      id:loc.id || loc.locationId || loc.facilityId || `FAC-${idx+1}-${slugifyFacility(name)}`,
+      id,
       name,
       address:loc.address||"",
       cityState:loc.cityState||loc.city||"",
-      phone:loc.phone||"",
-      email:loc.email||"",
-      manager:loc.manager||"",
+      phone:loc.phone||loc.contactPhone||"",
+      email:loc.email||loc.contactEmail||"",
+      manager:loc.manager||loc.contactName||"",
       region:loc.region||"",
       logo:loc.logo || loc.facilityLogo || "",
       facilityLogo:loc.facilityLogo || loc.logo || "",
@@ -377,7 +384,6 @@ function normalizeMaintForgeLocations(state={}) {
   });
   return list;
 }
-
 function normalizeMaintForgeAreas(state={}, facilityId="") {
   const settings = state.settings || {};
   const rawAreas = [
@@ -1183,6 +1189,14 @@ const equipmentReportLabel = (state={}, id="") => {
   return name ? `${num} - ${name}` : num;
 };
 const htmlEscape = v => String(v ?? "").replace(/[&<>\"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
+const workOrderBrandFontSize = (name="") => {
+  const len = String(name || "").trim().length;
+  if(len > 58) return 12;
+  if(len > 48) return 13;
+  if(len > 40) return 14;
+  if(len > 32) return 15;
+  return 18;
+};
 
 
 const csvEscape = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
@@ -2499,7 +2513,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .logoBox img{max-width:100%;max-height:.58in;object-fit:contain;display:block}
       .logoText{font-weight:900;text-align:center;color:#111827;font-size:13px;line-height:1.2}
       .companyBox{display:flex;flex-direction:column;align-items:center;justify-content:center;background:${C.soft};padding:8px 10px;text-align:center}
-      .company{font-size:18px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#111827;line-height:1.1}
+      .company{font-size:18px;font-weight:900;letter-spacing:.35px;text-transform:uppercase;color:#111827;line-height:1.05;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:clip}
       .facilityName{margin-top:3px;font-size:12px;font-weight:800;letter-spacing:.45px;color:#334155;text-transform:uppercase;line-height:1.1}
       .typePill{margin-top:4px;border:1.5px solid ${C.border};background:${C.accent};color:#111827;border-radius:999px;padding:4px 18px;font-size:12px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;display:inline-flex;gap:6px;align-items:center}
       .numberBox{border-left:1.5px solid #111827;display:grid;grid-template-rows:1fr .32in;text-align:center;background:white}
@@ -2544,7 +2558,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       <div class="outer">
         <header class="top">
           <div class="logoBox">${companyLogo?`<img src="${companyLogo}" alt="Logo">`:`<div class="logoText">LOGO</div>`}</div>
-          <div class="companyBox"><div class="company">${h(companyName)}</div>${printableFacilityName ? `<div class="facilityName">${h(printableFacilityName)}</div>` : ""}<div class="typePill"><span>${typeIcon}</span><span>${h(workType)}</span></div></div>
+          <div class="companyBox"><div class="company" style="font-size:${workOrderBrandFontSize(companyName)}px">${h(companyName)}</div>${printableFacilityName ? `<div class="facilityName">${h(printableFacilityName)}</div>` : ""}<div class="typePill"><span>${typeIcon}</span><span>${h(workType)}</span></div></div>
           <div class="numberBox"><div class="woNumber"><div class="label">Work Order Number</div><div class="number">${h(wo.id || "")}</div></div><div class="status ${statusClass}">${h(wo.status || "Open")}</div></div>
         </header>
 
@@ -3554,7 +3568,7 @@ function Equipment({ state, dispatch }) {
       .logoBox img{max-width:100%;max-height:.58in;object-fit:contain;display:block}
       .logoText{font-weight:900;text-align:center;color:#111827;font-size:13px;line-height:1.2}
       .companyBox{display:flex;flex-direction:column;align-items:center;justify-content:center;background:${C.soft};padding:8px 10px;text-align:center}
-      .company{font-size:18px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#111827;line-height:1.1}
+      .company{font-size:18px;font-weight:900;letter-spacing:.35px;text-transform:uppercase;color:#111827;line-height:1.05;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:clip}
       .typePill{margin-top:4px;border:1.5px solid ${C.border};background:${C.accent};color:#111827;border-radius:999px;padding:4px 18px;font-size:12px;font-weight:900;letter-spacing:.8px;text-transform:uppercase}
       .numberBox{border-left:1.5px solid #111827;display:grid;grid-template-rows:1fr .32in;text-align:center;background:white}
       .woNumber{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px}
@@ -3591,7 +3605,7 @@ function Equipment({ state, dispatch }) {
       <div class="page"><div class="outer">
         <header class="top">
           <div class="logoBox">${resolveMaintForgeLogo(state, wo.locationId || wo.facilityId || eq?.locationId || eq?.facilityId || state.activeLocationId) ? `<img src="${resolveMaintForgeLogo(state, wo.locationId || wo.facilityId || eq?.locationId || eq?.facilityId || state.activeLocationId)}" alt="Logo">` : `<div class="logoText">LOGO</div>`}</div>
-          <div class="companyBox"><div class="company">${h(gs.companyName || "Maintenance Department")}</div><div class="typePill">${h(type.toUpperCase())}</div></div>
+          <div class="companyBox"><div class="company" style="font-size:${workOrderBrandFontSize(gs.companyName || "Maintenance Department")}px">${h(gs.companyName || "Maintenance Department")}</div><div class="typePill">${h(type.toUpperCase())}</div></div>
           <div class="numberBox"><div class="woNumber"><div class="label">Work Order Number</div><div class="number">${h(wo.id || "")}</div></div><div class="status">${h(wo.status || "Open")}</div></div>
         </header>
         <div class="dateGrid">
