@@ -7933,6 +7933,95 @@ function SystemSettings({ state, dispatch, onClose }) {
   const orgAreas = normalizeMaintForgeAreas(foundationState);
   const [inviteForm, setInviteForm] = useState({ email:"", name:"", role:"Facility Administrator", locationId:orgLocations[0]?.id || "" });
   const [migrationForm, setMigrationForm] = useState({ fromId:orgLocations[0]?.id || "", toId:orgLocations[1]?.id || orgLocations[0]?.id || "", pmTasks:true, inspectionTasks:true, tasks:true });
+  const backupFileInputRef = useRef(null);
+  const backupCounts = (data={}) => ({
+    equipment: data.equipment?.length || 0,
+    workOrders: data.workOrders?.length || 0,
+    parts: data.parts?.length || 0,
+    facilities: data.locations?.length || 0,
+    areas: data.areas?.length || 0,
+    pmSchedules: data.pmSchedules?.length || 0,
+    inspectionSchedules: data.inspectionSchedules?.length || 0,
+    fuelContainers: data.fuelContainers?.length || 0,
+  });
+  const downloadMaintForgeBackup = () => {
+    try {
+      const safeState = normalizeLoadedUserState(state, state.ownerUserId || "");
+      const payload = {
+        maintForgeBackup: true,
+        version: "1.0",
+        exportedAt: new Date().toISOString(),
+        source: "MaintForge Browser Backup",
+        counts: backupCounts(safeState),
+        state: safeState,
+      };
+      const dateStamp = new Date().toISOString().slice(0,19).replace(/[:T]/g,"-");
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type:"application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `MaintForge_BACKUP_${dateStamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 1000);
+      alert(`Backup downloaded.\n\nEquipment: ${payload.counts.equipment}\nWork Orders: ${payload.counts.workOrders}\nParts: ${payload.counts.parts}\nFacilities: ${payload.counts.facilities}`);
+    } catch(err) {
+      console.error("Backup export failed:", err);
+      alert("Backup export failed. Open the browser console for details.");
+    }
+  };
+  const restoreMaintForgeBackupFile = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const parsed = JSON.parse(String(ev.target.result || "{}"));
+        const importedState = parsed.maintForgeBackup && parsed.state ? parsed.state : parsed;
+        const counts = backupCounts(importedState);
+        if(counts.equipment === 0 && counts.workOrders === 0 && counts.parts === 0 && counts.facilities === 0) {
+          alert("This backup looks empty. Restore cancelled.");
+          return;
+        }
+        const message =
+          `Restore this MaintForge backup?\n\n` +
+          `Equipment: ${counts.equipment}\n` +
+          `Work Orders: ${counts.workOrders}\n` +
+          `Parts: ${counts.parts}\n` +
+          `Facilities: ${counts.facilities}\n` +
+          `PM Schedules: ${counts.pmSchedules}\n` +
+          `Inspection Schedules: ${counts.inspectionSchedules}\n\n` +
+          `This replaces the data currently loaded in the app. A local emergency copy of the current data will be saved first.`;
+        if(!confirm(message)) return;
+        const emergencyName = `ncaState:beforeRestore:${new Date().toISOString()}`;
+        try {
+          localStorage.setItem(emergencyName, JSON.stringify(normalizeLoadedUserState(state, state.ownerUserId || "")));
+        } catch(e) {
+          console.warn("Could not save local emergency backup before restore:", e);
+        }
+        const restored = normalizeLoadedUserState({
+          ...importedState,
+          ownerUserId: state.ownerUserId || importedState.ownerUserId || "",
+        }, state.ownerUserId || importedState.ownerUserId || "");
+        try {
+          localStorage.setItem("ncaState", JSON.stringify(restored));
+          if(restored.ownerUserId) localStorage.setItem("ncaState:lastUserId", restored.ownerUserId);
+        } catch(e) {
+          console.warn("Could not update localStorage during restore:", e);
+        }
+        dispatch({ type:"REPLACE_STATE", payload:restored });
+        alert("Backup loaded. The app will sync this restored data to the cloud automatically. Do not close the browser for a few seconds.");
+        onClose();
+      } catch(err) {
+        console.error("Backup restore failed:", err);
+        alert("Could not read this backup file. Make sure it is a MaintForge JSON backup.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
   const createInvitePayload = () => {
     const token = `INVITE-${Date.now()}-${Math.random().toString(36).slice(2,8).toUpperCase()}`;
     const locName = locationNameForId(foundationState, inviteForm.locationId);
@@ -8224,6 +8313,29 @@ function SystemSettings({ state, dispatch, onClose }) {
               <div style={{ flex:1, height:8, borderRadius:4, background:form.accentColor }}/>
             </div>
           </Field>
+        </div>
+      </div>
+
+
+      <div style={{ marginTop:14, padding:14, border:`1px solid ${T.border}`, borderRadius:10, background:T.grayLt }}>
+        <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"flex-start", flexWrap:"wrap" }}>
+          <div style={{ flex:"1 1 280px" }}>
+            <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:900, color:T.text, textTransform:"uppercase", letterSpacing:.5 }}>Data Backup & Restore</div>
+            <div style={{ fontFamily:T.sans, fontSize:12, color:T.subtext, lineHeight:1.45, marginTop:6 }}>
+              Download a full MaintForge JSON backup to your computer. If cloud data ever loads blank again, use Load Backup to restore the last good file.
+            </div>
+            <div style={{ fontFamily:T.mono, fontSize:11, color:T.muted, marginTop:8 }}>
+              Current loaded data: {backupCounts(state).equipment} equipment · {backupCounts(state).workOrders} work orders · {backupCounts(state).parts} parts · {backupCounts(state).facilities} facilities
+            </div>
+          </div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end" }}>
+            <Btn onClick={downloadMaintForgeBackup}>Download Data Backup</Btn>
+            <Btn variant="secondary" onClick={()=>backupFileInputRef.current?.click()}>Load Last Backup</Btn>
+            <input ref={backupFileInputRef} type="file" accept=".json,application/json" onChange={restoreMaintForgeBackupFile} style={{ display:"none" }} />
+          </div>
+        </div>
+        <div style={{ marginTop:10, padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.surface, fontFamily:T.sans, fontSize:11, color:T.muted, lineHeight:1.45 }}>
+          Safety note: Loading a backup first saves a local emergency copy of the current data, then replaces the app data with the selected backup and lets the normal cloud sync save it.
         </div>
       </div>
 
