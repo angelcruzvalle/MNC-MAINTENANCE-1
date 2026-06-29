@@ -408,11 +408,36 @@ function normalizeInviteRecord(inv={}) {
   };
 }
 
-function normalizeLoadedUserState(data={}, ownerUserId="") {
-  if(!data || typeof data !== "object" || Array.isArray(data)) return blankUserState(ownerUserId);
-  if(data.ownerUserId && ownerUserId && data.ownerUserId !== ownerUserId) return blankUserState(ownerUserId);
-  const merged = { ...blankUserState(ownerUserId), ...data, ownerUserId: ownerUserId || data.ownerUserId || "" };
+function normalizeLoadedUserState(data={}, currentUserId="") {
+  if(!data || typeof data !== "object" || Array.isArray(data)) return blankUserState(currentUserId);
+  // Do not throw away valid organization/member data when ownerUserId is different from the signed-in user.
+  // Members invited to an organization must keep the original ownerUserId while still loading under their own login.
+  const effectiveOwnerUserId = data.ownerUserId || currentUserId || "";
+  const merged = {
+    ...blankUserState(effectiveOwnerUserId),
+    ...data,
+    ownerUserId: effectiveOwnerUserId,
+    currentUserId: currentUserId || data.currentUserId || effectiveOwnerUserId,
+  };
   return migrateLegacyDataToMorovis(autoAssignLegacyDataToDefaultFacility(merged));
+}
+
+function loadLocalUserBackup(currentUserId="") {
+  try {
+    const raw = localStorage.getItem("ncaState");
+    if(!raw) return null;
+    const lastUserId = localStorage.getItem("ncaState:lastUserId") || "";
+    if(lastUserId && currentUserId && lastUserId !== currentUserId) return null;
+    const parsed = JSON.parse(raw);
+    if(!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    // Only trust local backup if it looks like a real configured account, not an empty first-run state.
+    const hasRealSetup = parsed.setupComplete || parsed.settings || (Array.isArray(parsed.equipment) && parsed.equipment.length) || (Array.isArray(parsed.workOrders) && parsed.workOrders.length);
+    if(!hasRealSetup) return null;
+    return normalizeLoadedUserState(parsed, currentUserId || parsed.currentUserId || parsed.ownerUserId || "");
+  } catch(e) {
+    console.error("Local backup load failed:", e);
+    return null;
+  }
 }
 
 
@@ -8093,6 +8118,11 @@ function SystemSettings({ state, dispatch, onClose, session }) {
   const handleCreateInvite = async () => {
     if(!inviteForm.email.trim()) return alert("Enter an email first.");
     if(!validateEmail(inviteForm.email.trim())) return alert("Enter a valid email address.");
+    const inviteEmail = String(inviteForm.email || "").trim().toLowerCase();
+    const signedInEmail = String(session?.user?.email || state.profile?.email || "").trim().toLowerCase();
+    if(inviteEmail && signedInEmail && inviteEmail === signedInEmail) {
+      return alert("Do not invite your own login email. Use Edit Role on your user record instead so your existing account is not treated like a new invite.");
+    }
     if(!canManageUsers) return alert("Only Organization Owner or Organization Manager can invite users.");
     if(inviteForm.role!=="org_manager" && !(inviteForm.facilityIds||[]).length) return alert("Choose at least one facility.");
     const invite = createInvitePayload();
@@ -8886,6 +8916,7 @@ export default function App() {
   const publicWORequestMode = isPublicWORequestPage();
   const [publicPortal, setPublicPortal] = useState(null);
   const [publicPortalLoading, setPublicPortalLoading] = useState(false);
+  const skipNextCloudSaveRef = useRef(false);
 
   useEffect(() => {
     if(publicWORequestMode) { setAuthLoading(false); return; }
@@ -8950,7 +8981,15 @@ export default function App() {
             if(inviteResult?.data) {
               const invite = normalizeInviteRecord(inviteResult.data);
               const signedEmail = String(session.user.email || "").trim().toLowerCase();
-              if(invite.email && signedEmail && invite.email !== signedEmail) {
+              const isSelfInvite = invite.email && signedEmail && invite.email === signedEmail && invite.ownerUserId && invite.ownerUserId === session.user.id;
+              if(isSelfInvite) {
+                // Existing owners should never be routed through the new-user invite/account setup flow.
+                setAuthInfoMsg("Self-invite ignored. Opening your existing owner account.");
+                try {
+                  await supabase.from("user_invitations").update({ status:"Ignored - self invite", accepted_user_id:session.user.id, accepted_at:new Date().toISOString() }).eq("token", inviteToken);
+                } catch(e) {}
+                clearInviteTokenFromUrl();
+              } else if(invite.email && signedEmail && invite.email !== signedEmail) {
                 setAuthError(`This invite was sent to ${invite.email}. Sign in with that email to accept it.`);
               } else if(invite.ownerUserId) {
                 const ownerResult = await withTimeout(
@@ -9003,25 +9042,43 @@ export default function App() {
         );
 
         if (cancelled) return;
+        const useFallback = (message) => {
+          const localBackup = loadLocalUserBackup(session.user.id);
+          skipNextCloudSaveRef.current = true;
+          if(localBackup) {
+            setAuthError(`${message} I loaded your saved local backup instead and will not overwrite the cloud until you make another change.`);
+            dispatch({ type:"REPLACE_STATE", payload:localBackup });
+          } else {
+            setAuthError(`${message} No saved account setup was found on this browser. I will not overwrite your cloud data from this empty screen.`);
+            dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
+          }
+        };
+
         if (result?.timedOut) {
           console.error("Load timed out");
-          setAuthError("Cloud loading timed out. I opened a safe local session so the app does not stay stuck.");
-          dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
+          useFallback("Cloud loading timed out.");
         } else {
           const { data, error } = result;
           if (error) {
             console.error("Load error:", error);
-            dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
+            useFallback("Cloud loading returned an error.");
           } else if (data && data.data && Object.keys(data.data).length > 0) {
             dispatch({ type:"REPLACE_STATE", payload:normalizeLoadedUserState(data.data, session.user.id) });
           } else {
-            dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
-            try { localStorage.removeItem("ncaState"); } catch(e) {}
+            useFallback("No cloud account data was found for this login.");
           }
         }
       } catch (e) {
         console.error("Load exception:", e);
-        dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
+        const localBackup = loadLocalUserBackup(session.user.id);
+        skipNextCloudSaveRef.current = true;
+        if(localBackup) {
+          setAuthError("Cloud loading failed. I loaded your saved local backup instead and will not overwrite the cloud until you make another change.");
+          dispatch({ type:"REPLACE_STATE", payload:localBackup });
+        } else {
+          setAuthError("Cloud loading failed and no saved account setup was found on this browser. I will not overwrite your cloud data from this empty screen.");
+          dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
+        }
       } finally {
         if (!cancelled) setDataLoaded(true);
       }
@@ -9035,8 +9092,15 @@ export default function App() {
   useEffect(() => {
     if(!session || dataLoaded) return;
     const timer = setTimeout(() => {
-      setAuthError("Cloud loading took too long. I opened MaintForge in safe mode so you can keep working.");
-      dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
+      const localBackup = loadLocalUserBackup(session.user.id);
+      skipNextCloudSaveRef.current = true;
+      if(localBackup) {
+        setAuthError("Cloud loading took too long. I loaded your saved local backup and will not overwrite the cloud until you make another change.");
+        dispatch({ type:"REPLACE_STATE", payload:localBackup });
+      } else {
+        setAuthError("Cloud loading took too long. No local backup was found, so the empty setup screen will not be saved over your cloud data.");
+        dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
+      }
       setDataLoaded(true);
     }, 12000);
     return () => clearTimeout(timer);
@@ -9045,6 +9109,11 @@ export default function App() {
   /* Save state to Supabase, debounced */
   useEffect(() => {
     if (!session || !dataLoaded) return;
+    if (skipNextCloudSaveRef.current) {
+      skipNextCloudSaveRef.current = false;
+      setSyncStatus("idle");
+      return;
+    }
     setSyncStatus("saving");
     const timer = setTimeout(async () => {
       try {
