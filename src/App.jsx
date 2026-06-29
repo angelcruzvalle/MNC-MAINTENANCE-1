@@ -404,7 +404,6 @@ function normalizeInviteRecord(inv={}) {
     organizationId: data.organizationId || data.organization_id || inv.organization_id || "",
     organizationName: data.organizationName || data.organization_name || inv.organization_name || "",
     ownerUserId: data.ownerUserId || data.owner_user_id || inv.owner_user_id || inv.created_by || "",
-    status: data.status || inv.status || "Pending",
   };
 }
 
@@ -1175,7 +1174,7 @@ function reducer(state, { type, payload }) {
       return { ...state, locations:nextLocations, settings:{ ...(state.settings||{}), locations:nextLocations } };
     }
     case "ADD_USER_INVITE": {
-      const invite = { id:`INV-${Date.now()}`, status:"Pending", created:today(), ...payload };
+      const invite = { id:`INV-${Date.now()}`, created:today(), ...payload };
       return { ...state, userInvites:[invite, ...(state.userInvites||[])] };
     }
     case "UPDATE_USER_INVITE": {
@@ -8090,7 +8089,7 @@ function SystemSettings({ state, dispatch, onClose, session }) {
     const users = Array.isArray(state.orgUsers) ? state.orgUsers : [];
     const ownerEmail = state.profile?.email || "owner@maintforge.local";
     const hasOwner = users.some(u => (u.role||"") === "owner");
-    return hasOwner ? users : [{ id:"OWNER-CURRENT", name:state.profile?.name || "Organization Owner", email:ownerEmail, role:"owner", status:"Active", facilityIds:["__all"] }, ...users];
+    return (hasOwner ? users : [{ id:"OWNER-CURRENT", name:state.profile?.name || "Organization Owner", email:ownerEmail, role:"owner", facilityIds:["__all"] }, ...users]).map(u => ({ ...u, status:"Active" }));
   })();
   const navItems = [
     ["organization","🏢","Organization","Company info and defaults"],
@@ -8149,7 +8148,6 @@ function SystemSettings({ state, dispatch, onClose, session }) {
         token: invite.token,
         email: invite.email,
         role: invite.role,
-        status: "Pending",
         owner_user_id: invite.ownerUserId,
         organization_id: invite.organizationId,
         organization_name: invite.organizationName,
@@ -8163,7 +8161,7 @@ function SystemSettings({ state, dispatch, onClose, session }) {
     } catch(e) {
       console.warn("Invite cloud save skipped:", e);
     }
-    dispatch({type:"ADD_USER_INVITE", payload:{ ...invite, status: cloudSaved ? "Pending" : "Pending - local only" }});
+    dispatch({type:"ADD_USER_INVITE", payload:{ ...invite, cloudSaved }});
     setInviteSending(false);
     setInviteForm({ email:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] });
     const message = cloudSaved
@@ -8240,14 +8238,14 @@ function SystemSettings({ state, dispatch, onClose, session }) {
               </div>
             </div>
             <div style={{ display:"grid", gap:10 }}>
-              {effectiveUsers.map(u => <div key={u.id} style={{ display:"grid", gridTemplateColumns:"1.2fr 210px 1fr 150px", gap:10, alignItems:"center", padding:12, border:`1px solid ${T.border}`, borderRadius:10, background:T.card }}>
+              {effectiveUsers.map(u => <div key={u.id} style={{ display:"grid", gridTemplateColumns:"1.2fr 210px 1fr 110px", gap:10, alignItems:"center", padding:12, border:`1px solid ${T.border}`, borderRadius:10, background:T.card }}>
                 <div><div style={{ fontFamily:T.sans, fontWeight:800, color:T.text }}>{u.name || u.email}</div><div style={{ fontFamily:T.mono, fontSize:11, color:T.muted }}>{u.email}</div></div>
                 <select style={sel} disabled={!canManageUsers || u.role==="owner" || !canManageRole(managerRole,u.role)} value={u.role || "viewer"} onChange={e=>dispatch({type:"UPDATE_ORG_USER", payload:{...u, role:e.target.value, facilityIds:e.target.value==="org_manager"?["__all"]:(u.facilityIds||[])}})}>{ROLE_OPTIONS.map(r=><option key={r.value} value={r.value}>{r.label}</option>)}</select>
                 <div style={{ fontFamily:T.sans, fontSize:12, color:T.subtext }}>{userFacilitiesLabel(u, orgLocations)}</div>
-                <div style={{ display:"flex", gap:6, justifyContent:"flex-end" }}><Badge label={u.status || "Active"} /><Btn small variant="danger" onClick={()=>{ if(u.role==="owner") return alert("Owner cannot be removed."); if(!canManageUsers) return alert("You do not have permission to remove users."); if(confirm(`Remove ${u.email}?`)) dispatch({type:"REMOVE_ORG_USER", payload:u.id}); }}>Remove</Btn></div>
+                <div style={{ display:"flex", gap:6, justifyContent:"flex-end" }}><Btn small variant="danger" onClick={()=>{ if(u.role==="owner") return alert("Owner cannot be removed."); if(!canManageUsers) return alert("You do not have permission to remove users."); if(confirm(`Remove ${u.email}?`)) dispatch({type:"REMOVE_ORG_USER", payload:u.id}); }}>Remove</Btn></div>
               </div>)}
             </div>
-            {(state.userInvites||[]).length>0 && <div style={{ marginTop:18 }}><PanelTitle title="Pending Invitations" sub="Copy invite links or cancel pending access." />{(state.userInvites||[]).map(inv=><div key={inv.id} style={{ padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.surface, marginBottom:8, fontFamily:T.sans, fontSize:12 }}><b style={{ color:T.text }}>{inv.email}</b> — {roleLabel(inv.role)} — {userFacilitiesLabel(inv, orgLocations)} — {inv.status}<div style={{ fontFamily:T.mono, color:T.muted, wordBreak:"break-all", marginTop:4 }}>{inv.inviteUrl || inv.token}</div><Btn small variant="danger" style={{ marginTop:6 }} onClick={()=>dispatch({type:"REMOVE_USER_INVITE", payload:inv.id})}>Cancel Invite</Btn></div>)}</div>}
+            {(state.userInvites||[]).length>0 && <div style={{ marginTop:18 }}><PanelTitle title="Invitations" sub="Copy invite links or remove invitation records. Invite status is no longer used for app login." />{(state.userInvites||[]).map(inv=><div key={inv.id} style={{ padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.surface, marginBottom:8, fontFamily:T.sans, fontSize:12 }}><b style={{ color:T.text }}>{inv.email}</b> — {roleLabel(inv.role)} — {userFacilitiesLabel(inv, orgLocations)}<div style={{ fontFamily:T.mono, color:T.muted, wordBreak:"break-all", marginTop:4 }}>{inv.inviteUrl || inv.token}</div><Btn small variant="danger" style={{ marginTop:6 }} onClick={()=>dispatch({type:"REMOVE_USER_INVITE", payload:inv.id})}>Cancel Invite</Btn></div>)}</div>}
             <div style={{ marginTop:18 }}><PanelTitle title="Permission Matrix" sub="This is the single source of truth for what each role can do." />
               <div style={{ overflowX:"auto", border:`1px solid ${T.border}`, borderRadius:10 }}><table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:12 }}><thead><tr style={{ background:T.grayLt }}><th style={{ textAlign:"left", padding:8 }}>Permission</th>{ROLE_OPTIONS.map(r=><th key={r.value} style={{ padding:8 }}>{r.label.replace("Organization ","Org ").replace(" / Technician","")}</th>)}</tr></thead><tbody>{permissionRows.map(([label,key])=><tr key={key} style={{ borderTop:`1px solid ${T.border}` }}><td style={{ padding:8, color:T.text, fontWeight:700 }}>{label}</td>{ROLE_OPTIONS.map(r=><td key={r.value} style={{ textAlign:"center", padding:8 }}><PermissionDot yes={hasPermission(r.value,key)} /></td>)}</tr>)}</tbody></table></div>
             </div>
@@ -9025,12 +9023,12 @@ export default function App() {
             activeLocationId: acceptedUser.role === "org_manager" ? "__all" : (acceptedUser.facilityIds[0] || base.activeLocationId || "__all"),
             profile:{ ...(base.profile||{}), email:acceptedUser.email, name:acceptedUser.name, role:acceptedUser.role },
             orgUsers: nextUsers,
-            userInvites:(base.userInvites||[]).map(i => i.token === normalizedInvite.token ? { ...i, status:"Accepted", accepted:today() } : i),
+            userInvites:(base.userInvites||[]).filter(i => i.token !== normalizedInvite.token),
           };
           skipNextCloudSaveRef.current = true;
           dispatch({ type:"REPLACE_STATE", payload:acceptedState });
           try {
-            if(normalizedInvite.token) await supabase.from("user_invitations").update({ status:"Accepted", accepted_user_id:session.user.id, accepted_at:new Date().toISOString() }).eq("token", normalizedInvite.token);
+            if(normalizedInvite.token) await supabase.from("user_invitations").update({ accepted_user_id:session.user.id, accepted_at:new Date().toISOString() }).eq("token", normalizedInvite.token);
           } catch(e) {}
           if(sourceLabel === "invite-link") clearInviteTokenFromUrl();
           return true;
@@ -9051,7 +9049,7 @@ export default function App() {
                 // Existing owners should never be routed through the new-user invite/account setup flow.
                 setAuthInfoMsg("Self-invite ignored. Opening your existing owner account.");
                 try {
-                  await supabase.from("user_invitations").update({ status:"Ignored - self invite", accepted_user_id:session.user.id, accepted_at:new Date().toISOString() }).eq("token", inviteToken);
+                  await supabase.from("user_invitations").delete().eq("token", inviteToken);
                 } catch(e) {}
                 clearInviteTokenFromUrl();
               } else if(invite.email && signedEmail && invite.email !== signedEmail) {
@@ -9084,24 +9082,8 @@ export default function App() {
             return true;
           }
 
-          // If this email has an invite record, load the organization from the original owner, even without an invite link.
-          if(signedEmailForLookup) {
-            try {
-              const inviteByEmail = await withTimeout(
-                supabase.from("user_invitations").select("*").eq("email", signedEmailForLookup).order("created_at", { ascending:false }).limit(1).maybeSingle(),
-                9000
-              );
-              if(inviteByEmail?.data?.owner_user_id || inviteByEmail?.data?.ownerUserId) {
-                const loaded = await loadOrganizationFromInvite(inviteByEmail.data, "email-invite");
-                if(loaded) {
-                  setAuthError(`${message} I loaded your organization through your invite record instead.`);
-                  return true;
-                }
-              }
-            } catch(inviteLookupErr) {
-              console.error("Invite fallback lookup failed:", inviteLookupErr);
-            }
-          }
+          // Important: do not auto-route an existing login through a pending invitation just because the email matches.
+          // Invites are only accepted from an explicit invite link. Existing users must load their own account data.
 
           setAccountRecovery({
             message,
@@ -9715,7 +9697,7 @@ export default function App() {
             <Btn variant="secondary" onClick={handleLogout}>Sign Out and Sign In Again</Btn>
             <Btn variant="danger" onClick={()=>{ if(confirm("Only use this if you truly want to start a new empty MaintForge setup for this login. Continue?")){ setAccountRecovery(null); setAllowSetupWizard(true); dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) }); }}}>Start New Setup</Btn>
           </div>
-          <p style={{ margin:"14px 0 0", fontSize:12, color:T.muted }}>If this happened after inviting yourself, delete the self-invite row in Supabase or use Edit Role on your existing user instead of inviting the same email.</p>
+          <p style={{ margin:"14px 0 0", fontSize:12, color:T.muted }}>If this happened after inviting yourself, this version no longer uses invite status to decide login. Use Edit Role on your existing user instead of inviting the same email.</p>
         </div>
       </div>
     );
