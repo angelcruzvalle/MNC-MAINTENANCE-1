@@ -8874,6 +8874,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authMode, setAuthMode] = useState("login");
+  const [authScreenTouched, setAuthScreenTouched] = useState(false);
   const hasInviteToken = (() => { try { return !!inviteTokenFromUrl(); } catch(e) { return false; } })();
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
@@ -8887,16 +8888,18 @@ export default function App() {
 
   useEffect(() => {
     if(publicWORequestMode) { setAuthLoading(false); return; }
+    setAuthMode("login");
+    setAuthScreenTouched(false);
     loadSession(setSession, setAuthLoading);
   }, [publicWORequestMode]);
 
   useEffect(() => {
-    if(!session && authMode !== "login") {
-      // Refreshes should always return existing users to Sign In by default.
-      // Users can still click Create Account manually.
+    if(!authLoading && !session && !authScreenTouched && authMode !== "login") {
+      // Every unauthenticated page load must default to Sign In.
+      // Sign Up only appears after the user manually clicks Create Account.
       setAuthMode("login");
     }
-  }, [session]);
+  }, [authLoading, session, authScreenTouched, authMode]);
 
   useEffect(() => {
     if(!publicWORequestMode) return;
@@ -9276,6 +9279,7 @@ export default function App() {
 
   function switchAuthMode(mode) {
     const nextMode = mode === "signup" ? "signup" : "login";
+    setAuthScreenTouched(true);
     setAuthMode(nextMode);
     setAuthError(""); setAuthInfoMsg("");
     setAuthPassword(""); setAuthConfirmPassword("");
