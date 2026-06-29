@@ -1683,14 +1683,14 @@ function HelpCenter({ state, onClose }) {
     ["Organization", "The top-level company/account. Organization Owners can manage all facilities and company-wide reports."],
     ["Facility", "A separate shop, cemetery, branch, or site. Facility data is isolated from other facilities."],
     ["Area", "A building, department, zone, section, or physical area inside one facility."],
-    ["Foundation", "The Settings section where the Organization, Facilities, Areas, Users, Roles, Invitations, Numbering, and Migration Center are managed."],
+    ["Foundation", "The Settings section where the Organization, Facilities, Areas, Users, Roles, Numbering, and Migration Center are managed."],
     ["Migration", "Copies PM tasks, inspection tasks, and task templates from one facility to another. The copy is independent and can be edited without changing the original."],
     ["Legacy Unassigned Data", "Older records created before the facility system existed. Use the repair banner to assign them to the correct facility."],
   ];
   const topics = [
     isOwner && ["Create and manage facilities", "Go to Settings → Foundation → Facilities. Add the facility name, address, contact info, and save. Use the facility switcher in the header to work inside that facility."],
     isOwner && ["Fix records showing only under Organization", "Switch to the correct facility, use the unassigned data repair banner, and assign the old records to that facility. After that, the records show inside the facility and reports filter correctly."],
-    isOwner && ["Invite users", "Go to Settings → Foundation → Invitations. Enter the user's email, choose the role, assign the facility, and send the invite. The user creates their own account from the invite."],
+    isOwner && ["Invite users", "Invitations are temporarily disabled. Edit existing users from Admin Center → Users & Roles."],
     isOwner && ["Migrate templates", "Go to Settings → Foundation → Migration Center. Choose From Facility and To Facility, select PM task library, inspection task library, or general tasks, then Copy Selected. The destination facility receives independent copies."],
     isAdmin && ["Manage equipment", "Open Equipment, add or edit equipment for the active facility, assign the Facility and Area, add usage type, status, attachments, and inventory-related details."],
     isAdmin && ["Manage inventory", "Open Parts or Equipment Inventory. Add parts, quantities, units, reorder levels, vendors, and link parts to models/equipment where needed."],
@@ -8093,7 +8093,7 @@ function SystemSettings({ state, dispatch, onClose, session }) {
   })();
   const navItems = [
     ["organization","🏢","Organization","Company info and defaults"],
-    ["users","👥","Users & Roles","Invites, access, permissions"],
+    ["users","👥","Users & Roles","Access and permissions"],
     ["roles","🛡️","Role Management","Permission matrix and role rules"],
     ["activitylog","🧾","Activity Log","Recent admin and data changes"],
     ["facilities","🏭","Facilities & Areas","Facility details and areas"],
@@ -8123,52 +8123,11 @@ function SystemSettings({ state, dispatch, onClose, session }) {
   );
   const handleLogo = e => { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = ev => setForm(f=>({...f, logo:ev.target.result})); reader.readAsDataURL(file); };
   const handleSelectedFacilityLogo = e => { const file = e.target.files[0]; if(!file) return; const reader = new FileReader(); reader.onload = ev => updateSelectedFacility({ logo:ev.target.result, facilityLogo:ev.target.result }); reader.readAsDataURL(file); e.target.value = ""; };
-  const createInvitePayload = () => {
-    const token = `INVITE-${Date.now()}-${Math.random().toString(36).slice(2,8).toUpperCase()}`;
-    let inviteUrl = token;
-    try { inviteUrl = `${window.location.origin}${window.location.pathname}?invite=${encodeURIComponent(token)}`; } catch(e) {}
-    const facilityIds = inviteForm.role === "org_manager" ? ["__all"] : (inviteForm.facilityIds || []);
-    return { ...inviteForm, email:String(inviteForm.email||"").trim().toLowerCase(), locationId:facilityIds[0]||"", facilityIds, token, inviteUrl, organizationId:state.organization?.id || `ORG-${state.ownerUserId || session?.user?.id || Date.now()}`, organizationName:form.companyName || state.organization?.name || "", ownerUserId: state.ownerUserId || session?.user?.id || "", ownerEmail: session?.user?.email || state.profile?.email || "" };
-  };
+  const createInvitePayload = () => null;
   const handleCreateInvite = async () => {
-    if(!inviteForm.email.trim()) return alert("Enter an email first.");
-    if(!validateEmail(inviteForm.email.trim())) return alert("Enter a valid email address.");
-    const inviteEmail = String(inviteForm.email || "").trim().toLowerCase();
-    const signedInEmail = String(session?.user?.email || state.profile?.email || "").trim().toLowerCase();
-    if(inviteEmail && signedInEmail && inviteEmail === signedInEmail) {
-      return alert("Do not invite your own login email. Use Edit Role on your user record instead so your existing account is not treated like a new invite.");
-    }
-    if(!canManageUsers) return alert("Only Organization Owner or Organization Manager can invite users.");
-    if(inviteForm.role!=="org_manager" && !(inviteForm.facilityIds||[]).length) return alert("Choose at least one facility.");
-    const invite = createInvitePayload();
-    setInviteSending(true);
-    let cloudSaved = false;
-    try {
-      const row = {
-        token: invite.token,
-        email: invite.email,
-        role: invite.role,
-        owner_user_id: invite.ownerUserId,
-        organization_id: invite.organizationId,
-        organization_name: invite.organizationName,
-        facility_ids: invite.facilityIds,
-        invite_data: invite,
-        created_at: new Date().toISOString(),
-      };
-      const { error } = await supabase.from("user_invitations").insert(row);
-      if(error) throw error;
-      cloudSaved = true;
-    } catch(e) {
-      console.warn("Invite cloud save skipped:", e);
-    }
-    dispatch({type:"ADD_USER_INVITE", payload:{ ...invite, cloudSaved }});
-    setInviteSending(false);
-    setInviteForm({ email:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] });
-    const message = cloudSaved
-      ? `Invite created. Copy this link and send it to the user:\n\n${invite.inviteUrl}`
-      : `Invite created locally, but it could not be saved to the cloud invitation table yet. Copy this link for now:\n\n${invite.inviteUrl}\n\nRun the Supabase SQL I will provide so invite links work from other devices.`;
-    alert(message);
+    alert("User invitations are temporarily disabled while the login flow is being stabilized. Use the existing user row to edit roles, or add users later after invite is rebuilt safely.");
   };
+  const toggleInviteFacility = () => {};
     const addFacilityFromInput = () => setForm(f=>{ const name=(f._newLoc||"").trim(); if(!name) return f; const list=normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations }); const exists=list.some(x=>x.name.toLowerCase()===name.toLowerCase()); const next=exists?list:[...list,{ id:`FAC-${Date.now()}`, name, address:"", cityState:"", phone:"", email:"", manager:"", active:true }]; const selectedId=exists?(f._selectedFacilityId||list[0]?.id||""):next[next.length-1].id; return {...f,locations:next,_selectedFacilityId:selectedId,_areaFacilityId:selectedId,_newAreaFacilityId:selectedId,_newLoc:""}; });
   const copySelectedTemplates = () => { if(migrationForm.fromId===migrationForm.toId) return alert("Choose two different facilities."); if(!migrationForm.pmTasks && !migrationForm.inspectionTasks && !migrationForm.tasks) return alert("Choose at least one template type to copy."); if(selectedMigrationTotal <= 0) return alert("No templates were found in the source facility. Save Admin Center first and make sure you are copying from the correct Facility."); dispatch({type:"MIGRATE_TEMPLATES", payload:migrationForm}); alert(`Copied ${selectedMigrationTotal} template${selectedMigrationTotal===1?"":"s"} to ${locationNameForId(foundationState, migrationForm.toId)}.`); };
   const toggleInviteFacility = (id) => setInviteForm(f => ({ ...f, facilityIds:(f.facilityIds||[]).includes(id) ? (f.facilityIds||[]).filter(x=>x!==id) : [...(f.facilityIds||[]), id] }));
@@ -8186,7 +8145,6 @@ function SystemSettings({ state, dispatch, onClose, session }) {
   ];
   const adminActivityRows = [
     ...(state.activityLog || []),
-    ...(state.userInvites || []).map(inv => ({ id:`invite-${inv.id}`, date:inv.created || today(), actor:state.profile?.name || "Admin", action:"Created user invite", target:inv.email, detail:`${roleLabel(inv.role)} • ${userFacilitiesLabel(inv, orgLocations)}` })),
     ...(effectiveUsers || []).filter(u=>u.role !== "owner").map(u => ({ id:`user-${u.id}`, date:u.updated || u.created || today(), actor:state.profile?.name || "Admin", action:"User access active", target:u.email, detail:`${roleLabel(u.role)} • ${userFacilitiesLabel(u, orgLocations)}` })),
     ...(state.workOrders || []).slice(-8).reverse().map(w => ({ id:`wo-${w.id}`, date:w.completedDate || w.created || w.date || today(), actor:w.mechanic || w.assignedTo || "System", action:`Work order ${w.status || "updated"}`, target:w.woNumber || w.id, detail:w.description || w.title || w.type || "Work order activity" })),
   ].filter(Boolean).slice(0, 30);
@@ -8224,18 +8182,10 @@ function SystemSettings({ state, dispatch, onClose, session }) {
           </div>}
 
           {activeSection==="users" && <div>
-            <PanelTitle title="Users & Roles" sub="Invite users, assign facility access, edit roles, and remove users." action={<Btn onClick={handleCreateInvite} disabled={inviteSending}>{inviteSending ? "Creating..." : "+ Create Invite"}</Btn>} />
+            <PanelTitle title="Users & Roles" sub="Edit roles, facility access, and remove users. Invitations are disabled for now to stop the login loop." />
             {!canManageUsers && <div style={{ padding:10, border:`1px solid ${T.amber}`, borderRadius:8, background:T.amberLt, color:T.amber, fontFamily:T.sans, fontSize:12, marginBottom:12 }}>Your current role can view this page, but cannot manage users.</div>}
-            <div style={{ padding:14, border:`1px solid ${T.border}`, borderRadius:10, background:T.grayLt, marginBottom:16 }}>
-              <div style={{ fontFamily:T.sans, fontWeight:800, fontSize:13, color:T.text, marginBottom:10 }}>Invite User</div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 220px", gap:10 }}>
-                <input style={inp} placeholder="Name (optional)" value={inviteForm.name} onChange={e=>setInviteForm(f=>({...f,name:e.target.value}))} />
-                <input style={inp} placeholder="Email address" value={inviteForm.email} onChange={e=>setInviteForm(f=>({...f,email:e.target.value}))} />
-                <select style={sel} value={inviteForm.role} onChange={e=>setInviteForm(f=>({...f,role:e.target.value, facilityIds:e.target.value==="org_manager"?["__all"]:(f.facilityIds||[]).filter(x=>x!=="__all")}))}>{ROLE_OPTIONS.filter(r=>canManageRole(managerRole,r.value) && r.value!=="owner").map(r=><option key={r.value} value={r.value}>{r.label}</option>)}</select>
-              </div>
-              <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginTop:10 }}>
-                {inviteForm.role==="org_manager" ? <Badge label="All facilities" /> : orgLocations.map(l=><label key={l.id} style={{ fontFamily:T.sans, fontSize:12, color:T.text, display:"inline-flex", alignItems:"center", gap:5 }}><input type="checkbox" checked={(inviteForm.facilityIds||[]).includes(l.id)} onChange={()=>toggleInviteFacility(l.id)} />{l.name}</label>)}
-              </div>
+            <div style={{ padding:14, border:`1px solid ${T.amber}`, borderRadius:10, background:T.amberLt, color:T.amber, marginBottom:16, fontFamily:T.sans, fontSize:13 }}>
+              <b>Invites temporarily removed.</b> Existing users can sign in normally. Role editing stays available here, and the invite system can be rebuilt later without touching the login flow.
             </div>
             <div style={{ display:"grid", gap:10 }}>
               {effectiveUsers.map(u => <div key={u.id} style={{ display:"grid", gridTemplateColumns:"1.2fr 210px 1fr 110px", gap:10, alignItems:"center", padding:12, border:`1px solid ${T.border}`, borderRadius:10, background:T.card }}>
@@ -8245,7 +8195,6 @@ function SystemSettings({ state, dispatch, onClose, session }) {
                 <div style={{ display:"flex", gap:6, justifyContent:"flex-end" }}><Btn small variant="danger" onClick={()=>{ if(u.role==="owner") return alert("Owner cannot be removed."); if(!canManageUsers) return alert("You do not have permission to remove users."); if(confirm(`Remove ${u.email}?`)) dispatch({type:"REMOVE_ORG_USER", payload:u.id}); }}>Remove</Btn></div>
               </div>)}
             </div>
-            {(state.userInvites||[]).length>0 && <div style={{ marginTop:18 }}><PanelTitle title="Invitations" sub="Copy invite links or remove invitation records. Invite status is no longer used for app login." />{(state.userInvites||[]).map(inv=><div key={inv.id} style={{ padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.surface, marginBottom:8, fontFamily:T.sans, fontSize:12 }}><b style={{ color:T.text }}>{inv.email}</b> — {roleLabel(inv.role)} — {userFacilitiesLabel(inv, orgLocations)}<div style={{ fontFamily:T.mono, color:T.muted, wordBreak:"break-all", marginTop:4 }}>{inv.inviteUrl || inv.token}</div><Btn small variant="danger" style={{ marginTop:6 }} onClick={()=>dispatch({type:"REMOVE_USER_INVITE", payload:inv.id})}>Cancel Invite</Btn></div>)}</div>}
             <div style={{ marginTop:18 }}><PanelTitle title="Permission Matrix" sub="This is the single source of truth for what each role can do." />
               <div style={{ overflowX:"auto", border:`1px solid ${T.border}`, borderRadius:10 }}><table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:12 }}><thead><tr style={{ background:T.grayLt }}><th style={{ textAlign:"left", padding:8 }}>Permission</th>{ROLE_OPTIONS.map(r=><th key={r.value} style={{ padding:8 }}>{r.label.replace("Organization ","Org ").replace(" / Technician","")}</th>)}</tr></thead><tbody>{permissionRows.map(([label,key])=><tr key={key} style={{ borderTop:`1px solid ${T.border}` }}><td style={{ padding:8, color:T.text, fontWeight:700 }}>{label}</td>{ROLE_OPTIONS.map(r=><td key={r.value} style={{ textAlign:"center", padding:8 }}><PermissionDot yes={hasPermission(r.value,key)} /></td>)}</tr>)}</tbody></table></div>
             </div>
@@ -8936,6 +8885,7 @@ export default function App() {
 
   useEffect(() => {
     if(publicWORequestMode) { setAuthLoading(false); return; }
+    try { clearInviteTokenFromUrl(); } catch(e) {}
     setAuthMode("login");
     setAuthScreenTouched(false);
     setShowCreateAccount(false);
@@ -8987,84 +8937,9 @@ export default function App() {
     let cancelled = false;
     async function loadData() {
       try {
-        const inviteToken = inviteTokenFromUrl();
-        const signedEmailForLookup = String(session.user?.email || "").trim().toLowerCase();
-
-        const loadOrganizationFromInvite = async (invite, sourceLabel="invite") => {
-          const normalizedInvite = normalizeInviteRecord(invite);
-          if(!normalizedInvite?.ownerUserId) return false;
-          const ownerResult = await withTimeout(
-            supabase.from("user_state").select("data").eq("user_id", normalizedInvite.ownerUserId).maybeSingle(),
-            9000
-          );
-          if(ownerResult?.timedOut) throw new Error("Organization load timed out");
-          const ownerData = ownerResult?.data?.data;
-          if(!hasConfiguredUserState(ownerData)) return false;
-          const base = normalizeLoadedUserState(ownerData, normalizedInvite.ownerUserId);
-          const acceptedUser = {
-            id: session.user.id,
-            name: normalizedInvite.name || signedEmailForLookup,
-            email: signedEmailForLookup || normalizedInvite.email,
-            role: normalizedInvite.role || "mechanic",
-            facilityIds: normalizedInvite.facilityIds || [],
-            locationId: normalizedInvite.locationId || (normalizedInvite.facilityIds || [])[0] || "",
-            status: "Active",
-            accepted: today(),
-          };
-          const existingUsers = Array.isArray(base.orgUsers) ? base.orgUsers : [];
-          const nextUsers = existingUsers.some(u => String(u.email||"").toLowerCase() === String(acceptedUser.email||"").toLowerCase())
-            ? existingUsers.map(u => String(u.email||"").toLowerCase() === String(acceptedUser.email||"").toLowerCase() ? { ...u, ...acceptedUser } : u)
-            : [acceptedUser, ...existingUsers];
-          const acceptedState = {
-            ...base,
-            ownerUserId: normalizedInvite.ownerUserId,
-            currentUserId: session.user.id,
-            userRole: acceptedUser.role,
-            activeLocationId: acceptedUser.role === "org_manager" ? "__all" : (acceptedUser.facilityIds[0] || base.activeLocationId || "__all"),
-            profile:{ ...(base.profile||{}), email:acceptedUser.email, name:acceptedUser.name, role:acceptedUser.role },
-            orgUsers: nextUsers,
-            userInvites:(base.userInvites||[]).filter(i => i.token !== normalizedInvite.token),
-          };
-          skipNextCloudSaveRef.current = true;
-          dispatch({ type:"REPLACE_STATE", payload:acceptedState });
-          try {
-            if(normalizedInvite.token) await supabase.from("user_invitations").update({ accepted_user_id:session.user.id, accepted_at:new Date().toISOString() }).eq("token", normalizedInvite.token);
-          } catch(e) {}
-          if(sourceLabel === "invite-link") clearInviteTokenFromUrl();
-          return true;
-        };
-
-        if(inviteToken) {
-          try {
-            const inviteResult = await withTimeout(
-              supabase.from("user_invitations").select("*").eq("token", inviteToken).maybeSingle(),
-              9000
-            );
-            if(inviteResult?.timedOut) throw new Error("Invite lookup timed out");
-            if(inviteResult?.data) {
-              const invite = normalizeInviteRecord(inviteResult.data);
-              const signedEmail = String(session.user.email || "").trim().toLowerCase();
-              const isSelfInvite = invite.email && signedEmail && invite.email === signedEmail && invite.ownerUserId && invite.ownerUserId === session.user.id;
-              if(isSelfInvite) {
-                // Existing owners should never be routed through the new-user invite/account setup flow.
-                setAuthInfoMsg("Self-invite ignored. Opening your existing owner account.");
-                try {
-                  await supabase.from("user_invitations").delete().eq("token", inviteToken);
-                } catch(e) {}
-                clearInviteTokenFromUrl();
-              } else if(invite.email && signedEmail && invite.email !== signedEmail) {
-                setAuthError(`This invite was sent to ${invite.email}. Sign in with that email to accept it.`);
-              } else if(invite.ownerUserId) {
-                const loadedFromInvite = await loadOrganizationFromInvite(invite, "invite-link");
-                if(loadedFromInvite) return;
-                setAuthError("The invite was found, but the organization data behind it was not available. I will open your own account data instead.");
-              }
-            }
-          } catch(inviteErr) {
-            console.error("Invite accept error:", inviteErr);
-            setAuthError("The invite link could not be loaded. The app will open your own account data instead.");
-          }
-        }
+        // Invite acceptance is fully disabled for now.
+        // Normal login should never be routed through invite records or invite URL parameters.
+        try { clearInviteTokenFromUrl(); } catch(e) {}
 
         const result = await withTimeout(
           supabase.from("user_state").select("data").eq("user_id", session.user.id).maybeSingle(),
@@ -9395,10 +9270,10 @@ export default function App() {
   }
 
   function switchAuthMode(mode) {
-    const nextMode = mode === "signup" ? "signup" : "login";
-    setAuthScreenTouched(nextMode === "signup");
-    setShowCreateAccount(nextMode === "signup");
-    setAuthMode(nextMode);
+    // Signup/invitation flow is temporarily disabled while we stabilize existing-user login.
+    setAuthScreenTouched(false);
+    setShowCreateAccount(false);
+    setAuthMode("login");
     setAuthError(""); setAuthInfoMsg("");
     setAuthPassword(""); setAuthConfirmPassword("");
   }
@@ -9507,7 +9382,7 @@ export default function App() {
   }
 
   if (!session) {
-    const isSignup = showCreateAccount === true;
+    const isSignup = false; // Invite/signup flow temporarily disabled: existing-account login only.
     return (
       <div style={{
         minHeight:"100vh",
@@ -9656,11 +9531,7 @@ export default function App() {
                 </button>
               </>
             ) : (
-              <>Don't have an account?{" "}
-                <button onClick={()=>switchAuthMode("signup")} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontWeight:600, padding:0, fontSize:13 }}>
-                  Create one
-                </button>
-              </>
+              <>Use your existing MaintForge account to sign in.</>
             )}
           </div>
         </div>
