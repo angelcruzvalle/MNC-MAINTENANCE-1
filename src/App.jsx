@@ -440,6 +440,22 @@ function loadLocalUserBackup(currentUserId="") {
   }
 }
 
+function hasConfiguredUserState(data={}) {
+  if(!data || typeof data !== "object" || Array.isArray(data)) return false;
+  const settings = data.settings || {};
+  const org = data.organization || {};
+  return !!(
+    data.setupComplete ||
+    settings.companyName ||
+    org.name ||
+    (Array.isArray(data.locations) && data.locations.length) ||
+    (Array.isArray(data.equipment) && data.equipment.length) ||
+    (Array.isArray(data.workOrders) && data.workOrders.length) ||
+    (Array.isArray(data.parts) && data.parts.length) ||
+    (Array.isArray(data.technicians) && data.technicians.length)
+  );
+}
+
 
 function normalizeMaintForgeLocations(state={}) {
   const settings = state.settings || {};
@@ -8917,6 +8933,8 @@ export default function App() {
   const [publicPortal, setPublicPortal] = useState(null);
   const [publicPortalLoading, setPublicPortalLoading] = useState(false);
   const skipNextCloudSaveRef = useRef(false);
+  const [accountRecovery, setAccountRecovery] = useState(null);
+  const [allowSetupWizard, setAllowSetupWizard] = useState(false);
 
   useEffect(() => {
     if(publicWORequestMode) { setAuthLoading(false); return; }
@@ -8964,12 +8982,59 @@ export default function App() {
   useEffect(() => {
     if (!session) {
       setDataLoaded(false);
+      setAccountRecovery(null);
+      setAllowSetupWizard(false);
       return;
     }
     let cancelled = false;
     async function loadData() {
       try {
         const inviteToken = inviteTokenFromUrl();
+        const signedEmailForLookup = String(session.user?.email || "").trim().toLowerCase();
+
+        const loadOrganizationFromInvite = async (invite, sourceLabel="invite") => {
+          const normalizedInvite = normalizeInviteRecord(invite);
+          if(!normalizedInvite?.ownerUserId) return false;
+          const ownerResult = await withTimeout(
+            supabase.from("user_state").select("data").eq("user_id", normalizedInvite.ownerUserId).maybeSingle(),
+            9000
+          );
+          if(ownerResult?.timedOut) throw new Error("Organization load timed out");
+          const ownerData = ownerResult?.data?.data;
+          if(!hasConfiguredUserState(ownerData)) return false;
+          const base = normalizeLoadedUserState(ownerData, normalizedInvite.ownerUserId);
+          const acceptedUser = {
+            id: session.user.id,
+            name: normalizedInvite.name || signedEmailForLookup,
+            email: signedEmailForLookup || normalizedInvite.email,
+            role: normalizedInvite.role || "mechanic",
+            facilityIds: normalizedInvite.facilityIds || [],
+            locationId: normalizedInvite.locationId || (normalizedInvite.facilityIds || [])[0] || "",
+            status: "Active",
+            accepted: today(),
+          };
+          const existingUsers = Array.isArray(base.orgUsers) ? base.orgUsers : [];
+          const nextUsers = existingUsers.some(u => String(u.email||"").toLowerCase() === String(acceptedUser.email||"").toLowerCase())
+            ? existingUsers.map(u => String(u.email||"").toLowerCase() === String(acceptedUser.email||"").toLowerCase() ? { ...u, ...acceptedUser } : u)
+            : [acceptedUser, ...existingUsers];
+          const acceptedState = {
+            ...base,
+            ownerUserId: normalizedInvite.ownerUserId,
+            currentUserId: session.user.id,
+            userRole: acceptedUser.role,
+            activeLocationId: acceptedUser.role === "org_manager" ? "__all" : (acceptedUser.facilityIds[0] || base.activeLocationId || "__all"),
+            profile:{ ...(base.profile||{}), email:acceptedUser.email, name:acceptedUser.name, role:acceptedUser.role },
+            orgUsers: nextUsers,
+            userInvites:(base.userInvites||[]).map(i => i.token === normalizedInvite.token ? { ...i, status:"Accepted", accepted:today() } : i),
+          };
+          skipNextCloudSaveRef.current = true;
+          dispatch({ type:"REPLACE_STATE", payload:acceptedState });
+          try {
+            if(normalizedInvite.token) await supabase.from("user_invitations").update({ status:"Accepted", accepted_user_id:session.user.id, accepted_at:new Date().toISOString() }).eq("token", normalizedInvite.token);
+          } catch(e) {}
+          if(sourceLabel === "invite-link") clearInviteTokenFromUrl();
+          return true;
+        };
 
         if(inviteToken) {
           try {
@@ -8992,42 +9057,9 @@ export default function App() {
               } else if(invite.email && signedEmail && invite.email !== signedEmail) {
                 setAuthError(`This invite was sent to ${invite.email}. Sign in with that email to accept it.`);
               } else if(invite.ownerUserId) {
-                const ownerResult = await withTimeout(
-                  supabase.from("user_state").select("data").eq("user_id", invite.ownerUserId).maybeSingle(),
-                  9000
-                );
-                if(ownerResult?.timedOut) throw new Error("Organization load timed out");
-                const ownerData = ownerResult?.data?.data || blankUserState(invite.ownerUserId);
-                const base = normalizeLoadedUserState(ownerData, invite.ownerUserId);
-                const acceptedUser = {
-                  id: session.user.id,
-                  name: invite.name || signedEmail,
-                  email: signedEmail || invite.email,
-                  role: invite.role || "mechanic",
-                  facilityIds: invite.facilityIds || [],
-                  locationId: invite.locationId || (invite.facilityIds || [])[0] || "",
-                  status: "Active",
-                  accepted: today(),
-                };
-                const existingUsers = Array.isArray(base.orgUsers) ? base.orgUsers : [];
-                const nextUsers = existingUsers.some(u => String(u.email||"").toLowerCase() === String(acceptedUser.email||"").toLowerCase())
-                  ? existingUsers.map(u => String(u.email||"").toLowerCase() === String(acceptedUser.email||"").toLowerCase() ? { ...u, ...acceptedUser } : u)
-                  : [acceptedUser, ...existingUsers];
-                const acceptedState = {
-                  ...base,
-                  ownerUserId: invite.ownerUserId,
-                  userRole: acceptedUser.role,
-                  activeLocationId: acceptedUser.role === "org_manager" ? "__all" : (acceptedUser.facilityIds[0] || base.activeLocationId || "__all"),
-                  profile:{ ...(base.profile||{}), email:acceptedUser.email, name:acceptedUser.name, role:acceptedUser.role },
-                  orgUsers: nextUsers,
-                  userInvites:(base.userInvites||[]).map(i => i.token === inviteToken ? { ...i, status:"Accepted", accepted:today() } : i),
-                };
-                dispatch({ type:"REPLACE_STATE", payload:acceptedState });
-                try {
-                  await supabase.from("user_invitations").update({ status:"Accepted", accepted_user_id:session.user.id, accepted_at:new Date().toISOString() }).eq("token", inviteToken);
-                } catch(e) {}
-                clearInviteTokenFromUrl();
-                return;
+                const loadedFromInvite = await loadOrganizationFromInvite(invite, "invite-link");
+                if(loadedFromInvite) return;
+                setAuthError("The invite was found, but the organization data behind it was not available. I will open your own account data instead.");
               }
             }
           } catch(inviteErr) {
@@ -9042,30 +9074,57 @@ export default function App() {
         );
 
         if (cancelled) return;
-        const useFallback = (message) => {
+        const useFallback = async (message) => {
           const localBackup = loadLocalUserBackup(session.user.id);
           skipNextCloudSaveRef.current = true;
           if(localBackup) {
+            setAccountRecovery(null);
             setAuthError(`${message} I loaded your saved local backup instead and will not overwrite the cloud until you make another change.`);
             dispatch({ type:"REPLACE_STATE", payload:localBackup });
-          } else {
-            setAuthError(`${message} No saved account setup was found on this browser. I will not overwrite your cloud data from this empty screen.`);
-            dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
+            return true;
           }
+
+          // If this email has an invite record, load the organization from the original owner, even without an invite link.
+          if(signedEmailForLookup) {
+            try {
+              const inviteByEmail = await withTimeout(
+                supabase.from("user_invitations").select("*").eq("email", signedEmailForLookup).order("created_at", { ascending:false }).limit(1).maybeSingle(),
+                9000
+              );
+              if(inviteByEmail?.data?.owner_user_id || inviteByEmail?.data?.ownerUserId) {
+                const loaded = await loadOrganizationFromInvite(inviteByEmail.data, "email-invite");
+                if(loaded) {
+                  setAuthError(`${message} I loaded your organization through your invite record instead.`);
+                  return true;
+                }
+              }
+            } catch(inviteLookupErr) {
+              console.error("Invite fallback lookup failed:", inviteLookupErr);
+            }
+          }
+
+          setAccountRecovery({
+            message,
+            email: session.user?.email || "",
+            userId: session.user?.id || "",
+          });
+          dispatch({ type:"REPLACE_STATE", payload:{ ...blankUserState(session.user.id), setupComplete:true, settings:{ companyName:"MaintForge Recovery Mode" }, profile:{ email:session.user?.email || "" } } });
+          return false;
         };
 
         if (result?.timedOut) {
           console.error("Load timed out");
-          useFallback("Cloud loading timed out.");
+          await useFallback("Cloud loading timed out.");
         } else {
           const { data, error } = result;
           if (error) {
             console.error("Load error:", error);
-            useFallback("Cloud loading returned an error.");
-          } else if (data && data.data && Object.keys(data.data).length > 0) {
+            await useFallback("Cloud loading returned an error.");
+          } else if (data && data.data && Object.keys(data.data).length > 0 && hasConfiguredUserState(data.data)) {
+            setAccountRecovery(null);
             dispatch({ type:"REPLACE_STATE", payload:normalizeLoadedUserState(data.data, session.user.id) });
           } else {
-            useFallback("No cloud account data was found for this login.");
+            await useFallback(data && data.data ? "Your cloud account data looks blank or unfinished." : "No cloud account data was found for this login.");
           }
         }
       } catch (e) {
@@ -9076,8 +9135,9 @@ export default function App() {
           setAuthError("Cloud loading failed. I loaded your saved local backup instead and will not overwrite the cloud until you make another change.");
           dispatch({ type:"REPLACE_STATE", payload:localBackup });
         } else {
-          setAuthError("Cloud loading failed and no saved account setup was found on this browser. I will not overwrite your cloud data from this empty screen.");
-          dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
+          setAccountRecovery({ message:"Cloud loading failed and no saved account setup was found on this browser.", email:session.user?.email || "", userId:session.user?.id || "" });
+          setAuthError("Cloud loading failed. I will not open the first-run setup automatically because you are trying to log in to an existing account.");
+          dispatch({ type:"REPLACE_STATE", payload:{ ...blankUserState(session.user.id), setupComplete:true, settings:{ companyName:"MaintForge Recovery Mode" }, profile:{ email:session.user?.email || "" } } });
         }
       } finally {
         if (!cancelled) setDataLoaded(true);
@@ -9098,8 +9158,9 @@ export default function App() {
         setAuthError("Cloud loading took too long. I loaded your saved local backup and will not overwrite the cloud until you make another change.");
         dispatch({ type:"REPLACE_STATE", payload:localBackup });
       } else {
-        setAuthError("Cloud loading took too long. No local backup was found, so the empty setup screen will not be saved over your cloud data.");
-        dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
+        setAccountRecovery({ message:"Cloud loading took too long and no local backup was found.", email:session.user?.email || "", userId:session.user?.id || "" });
+        setAuthError("Cloud loading took too long. I will not open the first-run setup automatically because you are trying to log in to an existing account.");
+        dispatch({ type:"REPLACE_STATE", payload:{ ...blankUserState(session.user.id), setupComplete:true, settings:{ companyName:"MaintForge Recovery Mode" }, profile:{ email:session.user?.email || "" } } });
       }
       setDataLoaded(true);
     }, 12000);
@@ -9361,6 +9422,10 @@ export default function App() {
   }
 
   async function handleLogout() {
+    setAccountRecovery(null);
+    setAllowSetupWizard(false);
+    setShowCreateAccount(false);
+    setAuthMode("login");
     try { localStorage.removeItem("ncaState"); } catch(e) {}
     await supabase.auth.signOut();
   }
@@ -9504,7 +9569,7 @@ export default function App() {
             </button>
           )}
 
-          {/* Tab switcher */}
+          {/* Auth mode header */}
           <div style={{ display:"flex", background:"#111827", borderRadius:8, padding:4, marginBottom:20, border:"1px solid #374151" }}>
             <button
               type="button"
@@ -9517,18 +9582,6 @@ export default function App() {
                 fontWeight:600, fontSize:13, transition:"all .15s"
               }}>
               Sign In
-            </button>
-            <button
-              type="button"
-              onClick={()=>switchAuthMode("signup")}
-              disabled={authBusy}
-              style={{
-                flex:1, padding:"10px", borderRadius:6, border:"none", cursor:"pointer",
-                background: isSignup ? "#3b82f6" : "transparent",
-                color: isSignup ? "white" : "#9ca3af",
-                fontWeight:600, fontSize:13, transition:"all .15s"
-              }}>
-              Create Account
             </button>
           </div>
 
@@ -9646,7 +9699,55 @@ export default function App() {
     );
   }
 
+  if(accountRecovery && session) {
+    return (
+      <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, color:T.text, fontFamily:T.sans, padding:20 }}>
+        <div style={{ maxWidth:560, width:"100%", background:T.card, border:`1px solid ${T.border}`, borderRadius:16, padding:24, boxShadow:"0 12px 32px rgba(0,0,0,.18)" }}>
+          <div style={{ fontSize:34, marginBottom:8 }}>🔐</div>
+          <h2 style={{ margin:"0 0 8px" }}>Signed in, but account data was not found</h2>
+          <p style={{ color:T.muted, lineHeight:1.5, margin:"0 0 12px" }}>You are logged in as <b>{accountRecovery.email}</b>, but MaintForge could not find your saved organization data for this login. I stopped the app from sending you into Create Account/Setup because that can overwrite existing data.</p>
+          <div style={{ background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:10, padding:12, fontSize:13, color:T.subtext, marginBottom:16 }}>
+            <b>Reason:</b> {accountRecovery.message}<br/>
+            <b>User ID:</b> <span style={{ wordBreak:"break-all" }}>{accountRecovery.userId}</span>
+          </div>
+          <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+            <Btn onClick={()=>window.location.reload()}>Try Loading Again</Btn>
+            <Btn variant="secondary" onClick={handleLogout}>Sign Out and Sign In Again</Btn>
+            <Btn variant="danger" onClick={()=>{ if(confirm("Only use this if you truly want to start a new empty MaintForge setup for this login. Continue?")){ setAccountRecovery(null); setAllowSetupWizard(true); dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) }); }}}>Start New Setup</Btn>
+          </div>
+          <p style={{ margin:"14px 0 0", fontSize:12, color:T.muted }}>If this happened after inviting yourself, delete the self-invite row in Supabase or use Edit Role on your existing user instead of inviting the same email.</p>
+        </div>
+      </div>
+    );
+  }
+
   if(!state.setupComplete) {
+    if(!allowSetupWizard && session) {
+      const blockedSetupRecovery = {
+        message:"This login is about to open the first-run setup wizard instead of an existing account.",
+        email:session.user?.email || "",
+        userId:session.user?.id || "",
+      };
+      return (
+        <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, color:T.text, fontFamily:T.sans, padding:20 }}>
+          <div style={{ maxWidth:560, width:"100%", background:T.card, border:`1px solid ${T.border}`, borderRadius:16, padding:24, boxShadow:"0 12px 32px rgba(0,0,0,.18)" }}>
+            <div style={{ fontSize:34, marginBottom:8 }}>🔐</div>
+            <h2 style={{ margin:"0 0 8px" }}>MaintForge stopped the setup screen</h2>
+            <p style={{ color:T.muted, lineHeight:1.5, margin:"0 0 12px" }}>You are logged in as <b>{blockedSetupRecovery.email}</b>, but this account is about to open the first-run setup wizard. That usually means the saved organization data is missing, blank, or attached to another user ID.</p>
+            <div style={{ background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:10, padding:12, fontSize:13, color:T.subtext, marginBottom:16 }}>
+              <b>Reason:</b> {blockedSetupRecovery.message}<br/>
+              <b>User ID:</b> <span style={{ wordBreak:"break-all" }}>{blockedSetupRecovery.userId}</span>
+            </div>
+            <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+              <Btn onClick={()=>window.location.reload()}>Try Loading Again</Btn>
+              <Btn variant="secondary" onClick={handleLogout}>Sign Out and Sign In Again</Btn>
+              <Btn variant="danger" onClick={()=>{ if(confirm("Only use this if you truly want to start a new empty MaintForge setup for this login. Continue?")){ setAllowSetupWizard(true); dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) }); }}}>Start New Setup</Btn>
+            </div>
+            <p style={{ margin:"14px 0 0", fontSize:12, color:T.muted }}>This prevents accidental overwriting of your old MaintForge data.</p>
+          </div>
+        </div>
+      );
+    }
     return <SetupWizard onComplete={(setupData)=>dispatch({type:"COMPLETE_SETUP",payload:setupData})} />;
   }
 
