@@ -8891,10 +8891,12 @@ export default function App() {
   }, [publicWORequestMode]);
 
   useEffect(() => {
-    if(!session && !hasInviteToken && authMode !== "login") {
+    if(!session && authMode !== "login") {
+      // Refreshes should always return existing users to Sign In by default.
+      // Users can still click Create Account manually.
       setAuthMode("login");
     }
-  }, [session, hasInviteToken, authMode]);
+  }, [session]);
 
   useEffect(() => {
     if(!publicWORequestMode) return;
@@ -9021,6 +9023,18 @@ export default function App() {
     loadData();
     return () => { cancelled = true; };
   }, [session]);
+
+  /* Safety net: never leave the app stuck on "Loading your data from the cloud".
+     If Supabase or an invite lookup hangs, open a safe session and show a message. */
+  useEffect(() => {
+    if(!session || dataLoaded) return;
+    const timer = setTimeout(() => {
+      setAuthError("Cloud loading took too long. I opened MaintForge in safe mode so you can keep working.");
+      dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
+      setDataLoaded(true);
+    }, 12000);
+    return () => clearTimeout(timer);
+  }, [session, dataLoaded]);
 
   /* Save state to Supabase, debounced */
   useEffect(() => {
@@ -9261,7 +9275,8 @@ export default function App() {
   }
 
   function switchAuthMode(mode) {
-    setAuthMode(mode);
+    const nextMode = mode === "signup" ? "signup" : "login";
+    setAuthMode(nextMode);
     setAuthError(""); setAuthInfoMsg("");
     setAuthPassword(""); setAuthConfirmPassword("");
   }
@@ -9398,6 +9413,7 @@ export default function App() {
 
           {isSignup && (
             <button
+              type="button"
               onClick={()=>switchAuthMode("login")}
               disabled={authBusy}
               style={{
@@ -9412,7 +9428,9 @@ export default function App() {
           {/* Tab switcher */}
           <div style={{ display:"flex", background:"#111827", borderRadius:8, padding:4, marginBottom:20, border:"1px solid #374151" }}>
             <button
+              type="button"
               onClick={()=>switchAuthMode("login")}
+              disabled={authBusy}
               style={{
                 flex:1, padding:"10px", borderRadius:6, border:"none", cursor:"pointer",
                 background: !isSignup ? "#3b82f6" : "transparent",
@@ -9422,7 +9440,9 @@ export default function App() {
               Sign In
             </button>
             <button
+              type="button"
               onClick={()=>switchAuthMode("signup")}
+              disabled={authBusy}
               style={{
                 flex:1, padding:"10px", borderRadius:6, border:"none", cursor:"pointer",
                 background: isSignup ? "#3b82f6" : "transparent",
@@ -9534,27 +9554,14 @@ export default function App() {
     );
   }
 
-  /* First-run setup wizard */
-  /* While Supabase loads the user's data, show a brief loading screen */
+  /* While Supabase loads the user's data, show a loading screen with a built-in watchdog above. */
   if (session && !dataLoaded) {
     return (
       <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, fontFamily:T.sans, color:T.text }}>
-        <div style={{ textAlign:"center" }}>
+        <div style={{ textAlign:"center", maxWidth:420, padding:20 }}>
           <div style={{ fontSize:32, marginBottom:12 }}>⟳</div>
           <div style={{ fontSize:14, color:T.muted }}>Loading your data from the cloud...</div>
-        </div>
-      </div>
-    );
-  }
-
-
-  /* First-run setup wizard */
-  if (session && !dataLoaded) {
-    return (
-      <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, fontFamily:T.sans, color:T.text }}>
-        <div style={{ textAlign:"center" }}>
-          <div style={{ fontSize:32, marginBottom:12 }}>⟳</div>
-          <div style={{ fontSize:14, color:T.muted }}>Loading your data from the cloud...</div>
+          <div style={{ fontSize:12, color:T.muted, marginTop:8 }}>If the cloud does not answer, MaintForge will open automatically in safe mode.</div>
         </div>
       </div>
     );
