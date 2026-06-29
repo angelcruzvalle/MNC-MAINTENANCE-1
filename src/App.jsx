@@ -331,6 +331,25 @@ function blankUserState(ownerUserId="") {
   };
 }
 
+function emergencySignedInState(ownerUserId="", email="") {
+  const base = blankUserState(ownerUserId);
+  const facility = { id:"FAC-DEFAULT", name:"Default Facility", address:"", cityState:"", phone:"", email:"", manager:"", active:true };
+  return {
+    ...base,
+    setupComplete:true,
+    profile:{ email: email || "", name:"" },
+    settings:{
+      companyName:"MaintForge", department:"Maintenance", phone:"", email:email || "", region:"", siteName:"Default Facility",
+      address:"", cityState:"", laborRateDefault:0, requireTech:false, showCostsOnWO:true, locations:[facility], areas:[]
+    },
+    woSettings: base.woSettings || {},
+    organization:{ ...(base.organization||{}), name:"MaintForge" },
+    locations:[facility],
+    activeLocationId:"FAC-DEFAULT",
+    orgUsers:[{ id:ownerUserId || "owner", email:email || "", name:"Owner", role:"owner", facilityIds:["__all"], active:true }],
+    userInvites:[],
+  };
+}
 
 const ROLE_DEFINITIONS = {
   owner: { label:"Organization Owner", level:100, description:"Full control over the organization and every facility." },
@@ -8128,7 +8147,7 @@ function SystemSettings({ state, dispatch, onClose, session }) {
     alert("User invitations are temporarily disabled while the login flow is being stabilized. Use the existing user row to edit roles, or add users later after invite is rebuilt safely.");
   };
   const toggleInviteFacility = () => {};
-    const addFacilityFromInput = () => setForm(f=>{ const name=(f._newLoc||"").trim(); if(!name) return f; const list=normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations }); const exists=list.some(x=>x.name.toLowerCase()===name.toLowerCase()); const next=exists?list:[...list,{ id:`FAC-${Date.now()}`, name, address:"", cityState:"", phone:"", email:"", manager:"", active:true }]; const selectedId=exists?(f._selectedFacilityId||list[0]?.id||""):next[next.length-1].id; return {...f,locations:next,_selectedFacilityId:selectedId,_areaFacilityId:selectedId,_newAreaFacilityId:selectedId,_newLoc:""}; });
+  const addFacilityFromInput = () => setForm(f=>{ const name=(f._newLoc||"").trim(); if(!name) return f; const list=normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations }); const exists=list.some(x=>x.name.toLowerCase()===name.toLowerCase()); const next=exists?list:[...list,{ id:`FAC-${Date.now()}`, name, address:"", cityState:"", phone:"", email:"", manager:"", active:true }]; const selectedId=exists?(f._selectedFacilityId||list[0]?.id||""):next[next.length-1].id; return {...f,locations:next,_selectedFacilityId:selectedId,_areaFacilityId:selectedId,_newAreaFacilityId:selectedId,_newLoc:""}; });
   const copySelectedTemplates = () => { if(migrationForm.fromId===migrationForm.toId) return alert("Choose two different facilities."); if(!migrationForm.pmTasks && !migrationForm.inspectionTasks && !migrationForm.tasks) return alert("Choose at least one template type to copy."); if(selectedMigrationTotal <= 0) return alert("No templates were found in the source facility. Save Admin Center first and make sure you are copying from the correct Facility."); dispatch({type:"MIGRATE_TEMPLATES", payload:migrationForm}); alert(`Copied ${selectedMigrationTotal} template${selectedMigrationTotal===1?"":"s"} to ${locationNameForId(foundationState, migrationForm.toId)}.`); };
   const save = () => {
     const { _newLoc, _newArea, _newAreaFacilityId, _areaFacilityId, _selectedFacilityId, ...cleanForm } = form;
@@ -8894,7 +8913,7 @@ export default function App() {
   useEffect(() => {
     if(!authLoading && !session && !showCreateAccount) {
       // Existing users must always land on Sign In after refresh.
-      // The Create Account form is only shown after the user manually clicks Create Account in this screen.
+      // The old account creation flow is disabled in this recovery build.
       if(authMode !== "login") setAuthMode("login");
       if(authScreenTouched) setAuthScreenTouched(false);
     }
@@ -8959,12 +8978,9 @@ export default function App() {
           // Important: do not auto-route an existing login through a pending invitation just because the email matches.
           // Invites are only accepted from an explicit invite link. Existing users must load their own account data.
 
-          setAccountRecovery({
-            message,
-            email: session.user?.email || "",
-            userId: session.user?.id || "",
-          });
-          dispatch({ type:"REPLACE_STATE", payload:{ ...blankUserState(session.user.id), setupComplete:true, settings:{ companyName:"MaintForge Recovery Mode" }, profile:{ email:session.user?.email || "" } } });
+          setAccountRecovery(null);
+          setAuthError(message + " MaintForge opened a safe owner workspace instead of the create-account setup screen.");
+          dispatch({ type:"REPLACE_STATE", payload:emergencySignedInState(session.user.id, session.user?.email || "") });
           return false;
         };
 
@@ -8991,9 +9007,9 @@ export default function App() {
           setAuthError("Cloud loading failed. I loaded your saved local backup instead and will not overwrite the cloud until you make another change.");
           dispatch({ type:"REPLACE_STATE", payload:localBackup });
         } else {
-          setAccountRecovery({ message:"Cloud loading failed and no saved account setup was found on this browser.", email:session.user?.email || "", userId:session.user?.id || "" });
-          setAuthError("Cloud loading failed. I will not open the first-run setup automatically because you are trying to log in to an existing account.");
-          dispatch({ type:"REPLACE_STATE", payload:{ ...blankUserState(session.user.id), setupComplete:true, settings:{ companyName:"MaintForge Recovery Mode" }, profile:{ email:session.user?.email || "" } } });
+          setAccountRecovery(null);
+          setAuthError("Cloud loading failed. MaintForge opened a safe owner workspace instead of the create-account setup screen.");
+          dispatch({ type:"REPLACE_STATE", payload:emergencySignedInState(session.user.id, session.user?.email || "") });
         }
       } finally {
         if (!cancelled) setDataLoaded(true);
@@ -9014,9 +9030,9 @@ export default function App() {
         setAuthError("Cloud loading took too long. I loaded your saved local backup and will not overwrite the cloud until you make another change.");
         dispatch({ type:"REPLACE_STATE", payload:localBackup });
       } else {
-        setAccountRecovery({ message:"Cloud loading took too long and no local backup was found.", email:session.user?.email || "", userId:session.user?.id || "" });
-        setAuthError("Cloud loading took too long. I will not open the first-run setup automatically because you are trying to log in to an existing account.");
-        dispatch({ type:"REPLACE_STATE", payload:{ ...blankUserState(session.user.id), setupComplete:true, settings:{ companyName:"MaintForge Recovery Mode" }, profile:{ email:session.user?.email || "" } } });
+        setAccountRecovery(null);
+        setAuthError("Cloud loading took too long. MaintForge opened a safe owner workspace instead of the create-account setup screen.");
+        dispatch({ type:"REPLACE_STATE", payload:emergencySignedInState(session.user.id, session.user?.email || "") });
       }
       setDataLoaded(true);
     }, 12000);
@@ -9381,7 +9397,7 @@ export default function App() {
   }
 
   if (!session) {
-    const isSignup = false; // Invite/signup flow temporarily disabled: existing-account login only.
+    const isSignup = false; // Recovery build: existing-account sign-in only. // Invite/signup flow temporarily disabled: existing-account login only.
     return (
       <div style={{
         minHeight:"100vh",
@@ -9557,7 +9573,7 @@ export default function App() {
         <div style={{ maxWidth:560, width:"100%", background:T.card, border:`1px solid ${T.border}`, borderRadius:16, padding:24, boxShadow:"0 12px 32px rgba(0,0,0,.18)" }}>
           <div style={{ fontSize:34, marginBottom:8 }}>🔐</div>
           <h2 style={{ margin:"0 0 8px" }}>Signed in, but account data was not found</h2>
-          <p style={{ color:T.muted, lineHeight:1.5, margin:"0 0 12px" }}>You are logged in as <b>{accountRecovery.email}</b>, but MaintForge could not find your saved organization data for this login. I stopped the app from sending you into Create Account/Setup because that can overwrite existing data.</p>
+          <p style={{ color:T.muted, lineHeight:1.5, margin:"0 0 12px" }}>You are logged in as <b>{accountRecovery.email}</b>, but MaintForge could not find your saved organization data for this login. I stopped the app from opening the old first-run setup flow because that can overwrite existing data.</p>
           <div style={{ background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:10, padding:12, fontSize:13, color:T.subtext, marginBottom:16 }}>
             <b>Reason:</b> {accountRecovery.message}<br/>
             <b>User ID:</b> <span style={{ wordBreak:"break-all" }}>{accountRecovery.userId}</span>
@@ -9565,7 +9581,7 @@ export default function App() {
           <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
             <Btn onClick={()=>window.location.reload()}>Try Loading Again</Btn>
             <Btn variant="secondary" onClick={handleLogout}>Sign Out and Sign In Again</Btn>
-            <Btn variant="danger" onClick={()=>{ if(confirm("Only use this if you truly want to start a new empty MaintForge setup for this login. Continue?")){ setAccountRecovery(null); setAllowSetupWizard(true); dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) }); }}}>Start New Setup</Btn>
+            <Btn variant="danger" onClick={()=>{ if(confirm("Only use this if you truly want to start a new empty MaintForge workspace for this login. Continue?")){ setAccountRecovery(null); setAllowSetupWizard(true); dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) }); }}}>Start Empty Workspace</Btn>
           </div>
           <p style={{ margin:"14px 0 0", fontSize:12, color:T.muted }}>If this happened after inviting yourself, this version no longer uses invite status to decide login. Use Edit Role on your existing user instead of inviting the same email.</p>
         </div>
@@ -9574,33 +9590,19 @@ export default function App() {
   }
 
   if(!state.setupComplete) {
-    if(!allowSetupWizard && session) {
-      const blockedSetupRecovery = {
-        message:"This login is about to open the first-run setup wizard instead of an existing account.",
-        email:session.user?.email || "",
-        userId:session.user?.id || "",
-      };
-      return (
-        <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, color:T.text, fontFamily:T.sans, padding:20 }}>
-          <div style={{ maxWidth:560, width:"100%", background:T.card, border:`1px solid ${T.border}`, borderRadius:16, padding:24, boxShadow:"0 12px 32px rgba(0,0,0,.18)" }}>
-            <div style={{ fontSize:34, marginBottom:8 }}>🔐</div>
-            <h2 style={{ margin:"0 0 8px" }}>MaintForge stopped the setup screen</h2>
-            <p style={{ color:T.muted, lineHeight:1.5, margin:"0 0 12px" }}>You are logged in as <b>{blockedSetupRecovery.email}</b>, but this account is about to open the first-run setup wizard. That usually means the saved organization data is missing, blank, or attached to another user ID.</p>
-            <div style={{ background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:10, padding:12, fontSize:13, color:T.subtext, marginBottom:16 }}>
-              <b>Reason:</b> {blockedSetupRecovery.message}<br/>
-              <b>User ID:</b> <span style={{ wordBreak:"break-all" }}>{blockedSetupRecovery.userId}</span>
-            </div>
-            <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-              <Btn onClick={()=>window.location.reload()}>Try Loading Again</Btn>
-              <Btn variant="secondary" onClick={handleLogout}>Sign Out and Sign In Again</Btn>
-              <Btn variant="danger" onClick={()=>{ if(confirm("Only use this if you truly want to start a new empty MaintForge setup for this login. Continue?")){ setAllowSetupWizard(true); dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) }); }}}>Start New Setup</Btn>
-            </div>
-            <p style={{ margin:"14px 0 0", fontSize:12, color:T.muted }}>This prevents accidental overwriting of your old MaintForge data.</p>
+    return (
+      <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, color:T.text, fontFamily:T.sans, padding:20 }}>
+        <div style={{ maxWidth:560, width:"100%", background:T.card, border:`1px solid ${T.border}`, borderRadius:16, padding:24, boxShadow:"0 12px 32px rgba(0,0,0,.18)" }}>
+          <div style={{ fontSize:34, marginBottom:8 }}>🔐</div>
+          <h2 style={{ margin:"0 0 8px" }}>MaintForge login recovery</h2>
+          <p style={{ color:T.muted, lineHeight:1.5, margin:"0 0 12px" }}>You are signed in, but this browser received an unfinished workspace. The invite and first-run setup flow is disabled in this recovery build.</p>
+          <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+            <Btn onClick={()=>dispatch({ type:"REPLACE_STATE", payload:emergencySignedInState(session?.user?.id || "", session?.user?.email || "") })}>Open MaintForge</Btn>
+            <Btn variant="secondary" onClick={handleLogout}>Sign Out</Btn>
           </div>
         </div>
-      );
-    }
-    return <SetupWizard onComplete={(setupData)=>dispatch({type:"COMPLETE_SETUP",payload:setupData})} />;
+      </div>
+    );
   }
 
   return (
