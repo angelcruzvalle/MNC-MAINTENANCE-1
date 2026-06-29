@@ -1575,11 +1575,27 @@ const equipmentStatusTipColor = (status) => {
   if(normalized === "Fully Operational") return "#22c55e";
   return T.borderHi;
 };
-const EquipmentStatusTip = ({ status, label }) => {
+const EquipmentStatusTip = ({ status, label, style={} }) => {
   const color = equipmentStatusTipColor(status);
   return (
-    <span title={label || status || "Equipment status"} style={{ display:"inline-block", width:6, height:22, borderRadius:999, background:color, flexShrink:0, boxShadow:`0 0 0 1px ${color}22` }} />
+    <span title={label || status || "Equipment status"} style={{ display:"inline-block", width:6, height:22, borderRadius:999, background:color, flexShrink:0, boxShadow:`0 0 0 1px ${color}22`, ...style }} />
   );
+};
+
+const EquipmentStatusNumberCell = ({ status, label, children, style={} }) => (
+  <div style={{ position:"relative", minHeight:24, display:"flex", alignItems:"center", paddingLeft:15, ...style }}>
+    <EquipmentStatusTip status={status} label={label || status} style={{ position:"absolute", left:0, top:"50%", transform:"translateY(-50%)" }} />
+    <span>{children}</span>
+  </div>
+);
+
+const MF_LAST_TAB_KEY = "maintforge:lastPage";
+const MF_LAST_FACILITY_KEY = "maintforge:lastFacilityId";
+const readMFLocal = (key, fallback="") => {
+  try { return localStorage.getItem(key) || fallback; } catch(e) { return fallback; }
+};
+const writeMFLocal = (key, value) => {
+  try { localStorage.setItem(key, value || ""); } catch(e) {}
 };
 
 const priorityStyle = {
@@ -3369,10 +3385,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                   onMouseEnter={e=>e.currentTarget.style.background=rowHover}
                   onMouseLeave={e=>e.currentTarget.style.background=rowBg}>
                   <td style={{ padding:"11px 14px", whiteSpace:"nowrap" }}>
-                    <div style={{ display:"inline-flex", alignItems:"center", gap:7 }}>
-                      <EquipmentStatusTip status={rowStatus} label={rowStatus} />
+                    <EquipmentStatusNumberCell status={rowStatus} label={rowStatus}>
                       <span style={{ fontFamily:T.mono, fontSize:12, color:T.subtext }}>{wo.equipment || "—"}</span>
-                    </div>
+                    </EquipmentStatusNumberCell>
                   </td>
                   <td style={{ padding:"11px 14px", color:T.subtext, whiteSpace:"nowrap" }}>
                     <div style={{ fontWeight:600, color:T.text }}>{eqLabel}</div>
@@ -4439,10 +4454,9 @@ function Equipment({ state, dispatch }) {
 
                     <div style={{ width:90, flexShrink:0, marginRight:20 }}>
                       <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Equip #</div>
-                      <div style={{ display:"flex", alignItems:"center", gap:7, marginTop:3 }}>
-                        <EquipmentStatusTip status={eq.status} label={eq.status || "Fully Operational"} />
+                      <EquipmentStatusNumberCell status={eq.status} label={eq.status || "Fully Operational"} style={{ marginTop:3 }}>
                         <span style={{ fontFamily:T.mono, fontSize:12, color:T.subtext }}>{eq.id}</span>
-                      </div>
+                      </EquipmentStatusNumberCell>
                     </div>
 
                     <div style={{ flex:1, minWidth:180, marginRight:20 }}>
@@ -6715,10 +6729,9 @@ function UsageTracking({ state, dispatch }) {
                 </button>
 
                 {/* Equip # */}
-                <div style={{ display:"flex", alignItems:"center", gap:7 }}>
-                  <EquipmentStatusTip status={eq.status} label={eq.status || "Fully Operational"} />
+                <EquipmentStatusNumberCell status={eq.status} label={eq.status || "Fully Operational"}>
                   <span style={{ fontFamily:T.mono, fontSize:11, color:T.subtext }}>{eq.id}</span>
-                </div>
+                </EquipmentStatusNumberCell>
 
                 {/* Current Hours */}
                 <div>
@@ -7639,6 +7652,37 @@ function requestUrlForFacility(facility="", settings={}, ownerUserId="") {
   }
 }
 
+function inviteUrlForToken(token="", email="") {
+  try {
+    const base = window.location.origin + window.location.pathname;
+    const params = new URLSearchParams();
+    params.set("invite", token || "");
+    if(email) params.set("email", normalizeEmail(email));
+    return `${base}?${params.toString()}`;
+  } catch(e) {
+    return `?invite=${encodeURIComponent(token || "")}${email?`&email=${encodeURIComponent(normalizeEmail(email))}`:""}`;
+  }
+}
+
+function copyTextToClipboard(text="") {
+  if(!text) return Promise.reject(new Error("Nothing to copy."));
+  if(navigator?.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  return new Promise((resolve, reject) => {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      resolve();
+    } catch(err) { reject(err); }
+  });
+}
+
 function getWORequestUrlParam(name) {
   try { return new URLSearchParams(window.location.search).get(name) || ""; }
   catch(e) { return ""; }
@@ -8148,17 +8192,20 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
     const token = `INVITE-${Date.now()}-${Math.random().toString(36).slice(2,8).toUpperCase()}`;
     const facilityIds = Array.isArray(inviteForm.facilityIds) && inviteForm.facilityIds.length ? inviteForm.facilityIds : (orgLocations[0]?.id ? [orgLocations[0].id] : []);
     const locationNames = facilityIds.map(id => locationNameForId(foundationState, id)).filter(Boolean);
+    const email = normalizeEmail(inviteForm.email);
+    const inviteUrl = inviteUrlForToken(token, email);
     return {
       ...inviteForm,
-      email:normalizeEmail(inviteForm.email),
+      email,
       role:normalizeRole(inviteForm.role),
       token,
+      inviteUrl,
       facilityIds,
       locationId:facilityIds[0] || "",
       locationName:locationNames.join(", "),
       organizationId:state.organization?.id || "",
       organizationName:form.companyName || state.organization?.name || "",
-      note:"Invite is only a saved admin record right now. It does not change login routing or force account creation.",
+      note:"Manual invite URL generated. Existing users should not be invited again; update their role instead.",
     };
   };
   const saveRegisteredUserRole = (user, patch={}) => {
@@ -8173,8 +8220,18 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
     if(existingInviteForEmail && !confirm("There is already a pending invite for this email. Replace it with a new invite?")) return;
     const payload = createInvitePayload();
     dispatch({ type:"ADD_USER_INVITE", payload });
-    alert("Invite record created safely. It will not affect existing login. When email delivery is added later, this record can be used to send the invite.");
+    copyTextToClipboard(payload.inviteUrl)
+      .then(()=>alert("Invite URL created and copied. Share it manually with the new user. Existing registered users should not use invite links; change their role instead."))
+      .catch(()=>alert(`Invite URL created. Copy it from the Pending Invite Records section:
+
+${payload.inviteUrl}`));
     setInviteForm(f=>({...f,email:"",name:""}));
+  };
+  const copyInviteUrl = (inv) => {
+    const url = inv.inviteUrl || inviteUrlForToken(inv.token, inv.email);
+    copyTextToClipboard(url)
+      .then(()=>alert("Invite URL copied."))
+      .catch(()=>prompt("Copy this invite URL:", url));
   };
   const currentMigrationCounts = migrationTemplateCounts(foundationState, migrationForm.fromId);
   const selectedMigrationTotal = (migrationForm.pmTasks ? currentMigrationCounts.pmTasks : 0) + (migrationForm.inspectionTasks ? currentMigrationCounts.inspectionTasks : 0) + (migrationForm.tasks ? currentMigrationCounts.tasks : 0);
@@ -8492,19 +8549,25 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
                 </label>)}
               </div>
               <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginTop:10, alignItems:"center", flexWrap:"wrap" }}>
-                <div style={{ fontSize:11, color:T.muted }}>Safe mode: invites are saved as admin records only. They do not redirect login or overwrite user data.</div>
+                <div style={{ fontSize:11, color:T.muted }}>Manual mode: create an invite URL, copy it, and send it yourself. Existing registered users should be managed by changing their role, not by inviting them again.</div>
                 <Btn small onClick={createSafeInvite}>Create Invite</Btn>
               </div>
             </div>
 
-            {(state.userInvites||[]).length===0 ? <div style={{ marginTop:10, padding:10, border:`1px dashed ${T.border}`, borderRadius:8, background:T.surface, fontSize:12, color:T.muted }}>No pending invite records. When you create an invite, it will appear here without affecting login.</div> : <div style={{ marginTop:10, display:"grid", gap:6 }}>
+            {(state.userInvites||[]).length===0 ? <div style={{ marginTop:10, padding:10, border:`1px dashed ${T.border}`, borderRadius:8, background:T.surface, fontSize:12, color:T.muted }}>No pending invite records. Create one to generate a manual invite URL you can copy and send.</div> : <div style={{ marginTop:10, display:"grid", gap:6 }}>
               <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text }}>Pending Invite Records</div>
-              {(state.userInvites||[]).slice(0,8).map(inv=><div key={inv.id} style={{ display:"grid", gridTemplateColumns:"minmax(190px,1fr) minmax(140px,.8fr) minmax(160px,1fr) auto", gap:8, alignItems:"center", fontSize:12, color:T.subtext, padding:8, border:`1px solid ${T.border}`, borderRadius:6, background:T.surface }}>
-                <div><b style={{ color:T.text }}>{inv.email}</b><div style={{ color:T.muted, fontSize:11 }}>{inv.name || "No name entered"}</div></div>
+              {(state.userInvites||[]).slice(0,8).map(inv=>{ const url = inv.inviteUrl || inviteUrlForToken(inv.token, inv.email); return <div key={inv.id} style={{ display:"grid", gridTemplateColumns:"minmax(190px,1fr) minmax(140px,.65fr) minmax(220px,1.2fr) auto", gap:8, alignItems:"center", fontSize:12, color:T.subtext, padding:8, border:`1px solid ${T.border}`, borderRadius:6, background:T.surface }}>
+                <div><b style={{ color:T.text }}>{inv.email}</b><div style={{ color:T.muted, fontSize:11 }}>{inv.name || "No name entered"}</div><div style={{ color:T.muted, fontSize:11 }}>{inv.locationName || (inv.facilityIds||[]).map(id=>locationNameForId(foundationState,id)).join(", ") || "No facility selected"}</div></div>
                 <div>{roleLabel(normalizeRole(inv.role))}</div>
-                <div>{inv.locationName || (inv.facilityIds||[]).map(id=>locationNameForId(foundationState,id)).join(", ") || "No facility selected"}</div>
-                <Btn small variant="danger" onClick={()=>dispatch({type:"DELETE_USER_INVITE", payload:inv.id})}>Remove</Btn>
-              </div>)}
+                <div style={{ minWidth:0 }}>
+                  <div style={{ fontSize:10, color:T.muted, fontWeight:800, textTransform:"uppercase", letterSpacing:.4 }}>Invite URL</div>
+                  <input readOnly value={url} onFocus={e=>e.target.select()} style={{ ...inp, fontSize:11, padding:"7px 8px", height:34, width:"100%" }} />
+                </div>
+                <div style={{ display:"flex", gap:6, justifyContent:"flex-end", flexWrap:"wrap" }}>
+                  <Btn small variant="secondary" onClick={()=>copyInviteUrl(inv)}>Copy URL</Btn>
+                  <Btn small variant="danger" onClick={()=>dispatch({type:"DELETE_USER_INVITE", payload:inv.id})}>Remove</Btn>
+                </div>
+              </div>})}
             </div>}
           </div>
 
@@ -9186,12 +9249,24 @@ export default function App() {
   const [authError, setAuthError] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authInfoMsg, setAuthInfoMsg] = useState("");
+  const [manualInviteInfo, setManualInviteInfo] = useState(null);
   const publicWORequestMode = isPublicWORequestPage();
   const [publicPortal, setPublicPortal] = useState(null);
   const [publicPortalLoading, setPublicPortalLoading] = useState(false);
 
   useEffect(() => {
     if(publicWORequestMode) { setAuthLoading(false); return; }
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const inviteToken = params.get("invite") || "";
+      const inviteEmail = normalizeEmail(params.get("email") || "");
+      if(inviteToken) {
+        setManualInviteInfo({ token:inviteToken, email:inviteEmail });
+        if(inviteEmail) setAuthEmail(inviteEmail);
+        setAuthMode("signup");
+        setAuthInfoMsg(inviteEmail ? `Invite link detected for ${inviteEmail}. Create an account with this email, or sign in if you already registered.` : "Invite link detected. Create an account, or sign in if you already registered.");
+      }
+    } catch(e) {}
     loadSession(setSession, setAuthLoading);
   }, [publicWORequestMode]);
 
@@ -9507,12 +9582,21 @@ export default function App() {
     await supabase.auth.signOut();
   }
 
-  const [tab, setTab]       = useState("dashboard");
+  const [tab, setTab]       = useState(() => readMFLocal(MF_LAST_TAB_KEY, "dashboard") || "dashboard");
   const [menuOpen, setMenuOpen]           = useState(false);
   const [showProfile, setShowProfile]     = useState(false);
   const [showWOSettings, setShowWOSettings] = useState(false);
   const [showSettings, setShowSettings]   = useState(false);
   const [showHelp, setShowHelp]           = useState(false);
+
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if(!params.get("woRequest") && tab) writeMFLocal(MF_LAST_TAB_KEY, tab);
+    } catch(e) {
+      if(tab) writeMFLocal(MF_LAST_TAB_KEY, tab);
+    }
+  }, [tab]);
 
   useEffect(() => {
     try {
@@ -9525,6 +9609,22 @@ export default function App() {
   const settings     = state.settings || {};
   const companyName  = settings.companyName || "NCA Maintenance";
   const maintLocations = normalizeMaintForgeLocations(state);
+
+  useEffect(() => {
+    if(!dataLoaded || !session) return;
+    const savedFacilityId = readMFLocal(MF_LAST_FACILITY_KEY, "");
+    if(!savedFacilityId) return;
+    const isValidFacility = savedFacilityId === "__all" || maintLocations.some(l => l.id === savedFacilityId);
+    if(isValidFacility && savedFacilityId !== (state.activeLocationId || "__all")) {
+      dispatch({ type:"SET_ACTIVE_LOCATION", payload:savedFacilityId });
+    }
+  }, [dataLoaded, session?.user?.id, maintLocations.length]);
+
+  useEffect(() => {
+    if(!dataLoaded || !session) return;
+    writeMFLocal(MF_LAST_FACILITY_KEY, state.activeLocationId || "__all");
+  }, [dataLoaded, session?.user?.id, state.activeLocationId]);
+
   const activeLocationLabel = locationNameForId(state, state.activeLocationId || "__all");
   const visibleState = scopedStateForActiveLocation(state);
 
@@ -9631,6 +9731,12 @@ export default function App() {
               {isSignup ? "Create your account to get started" : "Sign in to your account"}
             </p>
           </div>
+
+          {manualInviteInfo && (
+            <div style={{ padding:"10px 12px", background:"#1e3a8a", border:"1px solid #60a5fa", borderRadius:8, marginBottom:14, fontSize:13, lineHeight:1.4 }}>
+              Manual invite link detected. Use the invited email to create the account. If this email already has an account, choose <b>Sign In</b> instead.
+            </div>
+          )}
 
           {/* Tab switcher */}
           <div style={{ display:"flex", background:"#111827", borderRadius:8, padding:4, marginBottom:20 }}>
@@ -10093,7 +10199,7 @@ export default function App() {
             <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, letterSpacing:.3 }}>{state.activeLocationId === "__all" ? "Organization Dashboard" : activeLocationLabel}</div>
           </button>
           <span style={{ color:T.border, fontSize:18 }}>›</span>
-          <span style={{ fontFamily:T.sans, fontSize:13, color:T.subtext, fontWeight:500 }}>{PAGE_TITLES[tab]}</span>
+          <span style={{ fontFamily:T.sans, fontSize:13, color:T.subtext, fontWeight:500 }}>{PAGE_TITLES[tab] || "Dashboard"}</span>
           <select title="Switch facility" value={state.activeLocationId || "__all"} onChange={e=>dispatch({type:"SET_ACTIVE_LOCATION", payload:e.target.value})} style={{ ...sel, width:190, padding:"5px 9px", fontSize:12 }}>
             <option value="__all">Organization Dashboard / All Facilities</option>
             {maintLocations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
@@ -10138,7 +10244,7 @@ export default function App() {
           <div style={{ width:32, height:3, background:T.accent, borderRadius:2, marginTop:6 }} />
         </div>
         <LegacyDataRepairBanner state={state} dispatch={dispatch} />
-        {pages[tab]}
+        {pages[tab] || pages.dashboard}
       </main>
 
       {showProfile    && <UserProfile    state={state} dispatch={dispatch} onClose={()=>setShowProfile(false)} />}
