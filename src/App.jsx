@@ -386,9 +386,13 @@ function normalizeMaintForgeLocations(state={}) {
 }
 function normalizeMaintForgeAreas(state={}, facilityId="") {
   const settings = state.settings || {};
+  const locations = normalizeMaintForgeLocations(state);
+  const defaultFacilityId = locations[0]?.id || "";
+  const facilityName = (id="") => locations.find(l => l.id === id || l.name === id)?.name || "";
   const rawAreas = [
-    ...(Array.isArray(state.areas) ? state.areas : []),
+    // Settings/form areas must be first so edits made in Settings win over older saved state.
     ...(Array.isArray(settings.areas) ? settings.areas : []),
+    ...(Array.isArray(state.areas) ? state.areas : []),
   ];
   const seen = new Set();
   const list = [];
@@ -396,12 +400,21 @@ function normalizeMaintForgeAreas(state={}, facilityId="") {
     const item = typeof area === "string" ? { name:area } : (area || {});
     const name = String(item.name || item.area || item.title || "").trim();
     if(!name) return;
-    const facId = item.facilityId || item.locationId || "";
-    if(facilityId && facId && facId !== facilityId) return;
-    const key = `${facilityId||facId||"global"}::${name.toLowerCase()}`;
+    // Legacy areas used to be global. Give them to the first facility instead of showing them under every facility.
+    const facId = item.facilityId || item.locationId || item.facility || defaultFacilityId || "";
+    if(facilityId && facId !== facilityId) return;
+    const key = `${facId||"unassigned"}::${name.toLowerCase()}`;
     if(seen.has(key)) return;
     seen.add(key);
-    list.push({ id:item.id || `AREA-${idx+1}-${slugifyFacility(name)}`, name, facilityId:facId, active:item.active !== false });
+    list.push({
+      ...item,
+      id:item.id || `AREA-${idx+1}-${slugifyFacility(name)}`,
+      name,
+      facilityId:facId,
+      locationId:facId,
+      facilityName:item.facilityName || facilityName(facId),
+      active:item.active !== false
+    });
   });
   return list;
 }
@@ -1090,7 +1103,13 @@ function reducer(state, { type, payload }) {
     }
     case "UPDATE_SETTINGS": {
       const normalizedLocations = normalizeMaintForgeLocations({ ...state, settings:payload });
-      const next = { ...state, settings: { ...payload, locations:normalizedLocations }, locations: normalizedLocations };
+      const normalizedAreas = normalizeMaintForgeAreas({ ...state, settings:payload, locations:normalizedLocations });
+      const next = {
+        ...state,
+        settings: { ...payload, locations:normalizedLocations, areas:normalizedAreas },
+        locations: normalizedLocations,
+        areas: normalizedAreas
+      };
       return autoAssignLegacyDataToDefaultFacility(next);
     }
     case "COMPLETE_SETUP": {
@@ -7892,10 +7911,11 @@ function SystemSettings({ state, dispatch, onClose }) {
     address:       s.address       || "",
     cityState:     s.cityState     || "",
     locations:     normalizeMaintForgeLocations(state),
-    areas:         Array.isArray(s.areas) ? s.areas : [],
+    areas:         normalizeMaintForgeAreas(state),
     _selectedFacilityId: state.activeLocationId && state.activeLocationId !== "__all" ? state.activeLocationId : (normalizeMaintForgeLocations(state)[0]?.id || ""),
     _newLoc:       "",
     _newArea:      "",
+    _areaFacilityId: state.activeLocationId && state.activeLocationId !== "__all" ? state.activeLocationId : (normalizeMaintForgeLocations(state)[0]?.id || ""),
     _newAreaFacilityId: "",
     accentColor:   s.accentColor   || "#0052cc",
     theme:         s.theme         || "light",
@@ -7934,6 +7954,9 @@ function SystemSettings({ state, dispatch, onClose }) {
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
   const facilityListForForm = () => normalizeMaintForgeLocations({ ...state, settings:form, locations:form.locations });
   const selectedFacility = facilityListForForm().find(l => l.id === form._selectedFacilityId) || facilityListForForm()[0] || null;
+  const selectedAreaFacilityId = form._areaFacilityId || selectedFacility?.id || orgLocations[0]?.id || "";
+  const selectedAreaFacilityName = locationNameForId(foundationState, selectedAreaFacilityId);
+  const areasForSelectedFacility = normalizeMaintForgeAreas({ ...foundationState, settings:{ ...form, areas:form.areas || [] }, areas:form.areas || [] }, selectedAreaFacilityId);
   const updateSelectedFacility = (patch) => setForm(f => {
     const list = normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations });
     const id = f._selectedFacilityId || list[0]?.id || "";
@@ -7982,9 +8005,9 @@ function SystemSettings({ state, dispatch, onClose }) {
   };
 
   const save = () => {
-    const { _newLoc, _newArea, _newAreaFacilityId, _selectedFacilityId, ...cleanForm } = form;
+    const { _newLoc, _newArea, _newAreaFacilityId, _areaFacilityId, _selectedFacilityId, ...cleanForm } = form;
     const cleanLocations = normalizeMaintForgeLocations({ ...state, settings:cleanForm, locations:cleanForm.locations });
-    const cleanAreas = (cleanForm.areas || []).map(a => typeof a === "string" ? { name:a } : a).filter(a => String(a?.name || "").trim());
+    const cleanAreas = normalizeMaintForgeAreas({ ...state, settings:cleanForm, locations:cleanLocations, areas:cleanForm.areas || [] });
     dispatch({ type:"UPDATE_SETTINGS", payload:{ ...cleanForm, brandLogoMode:cleanForm.logoMode, locations: cleanLocations, areas: cleanAreas } });
     onClose();
   };
@@ -8076,8 +8099,8 @@ function SystemSettings({ state, dispatch, onClose }) {
           <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Foundation — Facilities & Areas</div>
           <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginBottom:10 }}>Create separate Facilities for independent shops/sites. Add Areas for buildings, departments, zones, or sections inside a Facility.</div>
           <div style={{ display:"flex", gap:8, marginBottom:10 }}>
-            <input style={{ ...inp, flex:1 }} placeholder="Add facility (e.g. MNC, PRNC, San Juan Shop)..." value={form._newLoc||""} onChange={e=>setForm(f=>({...f,_newLoc:e.target.value}))} onKeyDown={e=>{ if(e.key==="Enter"&&form._newLoc?.trim()){ e.preventDefault(); setForm(f=>{ const name=f._newLoc.trim(); const list=normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations }); const exists=list.some(x=>x.name.toLowerCase()===name.toLowerCase()); const next=exists?list:[...list,{ id:`FAC-${Date.now()}`, name, address:"", cityState:"", phone:"", email:"", manager:"", active:true }]; return {...f,locations:next,_selectedFacilityId:exists?(f._selectedFacilityId||list[0]?.id||""):next[next.length-1].id,_newLoc:""}; }); }}} />
-            <Btn small onClick={()=>{ if(form._newLoc?.trim()) setForm(f=>{ const name=f._newLoc.trim(); const list=normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations }); const exists=list.some(x=>x.name.toLowerCase()===name.toLowerCase()); const next=exists?list:[...list,{ id:`FAC-${Date.now()}`, name, address:"", cityState:"", phone:"", email:"", manager:"", active:true }]; return {...f,locations:next,_selectedFacilityId:exists?(f._selectedFacilityId||list[0]?.id||""):next[next.length-1].id,_newLoc:""}; }); }}>Add Facility</Btn>
+            <input style={{ ...inp, flex:1 }} placeholder="Add facility (e.g. MNC, PRNC, San Juan Shop)..." value={form._newLoc||""} onChange={e=>setForm(f=>({...f,_newLoc:e.target.value}))} onKeyDown={e=>{ if(e.key==="Enter"&&form._newLoc?.trim()){ e.preventDefault(); setForm(f=>{ const name=f._newLoc.trim(); const list=normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations }); const exists=list.some(x=>x.name.toLowerCase()===name.toLowerCase()); const next=exists?list:[...list,{ id:`FAC-${Date.now()}`, name, address:"", cityState:"", phone:"", email:"", manager:"", active:true }]; const selectedId=exists?(f._selectedFacilityId||list[0]?.id||""):next[next.length-1].id; return {...f,locations:next,_selectedFacilityId:selectedId,_areaFacilityId:selectedId,_newAreaFacilityId:selectedId,_newLoc:""}; }); }}} />
+            <Btn small onClick={()=>{ if(form._newLoc?.trim()) setForm(f=>{ const name=f._newLoc.trim(); const list=normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations }); const exists=list.some(x=>x.name.toLowerCase()===name.toLowerCase()); const next=exists?list:[...list,{ id:`FAC-${Date.now()}`, name, address:"", cityState:"", phone:"", email:"", manager:"", active:true }]; const selectedId=exists?(f._selectedFacilityId||list[0]?.id||""):next[next.length-1].id; return {...f,locations:next,_selectedFacilityId:selectedId,_areaFacilityId:selectedId,_newAreaFacilityId:selectedId,_newLoc:""}; }); }}>Add Facility</Btn>
           </div>
           {facilityListForForm().length===0 ? (
             <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, fontStyle:"italic", padding:"8px 0" }}>No facilities defined. Add one above.</div>
@@ -8085,7 +8108,7 @@ function SystemSettings({ state, dispatch, onClose }) {
             <div style={{ display:"grid", gridTemplateColumns:"260px 1fr", gap:12, alignItems:"start" }}>
               <div style={{ display:"flex", flexDirection:"column", gap:4, maxHeight:260, overflowY:"auto" }}>
                 {facilityListForForm().map((loc)=>(
-                  <button key={loc.id} type="button" onClick={()=>setForm(f=>({...f,_selectedFacilityId:loc.id}))} style={{ textAlign:"left", padding:"9px 12px", background:form._selectedFacilityId===loc.id?T.accentLt:T.grayLt, border:`1px solid ${form._selectedFacilityId===loc.id?T.accent:T.border}`, borderRadius:6, color:T.text, cursor:"pointer", fontFamily:T.sans, fontSize:13 }}>
+                  <button key={loc.id} type="button" onClick={()=>setForm(f=>({...f,_selectedFacilityId:loc.id,_areaFacilityId:loc.id,_newAreaFacilityId:loc.id}))} style={{ textAlign:"left", padding:"9px 12px", background:form._selectedFacilityId===loc.id?T.accentLt:T.grayLt, border:`1px solid ${form._selectedFacilityId===loc.id?T.accent:T.border}`, borderRadius:6, color:T.text, cursor:"pointer", fontFamily:T.sans, fontSize:13 }}>
                     <b>{loc.name}</b><br/><span style={{ color:T.muted, fontSize:11 }}>{loc.address || "No address"}</span>
                   </button>
                 ))}
@@ -8113,29 +8136,30 @@ function SystemSettings({ state, dispatch, onClose }) {
                   {facilityField("phone", "Phone")}
                   {facilityField("email", "Email")}
                 </div>
-                <button type="button" onClick={()=>setForm(f=>{ const list=facilityListForForm(); const removeId=f._selectedFacilityId; if(!removeId) return f; if(list.length<=1) { alert("At least one facility is required. Create another facility before deleting this one."); return f; } if(!confirm("Delete this facility from Foundation? Records are not deleted, but unassigned records may need reassignment.")) return f; const next=list.filter(l=>l.id!==removeId); return {...f,locations:next,_selectedFacilityId:next[0]?.id||""}; })} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:700, padding:0 }}>Delete selected facility</button>
+                <button type="button" onClick={()=>setForm(f=>{ const list=facilityListForForm(); const removeId=f._selectedFacilityId; if(!removeId) return f; if(list.length<=1) { alert("At least one facility is required. Create another facility before deleting this one."); return f; } if(!confirm("Delete this facility from Foundation? Records are not deleted, but unassigned records may need reassignment.")) return f; const next=list.filter(l=>l.id!==removeId); return {...f,locations:next,areas:(f.areas||[]).filter(a=>(typeof a==="string"?"":(a.facilityId||a.locationId||""))!==removeId),_selectedFacilityId:next[0]?.id||"",_areaFacilityId:next[0]?.id||"",_newAreaFacilityId:next[0]?.id||""}; })} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:700, padding:0 }}>Delete selected facility</button>
               </div>
             </div>
           )}
 
           <div style={{ marginTop:14, padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
             <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:8 }}>Areas Inside a Facility</div>
-            <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginBottom:8 }}>Use Areas for Administration Building, Maintenance Building, Warehouse, Fuel Station, sections, or other places inside one Facility. Areas do not create a separate shop.</div>
+            <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginBottom:8 }}>Use Areas for Administration Building, Maintenance Building, Warehouse, Fuel Station, sections, or other places inside one Facility. Areas are saved separately per Facility.</div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr auto", gap:8, alignItems:"center" }}>
-              <select style={sel} value={form._newAreaFacilityId || orgLocations[0]?.id || ""} onChange={e=>setForm(f=>({...f,_newAreaFacilityId:e.target.value}))}>
+              <select style={sel} value={selectedAreaFacilityId} onChange={e=>setForm(f=>({...f,_areaFacilityId:e.target.value,_newAreaFacilityId:e.target.value}))}>
                 {orgLocations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
               </select>
-              <input style={inp} placeholder="Add area (e.g. Administration Building, Maintenance Building)..." value={form._newArea||""} onChange={e=>setForm(f=>({...f,_newArea:e.target.value}))} />
-              <Btn small onClick={()=>{ if(form._newArea?.trim()) setForm(f=>{ const facId=f._newAreaFacilityId || orgLocations[0]?.id || ""; const facName=locationNameForId({ ...state, settings:f }, facId); const next={ id:`AREA-${Date.now()}`, name:f._newArea.trim(), facilityId:facId, facilityName:facName }; const exists=(f.areas||[]).some(a=>String((typeof a==="string"?a:a.name)||"").toLowerCase()===next.name.toLowerCase() && (!facId || a.facilityId===facId)); return exists ? {...f,_newArea:""} : {...f,areas:[...(f.areas||[]),next],_newArea:""}; }); }}>Add Area</Btn>
+              <input style={inp} placeholder={`Add area for ${selectedAreaFacilityName}...`} value={form._newArea||""} onChange={e=>setForm(f=>({...f,_newArea:e.target.value}))} onKeyDown={e=>{ if(e.key==="Enter"&&form._newArea?.trim()){ e.preventDefault(); setForm(f=>{ const facId=f._areaFacilityId || f._newAreaFacilityId || selectedAreaFacilityId || orgLocations[0]?.id || ""; const facName=locationNameForId({ ...state, settings:f }, facId); const next={ id:`AREA-${Date.now()}`, name:f._newArea.trim(), facilityId:facId, locationId:facId, facilityName:facName }; const exists=normalizeMaintForgeAreas({ ...state, settings:f, areas:f.areas||[] }, facId).some(a=>String(a.name||"").toLowerCase()===next.name.toLowerCase()); return exists ? {...f,_newArea:"",_areaFacilityId:facId,_newAreaFacilityId:facId} : {...f,areas:[...(f.areas||[]),next],_newArea:"",_areaFacilityId:facId,_newAreaFacilityId:facId}; }); }}} />
+              <Btn small onClick={()=>{ if(form._newArea?.trim()) setForm(f=>{ const facId=f._areaFacilityId || f._newAreaFacilityId || selectedAreaFacilityId || orgLocations[0]?.id || ""; const facName=locationNameForId({ ...state, settings:f }, facId); const next={ id:`AREA-${Date.now()}`, name:f._newArea.trim(), facilityId:facId, locationId:facId, facilityName:facName }; const exists=normalizeMaintForgeAreas({ ...state, settings:f, areas:f.areas||[] }, facId).some(a=>String(a.name||"").toLowerCase()===next.name.toLowerCase()); return exists ? {...f,_newArea:"",_areaFacilityId:facId,_newAreaFacilityId:facId} : {...f,areas:[...(f.areas||[]),next],_newArea:"",_areaFacilityId:facId,_newAreaFacilityId:facId}; }); }}>Add Area</Btn>
             </div>
-            {(form.areas||[]).length===0 ? <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, fontStyle:"italic", padding:"8px 0" }}>No areas defined yet.</div> : (
+            <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:8 }}>Showing areas for <b>{selectedAreaFacilityName}</b> only.</div>
+            {areasForSelectedFacility.length===0 ? <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, fontStyle:"italic", padding:"8px 0" }}>No areas defined for this facility yet.</div> : (
               <div style={{ display:"flex", flexDirection:"column", gap:4, maxHeight:180, overflowY:"auto", marginTop:10 }}>
-                {(form.areas||[]).map((area,i)=>{ const a=typeof area==="string"?{name:area}:area; return (
+                {areasForSelectedFacility.map((a,i)=>(
                   <div key={a.id||i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"7px 12px", background:T.surface, borderRadius:6, border:`1px solid ${T.border}` }}>
-                    <span style={{ fontFamily:T.sans, fontSize:13, color:T.text }}><b>{a.name}</b><span style={{ color:T.muted }}> — {a.facilityName || locationNameForId(foundationState, a.facilityId)}</span></span>
-                    <button onClick={()=>setForm(f=>({...f,areas:(f.areas||[]).filter((_,j)=>j!==i)}))} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:16, lineHeight:1, padding:"0 4px" }}>×</button>
+                    <span style={{ fontFamily:T.sans, fontSize:13, color:T.text }}><b>{a.name}</b><span style={{ color:T.muted }}> — {a.facilityName || selectedAreaFacilityName}</span></span>
+                    <button onClick={()=>setForm(f=>({...f,areas:(f.areas||[]).filter(area=>{ const item=typeof area==="string"?{name:area,facilityId:orgLocations[0]?.id||""}:area; const sameId=a.id && item.id===a.id; const sameNameFacility=String(item.name||"").toLowerCase()===String(a.name||"").toLowerCase() && String(item.facilityId||item.locationId||"")===String(a.facilityId||""); return !(sameId || sameNameFacility); })}))} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:16, lineHeight:1, padding:"0 4px" }}>×</button>
                   </div>
-                );})}
+                ))}
               </div>
             )}
           </div>
