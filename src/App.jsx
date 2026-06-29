@@ -8875,6 +8875,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authMode, setAuthMode] = useState("login");
   const [authScreenTouched, setAuthScreenTouched] = useState(false);
+  const [showCreateAccount, setShowCreateAccount] = useState(false);
   const hasInviteToken = (() => { try { return !!inviteTokenFromUrl(); } catch(e) { return false; } })();
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
@@ -8890,16 +8891,18 @@ export default function App() {
     if(publicWORequestMode) { setAuthLoading(false); return; }
     setAuthMode("login");
     setAuthScreenTouched(false);
+    setShowCreateAccount(false);
     loadSession(setSession, setAuthLoading);
   }, [publicWORequestMode]);
 
   useEffect(() => {
-    if(!authLoading && !session && !authScreenTouched && authMode !== "login") {
-      // Every unauthenticated page load must default to Sign In.
-      // Sign Up only appears after the user manually clicks Create Account.
-      setAuthMode("login");
+    if(!authLoading && !session && !showCreateAccount) {
+      // Existing users must always land on Sign In after refresh.
+      // The Create Account form is only shown after the user manually clicks Create Account in this screen.
+      if(authMode !== "login") setAuthMode("login");
+      if(authScreenTouched) setAuthScreenTouched(false);
     }
-  }, [authLoading, session, authScreenTouched, authMode]);
+  }, [authLoading, session, showCreateAccount, authMode, authScreenTouched]);
 
   useEffect(() => {
     if(!publicWORequestMode) return;
@@ -9271,6 +9274,8 @@ export default function App() {
     } else if (data.user && !data.session) {
       setAuthInfoMsg("✓ Account created! Check your email to confirm your address, then log in.");
       setAuthMode("login");
+      setShowCreateAccount(false);
+      setAuthScreenTouched(false);
       setAuthPassword(""); setAuthConfirmPassword("");
     } else {
       setAuthInfoMsg("✓ Account created and signed in!");
@@ -9279,7 +9284,8 @@ export default function App() {
 
   function switchAuthMode(mode) {
     const nextMode = mode === "signup" ? "signup" : "login";
-    setAuthScreenTouched(true);
+    setAuthScreenTouched(nextMode === "signup");
+    setShowCreateAccount(nextMode === "signup");
     setAuthMode(nextMode);
     setAuthError(""); setAuthInfoMsg("");
     setAuthPassword(""); setAuthConfirmPassword("");
@@ -9385,7 +9391,7 @@ export default function App() {
   }
 
   if (!session) {
-    const isSignup = authMode==="signup";
+    const isSignup = showCreateAccount === true;
     return (
       <div style={{
         minHeight:"100vh",
