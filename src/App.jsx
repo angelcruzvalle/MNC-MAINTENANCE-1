@@ -1198,6 +1198,42 @@ const workOrderBrandFontSize = (name="") => {
   return 18;
 };
 
+const workOrderFacilityIdForBranding = (state={}, wo={}, eq={}) => {
+  const locations = normalizeMaintForgeLocations(state);
+  const findLocation = (value) => {
+    const raw = String(value ?? "").trim();
+    if(!raw || raw === "__all") return null;
+    const low = raw.toLowerCase();
+    return locations.find(loc =>
+      String(loc.id || "").toLowerCase() === low ||
+      String(loc.name || "").toLowerCase() === low ||
+      String(loc.location || "").toLowerCase() === low ||
+      String(loc.siteName || "").toLowerCase() === low
+    ) || null;
+  };
+  const candidates = [
+    wo.locationId, wo.facilityId, eq.locationId, eq.facilityId,
+    wo.locationName, wo.facilityName, wo.location, wo.facility, wo.siteName, wo.site,
+    eq.locationName, eq.facilityName, eq.location, eq.facility, eq.siteName, eq.site,
+  ];
+  for(const value of candidates) {
+    const loc = findLocation(value);
+    if(loc?.id) return loc.id;
+  }
+  const activeId = state.activeLocationId || "__all";
+  if(activeId && activeId !== "__all") {
+    const loc = findLocation(activeId);
+    if(loc?.id) return loc.id;
+    return activeId;
+  }
+  if(locations.length === 1) return locations[0].id;
+  return "__all";
+};
+
+const resolveWorkOrderBrandLogo = (state={}, wo={}, eq={}) => {
+  return resolveMaintForgeLogo(state, workOrderFacilityIdForBranding(state, wo, eq));
+};
+
 
 const csvEscape = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
 const downloadCSV = (filename, rows=[]) => {
@@ -2436,7 +2472,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const money = (value) => `$${(+value || 0).toFixed(2)}`;
 
     const companyName = gs.companyName || "Maintenance Department";
-    const companyLogo = resolveMaintForgeLogo(state, wo.locationId || wo.facilityId || eq?.locationId || eq?.facilityId || state.activeLocationId);
+    const companyLogo = resolveWorkOrderBrandLogo(state, wo, eq || {});
     const printableFacilityName = (() => {
       const raw = recordLocationName(wo, state) || recordLocationName(eq || {}, state) || activeFacilitySettings(state)?.activeFacilityName || gs.siteName || gs.location || "";
       if(!raw || raw === "All Facilities") return "";
@@ -3498,7 +3534,7 @@ function Equipment({ state, dispatch }) {
     win.document.write(`<!DOCTYPE html><html><head><title>Equipment Summary ${esc(eq.id||"")}</title><style>
       body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#111827;padding:24px;font-size:12px}h1{margin:0 0 4px;font-size:22px}p{margin:0 0 16px;color:#667085}.header{display:flex;align-items:flex-start;gap:14px;border-bottom:2px solid #111827;padding-bottom:14px;margin-bottom:16px}.logo{max-height:58px;max-width:120px;object-fit:contain}.titleBlock{flex:1}.eqNum{font-family:monospace;font-size:13px;font-weight:800;color:#334155}.subtitle{font-size:13px;color:#475467;margin-top:3px}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0 18px}.metric{border:1px solid #d0d5dd;background:#f9fafb;border-radius:10px;padding:12px}.metricValue{font-size:20px;font-weight:800;color:#111827}.metricLabel{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:#667085;margin-top:4px}.sectionTitle{background:#e5e7eb;padding:8px 10px;border-radius:8px;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.5px;margin:18px 0 8px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#111827;color:white;text-align:left;padding:7px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.4px}td{border-bottom:1px solid #e5e7eb;padding:7px 8px;vertical-align:top}.right{text-align:right}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px 20px}.field{border-bottom:1px solid #e5e7eb;padding:7px 0}.label{font-size:10px;text-transform:uppercase;color:#667085;font-weight:800}.value{font-size:13px;margin-top:2px}.actions{margin-top:18px;display:flex;gap:8px;justify-content:center}.actions button{padding:9px 18px;border:none;border-radius:8px;background:#111827;color:#fff;font-weight:800;cursor:pointer}@media print{.actions{display:none}.metric,.sectionTitle{break-inside:avoid}body{padding:18px}.metrics{grid-template-columns:repeat(4,1fr)}}@page{size:letter;margin:.35in}
     </style></head><body>`);
-    const summaryLogo = resolveMaintForgeLogo(state, eq.locationId || eq.facilityId || state.activeLocationId);
+    const summaryLogo = resolveWorkOrderBrandLogo(state, {}, eq || {});
     win.document.write(`<div class="header">${summaryLogo?`<img class="logo" src="${summaryLogo}" alt="Logo">`:""}<div class="titleBlock"><h1>${esc(settings.companyName || "Maintenance Department")}</h1><div class="eqNum">Equipment Summary — ${esc(eq.id||"—")}</div><div class="subtitle">${esc(eq.name || eq.nomenclature || "—")} · ${esc([eq.year,eq.make,eq.model].filter(Boolean).join(" ") || "—")}</div></div><div style="text-align:right;color:#667085;font-size:11px">Generated: ${new Date().toLocaleDateString()}</div></div>`);
     win.document.write(`<div class="metrics">${metric("Current " + usage.label, Number(usage.value||0).toLocaleString(undefined,{maximumFractionDigits:1}))}${metric("Lifetime Spent", moneyFmt(fin.lifetimeSpent))}${metric("FY Spent", moneyFmt(fin.fySpent))}${metric("Total WOs", fin.totalWOs)}${metric("Lifetime Labor", fin.lifetimeLaborHours.toFixed(1)+"h")}${metric("FY Labor", fin.fyLaborHours.toFixed(1)+"h")}${metric("Open WOs", fin.openWOs)}${metric("Completed WOs", fin.completedWOs)}</div>`);
     win.document.write(`<div class="sectionTitle">Equipment Information</div><div class="grid">${[["Equipment #",eq.id],["Nomenclature",eq.name||eq.nomenclature],["Year",eq.year],["Make",eq.make],["Model",eq.model],["Serial #",eq.serial],["EIL #",eq.eilNumber],["Facility",eq.location],["Area",eq.area],["Category",eq.category||eq.type],["Acquisition Date",eq.acquisitionDate],["Purchase Price",eq.acquisitionCost?moneyFmt(eq.acquisitionCost):""],["Status",eq.status||"Fully Operational"]].map(([k,v])=>`<div class="field"><div class="label">${esc(k)}</div><div class="value">${esc(v||"—")}</div></div>`).join("")}</div>`);
@@ -3513,6 +3549,7 @@ function Equipment({ state, dispatch }) {
   const printHistoryWO = (wo) => {
     const eq = state.equipment.find(e => e.id === wo.equipment) || {};
     const gs = state.settings || {};
+    const historyCompanyLogo = resolveWorkOrderBrandLogo(state, wo, eq || {});
     const h = (value) => String(value ?? "").replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[ch]));
     const inspectionRowsForPrint = (() => {
       const linkedTask = (state.inspectionTasks || []).find(t => String(t.id || "") === String(wo.inspectionTaskId || ""));
@@ -3604,7 +3641,7 @@ function Equipment({ state, dispatch }) {
     </style></head><body>
       <div class="page"><div class="outer">
         <header class="top">
-          <div class="logoBox">${resolveMaintForgeLogo(state, wo.locationId || wo.facilityId || eq?.locationId || eq?.facilityId || state.activeLocationId) ? `<img src="${resolveMaintForgeLogo(state, wo.locationId || wo.facilityId || eq?.locationId || eq?.facilityId || state.activeLocationId)}" alt="Logo">` : `<div class="logoText">LOGO</div>`}</div>
+          <div class="logoBox">${historyCompanyLogo ? `<img src="${historyCompanyLogo}" alt="Logo">` : `<div class="logoText">LOGO</div>`}</div>
           <div class="companyBox"><div class="company" style="font-size:${workOrderBrandFontSize(gs.companyName || "Maintenance Department")}px">${h(gs.companyName || "Maintenance Department")}</div><div class="typePill">${h(type.toUpperCase())}</div></div>
           <div class="numberBox"><div class="woNumber"><div class="label">Work Order Number</div><div class="number">${h(wo.id || "")}</div></div><div class="status">${h(wo.status || "Open")}</div></div>
         </header>
