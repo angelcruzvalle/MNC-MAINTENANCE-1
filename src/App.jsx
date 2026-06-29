@@ -361,13 +361,17 @@ function normalizeMaintForgeLocations(state={}) {
     if(seen.has(key)) return;
     seen.add(key);
     list.push({
-      id:loc.id || loc.locationId || `FAC-${idx+1}-${slugifyFacility(name)}`,
+      ...loc,
+      id:loc.id || loc.locationId || loc.facilityId || `FAC-${idx+1}-${slugifyFacility(name)}`,
       name,
       address:loc.address||"",
       cityState:loc.cityState||loc.city||"",
       phone:loc.phone||"",
       email:loc.email||"",
       manager:loc.manager||"",
+      region:loc.region||"",
+      logo:loc.logo || loc.facilityLogo || "",
+      facilityLogo:loc.facilityLogo || loc.logo || "",
       active:loc.active !== false
     });
   });
@@ -7849,7 +7853,7 @@ function SystemSettings({ state, dispatch, onClose }) {
     defaultPriority: s.defaultPriority || "Medium",
     laborRateDefault: s.laborRateDefault || 45,
     logo:          s.logo          || "",
-    logoMode:      s.logoMode      || "company",
+    logoMode:      s.logoMode || s.brandLogoMode || "company",
     showCostsOnWO: s.showCostsOnWO !== false,
     requireTech:   s.requireTech   || false,
   });
@@ -7927,10 +7931,10 @@ function SystemSettings({ state, dispatch, onClose }) {
   };
 
   const save = () => {
-    const { _newLoc, _newArea, _newAreaFacilityId, ...cleanForm } = form;
+    const { _newLoc, _newArea, _newAreaFacilityId, _selectedFacilityId, ...cleanForm } = form;
     const cleanLocations = normalizeMaintForgeLocations({ ...state, settings:cleanForm, locations:cleanForm.locations });
     const cleanAreas = (cleanForm.areas || []).map(a => typeof a === "string" ? { name:a } : a).filter(a => String(a?.name || "").trim());
-    dispatch({ type:"UPDATE_SETTINGS", payload:{ ...cleanForm, locations: cleanLocations, areas: cleanAreas } });
+    dispatch({ type:"UPDATE_SETTINGS", payload:{ ...cleanForm, brandLogoMode:cleanForm.logoMode, locations: cleanLocations, areas: cleanAreas } });
     onClose();
   };
 
