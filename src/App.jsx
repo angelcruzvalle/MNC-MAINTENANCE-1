@@ -1590,13 +1590,13 @@ const Badge = ({ label, type="status" }) => {
 };
 
 const Card = ({ children, style={} }) => (
-  <div style={{ background:T.card, color:T.text, border:`1px solid ${T.border}`, borderRadius:8, padding:"20px 22px", boxShadow:T.shadow, ...style }}>
+  <div className="mf-card" style={{ background:T.card, color:T.text, border:`1px solid ${T.border}`, borderRadius:16, padding:"18px 20px", boxShadow:T.shadow, minWidth:0, overflow:"visible", ...style }}>
     {children}
   </div>
 );
 
 const SectionHeading = ({ children, sub, action }) => (
-  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16, flexWrap:"wrap", gap:8 }}>
+  <div className="mf-section-heading" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:16, flexWrap:"wrap", gap:10, minWidth:0 }}>
     <div>
       <h3 style={{ margin:0, fontFamily:T.sans, fontSize:15, fontWeight:700, color:T.text, letterSpacing:-.2 }}>{children}</h3>
       {sub && <p style={{ margin:"2px 0 0", fontFamily:T.sans, fontSize:12, color:T.muted }}>{sub}</p>}
@@ -1605,7 +1605,7 @@ const SectionHeading = ({ children, sub, action }) => (
   </div>
 );
 
-const inp = { width:"100%", background:T.card, border:`1px solid ${T.border}`, borderRadius:6, padding:"8px 11px", color:T.text, fontSize:13, fontFamily:T.sans, boxSizing:"border-box", outline:"none", transition:"border-color .15s" };
+const inp = { width:"100%", minWidth:0, background:T.card, border:`1px solid ${T.border}`, borderRadius:12, padding:"10px 12px", color:T.text, fontSize:14, fontFamily:T.sans, boxSizing:"border-box", outline:"none", transition:"border-color .15s, box-shadow .15s", minHeight:42 };
 const sel = { ...inp };
 
 const Btn = ({ children, onClick, variant="primary", small, style={}, type="button" }) => {
@@ -1616,7 +1616,7 @@ const Btn = ({ children, onClick, variant="primary", small, style={}, type="butt
     ghost: { background:"transparent", color:T.subtext, border:"none" },
   };
   return (
-    <button type={type} onClick={onClick} style={{ ...styles[variant], padding:small?"5px 12px":"8px 16px", borderRadius:6, cursor:"pointer", fontSize:small?12:13, fontWeight:600, fontFamily:T.sans, display:"inline-flex", alignItems:"center", gap:5, ...style }}>
+    <button className="mf-btn" type={type} onClick={onClick} style={{ ...styles[variant], padding:small?"8px 12px":"10px 16px", borderRadius:12, cursor:"pointer", fontSize:small?13:14, fontWeight:700, fontFamily:T.sans, display:"inline-flex", alignItems:"center", justifyContent:"center", gap:7, minHeight:small?38:44, minWidth:0, boxShadow:variant==="primary"?"0 8px 18px rgba(37,99,235,.18)":"none", ...style }}>
       {children}
     </button>
   );
@@ -1631,13 +1631,13 @@ const Field = ({ label, children, half }) => (
 
 function Modal({ title, onClose, children, maxWidth=560 }) {
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.4)", zIndex:2000, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}>
-      <div style={{ background:T.card, borderRadius:10, border:`1px solid ${T.border}`, width:"100%", maxWidth, maxHeight:"92vh", overflowY:"auto", boxShadow:"0 20px 60px rgba(0,0,0,.15)" }}>
-        <div style={{ padding:"18px 22px", borderBottom:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <h3 style={{ margin:0, fontFamily:T.sans, fontSize:16, fontWeight:700, color:T.text }}>{title}</h3>
-          <button onClick={onClose} style={{ background:"none", border:"none", color:T.muted, fontSize:22, cursor:"pointer", lineHeight:1, padding:0 }}>×</button>
+    <div className="mf-modal-backdrop" style={{ position:"fixed", inset:0, background:"rgba(15,23,42,.56)", zIndex:2000, display:"flex", alignItems:"center", justifyContent:"center", padding:16, backdropFilter:"blur(6px)", WebkitBackdropFilter:"blur(6px)" }}>
+      <div className="mf-modal-panel" style={{ background:T.card, borderRadius:18, border:`1px solid ${T.border}`, width:"100%", maxWidth, maxHeight:"92vh", overflowY:"auto", overflowX:"hidden", boxShadow:"0 24px 80px rgba(15,23,42,.28)", minWidth:0 }}>
+        <div className="mf-modal-header" style={{ padding:"16px 20px", borderBottom:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, position:"sticky", top:0, background:T.card, zIndex:3 }}>
+          <h3 style={{ margin:0, fontFamily:T.sans, fontSize:17, fontWeight:900, color:T.text, minWidth:0, overflowWrap:"anywhere" }}>{title}</h3>
+          <button aria-label="Close" onClick={onClose} style={{ background:T.grayLt, border:`1px solid ${T.border}`, color:T.subtext, fontSize:22, cursor:"pointer", lineHeight:1, padding:0, width:40, height:40, borderRadius:12, flex:"0 0 auto" }}>×</button>
         </div>
-        <div style={{ padding:"20px 22px" }}>{children}</div>
+        <div className="mf-modal-body" style={{ padding:"18px 20px", minWidth:0 }}>{children}</div>
       </div>
     </div>
   );
@@ -1675,7 +1675,7 @@ function HelpCenter({ state, onClose }) {
   ].filter(Boolean);
   return (
     <Modal title={`Help & Glossary — ${role.replace(/_/g," ")} — ${facilityName}`} onClose={onClose}>
-      <div style={{ display:"grid", gap:14 }}>
+      <div className="mf-admin-content" style={{ display:"grid", gap:14, minWidth:0 }}>
         <div style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:10, background:`linear-gradient(135deg, ${T.card}, ${T.grayLt})` }}>
           <div style={{ fontWeight:800, color:T.text, marginBottom:4 }}>Role-aware help</div>
           <div style={{ fontSize:13, color:T.subtext, lineHeight:1.45 }}>This help center shows guidance based on your current role. Owners see organization tools, facility administrators see facility management tools, and mechanics see work execution tools.</div>
@@ -9761,10 +9761,24 @@ export default function App() {
   }
 
   return (
-    <div data-theme={effectiveTheme} style={{ minHeight:"100vh", background:T.bg, color:T.text, fontFamily:T.sans }}>
+    <div className="mf-app" data-theme={effectiveTheme} style={{ minHeight:"100vh", background:T.bg, color:T.text, fontFamily:T.sans }}>
       <style>{`
         * { box-sizing:border-box; }
-        body { margin:0; background:${T.bg}; color:${T.text}; }
+        html { -webkit-text-size-adjust:100%; text-size-adjust:100%; }
+        body { margin:0; background:${T.bg}; color:${T.text}; overscroll-behavior-y:none; }
+        .mf-app { width:100%; min-width:0; overflow-x:hidden; }
+        .mf-card { transition:box-shadow .18s ease, transform .18s ease, border-color .18s ease; }
+        .mf-card:focus-within { border-color:${T.accent}; box-shadow:0 0 0 3px ${T.accentLt}, ${T.shadow}; }
+        .mf-btn { -webkit-tap-highlight-color:transparent; user-select:none; touch-action:manipulation; }
+        .mf-btn:active { transform:translateY(1px); }
+        .mf-section-heading, .mf-section-heading * { min-width:0; }
+        .mf-section-heading p { line-height:1.45; }
+        img, svg, canvas, video { max-width:100%; height:auto; }
+        input, select, textarea, button { max-width:100%; }
+        textarea { resize:vertical; line-height:1.45; }
+        .mf-admin-content > div { min-width:0; }
+        .mf-admin-content [style*="grid-template-columns"] { min-width:0; }
+        .mf-admin-content label, .mf-admin-content p, .mf-admin-content div, .mf-admin-content span { overflow-wrap:anywhere; }
         #root { width:100%; min-width:0; }
         table { width:100%; }
         input, select, textarea { background:${T.surface} !important; color:${T.text} !important; border-color:${T.border} !important; caret-color:${T.text}; }
@@ -9949,16 +9963,66 @@ export default function App() {
           .wo-request-mobile-card * { white-space:normal !important; }
           .wo-request-mobile-meta { grid-template-columns:1fr !important; font-size:13px !important; }
         }
+        @media (max-width: 900px) {
+          .mf-modal-backdrop { padding:0 !important; align-items:stretch !important; justify-content:stretch !important; }
+          .mf-modal-panel { max-width:100vw !important; width:100vw !important; height:100dvh !important; max-height:100dvh !important; border-radius:0 !important; border:none !important; }
+          .mf-modal-header { padding:calc(12px + env(safe-area-inset-top)) 14px 12px !important; }
+          .mf-modal-body { padding:14px 14px calc(96px + env(safe-area-inset-bottom)) !important; }
+          .mf-admin-shell { display:block !important; }
+          .mf-admin-nav { position:sticky !important; top:0 !important; z-index:7 !important; flex-direction:row !important; overflow-x:auto !important; padding:8px 0 10px !important; margin:-4px 0 12px !important; background:${T.card} !important; border-bottom:1px solid ${T.border} !important; scroll-snap-type:x proximity; -webkit-overflow-scrolling:touch; }
+          .mf-admin-nav button { min-width:168px !important; flex:0 0 auto !important; scroll-snap-align:start; }
+          .mf-admin-content { gap:12px !important; }
+          .mf-admin-content > div { border-radius:16px !important; padding:14px !important; }
+          .mf-admin-footer { left:0 !important; right:0 !important; margin:14px -14px -14px !important; padding:12px 14px calc(12px + env(safe-area-inset-bottom)) !important; box-shadow:0 -10px 30px rgba(15,23,42,.12) !important; }
+        }
+        @media (max-width: 768px) {
+          .mf-header { display:grid !important; grid-template-columns:44px minmax(0,1fr) !important; height:auto !important; min-height:64px !important; padding:8px 10px !important; gap:8px !important; align-items:center !important; }
+          .mf-header > div:first-child { display:contents !important; }
+          .mf-header > div:first-child > button:first-child { grid-column:1 !important; grid-row:1 !important; width:44px !important; height:44px !important; justify-content:center !important; }
+          .mf-header > div:first-child > div[style*="width:1"] { display:none !important; }
+          .mf-header > div:first-child > img { display:none !important; }
+          .mf-header > div:first-child > button[title="Go to dashboard"] { grid-column:2 !important; grid-row:1 !important; min-width:0 !important; }
+          .mf-header > div:first-child > span { display:none !important; }
+          .mf-header > div:first-child > select { grid-column:1 / -1 !important; grid-row:2 !important; width:100% !important; min-height:42px !important; }
+          .mf-header > div:first-child > span:last-child { display:block !important; grid-column:1 / -1 !important; grid-row:3 !important; max-width:none !important; white-space:normal !important; font-size:11px !important; }
+          .mf-header > div:last-child { grid-column:1 / -1 !important; grid-row:4 !important; display:grid !important; grid-template-columns:repeat(5,minmax(44px,1fr)) !important; width:100% !important; gap:6px !important; }
+          .mf-header > div:last-child button { width:100% !important; min-height:42px !important; justify-content:center !important; padding:6px 8px !important; }
+          .mf-header > div:last-child button span { display:none !important; }
+          .mf-header > div:last-child > button:last-child { grid-column:span 2 !important; }
+          .mf-main { padding:14px 10px calc(86px + env(safe-area-inset-bottom)) !important; overflow-x:hidden !important; }
+          .mf-card { border-radius:16px !important; padding:14px !important; }
+          .mf-section-heading { align-items:stretch !important; }
+          .mf-section-heading > div:first-child { flex:1 1 100% !important; }
+          .mf-section-heading > *:last-child { width:100% !important; }
+          .mf-section-heading button, .mf-section-heading select { width:100% !important; }
+          input, select, textarea { width:100% !important; min-height:44px !important; border-radius:12px !important; }
+          .mf-btn, button { min-height:44px; }
+          .mobile-x-scroll { margin-left:-2px; margin-right:-2px; padding-bottom:8px; }
+          .mobile-x-scroll::before { content:"Swipe sideways to see all columns"; display:block; margin:0 0 8px; padding:7px 10px; border-radius:999px; background:${T.accentLt}; color:${T.accent}; font:700 12px ${T.sans}; width:max-content; max-width:100%; }
+          main table { min-width:920px !important; border-radius:14px !important; }
+          main th, main td { padding:10px 12px !important; line-height:1.35 !important; }
+          main td div, main td span, main td b { max-width:none !important; }
+          div[style*="display:flex"] { min-width:0; }
+          div[style*="grid-template-columns"] { min-width:0; }
+          [style*="grid-template-columns:1fr 1fr"], [style*="grid-template-columns: 1fr 1fr"], [style*="grid-template-columns:2fr"], [style*="grid-template-columns: 2fr"], [style*="grid-template-columns:230px"], [style*="grid-template-columns: 230px"] { grid-template-columns:1fr !important; }
+          [style*="grid-column:span 2"], [style*="grid-column: span 2"] { grid-column:1 / -1 !important; }
+          [style*="maxHeight:260"], [style*="max-height:260"] { max-height:none !important; }
+          p, li { line-height:1.5 !important; }
+        }
         @media (max-width: 480px) {
           div[style*="grid-template-columns:repeat(auto-fit"], div[style*="grid-template-columns:repeat(2"] { grid-template-columns:1fr !important; }
-          main table { min-width:1040px !important; }
+          main table { min-width:900px !important; }
+          h1 { font-size:21px !important; }
+          h2 { font-size:20px !important; }
+          .mf-admin-nav button { min-width:148px !important; }
+          .mf-header > div:last-child { grid-template-columns:repeat(4,minmax(44px,1fr)) !important; }
         }
       `}</style>
 
       <SlideMenu tab={tab} setTab={setTab} open={menuOpen} onClose={()=>setMenuOpen(false)} onSettings={()=>setShowSettings(true)} companyName={companyName} profile={profile} />
 
       {/* Custom header with profile button */}
-      <header className="no-print" style={{ position:"sticky", top:0, zIndex:1000, background:T.surface, borderBottom:`1px solid ${T.border}`, padding:"0 20px", height:56, display:"flex", alignItems:"center", justifyContent:"space-between", boxShadow:`0 1px 0 ${T.border}` }}>
+      <header className="no-print mf-header" style={{ position:"sticky", top:0, zIndex:1000, background:T.surface, borderBottom:`1px solid ${T.border}`, padding:"0 20px", height:56, display:"flex", alignItems:"center", justifyContent:"space-between", boxShadow:`0 1px 0 ${T.border}` }}>
         <div style={{ display:"flex", alignItems:"center", gap:14 }}>
           <button onClick={()=>setMenuOpen(v=>!v)} style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:7, padding:"7px 9px", cursor:"pointer", display:"flex", flexDirection:"column", gap:4, alignItems:"center" }}>
             <span style={{ display:"block", width:18, height:2, background:T.subtext, borderRadius:1 }}/>
@@ -10013,7 +10077,7 @@ export default function App() {
         </div>
       </header>
 
-      <main style={{ width:"100%", maxWidth:"none", padding:"16px 18px", minHeight:"calc(100vh - 56px)", overflowX:"auto" }}>
+      <main className="mf-main" style={{ width:"100%", maxWidth:"none", padding:"18px clamp(12px, 2vw, 28px)", minHeight:"calc(100vh - 56px)", overflowX:"auto" }}>
         <div style={{ marginBottom:20 }}>
           <h1 style={{ margin:0, fontFamily:T.sans, fontSize:24, fontWeight:700, color:T.text, letterSpacing:-.4 }}>{PAGE_TITLES[tab]}</h1>
           <div style={{ width:32, height:3, background:T.accent, borderRadius:2, marginTop:6 }} />
