@@ -8874,6 +8874,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authMode, setAuthMode] = useState("login");
+  const hasInviteToken = (() => { try { return !!inviteTokenFromUrl(); } catch(e) { return false; } })();
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authConfirmPassword, setAuthConfirmPassword] = useState("");
@@ -8888,6 +8889,12 @@ export default function App() {
     if(publicWORequestMode) { setAuthLoading(false); return; }
     loadSession(setSession, setAuthLoading);
   }, [publicWORequestMode]);
+
+  useEffect(() => {
+    if(!session && !hasInviteToken && authMode !== "login") {
+      setAuthMode("login");
+    }
+  }, [session, hasInviteToken, authMode]);
 
   useEffect(() => {
     if(!publicWORequestMode) return;
@@ -9389,8 +9396,21 @@ export default function App() {
             </p>
           </div>
 
+          {isSignup && (
+            <button
+              onClick={()=>switchAuthMode("login")}
+              disabled={authBusy}
+              style={{
+                width:"100%", margin:"0 0 12px", padding:"11px 12px", borderRadius:8,
+                border:"1px solid #60a5fa", background:"rgba(37,99,235,.16)", color:"#bfdbfe",
+                cursor:authBusy ? "wait" : "pointer", fontWeight:800, fontSize:14, fontFamily:T.sans
+              }}>
+              ← I already have an account — Sign In
+            </button>
+          )}
+
           {/* Tab switcher */}
-          <div style={{ display:"flex", background:"#111827", borderRadius:8, padding:4, marginBottom:20 }}>
+          <div style={{ display:"flex", background:"#111827", borderRadius:8, padding:4, marginBottom:20, border:"1px solid #374151" }}>
             <button
               onClick={()=>switchAuthMode("login")}
               style={{
