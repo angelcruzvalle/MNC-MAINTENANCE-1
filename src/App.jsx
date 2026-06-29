@@ -5308,14 +5308,14 @@ function Inspections({ state, dispatch }) {
       </Card>
 
       {modal==="task" && (
-        <Modal title={taskForm.id?"Edit Inspection Task":"New Inspection Task"} onClose={()=>setModal(null)}>
+        <Modal title={taskForm.id?"Edit Inspection Task":"New Inspection Task"} maxWidth={940} onClose={()=>setModal(null)}>
           <div style={{ display:"grid", gap:12 }}>
             <Field label="Task Name"><input style={inp} value={taskForm.name||""} onChange={e=>setTaskForm(f=>({...f,name:e.target.value}))} placeholder="e.g. Monthly safety inspection" /></Field>
             <Field label="Default Frequency"><select style={inp} value={taskForm.frequency||"Monthly"} onChange={e=>setTaskForm(f=>({...f,frequency:e.target.value}))}>{["Daily","Weekly","Monthly","Quarterly","Semi-Annual","Annual"].map(x=><option key={x}>{x}</option>)}</select></Field>
             <Field label="Upload Existing Inspection Sheet"><input style={inp} type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,image/*" onChange={e=>addTaskFiles(e.target.files)} /></Field>
             {(taskForm.attachments||[]).length>0 && <div style={{ display:"grid", gap:6 }}>{taskForm.attachments.map(a=><div key={a.id||a.name} style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center", padding:8, border:`1px solid ${T.border}`, borderRadius:10 }}><span style={{ fontSize:13 }}>{a.name}</span><Btn variant="danger" onClick={()=>removeTaskFile(a.id)}>Remove</Btn></div>)}</div>}
             <Field label="Inspection Steps / Checklist"><div style={{ display:"grid", gap:8 }}>
-              {taskStepRows(taskForm.steps).map((step,i,arr)=><div key={`step-${i}`} style={{ display:"grid", gridTemplateColumns:"40px 1fr auto", gap:8, alignItems:"center" }}>
+              {taskStepRows(taskForm.steps).map((step,i,arr)=><div key={`step-${i}`} style={{ display:"grid", gridTemplateColumns:"42px minmax(0, 1fr) auto", gap:8, alignItems:"center" }}>
                 <b>{i+1}</b><input style={inp} value={step} autoFocus={i===arr.length-1 && step===""} onClick={e=>e.stopPropagation()} onKeyDown={e=>e.stopPropagation()} onChange={e=>updateStep(i,e.target.value)} placeholder="Start typing inspection step..." />
                 <Btn variant="danger" onClick={()=>removeStep(i)}>X</Btn>
               </div>)}
@@ -5331,7 +5331,7 @@ function Inspections({ state, dispatch }) {
       )}
 
       {modal==="schedule" && (
-        <Modal title={scheduleForm.id?"Edit Inspection Assignment":"Assign Inspection Task to Equipment"} onClose={()=>setModal(null)}>
+        <Modal title={scheduleForm.id?"Edit Inspection Assignment":"Assign Inspection Task to Equipment"} maxWidth={880} onClose={()=>setModal(null)}>
           <div style={{ display:"grid", gap:12 }}>
             <Field label="Equipment"><select style={inp} value={scheduleForm.equipmentId} onChange={e=>setScheduleForm(f=>({...f,equipmentId:e.target.value}))}><option value="">Choose equipment...</option>{equipment.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name || e.nomenclature}</option>)}</select></Field>
             <Field label="Inspection Task"><select style={inp} value={scheduleForm.taskId} onChange={e=>setScheduleTask(e.target.value)}><option value="">Choose task...</option>{tasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></Field>
@@ -5937,7 +5937,7 @@ function PM({ state, dispatch }) {
 
       {/* Tasks Library Modal */}
       {showTaskLib && (
-        <Modal title={`Tasks Library (${pmTasks.length})`} onClose={()=>setShowTaskLib(false)}>
+        <Modal title={`Tasks Library (${pmTasks.length})`} maxWidth={1080} onClose={()=>setShowTaskLib(false)}>
           {pmTasks.length===0 ? (
             <div style={{ textAlign:"center", padding:"24px 0", color:T.muted, fontFamily:T.sans, fontSize:13 }}>
               No tasks yet. Click "+ Create New Task" to add one.
@@ -6057,7 +6057,7 @@ function PM({ state, dispatch }) {
 
       {/* Create New Task Modal */}
       {taskModal&&(
-        <Modal title={editTaskId?"Edit Task":"Create PM Task"} onClose={()=>{ setTaskModal(false); setEditTaskId(null); setTaskForm(blankTaskForm()); }}>
+        <Modal title={editTaskId?"Edit Task":"Create PM Task"} maxWidth={980} onClose={()=>{ setTaskModal(false); setEditTaskId(null); setTaskForm(blankTaskForm()); }}>
           <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.subtext }}>Create a reusable service task with steps and parts. Attach it to equipment using Task-to-Equipment.</p>
           <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
             <Field label="Task Name"><input style={inp} value={taskForm.name} onPaste={pasteIntoText(v=>setTaskForm(f=>({...f,name:v})))} onChange={e=>setTaskForm(f=>({...f,name:e.target.value}))} placeholder="e.g. 500-Hour Service, Annual Inspection" /></Field>
@@ -6075,11 +6075,11 @@ function PM({ state, dispatch }) {
             </div>
             <div>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:8 }}>Parts & Lubricants Required</label>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 80px 80px auto", gap:6, marginBottom:6, background:T.grayLt, padding:"5px 8px", borderRadius:5 }}>
+              <div style={{ display:"grid", gridTemplateColumns:"minmax(240px, 1fr) 90px 110px auto", gap:8, marginBottom:8, background:T.grayLt, padding:"7px 10px", borderRadius:8 }}>
                 {["Part / Fluid Name","Qty","Unit",""].map(h=><div key={h} style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</div>)}
               </div>
               {(taskForm.parts||[]).map((p,i)=>(
-                <div key={i} style={{ display:"grid", gridTemplateColumns:"1fr 80px 80px auto", gap:6, marginBottom:6, alignItems:"center" }}>
+                <div key={i} style={{ display:"grid", gridTemplateColumns:"minmax(240px, 1fr) 90px 110px auto", gap:8, marginBottom:8, alignItems:"center" }}>
                   <input style={inp} placeholder="e.g. Engine Oil, Air Filter..." value={p.name} onPaste={pasteIntoText(v=>setTaskPart(i,"name",v))} onChange={e=>setTaskPart(i,"name",e.target.value)} />
                   <input style={inp} type="number" placeholder="5" value={p.qty} onChange={e=>setTaskPart(i,"qty",e.target.value)} />
                   <select style={sel} value={p.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, p.unit||"ea", v=>setTaskPart(i,"unit",v))}>
@@ -6100,9 +6100,9 @@ function PM({ state, dispatch }) {
               </div>
               {(taskForm.triggers||[]).map((tr,i)=>(
                 <div key={i} style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:7, padding:"10px 12px", marginBottom:8 }}>
-                  <div style={{ display:"flex", gap:6, marginBottom:8, alignItems:"center" }}>
+                  <div style={{ display:"flex", gap:8, marginBottom:10, alignItems:"center", flexWrap:"wrap" }}>
                     <span style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted }}>Trigger {i+1}</span>
-                    <div style={{ display:"flex", gap:4, marginLeft:4 }}>
+                    <div style={{ display:"flex", gap:6, marginLeft:4, flexWrap:"wrap" }}>
                       {[["time","By Time"],["hours","By Hours"],["mileage","By Mileage"]].map(([v,l])=>(
                         <button key={v} type="button" onClick={()=>setTrigger(i,"type",v)} style={{ padding:"3px 9px", borderRadius:5, border:`1px solid ${tr.type===v?T.accent:T.border}`, background:tr.type===v?T.accentLt:"#fff", color:tr.type===v?T.accent:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:tr.type===v?700:400 }}>{l}</button>
                       ))}
@@ -6110,13 +6110,13 @@ function PM({ state, dispatch }) {
                     {(taskForm.triggers||[]).length>1&&<button onClick={()=>delTrigger(i)} style={{ marginLeft:"auto", background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:16 }}>×</button>}
                   </div>
                   {tr.type==="time" && (
-                    <div style={{ display:"grid", gridTemplateColumns:"80px 1fr", gap:8 }}>
+                    <div style={{ display:"grid", gridTemplateColumns:"120px minmax(160px, 1fr)", gap:10 }}>
                       <div><label style={{ fontFamily:T.sans, fontSize:10, color:T.muted, display:"block", marginBottom:3 }}>Every</label><input style={inp} type="number" value={tr.timeInterval} onChange={e=>setTrigger(i,"timeInterval",e.target.value)} placeholder="6" /></div>
                       <div><label style={{ fontFamily:T.sans, fontSize:10, color:T.muted, display:"block", marginBottom:3 }}>Unit</label><select style={sel} value={tr.timeUnit} onChange={e=>setTrigger(i,"timeUnit",e.target.value)}>{["days","weeks","months","years"].map(u=><option key={u}>{u}</option>)}</select></div>
                     </div>
                   )}
                   {(tr.type==="hours"||tr.type==="mileage") && (
-                    <div style={{ display:"grid", gridTemplateColumns:"1fr 100px 1fr", gap:8 }}>
+                    <div style={{ display:"grid", gridTemplateColumns:"minmax(220px, 1fr) 120px minmax(140px, 1fr)", gap:10 }}>
                       <div><label style={{ fontFamily:T.sans, fontSize:10, color:T.muted, display:"block", marginBottom:3 }}>Mode</label>
                         <select style={sel} value={tr.usageMode||"every"} onChange={e=>setTrigger(i,"usageMode",e.target.value)}>
                           <option value="every">Every X {tr.type}</option>
@@ -6131,7 +6131,7 @@ function PM({ state, dispatch }) {
               ))}
             </div>
           </div>
-          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
+          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14, flexWrap:"wrap" }}>
             <Btn variant="secondary" onClick={()=>{ setTaskModal(false); setEditTaskId(null); setTaskForm(blankTaskForm()); }}>Cancel</Btn>
             {editTaskId&&<Btn variant="secondary" onClick={()=>copyPMTask({...taskForm,id:editTaskId})}>Copy as New</Btn>}<Btn onClick={saveTask}>{editTaskId?"Update Task":"Save Task to Library"}</Btn>
           </div>
@@ -6139,7 +6139,7 @@ function PM({ state, dispatch }) {
       )}
 
       {modal==="manualTrigger"&&(
-        <Modal title="Manual PM Service Trigger" onClose={()=>setModal(null)}>
+        <Modal title="Manual PM Service Trigger" maxWidth={860} onClose={()=>setModal(null)}>
           <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.subtext }}>
             Manually create a Service work order by choosing the equipment first, then the task. The generated work order will include the task steps.
           </p>
@@ -6177,7 +6177,7 @@ function PM({ state, dispatch }) {
 
       {/* Create Maintenance Schedule */}
       {modal==="schedule"&&(
-        <Modal title={schForm.id?"Edit Assigned Preventive Maintenance":"Task-to-Equipment"} onClose={()=>setModal(null)}>
+        <Modal title={schForm.id?"Edit Assigned Preventive Maintenance":"Task-to-Equipment"} maxWidth={920} onClose={()=>setModal(null)}>
           <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.subtext }}>
             Assign a PM task to equipment. The trigger comes from the task itself; this screen only links the task to the equipment.
           </p>
