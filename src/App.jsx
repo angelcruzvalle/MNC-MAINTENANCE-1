@@ -2191,6 +2191,41 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   const roleRank = { organization_admin:5, facility_admin:4, supervisor:3, mechanic:2, viewer:1 };
   const roleAtLeast = (minimum) => (roleRank[role] || 1) >= (roleRank[minimum] || 1);
   const roleCanSee = (roles) => !roles || roles.includes(role) || (role === "organization_admin" && !roles.includes("__none"));
+  const canUseSettings = roleAtLeast("facility_admin");
+  const quickLinksForRole = () => {
+    const adminLinks = [
+      { tab:"workorders", label:"Work Orders", sub:`${activeWOs.length} active`, icon:"📋" },
+      { tab:"wo_requests", label:"Requests", sub:`${openRequests.length} waiting`, icon:"📲" },
+      { tab:"equipment", label:"Equipment", sub:`${deadlineEqs.length} deadline`, icon:"🚜" },
+      { tab:"inventory", label:"Equipment Inventory", sub:`${eqs.length} assets`, icon:"📋" },
+      { tab:"parts", label:"Parts", sub:`${lowStock.length} low stock`, icon:"📦" },
+      { tab:"pm", label:"PM", sub:`${duePM.length} due soon`, icon:"🔧" },
+      { tab:"inspections", label:"Inspections", sub:`${dueInspections.length} due soon`, icon:"🔍" },
+      { tab:"usage", label:"Usage", sub:`${usageLogs.length} logs`, icon:"📊" },
+      { tab:"fuel", label:"Fuel", sub:`${lowFuel.length} low`, icon:"⛽" },
+      { tab:"spending", label:"Spending", sub:moneyFmt(monthSpend), icon:"💰" },
+      { tab:"reports_combined", label:"Combined Report", sub:"Print / review", icon:"📑" },
+    ];
+    if(role === "mechanic") return [
+      { tab:"workorders", label:"My Work", sub:`${assignedToMe.length || activeWOs.length} active`, icon:"📋" },
+      { tab:"equipment", label:"Equipment", sub:`${deadlineEqs.length} deadline`, icon:"🚜" },
+      { tab:"parts", label:"Parts", sub:"Look up stock", icon:"📦" },
+      { tab:"pm", label:"PM Tasks", sub:`${duePM.length} due soon`, icon:"🔧" },
+      { tab:"inspections", label:"Inspections", sub:`${dueInspections.length} due soon`, icon:"🔍" },
+      { tab:"usage", label:"Usage", sub:"Log readings", icon:"📊" },
+    ];
+    if(role === "viewer") return [
+      { tab:"equipment", label:"Equipment", sub:`${eqs.length} assets`, icon:"🚜" },
+      { tab:"workorders", label:"Work Orders", sub:`${activeWOs.length} active`, icon:"📋" },
+      { tab:"inventory", label:"Inventory", sub:"Asset list", icon:"📋" },
+      { tab:"reports_combined", label:"Combined Report", sub:"Read only", icon:"📑" },
+      { tab:"reports_spending", label:"Spending Report", sub:"Costs", icon:"💰" },
+      { tab:"reports_fuel", label:"Fuel Report", sub:"Fuel data", icon:"⛽" },
+    ];
+    if(role === "supervisor") return adminLinks.filter(l => !["spending","reports_combined"].includes(l.tab)).slice(0,10);
+    return adminLinks;
+  };
+  const quickLinks = quickLinksForRole();
 
   const priorityList = activeWOs.slice().sort((a,b)=>({High:0,Medium:1,Low:2}[a.priority]??3)-({High:0,Medium:1,Low:2}[b.priority]??3) || String(a.due||"").localeCompare(String(b.due||""))).slice(0,6);
   const equipmentWatch = [...deadlineEqs, ...deficientEqs].slice(0,6);
@@ -2200,12 +2235,12 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   ].sort((a,b)=>String(a.due||"").localeCompare(String(b.due||""))).slice(0,6);
 
   const defaultLayoutForRole = (r) => {
-    if(r === "mechanic") return ["my_work","active_work","due_today","schedule_due_count","equipment_watch","schedule_due","recent_activity"];
-    if(r === "viewer") return ["readiness","active_work","deadline","fuel_low","schedule_due_count","readiness_breakdown","equipment_watch","fuel_levels","recent_activity"];
-    if(r === "supervisor") return ["readiness","active_work","overdue_work","deadline","due_today","schedule_due_count","today_focus","priority_queue","equipment_watch","schedule_due","awaiting_parts","low_stock"];
-    return ["readiness","active_work","overdue_work","deadline","fuel_low","schedule_due_count","requests","low_stock","today_focus","readiness_breakdown","fuel_levels","priority_queue","schedule_due","equipment_watch","month_spend"];
+    if(r === "mechanic") return ["quick_links","my_work","active_work","due_today","awaiting_parts","schedule_due_count","priority_queue","equipment_watch","schedule_due","recent_activity"];
+    if(r === "viewer") return ["quick_links","readiness","active_work","deadline","completed_month","fuel_low","readiness_breakdown","equipment_watch","fuel_levels","recent_activity"];
+    if(r === "supervisor") return ["quick_links","readiness","active_work","overdue_work","deadline","due_today","schedule_due_count","today_focus","priority_queue","equipment_watch","schedule_due","inventory_requests"];
+    return ["quick_links","readiness","active_work","overdue_work","deadline","fuel_low","schedule_due_count","requests","low_stock","month_spend","today_focus","readiness_breakdown","fuel_levels","priority_queue","schedule_due","equipment_watch","inventory_requests"];
   };
-  const layoutKey = `maintforge_dashboard_layout_v3_facility_manager_${role}`;
+  const layoutKey = `maintforge_dashboard_layout_v4_role_based_${role}`;
   const loadLayout = () => {
     try {
       const saved = JSON.parse(localStorage.getItem(layoutKey) || "null");
@@ -2240,8 +2275,18 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     </button>
   );
   const Panel = ({ title, action, children }) => <Card style={{ padding:18, borderRadius:22, boxShadow:"0 10px 24px rgba(15,23,42,.06)", overflow:"hidden", minHeight:180 }}><div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginBottom:8 }}><h3 style={{ margin:0, fontSize:16, color:T.text, overflowWrap:"anywhere" }}>{title}</h3>{action}</div>{children}</Card>;
+  const QuickLinkButton = ({ link }) => (
+    <button type="button" onClick={()=>click(link.tab)} style={{ border:`1px solid ${T.border}`, background:T.grayLt, color:T.text, borderRadius:18, padding:"13px 14px", textAlign:"left", cursor:"pointer", minHeight:78, display:"grid", gridTemplateColumns:"auto 1fr", gap:10, alignItems:"center" }}>
+      <span style={{ width:34, height:34, borderRadius:12, display:"grid", placeItems:"center", background:T.card, boxShadow:"inset 0 0 0 1px rgba(15,23,42,.06)", fontSize:18 }}>{link.icon}</span>
+      <span style={{ minWidth:0 }}>
+        <span style={{ display:"block", fontWeight:950, color:T.text, lineHeight:1.1, overflowWrap:"anywhere" }}>{link.label}</span>
+        <span style={{ display:"block", marginTop:4, fontSize:12, color:T.muted, overflowWrap:"anywhere" }}>{link.sub}</span>
+      </span>
+    </button>
+  );
 
   const widgetRegistry = {
+    quick_links: { title:"Quick Links", size:"wide", tab:"dashboard", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title={`Quick Links — ${roleLabel(role)}`} action={canUseSettings ? <Btn small variant="secondary" onClick={onSettings}>Settings</Btn> : null}><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(165px,1fr))", gap:10, marginTop:8 }}>{quickLinks.map(link => <QuickLinkButton key={link.tab} link={link} />)}</div></Panel> },
     readiness: { title:"Operational Ready", size:"small", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <SmallCard title="Operational Ready" value={`${readiness}%`} sub={`${readyEqs.length} of ${eqs.length} assets fully operational`} color={readiness>=85?T.green:readiness>=65?T.amber:T.red} tab="equipment" /> },
     active_work: { title:"Active Work", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <SmallCard title="Active Work" value={activeWOs.length} sub={`${highPriority.length} high priority • ${awaitingParts.length} awaiting parts`} color={highPriority.length?T.red:T.accent} tab="workorders" /> },
     high_priority: { title:"High Priority", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="High Priority" value={highPriority.length} sub="Work orders needing fast attention" color={highPriority.length?T.red:T.green} tab="workorders" /> },
@@ -2302,11 +2347,12 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
         .mf-dashboard-widget-wide{ grid-column:span 1 !important; }
         .mf-dashboard-hero{ border-radius:20px !important; padding:16px !important; }
         .mf-dashboard-hero h2{ font-size:27px !important; }
+        .mf-dashboard-actions{ width:100%; }
       }
     `}</style>
-    <div className="mf-dashboard-hero" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:14, flexWrap:"wrap", padding:"18px 20px", borderRadius:26, background:"linear-gradient(135deg,#0f172a,#1d4ed8 55%,#38bdf8)", color:"white", boxShadow:"0 18px 40px rgba(15,23,42,.18)" }}>
-      <div style={{ minWidth:240 }}><div style={{ fontSize:12, fontWeight:900, letterSpacing:.6, textTransform:"uppercase", opacity:.78 }}>Maintenance Command Center</div><h2 style={{ margin:"6px 0 8px", fontSize:32, lineHeight:1, letterSpacing:-.8 }}>Today’s Work</h2><div style={{ opacity:.86, fontSize:14, maxWidth:680 }}>Facility manager view for {facilityScopeLabel} • {roleLabel(role)}. Click any card to jump to the page. Customize lets you add, remove, or reorder widgets.</div></div>
-      <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}><Btn onClick={()=>setEditDashboard(v=>!v)}>{editDashboard ? "Done Customizing" : "Customize Dashboard"}</Btn><Btn variant="secondary" onClick={()=>click("workorders")}>Open Work Orders</Btn>{roleAtLeast("facility_admin") && <Btn variant="secondary" onClick={onSettings}>Admin Center</Btn>}</div>
+    <div className="mf-dashboard-hero" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:14, flexWrap:"wrap", padding:"18px 20px", borderRadius:26, background:T.card, color:T.text, border:`1px solid ${T.border}`, boxShadow:"0 12px 30px rgba(15,23,42,.08)" }}>
+      <div style={{ minWidth:240, flex:"1 1 520px" }}><div style={{ fontSize:12, fontWeight:900, letterSpacing:.6, textTransform:"uppercase", color:T.muted }}>Dashboard • {facilityScopeLabel}</div><h2 style={{ margin:"6px 0 8px", fontSize:32, lineHeight:1, letterSpacing:-.8 }}>Role-Based Dashboard</h2><div style={{ color:T.muted, fontSize:14, maxWidth:760 }}>{roleLabel(role)} view with live data, alerts, and shortcuts. Click a card or quick link to jump directly to the section you need.</div></div>
+      <div className="mf-dashboard-actions" style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end" }}><Btn onClick={()=>setEditDashboard(v=>!v)}>{editDashboard ? "Done Customizing" : "Customize Dashboard"}</Btn><Btn variant="secondary" onClick={()=>click("workorders")}>Work Orders</Btn><Btn variant="secondary" onClick={()=>click("equipment")}>Equipment</Btn>{canUseSettings && <Btn variant="secondary" onClick={onSettings}>Settings</Btn>}</div>
     </div>
 
     {editDashboard && <Card style={{ borderRadius:22, padding:16, border:`1px solid ${T.border}`, background:T.card, boxShadow:"0 10px 24px rgba(15,23,42,.06)" }}>
@@ -2319,7 +2365,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
       </div>
     </Card>}
 
-    <div className="mf-dashboard-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))", gap:12, alignItems:"stretch" }}>
+    <div className="mf-dashboard-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:12, alignItems:"stretch" }}>
       {safeLayout.map((id, index) => {
         const w = widgetRegistry[id];
         return <div key={id} className={w.size === "wide" ? "mf-dashboard-widget-wide" : ""} draggable={editDashboard} onDragStart={()=>setDragWidgetId(id)} onDragOver={e=>{ if(editDashboard) e.preventDefault(); }} onDrop={()=>onDropWidget(id)} style={{ gridColumn:w.size === "wide" ? "span 2" : "span 1", position:"relative", minWidth:0 }}>
