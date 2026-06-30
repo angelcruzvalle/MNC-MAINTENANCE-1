@@ -367,6 +367,16 @@ function normalizeRole(value="") {
   return ROLE_OPTIONS.some(r => r.value === raw) ? raw : "viewer";
 }
 
+function currentUserIsOrganizationOwner(state={}, currentUser=null) {
+  if(!currentUser?.id && !currentUser?.email) return false;
+  const currentEmail = normalizeEmail(currentUser?.email);
+  const ownerId = String(state.ownerUserId || state.organizationOwnerId || "");
+  const ownerEmail = normalizeEmail(state.ownerEmail || state.organizationOwnerEmail || "");
+  if(ownerId && currentUser?.id && ownerId === currentUser.id) return true;
+  if(ownerEmail && currentEmail && ownerEmail === currentEmail) return true;
+  return !ownerId && !ownerEmail;
+}
+
 function normalizeOrgUsers(state={}, currentUser=null) {
   const users = Array.isArray(state.organizationUsers) ? state.organizationUsers : [];
   const byEmail = new Map();
@@ -385,15 +395,16 @@ function normalizeOrgUsers(state={}, currentUser=null) {
   const currentEmail = normalizeEmail(currentUser?.email);
   if(currentEmail) {
     const existing = byEmail.get(currentEmail) || {};
+    const isOwner = currentUserIsOrganizationOwner(state, currentUser);
     byEmail.set(currentEmail, {
       ...existing,
       id:existing.id || currentUser?.id || `USER-${Date.now()}`,
       userId:currentUser?.id || existing.userId || "",
       email:currentEmail,
       name:existing.name || currentUser?.user_metadata?.name || currentEmail,
-      role:"organization_admin",
-      facilityIds:existing.facilityIds || [],
-      status:"Active",
+      role:normalizeRole(existing.role || (isOwner ? "organization_admin" : "viewer")),
+      facilityIds:Array.isArray(existing.facilityIds) ? existing.facilityIds : (existing.locationId ? [existing.locationId] : []),
+      status:existing.status || "Active",
       isCurrentUser:true,
     });
   }
@@ -406,12 +417,61 @@ function normalizeOrgUsers(state={}, currentUser=null) {
 function ensureCurrentOrganizationAdmin(state={}, currentUser=null) {
   const currentEmail = normalizeEmail(currentUser?.email);
   if(!currentEmail) return state;
-  const users = normalizeOrgUsers(state, currentUser);
+  const ownerId = state.ownerUserId || currentUser?.id || "";
+  const base = { ...state, ownerUserId:ownerId, ownerEmail:state.ownerEmail || currentEmail };
+  const users = normalizeOrgUsers(base, currentUser);
+  const me = users.find(u => normalizeEmail(u.email) === currentEmail);
+  const role = normalizeRole(me?.role || (currentUserIsOrganizationOwner(base, currentUser) ? "organization_admin" : "viewer"));
+  const facilityIds = Array.isArray(me?.facilityIds) ? me.facilityIds : [];
+  const firstFacility = facilityIds[0] || "";
+  const activeLocationId = role === "organization_admin"
+    ? (base.activeLocationId || "__all")
+    : ((base.activeLocationId && base.activeLocationId !== "__all" && (!facilityIds.length || facilityIds.includes(base.activeLocationId))) ? base.activeLocationId : (firstFacility || base.activeLocationId || "__all"));
   return {
-    ...state,
-    userRole:"organization_admin",
+    ...base,
+    currentUser:{ id:currentUser?.id || "", email:currentEmail },
+    userRole:role,
+    userFacilityIds:facilityIds,
+    activeLocationId,
     organizationUsers:users,
   };
+}
+
+function applyInviteToOrganizationState(ownerState={}, invite={}, currentUser=null) {
+  const email = normalizeEmail(currentUser?.email || invite?.email);
+  if(!email || !invite?.token) return ownerState;
+  const role = normalizeRole(invite.role || "viewer");
+  const facilityIds = Array.isArray(invite.facilityIds) ? invite.facilityIds : (invite.locationId ? [invite.locationId] : []);
+  const invitedUser = {
+    id:currentUser?.id || `USER-${Date.now()}`,
+    userId:currentUser?.id || "",
+    email,
+    name:invite.name || currentUser?.user_metadata?.name || email,
+    role,
+    facilityIds,
+    locationId:facilityIds[0] || "",
+    status:"Active",
+    invitedBy:ownerState.ownerUserId || invite.ownerUserId || "",
+    inviteToken:invite.token,
+    acceptedAt:new Date().toISOString(),
+  };
+  const nextInvites = (ownerState.userInvites || []).map(inv =>
+    inv.token === invite.token || normalizeEmail(inv.email) === email
+      ? { ...inv, status:"Accepted", acceptedAt:new Date().toISOString(), acceptedBy:email }
+      : inv
+  );
+  const nextUsers = normalizeOrgUsers(ownerState).filter(u => normalizeEmail(u.email) !== email);
+  const activeLocationId = role === "organization_admin" ? (ownerState.activeLocationId || "__all") : (facilityIds[0] || ownerState.activeLocationId || "__all");
+  return ensureCurrentOrganizationAdmin({ ...ownerState, userInvites:nextInvites, organizationUsers:[invitedUser, ...nextUsers], activeLocationId }, currentUser);
+}
+
+function findMatchingInviteInState(orgState={}, inviteInfo={}, currentUser=null) {
+  const token = String(inviteInfo?.token || "");
+  const email = normalizeEmail(inviteInfo?.email || currentUser?.email || "");
+  if(!token) return null;
+  return (orgState.userInvites || []).find(inv =>
+    String(inv.token || "") === token && (!email || normalizeEmail(inv.email) === email)
+  ) || null;
 }
 
 function blankUserState(ownerUserId="") {
@@ -2247,6 +2307,10 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     };
   };
   const fuelLevels = fuelContainers.map(dashboardFuelSnapshot).sort((a,b)=>a._percent-b._percent);
+  const fuelGallonsText = (value) => Number.isFinite(Number(value)) ? `${Math.round(Number(value)).toLocaleString()} gal` : "0 gal";
+  const fuelQuickLinkSub = fuelLevels.length
+    ? `${fuelLevels.slice(0, 2).map(c => `${c.name || c.containerName || "Container"}: ${fuelGallonsText(c._gallons)} • ${Math.round(c._percent || 0)}%`).join(" | ")}${fuelLevels.length > 2 ? ` | +${fuelLevels.length - 2} more` : ""}`
+    : "No fuel containers";
   const lowFuel = fuelLevels.filter(c => c._percent > 0 && c._percent <= 25);
   const recentActivity = [...notifications].sort((a,b)=>String(b.createdAt||b.time||"").localeCompare(String(a.createdAt||a.time||""))).slice(0,6);
   const facilities = normalizeMaintForgeLocations(state).filter(f => f.active !== false);
@@ -2320,7 +2384,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
       { tab:"pm", label:"PM", sub:`${duePM.length} due soon`, icon:"🔧" },
       { tab:"inspections", label:"Inspections", sub:`${dueInspections.length} due soon`, icon:"🔍" },
       { tab:"usage", label:"Usage", sub:`${usageLogs.length} logs`, icon:"📊" },
-      { tab:"fuel", label:"Fuel", sub:`${fuelLevels.length} containers`, icon:"⛽" },
+      { tab:"fuel", label:"Fuel", sub:fuelQuickLinkSub, icon:"⛽" },
       { tab:"spending", label:"Spending", sub:moneyFmt(monthSpend), icon:"💰" },
       { tab:"reports_combined", label:"Combined Report", sub:"Print / review", icon:"📑" },
     ];
@@ -2431,19 +2495,19 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
       {badge && <StatusPill color={color}>{badge}</StatusPill>}
     </button>
   );
-  const Panel = ({ title, action, children }) => <Card style={{ padding:18, borderRadius:22, boxShadow:"0 10px 24px rgba(15,23,42,.06)", overflow:"hidden", minHeight:180 }}><div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginBottom:8 }}><h3 style={{ margin:0, fontSize:16, color:T.text, overflowWrap:"anywhere" }}>{title}</h3>{action}</div>{children}</Card>;
+  const Panel = ({ title, action, children }) => <Card style={{ height:"100%", padding:18, borderRadius:22, boxShadow:"0 10px 24px rgba(15,23,42,.06)", overflow:"hidden", minHeight:180, display:"flex", flexDirection:"column" }}><div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginBottom:8 }}><h3 style={{ margin:0, fontSize:16, color:T.text, overflowWrap:"anywhere" }}>{title}</h3>{action}</div><div style={{ flex:1, minHeight:0 }}>{children}</div></Card>;
   const QuickLinkButton = ({ link }) => (
-    <button type="button" onClick={()=>click(link.tab)} style={{ border:`1px solid ${T.border}`, background:T.grayLt, color:T.text, borderRadius:18, padding:"13px 14px", textAlign:"left", cursor:"pointer", minHeight:78, display:"grid", gridTemplateColumns:"auto 1fr", gap:10, alignItems:"center" }}>
-      <span style={{ width:34, height:34, borderRadius:12, display:"grid", placeItems:"center", background:T.card, boxShadow:"inset 0 0 0 1px rgba(15,23,42,.06)", fontSize:18 }}>{link.icon}</span>
-      <span style={{ minWidth:0 }}>
+    <button type="button" onClick={()=>click(link.tab)} style={{ width:"100%", height:"100%", border:`1px solid ${T.border}`, background:T.grayLt, color:T.text, borderRadius:18, padding:"13px 14px", textAlign:"left", cursor:"pointer", minHeight:112, display:"grid", gridTemplateColumns:"auto 1fr", gap:10, alignItems:"center", overflow:"hidden" }}>
+      <span style={{ width:38, height:38, borderRadius:12, display:"grid", placeItems:"center", background:T.card, boxShadow:"inset 0 0 0 1px rgba(15,23,42,.06)", fontSize:19, flexShrink:0 }}>{link.icon}</span>
+      <span style={{ minWidth:0, display:"flex", flexDirection:"column", justifyContent:"center" }}>
         <span style={{ display:"block", fontWeight:950, color:T.text, lineHeight:1.1, overflowWrap:"anywhere" }}>{link.label}</span>
-        <span style={{ display:"block", marginTop:4, fontSize:12, color:T.muted, overflowWrap:"anywhere" }}>{link.sub}</span>
+        <span style={{ display:"-webkit-box", WebkitLineClamp:3, WebkitBoxOrient:"vertical", overflow:"hidden", marginTop:5, fontSize:12, lineHeight:1.25, color:T.muted, overflowWrap:"anywhere" }}>{link.sub}</span>
       </span>
     </button>
   );
 
   const widgetRegistry = {
-    quick_links: { title:"Quick Links", size:"full", tab:"dashboard", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title="Quick Links"><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(180px,100%),1fr))", gap:10, marginTop:8 }}>{quickLinks.map((link, index) => <div key={link.tab} draggable={editDashboard} onDragStart={()=>setDragQuickLink(link.tab)} onDragOver={e=>{ if(editDashboard) e.preventDefault(); }} onDrop={()=>onDropQuickLink(link.tab)} style={{ minWidth:0 }}>{editDashboard && <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:6, marginBottom:5, padding:"5px 6px", border:`1px dashed ${T.border}`, borderRadius:10, background:T.grayLt }}><span style={{ fontSize:11, fontWeight:900, color:T.muted, cursor:"grab" }}>☰ {link.label}</span><span style={{ display:"flex", gap:3 }}><button type="button" onClick={()=>moveQuickLink(link.tab,-1)} disabled={index===0} style={{ border:`1px solid ${T.border}`, background:T.card, borderRadius:7, padding:"2px 6px", cursor:index===0?"not-allowed":"pointer" }}>↑</button><button type="button" onClick={()=>moveQuickLink(link.tab,1)} disabled={index===quickLinks.length-1} style={{ border:`1px solid ${T.border}`, background:T.card, borderRadius:7, padding:"2px 6px", cursor:index===quickLinks.length-1?"not-allowed":"pointer" }}>↓</button><button type="button" onClick={()=>removeQuickLink(link.tab)} style={{ border:`1px solid ${T.red}`, color:T.red, background:T.card, borderRadius:7, padding:"2px 6px", cursor:"pointer" }}>×</button></span></div>}<QuickLinkButton link={link} /></div>)}{!quickLinks.length && <div style={{ color:T.muted, padding:12 }}>No quick links selected. Use Customize Dashboard to add them back.</div>}</div></Panel> },
+    quick_links: { title:"Quick Links", size:"full", tab:"dashboard", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title="Quick Links"><div className="mf-quick-links-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:12, marginTop:8, alignItems:"stretch", gridAutoRows:"1fr" }}>{quickLinks.map((link, index) => <div key={link.tab} draggable={editDashboard} onDragStart={()=>setDragQuickLink(link.tab)} onDragOver={e=>{ if(editDashboard) e.preventDefault(); }} onDrop={()=>onDropQuickLink(link.tab)} style={{ minWidth:0, height:"100%", display:"flex", flexDirection:"column" }}>{editDashboard && <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:6, marginBottom:5, padding:"5px 6px", border:`1px dashed ${T.border}`, borderRadius:10, background:T.grayLt }}><span style={{ fontSize:11, fontWeight:900, color:T.muted, cursor:"grab" }}>☰ {link.label}</span><span style={{ display:"flex", gap:3 }}><button type="button" onClick={()=>moveQuickLink(link.tab,-1)} disabled={index===0} style={{ border:`1px solid ${T.border}`, background:T.card, borderRadius:7, padding:"2px 6px", cursor:index===0?"not-allowed":"pointer" }}>↑</button><button type="button" onClick={()=>moveQuickLink(link.tab,1)} disabled={index===quickLinks.length-1} style={{ border:`1px solid ${T.border}`, background:T.card, borderRadius:7, padding:"2px 6px", cursor:index===quickLinks.length-1?"not-allowed":"pointer" }}>↓</button><button type="button" onClick={()=>removeQuickLink(link.tab)} style={{ border:`1px solid ${T.red}`, color:T.red, background:T.card, borderRadius:7, padding:"2px 6px", cursor:"pointer" }}>×</button></span></div>}<div style={{ flex:1, minHeight:0 }}><QuickLinkButton link={link} /></div></div>)}{!quickLinks.length && <div style={{ color:T.muted, padding:12 }}>No quick links selected. Use Customize Dashboard to add them back.</div>}</div></Panel> },
     readiness: { title:"Operational Ready", size:"small", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <SmallCard title="Operational Ready" value={`${readiness}%`} sub={`${readyEqs.length} of ${eqs.length} assets fully operational`} color={readiness>=85?T.green:readiness>=65?T.amber:T.red} tab="equipment" /> },
     active_work: { title:"Active Work", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <SmallCard title="Active Work" value={activeWOs.length} sub={`${highPriority.length} high priority • ${awaitingParts.length} awaiting parts`} color={highPriority.length?T.red:T.accent} tab="workorders" /> },
     high_priority: { title:"High Priority", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="High Priority" value={highPriority.length} sub="Work orders needing fast attention" color={highPriority.length?T.red:T.green} tab="workorders" /> },
@@ -2503,6 +2567,8 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
       .mf-dashboard-widget-small{ grid-column:span 1; }
       .mf-dashboard-widget-wide{ grid-column:span 2; }
       .mf-dashboard-widget-full{ grid-column:1 / -1; }
+      .mf-dashboard-widget-small > div, .mf-dashboard-widget-wide > div, .mf-dashboard-widget-full > div{ height:100%; }
+      .mf-quick-links-grid > div{ min-width:0; height:100%; }
       @media (max-width: 980px){
         .mf-dashboard-widget-wide,.mf-dashboard-widget-full{ grid-column:1 / -1 !important; }
       }
@@ -2535,7 +2601,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
       </div>
     </Card>}
 
-    <div className="mf-dashboard-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(230px,100%),1fr))", gap:12, alignItems:"stretch", gridAutoFlow:"row dense" }}>
+    <div className="mf-dashboard-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(240px,100%),1fr))", gap:12, alignItems:"stretch", gridAutoFlow:"row dense" }}>
       {safeLayout.map((id, index) => {
         const w = widgetRegistry[id];
         const widgetClass = w.size === "full" ? "mf-dashboard-widget-full" : w.size === "wide" ? "mf-dashboard-widget-wide" : "mf-dashboard-widget-small";
@@ -8256,15 +8322,16 @@ function requestUrlForFacility(facility="", settings={}, ownerUserId="") {
   }
 }
 
-function inviteUrlForToken(token="", email="") {
+function inviteUrlForToken(token="", email="", ownerUserId="") {
   try {
     const base = window.location.origin + window.location.pathname;
     const params = new URLSearchParams();
     params.set("invite", token || "");
     if(email) params.set("email", normalizeEmail(email));
+    if(ownerUserId) params.set("owner", ownerUserId);
     return `${base}?${params.toString()}`;
   } catch(e) {
-    return `?invite=${encodeURIComponent(token || "")}${email?`&email=${encodeURIComponent(normalizeEmail(email))}`:""}`;
+    return `?invite=${encodeURIComponent(token || "")}${email?`&email=${encodeURIComponent(normalizeEmail(email))}`:""}${ownerUserId?`&owner=${encodeURIComponent(ownerUserId)}`:""}`;
   }
 }
 
@@ -8797,7 +8864,8 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
     const facilityIds = Array.isArray(inviteForm.facilityIds) && inviteForm.facilityIds.length ? inviteForm.facilityIds : (orgLocations[0]?.id ? [orgLocations[0].id] : []);
     const locationNames = facilityIds.map(id => locationNameForId(foundationState, id)).filter(Boolean);
     const email = normalizeEmail(inviteForm.email);
-    const inviteUrl = inviteUrlForToken(token, email);
+    const ownerUserId = state.ownerUserId || currentUser?.id || "";
+    const inviteUrl = inviteUrlForToken(token, email, ownerUserId);
     return {
       ...inviteForm,
       email,
@@ -8807,8 +8875,9 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
       facilityIds,
       locationId:facilityIds[0] || "",
       locationName:locationNames.join(", "),
+      ownerUserId,
       organizationId:state.organization?.id || "",
-      organizationName:form.companyName || state.organization?.name || "",
+      organizationName:form.companyName || state.organization?.name || form.department || "",
       note:"Manual invite URL generated. Existing users should not be invited again; update their role instead.",
     };
   };
@@ -8832,7 +8901,7 @@ ${payload.inviteUrl}`));
     setInviteForm(f=>({...f,email:"",name:""}));
   };
   const copyInviteUrl = (inv) => {
-    const url = inv.inviteUrl || inviteUrlForToken(inv.token, inv.email);
+    const url = inv.inviteUrl || inviteUrlForToken(inv.token, inv.email, inv.ownerUserId || state.ownerUserId || currentUser?.id || "");
     copyTextToClipboard(url)
       .then(()=>alert("Invite URL copied."))
       .catch(()=>prompt("Copy this invite URL:", url));
@@ -9837,6 +9906,61 @@ async function loadSession(setSession, setAuthLoading) {
   setAuthLoading(false);
 }
 
+async function fetchUserStateRow(userId="") {
+  if(!userId) return null;
+  const { data, error } = await supabase
+    .from("user_state")
+    .select("user_id,data")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if(error) {
+    console.error("User state lookup error:", error);
+    return null;
+  }
+  return data || null;
+}
+
+async function findOrganizationStateForInvite(inviteInfo={}, currentUser=null) {
+  const ownerId = inviteInfo?.ownerUserId || "";
+  const email = normalizeEmail(inviteInfo?.email || currentUser?.email || "");
+  if(ownerId) {
+    const ownerRow = await fetchUserStateRow(ownerId);
+    const ownerState = normalizeLoadedUserState(ownerRow?.data || {}, ownerId);
+    const invite = findMatchingInviteInState(ownerState, { ...inviteInfo, email }, currentUser);
+    if(invite) return { ownerRow, ownerState, invite, ownerUserId:ownerId };
+  }
+  try {
+    const { data, error } = await supabase
+      .from("user_state")
+      .select("user_id,data");
+    if(error) {
+      console.error("Invite organization search error:", error);
+      return null;
+    }
+    for(const row of (data || [])) {
+      const ownerState = normalizeLoadedUserState(row.data || {}, row.user_id);
+      const invite = findMatchingInviteInState(ownerState, { ...inviteInfo, email }, currentUser);
+      if(invite) return { ownerRow:row, ownerState, invite, ownerUserId:row.user_id };
+    }
+  } catch(e) {
+    console.error("Invite organization search exception:", e);
+  }
+  return null;
+}
+
+async function saveInvitePointerForUser(userId="", ownerUserId="", email="") {
+  if(!userId || !ownerUserId || userId === ownerUserId) return;
+  try {
+    await supabase.from("user_state").upsert({
+      user_id:userId,
+      data:{ ownerUserId, invitedMember:true, email:normalizeEmail(email), updatedAt:new Date().toISOString() },
+      updated_at:new Date().toISOString(),
+    }, { onConflict:"user_id" });
+  } catch(e) {
+    console.error("Could not save invite pointer:", e);
+  }
+}
+
 export default function App() {
   /* Start empty, then load the signed-in user's data from Supabase */
   const emptyState = blankUserState();
@@ -9866,8 +9990,9 @@ export default function App() {
       const params = new URLSearchParams(window.location.search);
       const inviteToken = params.get("invite") || "";
       const inviteEmail = normalizeEmail(params.get("email") || "");
+      const inviteOwner = params.get("owner") || "";
       if(inviteToken) {
-        setManualInviteInfo({ token:inviteToken, email:inviteEmail });
+        setManualInviteInfo({ token:inviteToken, email:inviteEmail, ownerUserId:inviteOwner });
         if(inviteEmail) setAuthEmail(inviteEmail);
         setAuthMode("signup");
         setAuthInfoMsg(inviteEmail ? `Invite link detected for ${inviteEmail}. Create an account with this email, or sign in if you already registered.` : "Invite link detected. Create an account, or sign in if you already registered.");
@@ -9910,18 +10035,39 @@ export default function App() {
     let cancelled = false;
     async function loadData() {
       try {
-        const { data, error } = await supabase
-          .from("user_state")
-          .select("data")
-          .eq("user_id", session.user.id)
-          .maybeSingle();
-
+        const ownRow = await fetchUserStateRow(session.user.id);
+        const ownData = ownRow?.data || null;
         if (cancelled) return;
-        if (error) {
-          console.error("Load error:", error);
-          dispatch({ type:"REPLACE_STATE", payload:blankUserState(session.user.id) });
-        } else if (data && data.data && Object.keys(data.data).length > 0) {
-          const loadedState = normalizeLoadedUserState(data.data, session.user.id);
+
+        if (manualInviteInfo?.token) {
+          const inviteMatch = await findOrganizationStateForInvite(manualInviteInfo, session.user);
+          if(inviteMatch?.invite) {
+            const acceptedState = applyInviteToOrganizationState({ ...inviteMatch.ownerState, ownerUserId:inviteMatch.ownerUserId }, inviteMatch.invite, session.user);
+            dispatch({ type:"REPLACE_STATE", payload:acceptedState });
+            await saveInvitePointerForUser(session.user.id, inviteMatch.ownerUserId, session.user.email);
+            setAuthInfoMsg(`✓ Invite accepted. You are connected to ${acceptedState.settings?.companyName || acceptedState.organization?.name || inviteMatch.invite.organizationName || "the organization"} as ${roleLabel(acceptedState.userRole)}.`);
+            try {
+              const url = new URL(window.location.href);
+              url.searchParams.delete("invite"); url.searchParams.delete("email"); url.searchParams.delete("owner");
+              window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+            } catch(e) {}
+            return;
+          }
+          setAuthInfoMsg("Invite link found, but the invite record was not found in the organization data. Ask the organization administrator to create a fresh invite link.");
+        }
+
+        const linkedOwnerId = ownData && ownData.ownerUserId && ownData.ownerUserId !== session.user.id ? ownData.ownerUserId : "";
+        if(linkedOwnerId) {
+          const ownerRow = await fetchUserStateRow(linkedOwnerId);
+          if(ownerRow?.data) {
+            const ownerState = normalizeLoadedUserState(ownerRow.data, linkedOwnerId);
+            dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(ownerState, session.user) });
+            return;
+          }
+        }
+
+        if (ownData && Object.keys(ownData).length > 0 && !ownData.invitedMember) {
+          const loadedState = normalizeLoadedUserState(ownData, session.user.id);
           dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(loadedState, session.user) });
         } else {
           // New users start with a clean platform, and the first signed-in account
@@ -9937,7 +10083,7 @@ export default function App() {
     }
     loadData();
     return () => { cancelled = true; };
-  }, [session]);
+  }, [session, manualInviteInfo?.token, manualInviteInfo?.ownerUserId]);
 
   /* Save state to Supabase, debounced */
   useEffect(() => {
@@ -9945,11 +10091,13 @@ export default function App() {
     setSyncStatus("saving");
     const timer = setTimeout(async () => {
       try {
+        const cloudOwnerId = state.ownerUserId || session.user.id;
+        const cloudState = ensureCurrentOrganizationAdmin(normalizeLoadedUserState(state, cloudOwnerId), session.user);
         const { error } = await supabase
           .from("user_state")
           .upsert({
-            user_id: session.user.id,
-            data: ensureCurrentOrganizationAdmin(normalizeLoadedUserState(state, session.user.id), session.user),
+            user_id: cloudOwnerId,
+            data: cloudState,
             updated_at: new Date().toISOString(),
           }, { onConflict:"user_id" });
 
@@ -9957,8 +10105,9 @@ export default function App() {
           console.error("Save error:", error);
           setSyncStatus("error");
         } else {
+          if(cloudOwnerId !== session.user.id) await saveInvitePointerForUser(session.user.id, cloudOwnerId, session.user.email);
           setSyncStatus("saved");
-          try { localStorage.setItem("ncaState", JSON.stringify(ensureCurrentOrganizationAdmin(normalizeLoadedUserState(state, session.user.id), session.user))); localStorage.setItem("ncaState:lastUserId", session.user.id); } catch(e) {}
+          try { localStorage.setItem("ncaState", JSON.stringify(cloudState)); localStorage.setItem("ncaState:lastUserId", session.user.id); } catch(e) {}
           setTimeout(() => setSyncStatus("idle"), 2000);
         }
       } catch (e) {
@@ -10164,16 +10313,17 @@ export default function App() {
     const { error, data } = await supabase.auth.signUp({
       email: authEmail.trim(),
       password: authPassword,
+      options: manualInviteInfo?.token ? { data:{ inviteToken:manualInviteInfo.token, invitedEmail:normalizeEmail(authEmail), invitedOwnerUserId:manualInviteInfo.ownerUserId || "" } } : undefined,
     });
     setAuthBusy(false);
     if (error) {
       setAuthError(error.message);
     } else if (data.user && !data.session) {
-      setAuthInfoMsg("✓ Account created! Check your email to confirm your address, then log in.");
+      setAuthInfoMsg(manualInviteInfo?.token ? "✓ Account created! Check your email to confirm your address, then come back to this invite link or sign in with this email." : "✓ Account created! Check your email to confirm your address, then log in.");
       setAuthMode("login");
       setAuthPassword(""); setAuthConfirmPassword("");
     } else {
-      setAuthInfoMsg("✓ Account created and signed in!");
+      setAuthInfoMsg(manualInviteInfo?.token ? "✓ Account created and signed in! Connecting you to the invited organization..." : "✓ Account created and signed in!");
     }
   }
 
