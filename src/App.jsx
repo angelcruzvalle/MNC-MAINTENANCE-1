@@ -2286,7 +2286,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   );
 
   const widgetRegistry = {
-    quick_links: { title:"Quick Links", size:"wide", tab:"dashboard", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title={`Quick Links — ${roleLabel(role)}`} action={canUseSettings ? <Btn small variant="secondary" onClick={onSettings}>Settings</Btn> : null}><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(165px,1fr))", gap:10, marginTop:8 }}>{quickLinks.map(link => <QuickLinkButton key={link.tab} link={link} />)}</div></Panel> },
+    quick_links: { title:"Quick Links", size:"full", tab:"dashboard", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title="Quick Links" action={canUseSettings ? <Btn small variant="secondary" onClick={onSettings}>Settings</Btn> : null}><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(165px,1fr))", gap:10, marginTop:8 }}>{quickLinks.map(link => <QuickLinkButton key={link.tab} link={link} />)}</div></Panel> },
     readiness: { title:"Operational Ready", size:"small", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <SmallCard title="Operational Ready" value={`${readiness}%`} sub={`${readyEqs.length} of ${eqs.length} assets fully operational`} color={readiness>=85?T.green:readiness>=65?T.amber:T.red} tab="equipment" /> },
     active_work: { title:"Active Work", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <SmallCard title="Active Work" value={activeWOs.length} sub={`${highPriority.length} high priority • ${awaitingParts.length} awaiting parts`} color={highPriority.length?T.red:T.accent} tab="workorders" /> },
     high_priority: { title:"High Priority", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="High Priority" value={highPriority.length} sub="Work orders needing fast attention" color={highPriority.length?T.red:T.green} tab="workorders" /> },
@@ -2342,16 +2342,23 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
 
   return <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
     <style>{`
-      @media (max-width: 860px){
+      .mf-dashboard-grid > div{ min-width:0; }
+      @media (max-width: 1120px){
+        .mf-dashboard-grid{ grid-template-columns:repeat(6,minmax(0,1fr)) !important; }
+        .mf-dashboard-widget-small{ grid-column:span 3 !important; }
+        .mf-dashboard-widget-wide,.mf-dashboard-widget-full{ grid-column:1 / -1 !important; }
+      }
+      @media (max-width: 700px){
         .mf-dashboard-grid{ grid-template-columns:1fr !important; }
-        .mf-dashboard-widget-wide{ grid-column:span 1 !important; }
+        .mf-dashboard-widget-small,.mf-dashboard-widget-wide,.mf-dashboard-widget-full{ grid-column:1 / -1 !important; }
         .mf-dashboard-hero{ border-radius:20px !important; padding:16px !important; }
         .mf-dashboard-hero h2{ font-size:27px !important; }
-        .mf-dashboard-actions{ width:100%; }
+        .mf-dashboard-hero{ grid-template-columns:1fr !important; }
+        .mf-dashboard-actions{ width:100%; justify-content:flex-start !important; }
       }
     `}</style>
-    <div className="mf-dashboard-hero" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:14, flexWrap:"wrap", padding:"18px 20px", borderRadius:26, background:T.card, color:T.text, border:`1px solid ${T.border}`, boxShadow:"0 12px 30px rgba(15,23,42,.08)" }}>
-      <div style={{ minWidth:240, flex:"1 1 520px" }}><div style={{ fontSize:12, fontWeight:900, letterSpacing:.6, textTransform:"uppercase", color:T.muted }}>Dashboard • {facilityScopeLabel}</div><h2 style={{ margin:"6px 0 8px", fontSize:32, lineHeight:1, letterSpacing:-.8 }}>Role-Based Dashboard</h2><div style={{ color:T.muted, fontSize:14, maxWidth:760 }}>{roleLabel(role)} view with live data, alerts, and shortcuts. Click a card or quick link to jump directly to the section you need.</div></div>
+    <div className="mf-dashboard-hero" style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", alignItems:"center", gap:14, padding:"18px 20px", borderRadius:26, background:T.card, color:T.text, border:`1px solid ${T.border}`, boxShadow:"0 12px 30px rgba(15,23,42,.08)" }}>
+      <div style={{ minWidth:0 }}><div style={{ fontSize:12, fontWeight:900, letterSpacing:.6, textTransform:"uppercase", color:T.muted }}>Dashboard • {facilityScopeLabel}</div><h2 style={{ margin:"6px 0 8px", fontSize:32, lineHeight:1, letterSpacing:-.8 }}>Dashboard</h2><div style={{ color:T.muted, fontSize:14, maxWidth:760 }}>{roleLabel(role)} view with live data, alerts, and shortcuts. Click a card or quick link to jump directly to the section you need.</div></div>
       <div className="mf-dashboard-actions" style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end" }}><Btn onClick={()=>setEditDashboard(v=>!v)}>{editDashboard ? "Done Customizing" : "Customize Dashboard"}</Btn><Btn variant="secondary" onClick={()=>click("workorders")}>Work Orders</Btn><Btn variant="secondary" onClick={()=>click("equipment")}>Equipment</Btn>{canUseSettings && <Btn variant="secondary" onClick={onSettings}>Settings</Btn>}</div>
     </div>
 
@@ -2365,10 +2372,12 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
       </div>
     </Card>}
 
-    <div className="mf-dashboard-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))", gap:12, alignItems:"stretch" }}>
+    <div className="mf-dashboard-grid" style={{ display:"grid", gridTemplateColumns:"repeat(12,minmax(0,1fr))", gap:12, alignItems:"stretch" }}>
       {safeLayout.map((id, index) => {
         const w = widgetRegistry[id];
-        return <div key={id} className={w.size === "wide" ? "mf-dashboard-widget-wide" : ""} draggable={editDashboard} onDragStart={()=>setDragWidgetId(id)} onDragOver={e=>{ if(editDashboard) e.preventDefault(); }} onDrop={()=>onDropWidget(id)} style={{ gridColumn:w.size === "wide" ? "span 2" : "span 1", position:"relative", minWidth:0 }}>
+        const widgetClass = w.size === "full" ? "mf-dashboard-widget-full" : w.size === "wide" ? "mf-dashboard-widget-wide" : "mf-dashboard-widget-small";
+        const widgetSpan = w.size === "full" ? "1 / -1" : w.size === "wide" ? "span 6" : "span 3";
+        return <div key={id} className={widgetClass} draggable={editDashboard} onDragStart={()=>setDragWidgetId(id)} onDragOver={e=>{ if(editDashboard) e.preventDefault(); }} onDrop={()=>onDropWidget(id)} style={{ gridColumn:widgetSpan, position:"relative", minWidth:0 }}>
           {editDashboard && <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, marginBottom:6, background:T.card, border:`1px dashed ${T.border}`, borderRadius:14, padding:"7px 8px" }}>
             <span style={{ fontSize:12, color:T.muted, fontWeight:900, cursor:"grab" }}>☰ Drag • {w.title}</span>
             <div style={{ display:"flex", gap:4 }}>
