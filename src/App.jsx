@@ -639,7 +639,7 @@ function stampLegacyList(list=[], facilityId='', facilityName='') {
 }
 
 function morovisFacilityForState(state={}) {
-  const facilities = normalizeMaintForgeLocations(state).filter(f => f.active !== false);
+  const facilities = restrictedRole ? allFacilities.filter(f => roleFacilityIds.includes(String(f.id))) : allFacilities;
   return facilities.find(f => isMorovisFacilityName(f.name)) || null;
 }
 
@@ -2125,21 +2125,53 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   const allFuelContainers = state.fuelContainers || [];
   const allUsageLogs = state.usageLogs || [];
   const notifications = state.notifications || [];
+  const role = normalizeRole(state.userRole || "organization_admin");
+  const allFacilities = normalizeMaintForgeLocations(state).filter(f => f.active !== false);
+  const currentUserEmail = normalizeEmail(state.currentUser?.email || state.user?.email || state.profile?.email || "");
+  const currentOrgUser = currentUserEmail ? (state.organizationUsers || []).find(u => normalizeEmail(u.email) === currentUserEmail) : null;
+  const profileFacilityIds = [
+    ...(Array.isArray(state.profile?.facilityIds) ? state.profile.facilityIds : []),
+    ...(Array.isArray(state.userFacilityIds) ? state.userFacilityIds : []),
+    ...(Array.isArray(state.assignedFacilityIds) ? state.assignedFacilityIds : []),
+    ...(Array.isArray(currentOrgUser?.facilityIds) ? currentOrgUser.facilityIds : []),
+    state.profile?.facilityId,
+    state.profile?.locationId,
+    currentOrgUser?.facilityId,
+    currentOrgUser?.locationId,
+  ].filter(Boolean).map(String);
   const activeFacility = activeMaintForgeLocation(state);
-  const facilityScopeLabel = activeFacility?.name || "All Facilities";
-  const eqs = allEqs.filter(e => recordMatchesActiveLocation(e, state));
+  const restrictedRole = role !== "organization_admin";
+  const roleFacilityIds = (() => {
+    if(!restrictedRole) return activeFacility?.id ? [String(activeFacility.id)] : [];
+    if(activeFacility?.id && (profileFacilityIds.length === 0 || profileFacilityIds.includes(String(activeFacility.id)))) return [String(activeFacility.id)];
+    const ids = Array.from(new Set(profileFacilityIds));
+    if(ids.length) return ids;
+    return allFacilities[0]?.id ? [String(allFacilities[0].id)] : [];
+  })();
+  const dashboardRecordMatchesScope = (record={}) => {
+    if(!restrictedRole) return recordMatchesActiveLocation(record, state);
+    if(!roleFacilityIds.length) return false;
+    return roleFacilityIds.some(fid => recordMatchesActiveLocation(record, { ...state, activeLocationId: fid }));
+  };
+  const dashboardFacilityLabel = (() => {
+    if(!restrictedRole) return activeFacility?.name || "All Facilities";
+    const names = roleFacilityIds.map(id => locationNameForId(state, id)).filter(Boolean);
+    return names.length === 1 ? names[0] : `${names.length || 0} Assigned Facilities`;
+  })();
+  const facilityScopeLabel = dashboardFacilityLabel;
+  const eqs = allEqs.filter(e => dashboardRecordMatchesScope(e));
   const scopedEqIds = new Set(eqs.map(e => String(e.id || e.equipmentId || "")).filter(Boolean));
   const belongsToScopedEquipment = (record={}) => {
     const id = workOrderEquipmentId(record) || record.equipmentId || record.equipment || record.parentEquipmentId || record.parentId || "";
     return id && scopedEqIds.has(String(id));
   };
-  const wos = allWos.filter(w => recordMatchesActiveLocation(w, state) || belongsToScopedEquipment(w));
-  const parts = allParts.filter(p => recordMatchesActiveLocation(p, state) || belongsToScopedEquipment(p));
-  const pmSchedules = allPmSchedules.filter(s => recordMatchesActiveLocation(s, state) || belongsToScopedEquipment(s));
-  const inspectionSchedules = allInspectionSchedules.filter(s => recordMatchesActiveLocation(s, state) || belongsToScopedEquipment(s));
-  const requests = allRequests.filter(r => recordMatchesActiveLocation(r, state) || belongsToScopedEquipment(r));
-  const fuelContainers = allFuelContainers.filter(c => recordMatchesActiveLocation(c, state));
-  const usageLogs = allUsageLogs.filter(u => recordMatchesActiveLocation(u, state) || belongsToScopedEquipment(u));
+  const wos = allWos.filter(w => dashboardRecordMatchesScope(w) || belongsToScopedEquipment(w));
+  const parts = allParts.filter(p => dashboardRecordMatchesScope(p) || belongsToScopedEquipment(p));
+  const pmSchedules = allPmSchedules.filter(s => dashboardRecordMatchesScope(s) || belongsToScopedEquipment(s));
+  const inspectionSchedules = allInspectionSchedules.filter(s => dashboardRecordMatchesScope(s) || belongsToScopedEquipment(s));
+  const requests = allRequests.filter(r => dashboardRecordMatchesScope(r) || belongsToScopedEquipment(r));
+  const fuelContainers = allFuelContainers.filter(c => dashboardRecordMatchesScope(c));
+  const usageLogs = allUsageLogs.filter(u => dashboardRecordMatchesScope(u) || belongsToScopedEquipment(u));
   const todayStr = today();
   const soon = new Date(); soon.setDate(soon.getDate() + 14);
   const soonStr = soon.toISOString().split("T")[0];
@@ -2166,20 +2198,23 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   const repairsOpen = activeWOs.filter(w => w.woType === "Repair");
   const serviceOpen = activeWOs.filter(w => w.woType === "Service");
   const inspectionOpen = activeWOs.filter(w => w.woType === "Inspection");
-  const role = normalizeRole(state.userRole || "organization_admin");
   const profileName = state.profile?.firstName ? `${state.profile.firstName} ${state.profile.lastName || ""}`.trim() : "";
   const assignedToMe = activeWOs.filter(w => profileName && String(w.tech || "").toLowerCase() === profileName.toLowerCase());
-  const fuelPercentFor = (c={}) => {
-    const raw = c.percentFull ?? c.percent ?? c.levelPercent ?? c.currentPercent ?? c.percentUsed;
-    const n = Number(raw);
-    if(Number.isFinite(n) && n > 0) return Math.max(0, Math.min(100, n));
-    const gallons = Number(c.currentGallons ?? c.gallons ?? c.currentLevel ?? c.levelGallons ?? 0);
+  const dashboardFuelSnapshot = (c={}) => {
+    const reading = latestFuelReading(state, c.id || c.containerId || c.name);
+    const gallons = Number(reading?.gallons ?? c.currentGallons ?? c.gallons ?? c.currentLevel ?? c.levelGallons ?? 0);
     const capacity = Number(c.capacity ?? c.maxGallons ?? c.sizeGallons ?? 0);
-    if(capacity > 0 && gallons >= 0) return Math.max(0, Math.min(100, Math.round((gallons / capacity) * 100)));
-    return 0;
+    const rawPercent = reading ? fuelPercent(c, gallons) : Number(c.percentFull ?? c.percent ?? c.levelPercent ?? c.currentPercent ?? NaN);
+    const percent = Number.isFinite(rawPercent) ? Math.max(0, Math.min(100, rawPercent)) : (capacity > 0 ? Math.max(0, Math.min(100, (gallons / capacity) * 100)) : 0);
+    return {
+      ...c,
+      _percent: percent,
+      _gallons: gallons,
+      _latestInches: reading?.inchesText ?? reading?.inches ?? c.latestInches ?? c.inches ?? "",
+      _latestDate: reading?.date || c.latestDate || c.date || "",
+    };
   };
-  const fuelGallonsFor = (c={}) => Number(c.currentGallons ?? c.gallons ?? c.currentLevel ?? c.levelGallons ?? 0);
-  const fuelLevels = fuelContainers.map(c => ({ ...c, _percent:fuelPercentFor(c), _gallons:fuelGallonsFor(c) })).sort((a,b)=>a._percent-b._percent);
+  const fuelLevels = fuelContainers.map(dashboardFuelSnapshot).sort((a,b)=>a._percent-b._percent);
   const lowFuel = fuelLevels.filter(c => c._percent > 0 && c._percent <= 25);
   const recentActivity = [...notifications].sort((a,b)=>String(b.createdAt||b.time||"").localeCompare(String(a.createdAt||a.time||""))).slice(0,6);
   const facilities = normalizeMaintForgeLocations(state).filter(f => f.active !== false);
@@ -2272,7 +2307,45 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     if(role === "supervisor") return adminLinks.filter(l => !["spending","reports_combined"].includes(l.tab)).slice(0,10);
     return adminLinks;
   };
-  const quickLinks = quickLinksForRole();
+  const allQuickLinks = quickLinksForRole();
+  const defaultQuickLinkTabs = () => allQuickLinks.map(link => link.tab);
+  const quickLinksKey = `maintforge_dashboard_quick_links_v1_${role}_${restrictedRole ? roleFacilityIds.join("_") || "assigned" : "all"}`;
+  const loadQuickLinks = () => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(quickLinksKey) || "null");
+      if(Array.isArray(saved) && saved.length) return saved;
+    } catch(e) {}
+    return defaultQuickLinkTabs();
+  };
+  const [quickLinkLayout, setQuickLinkLayout] = useState(loadQuickLinks);
+  const [dragQuickLink, setDragQuickLink] = useState(null);
+  useEffect(()=>{ setQuickLinkLayout(loadQuickLinks()); }, [quickLinksKey]);
+  useEffect(()=>{ try { localStorage.setItem(quickLinksKey, JSON.stringify(quickLinkLayout)); } catch(e) {} }, [quickLinkLayout, quickLinksKey]);
+  const quickLinkRegistry = Object.fromEntries(allQuickLinks.map(link => [link.tab, link]));
+  const quickLinks = quickLinkLayout.map(tab => quickLinkRegistry[tab]).filter(Boolean);
+  const addableQuickLinks = allQuickLinks.filter(link => !quickLinkLayout.includes(link.tab));
+  const moveQuickLink = (tab, direction) => setQuickLinkLayout(list => {
+    const next = list.filter(id => quickLinkRegistry[id]);
+    const idx = next.indexOf(tab);
+    const target = idx + direction;
+    if(idx < 0 || target < 0 || target >= next.length) return next;
+    [next[idx], next[target]] = [next[target], next[idx]];
+    return next;
+  });
+  const removeQuickLink = (tab) => setQuickLinkLayout(list => list.filter(id => id !== tab));
+  const addQuickLink = (tab) => setQuickLinkLayout(list => list.includes(tab) ? list : [...list, tab]);
+  const resetQuickLinks = () => setQuickLinkLayout(defaultQuickLinkTabs());
+  const onDropQuickLink = (targetTab) => {
+    if(!dragQuickLink || dragQuickLink === targetTab) return;
+    setQuickLinkLayout(list => {
+      const current = list.filter(id => id !== dragQuickLink && quickLinkRegistry[id]);
+      const idx = current.indexOf(targetTab);
+      if(idx < 0) return list;
+      current.splice(idx, 0, dragQuickLink);
+      return current;
+    });
+    setDragQuickLink(null);
+  };
 
   const priorityList = activeWOs.slice().sort((a,b)=>({High:0,Medium:1,Low:2}[a.priority]??3)-({High:0,Medium:1,Low:2}[b.priority]??3) || String(a.due||"").localeCompare(String(b.due||""))).slice(0,6);
   const equipmentWatch = [...deadlineEqs, ...deficientEqs].slice(0,6);
@@ -2334,7 +2407,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   );
 
   const widgetRegistry = {
-    quick_links: { title:"Quick Links", size:"full", tab:"dashboard", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title="Quick Links"><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(180px,100%),1fr))", gap:10, marginTop:8 }}>{quickLinks.map(link => <QuickLinkButton key={link.tab} link={link} />)}</div></Panel> },
+    quick_links: { title:"Quick Links", size:"full", tab:"dashboard", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title="Quick Links"><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(180px,100%),1fr))", gap:10, marginTop:8 }}>{quickLinks.map((link, index) => <div key={link.tab} draggable={editDashboard} onDragStart={()=>setDragQuickLink(link.tab)} onDragOver={e=>{ if(editDashboard) e.preventDefault(); }} onDrop={()=>onDropQuickLink(link.tab)} style={{ minWidth:0 }}>{editDashboard && <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:6, marginBottom:5, padding:"5px 6px", border:`1px dashed ${T.border}`, borderRadius:10, background:T.grayLt }}><span style={{ fontSize:11, fontWeight:900, color:T.muted, cursor:"grab" }}>☰ {link.label}</span><span style={{ display:"flex", gap:3 }}><button type="button" onClick={()=>moveQuickLink(link.tab,-1)} disabled={index===0} style={{ border:`1px solid ${T.border}`, background:T.card, borderRadius:7, padding:"2px 6px", cursor:index===0?"not-allowed":"pointer" }}>↑</button><button type="button" onClick={()=>moveQuickLink(link.tab,1)} disabled={index===quickLinks.length-1} style={{ border:`1px solid ${T.border}`, background:T.card, borderRadius:7, padding:"2px 6px", cursor:index===quickLinks.length-1?"not-allowed":"pointer" }}>↓</button><button type="button" onClick={()=>removeQuickLink(link.tab)} style={{ border:`1px solid ${T.red}`, color:T.red, background:T.card, borderRadius:7, padding:"2px 6px", cursor:"pointer" }}>×</button></span></div>}<QuickLinkButton link={link} /></div>)}{!quickLinks.length && <div style={{ color:T.muted, padding:12 }}>No quick links selected. Use Customize Dashboard to add them back.</div>}</div></Panel> },
     readiness: { title:"Operational Ready", size:"small", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <SmallCard title="Operational Ready" value={`${readiness}%`} sub={`${readyEqs.length} of ${eqs.length} assets fully operational`} color={readiness>=85?T.green:readiness>=65?T.amber:T.red} tab="equipment" /> },
     active_work: { title:"Active Work", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <SmallCard title="Active Work" value={activeWOs.length} sub={`${highPriority.length} high priority • ${awaitingParts.length} awaiting parts`} color={highPriority.length?T.red:T.accent} tab="workorders" /> },
     high_priority: { title:"High Priority", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="High Priority" value={highPriority.length} sub="Work orders needing fast attention" color={highPriority.length?T.red:T.green} tab="workorders" /> },
@@ -2352,7 +2425,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     work_mix: { title:"Work Mix", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <SmallCard title="Work Mix" value={`${repairsOpen}/${serviceOpen}/${inspectionOpen}`} sub="Repair / Service / Inspection active WOs" color={repairsOpen?T.red:serviceOpen?T.amber:T.green} tab="workorders" /> },
     readiness_breakdown: { title:"Readiness Breakdown", size:"wide", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <Panel title={`Readiness Breakdown — ${facilityScopeLabel}`} action={<Btn small variant="secondary" onClick={()=>click("equipment")}>Equipment</Btn>}><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(150px,100%),1fr))", gap:10, marginTop:8 }}><SmallCard title="Ready" value={readyEqs.length} sub="Fully operational" color={T.green} tab="equipment" /><SmallCard title="Deficient" value={deficientEqs.length} sub="Can work, needs attention" color={T.amber} tab="equipment" /><SmallCard title="Deadline" value={deadlineEqs.length} sub="Out of service" color={T.red} tab="equipment" /></div></Panel> },
     facility_readiness: { title:"Facility Readiness", size:"full", tab:"equipment", roles:["organization_admin"], render:()=> <Panel title="Facility Readiness" action={<Btn small variant="secondary" onClick={()=>click("equipment")}>Equipment</Btn>}><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(170px,100%),1fr))", gap:10, marginTop:8, marginBottom:12 }}><SmallCard title="Organization Readiness" value={`${organizationReadinessSummary.readiness}%`} sub={`${organizationReadinessSummary.ready} ready of ${organizationReadinessSummary.assets} assets`} color={organizationReadinessSummary.readiness>=85?T.green:organizationReadinessSummary.readiness>=65?T.amber:T.red} tab="equipment" /><SmallCard title="Organization Assets" value={organizationReadinessSummary.assets} sub={`${organizationReadinessSummary.deficient} deficient • ${organizationReadinessSummary.deadline} deadline`} color={organizationReadinessSummary.deadline?T.red:organizationReadinessSummary.deficient?T.amber:T.green} tab="equipment" /><SmallCard title="Organization Active WOs" value={organizationReadinessSummary.activeWork} sub={`Month spend ${moneyFmt(organizationReadinessSummary.monthSpend)}`} color={organizationReadinessSummary.activeWork?T.accent:T.green} tab="workorders" /></div>{facilityDashboardRows.length ? <div style={{ overflowX:"auto", marginTop:8 }}><table style={{ width:"100%", borderCollapse:"collapse", minWidth:760 }}><thead><tr>{["Facility","Readiness","Assets","Ready","Deficient","Deadline","Active WOs","Month Spend"].map(h=><th key={h} style={{ textAlign:h==="Facility"?"left":"right", color:T.muted, fontSize:12, letterSpacing:.35, textTransform:"uppercase", padding:"9px 8px", borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead><tbody>{facilityDashboardRows.map(row => <tr key={row.id} onClick={()=>click("equipment")} style={{ cursor:"pointer" }}><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, fontWeight:900, color:T.text }}>{row.name}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", fontWeight:950, color:row.readiness>=85?T.green:row.readiness>=65?T.amber:T.red }}>{row.readiness}%</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right" }}>{row.assets}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", color:T.green, fontWeight:900 }}>{row.ready}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", color:T.amber, fontWeight:900 }}>{row.deficient}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", color:T.red, fontWeight:900 }}>{row.deadline}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", fontWeight:900 }}>{row.activeWork}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", fontWeight:900 }}>{moneyFmt(row.monthSpend)}</td></tr>)}</tbody></table></div> : <div style={{ padding:14, color:T.muted }}>No facilities found yet. Add facilities in Settings to see readiness by facility.</div>}</Panel> },
-    fuel_levels: { title:"Fuel Levels", size:"wide", tab:"fuel", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <Panel title={`Fuel Levels — ${facilityScopeLabel}`} action={<Btn small variant="secondary" onClick={()=>click("fuel")}>Fuel</Btn>}>{fuelLevels.length ? fuelLevels.slice(0,6).map(c=><ActionRow key={c.id || c.name} title={c.name || c.containerName || "Fuel Container"} sub={`${Math.round(c._percent || 0)}% full${c._gallons ? ` • ${Math.round(c._gallons).toLocaleString()} gallons` : ""}${c.latestInches || c.inches ? ` • ${c.latestInches || c.inches} in` : ""}`} badge={c._percent <= 25 && c._percent > 0 ? "Low" : c._percent >= 75 ? "Full" : "OK"} color={c._percent <= 25 && c._percent > 0 ? T.red : c._percent >= 75 ? T.green : T.amber} tab="fuel" />) : <div style={{ padding:14, color:T.muted }}>No fuel containers found for this facility.</div>}</Panel> },
+    fuel_levels: { title:"Fuel Levels", size:"wide", tab:"fuel", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <Panel title={`Fuel Levels — ${facilityScopeLabel}`} action={<Btn small variant="secondary" onClick={()=>click("fuel")}>Fuel</Btn>}>{fuelLevels.length ? fuelLevels.slice(0,6).map(c=><ActionRow key={c.id || c.name} title={c.name || c.containerName || "Fuel Container"} sub={`${Math.round(c._percent || 0)}% full${Number.isFinite(Number(c._gallons)) ? ` • ${Math.round(c._gallons).toLocaleString()} gallons` : ""}${c._latestInches ? ` • ${c._latestInches} in` : ""}${c._latestDate ? ` • ${c._latestDate}` : ""}`} badge={c._percent <= 25 && c._percent > 0 ? "Low" : c._percent >= 75 ? "Full" : "OK"} color={c._percent <= 25 && c._percent > 0 ? T.red : c._percent >= 75 ? T.green : T.amber} tab="fuel" />) : <div style={{ padding:14, color:T.muted }}>No fuel containers found for this facility.</div>}</Panel> },
     today_focus: { title:"Facility Manager Focus", size:"wide", tab:"workorders", roles:["organization_admin","facility_admin","supervisor"], render:()=> <Panel title={`Facility Manager Focus — ${facilityScopeLabel}`} action={<Btn small onClick={()=>click("workorders")}>Work Orders</Btn>}>{overdueWOs.slice(0,3).map(w=><ActionRow key={`od-${w.id}`} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "Overdue Work Order"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • Due ${w.due || "No due date"} • ${w.status || "Open"}`} badge="Overdue" color={T.red} tab="workorders" />)}{highPriority.slice(0,3).map(w=><ActionRow key={`hp-${w.id}`} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "High Priority"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • ${w.status || "Open"}${w.due ? ` • Due ${w.due}` : ""}`} badge="High" color={T.red} tab="workorders" />)}{deadlineEqs.slice(0,3).map(e=><ActionRow key={`dl-${e.id}`} title={`${e.id} — ${e.name || e.nomenclature || "Deadline Equipment"}`} sub={`${e.locationName || e.location || facilityScopeLabel} • ${e.category || e.type || "Equipment"}`} badge="Deadline" color={T.red} tab="equipment" />)}{!overdueWOs.length && !highPriority.length && !deadlineEqs.length && <div style={{ padding:14, color:T.muted }}>No urgent overdue work, high-priority WOs, or deadline equipment right now.</div>}</Panel> },
     my_work: { title:"My Work", size:"wide", tab:"workorders", roles:["mechanic","supervisor","facility_admin","organization_admin"], render:()=> <Panel title="My Work / Assigned Work" action={<Btn small onClick={()=>click("workorders")}>Open</Btn>}>{(assignedToMe.length ? assignedToMe : activeWOs.slice(0,4)).slice(0,6).map(w=><ActionRow key={w.id} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "Work Order"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • ${w.status || "Open"}`} badge={w.priority || "Normal"} color={w.priority==="High"?T.red:w.priority==="Medium"?T.amber:T.accent} tab="workorders" />)}{!activeWOs.length && <div style={{ padding:14, color:T.muted }}>No active assigned work.</div>}</Panel> },
     priority_queue: { title:"Priority Work Queue", size:"wide", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <Panel title="Priority Work Queue" action={<Btn small onClick={()=>click("workorders")}>View All</Btn>}>{priorityList.length ? priorityList.map(w=><ActionRow key={w.id} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "Work Order"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • Due ${w.due || "No due date"} • ${w.status || "Open"}`} badge={w.priority || "Normal"} color={w.priority==="High"?T.red:w.priority==="Medium"?T.amber:T.accent} tab="workorders" />) : <div style={{ padding:14, color:T.muted }}>No active work orders. Great time to review PM and inventory.</div>}</Panel> },
@@ -2414,6 +2487,15 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
       </div>
       <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
         {addableWidgets.length ? addableWidgets.map(([id,w]) => <button key={id} type="button" onClick={()=>addWidget(id)} style={{ border:`1px solid ${T.border}`, background:T.grayLt, color:T.text, borderRadius:999, padding:"9px 12px", fontWeight:800, cursor:"pointer" }}>+ {w.title}</button>) : <div style={{ color:T.muted, fontSize:13 }}>All available widgets for your role are already on the dashboard.</div>}
+      </div>
+      <div style={{ marginTop:16, paddingTop:14, borderTop:`1px solid ${T.border}` }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap", marginBottom:8 }}>
+          <div><h4 style={{ margin:"0 0 3px", fontSize:15 }}>Quick Links</h4><div style={{ color:T.muted, fontSize:12 }}>Add, remove, or move the shortcut buttons inside Quick Links.</div></div>
+          <Btn small variant="secondary" onClick={resetQuickLinks}>Reset Quick Links</Btn>
+        </div>
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          {addableQuickLinks.length ? addableQuickLinks.map(link => <button key={link.tab} type="button" onClick={()=>addQuickLink(link.tab)} style={{ border:`1px solid ${T.border}`, background:T.grayLt, color:T.text, borderRadius:999, padding:"8px 11px", fontWeight:800, cursor:"pointer" }}>+ {link.label}</button>) : <div style={{ color:T.muted, fontSize:13 }}>All available quick links are already showing.</div>}
+        </div>
       </div>
     </Card>}
 
