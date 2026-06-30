@@ -2634,8 +2634,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const outsideServices = (formWithLatestUsage.outsideServices||[]).filter(svc=>String(svc?.description||svc?.name||"").trim() || +(svc?.unitCost||svc?.cost||0));
     const outsideServicesSubtotal = outsideServicesTotal(outsideServices);
     if(promptMissingPartInventory()) return;
+    const normalizedCreatedDate = String(formWithLatestUsage.created || formWithLatestUsage.date || today()).slice(0,10);
+    const normalizedDueDate = formWithLatestUsage.due ? String(formWithLatestUsage.due).slice(0,10) : "";
     if(isEdit) {
-      const payload = {...formWithLatestUsage, woType:formWithLatestUsage.woType||"Repair", title:formWithLatestUsage.faultDescription||formWithLatestUsage.woType||"Work Order", faultEnabled:true, outsideServices, partsCost:partsTotal, outsideServicesCost:outsideServicesSubtotal};
+      const payload = {...formWithLatestUsage, created:normalizedCreatedDate, due:normalizedDueDate, woType:formWithLatestUsage.woType||"Repair", title:formWithLatestUsage.faultDescription||formWithLatestUsage.woType||"Work Order", faultEnabled:true, outsideServices, partsCost:partsTotal, outsideServicesCost:outsideServicesSubtotal};
       if(prevWO && payload.status !== prevWO.status && !confirmWOStatusChange(prevWO, payload.status)) return;
       dispatch({type:"UPDATE_WO", payload});
       if(prevWO && prevWO.status !== "Completed" && payload.status === "Completed") {
@@ -2646,7 +2648,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     } else {
       const nextType = formWithLatestUsage.woType || "Repair";
       const nextId = genWOId(formWithLatestUsage.equipment, nextType);
-      dispatch({type:"ADD_WO", payload:{...formWithLatestUsage, woType:nextType, title:formWithLatestUsage.faultDescription||nextType, faultEnabled:true, id:nextId, woNumber:nextId, outsideServices, partsCost:partsTotal, outsideServicesCost:outsideServicesSubtotal}});
+      dispatch({type:"ADD_WO", payload:{...formWithLatestUsage, created:normalizedCreatedDate, due:normalizedDueDate, woType:nextType, title:formWithLatestUsage.faultDescription||nextType, faultEnabled:true, id:nextId, woNumber:nextId, outsideServices, partsCost:partsTotal, outsideServicesCost:outsideServicesSubtotal}});
     }
     setModal(null);
     setDetailWO(null);
@@ -2768,15 +2770,15 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       @page{size:Letter;margin:0}
       .page{width:8.5in;min-height:auto;margin:0 auto;padding:.24in .28in;display:flex;flex-direction:column;gap:4px}
       .outer{border:1.5px solid #111827;border-radius:8px;overflow:hidden;background:white}
-      .top{display:grid;grid-template-columns:1.05in 1fr 1.65in;border-bottom:1.5px solid #111827;min-height:.72in}
-      .logoBox{display:flex;align-items:center;justify-content:center;border-right:1.5px solid #111827;padding:6px;background:white;overflow:hidden}
-      .logoBox img{max-width:100%;max-height:.58in;object-fit:contain;display:block}
+      .top{display:grid;grid-template-columns:1.65in minmax(0,1fr) 1.65in;border-bottom:1.5px solid #111827;min-height:.78in}
+      .logoBox{display:flex;align-items:center;justify-content:center;border-right:1.5px solid #111827;padding:6px 8px;background:white;overflow:hidden;min-width:0}
+      .logoBox img{width:100%;max-width:1.38in;max-height:.66in;object-fit:contain;display:block}
       .logoText{font-weight:900;text-align:center;color:#111827;font-size:13px;line-height:1.2}
-      .companyBox{display:flex;flex-direction:column;align-items:center;justify-content:center;background:${C.soft};padding:8px 10px;text-align:center}
-      .company{font-size:18px;font-weight:900;letter-spacing:.35px;text-transform:uppercase;color:#111827;line-height:1.05;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:clip}
-      .facilityName{margin-top:3px;font-size:12px;font-weight:800;letter-spacing:.45px;color:#334155;text-transform:uppercase;line-height:1.1}
+      .companyBox{display:flex;flex-direction:column;align-items:center;justify-content:center;background:${C.soft};padding:8px 14px;text-align:center;min-width:0}
+      .company{font-size:18px;font-weight:900;letter-spacing:.35px;text-transform:uppercase;color:#111827;line-height:1.05;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:clip;text-align:center}
+      .facilityName{margin-top:3px;width:100%;font-size:12px;font-weight:800;letter-spacing:.45px;color:#334155;text-transform:uppercase;line-height:1.1;text-align:center}
       .typePill{margin-top:4px;border:1.5px solid ${C.border};background:${C.accent};color:#111827;border-radius:999px;padding:4px 18px;font-size:12px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;display:inline-flex;gap:6px;align-items:center}
-      .numberBox{border-left:1.5px solid #111827;display:grid;grid-template-rows:1fr .32in;text-align:center;background:white}
+      .numberBox{border-left:1.5px solid #111827;display:grid;grid-template-rows:1fr .32in;text-align:center;background:white;min-width:0}
       .woNumber{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px}
       .woNumber .label{font-size:10px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#111827}
       .woNumber .number{font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:900;color:#111827;margin-top:4px;word-break:break-word}
@@ -2929,6 +2931,24 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <select style={sel} value={form.priority||"Medium"} onChange={e=>setForm(f=>({...f,priority:e.target.value}))}>
             {["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}
           </select>
+        </Field>
+
+        <Field label="Date Created" half>
+          <input
+            style={inp}
+            type="date"
+            value={String(form.created || form.date || today()).slice(0,10)}
+            onChange={e=>setForm(f=>({...f,created:e.target.value}))}
+          />
+        </Field>
+
+        <Field label="Due Date" half>
+          <input
+            style={inp}
+            type="date"
+            value={form.due || today()}
+            onChange={e=>setForm(f=>({...f,due:e.target.value}))}
+          />
         </Field>
 
         <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.card }}>
@@ -3778,6 +3798,12 @@ function Equipment({ state, dispatch }) {
     const eq = state.equipment.find(e => e.id === wo.equipment) || {};
     const gs = state.settings || {};
     const historyCompanyLogo = resolveWorkOrderBrandLogo(state, wo, eq || {});
+    const historyFacilityName = (() => {
+      const raw = recordLocationName(wo, state) || recordLocationName(eq || {}, state) || activeFacilitySettings(state)?.activeFacilityName || gs.siteName || gs.location || "";
+      if(!raw || raw === "All Facilities") return "";
+      if(typeof raw === "object") return raw.name || raw.location || raw.title || "";
+      return String(raw || "").trim();
+    })();
     const h = (value) => String(value ?? "").replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[ch]));
     const inspectionRowsForPrint = (() => {
       const linkedTask = (state.inspectionTasks || []).find(t => String(t.id || "") === String(wo.inspectionTaskId || ""));
@@ -3828,14 +3854,15 @@ function Equipment({ state, dispatch }) {
       body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#111827;font-size:12px;line-height:1.35}
       .page{width:8.5in;min-height:11in;margin:0 auto;padding:.38in .45in}
       .outer{border:1.5px solid #111827;border-radius:8px;overflow:hidden;background:white}
-      .top{display:grid;grid-template-columns:1.05in 1fr 1.65in;border-bottom:1.5px solid #111827;min-height:.72in}
-      .logoBox{display:flex;align-items:center;justify-content:center;border-right:1.5px solid #111827;padding:6px;background:white;overflow:hidden}
-      .logoBox img{max-width:100%;max-height:.58in;object-fit:contain;display:block}
+      .top{display:grid;grid-template-columns:1.65in minmax(0,1fr) 1.65in;border-bottom:1.5px solid #111827;min-height:.78in}
+      .logoBox{display:flex;align-items:center;justify-content:center;border-right:1.5px solid #111827;padding:6px 8px;background:white;overflow:hidden;min-width:0}
+      .logoBox img{width:100%;max-width:1.38in;max-height:.66in;object-fit:contain;display:block}
       .logoText{font-weight:900;text-align:center;color:#111827;font-size:13px;line-height:1.2}
-      .companyBox{display:flex;flex-direction:column;align-items:center;justify-content:center;background:${C.soft};padding:8px 10px;text-align:center}
-      .company{font-size:18px;font-weight:900;letter-spacing:.35px;text-transform:uppercase;color:#111827;line-height:1.05;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:clip}
+      .companyBox{display:flex;flex-direction:column;align-items:center;justify-content:center;background:${C.soft};padding:8px 14px;text-align:center;min-width:0}
+      .company{font-size:18px;font-weight:900;letter-spacing:.35px;text-transform:uppercase;color:#111827;line-height:1.05;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:clip;text-align:center}
+      .facilityName{margin-top:3px;width:100%;font-size:12px;font-weight:800;letter-spacing:.45px;color:#334155;text-transform:uppercase;line-height:1.1;text-align:center}
       .typePill{margin-top:4px;border:1.5px solid ${C.border};background:${C.accent};color:#111827;border-radius:999px;padding:4px 18px;font-size:12px;font-weight:900;letter-spacing:.8px;text-transform:uppercase}
-      .numberBox{border-left:1.5px solid #111827;display:grid;grid-template-rows:1fr .32in;text-align:center;background:white}
+      .numberBox{border-left:1.5px solid #111827;display:grid;grid-template-rows:1fr .32in;text-align:center;background:white;min-width:0}
       .woNumber{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px}
       .woNumber .label{font-size:10px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#111827}
       .woNumber .number{font-size:18px;font-weight:900;color:#111827;margin-top:4px;word-break:break-word}
@@ -3870,7 +3897,7 @@ function Equipment({ state, dispatch }) {
       <div class="page"><div class="outer">
         <header class="top">
           <div class="logoBox">${historyCompanyLogo ? `<img src="${historyCompanyLogo}" alt="Logo">` : `<div class="logoText">LOGO</div>`}</div>
-          <div class="companyBox"><div class="company" style="font-size:${workOrderBrandFontSize(gs.companyName || "Maintenance Department")}px">${h(gs.companyName || "Maintenance Department")}</div><div class="typePill">${h(type.toUpperCase())}</div></div>
+          <div class="companyBox"><div class="company" style="font-size:${workOrderBrandFontSize(gs.companyName || "Maintenance Department")}px">${h(gs.companyName || "Maintenance Department")}</div>${historyFacilityName ? `<div class="facilityName">${h(historyFacilityName)}</div>` : ""}<div class="typePill">${h(type.toUpperCase())}</div></div>
           <div class="numberBox"><div class="woNumber"><div class="label">Work Order Number</div><div class="number">${h(wo.id || "")}</div></div><div class="status">${h(wo.status || "Open")}</div></div>
         </header>
         <div class="dateGrid">
