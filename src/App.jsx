@@ -10096,6 +10096,11 @@ async function upsertInviteAccessRecord(invite={}, ownerState={}, currentUser=nu
   const clean = cleanInviteInfo(invite);
   if(!clean.token || !clean.ownerUserId || !clean.email) return { ok:false, reason:"missing_invite_fields" };
   try {
+    const rpcCreate = await createInviteAccessRecordRpc(invite, ownerState, currentUser);
+    if(rpcCreate?.ok) return rpcCreate;
+    if(rpcCreate?.error && !rpcCreate?.missingRpc) {
+      return { ok:false, error:rpcCreate.error, missingRpc:false };
+    }
     const payload = {
       token:clean.token,
       owner_user_id:clean.ownerUserId,
@@ -10183,6 +10188,67 @@ async function markInviteAccessAccepted(inviteToken="", currentUser=null) {
   }
 }
 
+
+function isMissingRpcError(error) {
+  const msg = String(error?.message || error?.details || "").toLowerCase();
+  return error?.code === "PGRST202" || error?.code === "42883" || msg.includes("function") && msg.includes("not found") || msg.includes("could not find the function");
+}
+
+async function createInviteAccessRecordRpc(invite={}, ownerState={}, currentUser=null) {
+  const clean = cleanInviteInfo(invite);
+  if(!clean.token || !clean.ownerUserId || !clean.email) return { ok:false, reason:"missing_invite_fields" };
+  try {
+    const { data, error } = await supabase.rpc("maintforge_create_invite", {
+      invite_token: clean.token,
+      invited_email_arg: normalizeEmail(clean.email),
+      invited_name_arg: invite.name || "",
+      invite_role_arg: normalizeRole(clean.role || invite.role || "viewer"),
+      facility_ids_arg: invitedUserFacilityIdsFrom(clean),
+      organization_name_arg: clean.organizationName || ownerState?.settings?.companyName || ownerState?.organization?.name || "",
+    });
+    if(error) {
+      if(isMissingRpcError(error)) return { ok:false, missingRpc:true, error };
+      console.error("Invite RPC create failed:", error);
+      return { ok:false, error };
+    }
+    return { ok:true, data };
+  } catch(error) {
+    console.error("Invite RPC create exception:", error);
+    return { ok:false, error };
+  }
+}
+
+async function acceptInviteViaRpc(inviteInfo={}, currentUser=null) {
+  const clean = cleanInviteInfo({ ...inviteInfo, email:inviteInfo?.email || currentUser?.email || "" });
+  if(!clean?.token || !currentUser?.id) return null;
+  try {
+    const { data, error } = await supabase.rpc("maintforge_accept_invite", { invite_code: clean.token });
+    if(error) {
+      if(isMissingRpcError(error)) return { missingRpc:true, error };
+      console.error("Invite RPC acceptance failed:", error);
+      return { error };
+    }
+    const payload = data && typeof data === "object" ? data : {};
+    const invite = normalizeInviteAccessRow({
+      token:payload.token || clean.token,
+      owner_user_id:payload.ownerUserId || payload.owner_user_id || clean.ownerUserId || "",
+      invited_email:payload.email || payload.invited_email || currentUser.email || clean.email || "",
+      role:payload.role || clean.role || "viewer",
+      facility_ids:payload.facilityIds || payload.facility_ids || clean.facilityIds || [],
+      organization_name:payload.organizationName || payload.organization_name || clean.organizationName || "",
+    }, clean);
+    const ownerUserId = invite.ownerUserId || payload.ownerUserId || payload.owner_user_id || "";
+    if(!ownerUserId) return { error:new Error("Invite was accepted, but no organization owner was returned by the database.") };
+    const ownerRow = await fetchUserStateRow(ownerUserId);
+    if(!ownerRow?.data) return { error:new Error("Invite was accepted, but the shared organization workspace could not be loaded. Check user_state membership policies.") , invite, ownerUserId };
+    const ownerState = normalizeLoadedUserState(ownerRow.data || {}, ownerUserId);
+    return { ownerRow, ownerState, invite, ownerUserId, source:"rpc_accept" };
+  } catch(error) {
+    console.error("Invite RPC acceptance exception:", error);
+    return { error };
+  }
+}
+
 async function findOrganizationMembershipAccessForUser(currentUser=null) {
   if(!currentUser?.id) return null;
   try {
@@ -10220,6 +10286,13 @@ async function findOrganizationMembershipAccessForUser(currentUser=null) {
 async function resolveInviteToOrganizationState(inviteInfo={}, currentUser=null) {
   const clean = cleanInviteInfo({ ...inviteInfo, email:inviteInfo?.email || currentUser?.email || "" });
   if(!clean?.token) return null;
+
+  // Database-side acceptance is the reliable path. It can find both new invite-table
+  // records and older invites still stored only inside the owner's user_state JSON.
+  // This prevents existing users from getting stuck in their old personal workspace.
+  const rpcMatch = await acceptInviteViaRpc(clean, currentUser);
+  if(rpcMatch?.invite && rpcMatch?.ownerState) return rpcMatch;
+  if(rpcMatch?.error && !rpcMatch?.missingRpc) return rpcMatch;
 
   const accessLookup = await findInviteAccessRecord(clean, currentUser);
   if(accessLookup?.emailMismatch) return { emailMismatch:true, invite:accessLookup.invite };
@@ -10889,8 +10962,13 @@ export default function App() {
     setInviteCodeError("");
     try {
       const inviteMatch = await resolveInviteToOrganizationState(clean, session.user);
+      if(inviteMatch?.error && !inviteMatch?.invite) {
+        const msg = String(inviteMatch.error?.message || inviteMatch.error || "");
+        setInviteCodeError(msg.includes("INVITE_EMAIL_MISMATCH") ? "This invite code belongs to a different email. Sign in with the exact invited email." : msg.includes("INVITE_NOT_FOUND") ? "Invite code was not found in the database or legacy pending invites. Create a fresh invite after running the updated Supabase SQL." : `Invite connection failed: ${msg}`);
+        return false;
+      }
       if(!inviteMatch?.invite) {
-        setInviteCodeError("Invite code was not found. Ask the Organization Administrator to create a fresh invite and give you the code shown in Pending Invite Records.");
+        setInviteCodeError("Invite code was not found. Create a fresh invite after running the updated Supabase SQL, then use the code shown in Pending Invite Records.");
         return false;
       }
       const acceptedState = applyInviteToOrganizationState({ ...inviteMatch.ownerState, ownerUserId:inviteMatch.ownerUserId }, inviteMatch.invite, session.user);
