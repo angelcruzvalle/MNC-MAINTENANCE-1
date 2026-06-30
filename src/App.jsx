@@ -9948,6 +9948,45 @@ async function findOrganizationStateForInvite(inviteInfo={}, currentUser=null) {
   return null;
 }
 
+async function findOrganizationMembershipForUser(currentUser=null) {
+  const email = normalizeEmail(currentUser?.email || "");
+  const userId = String(currentUser?.id || "");
+  if(!email && !userId) return null;
+  try {
+    const { data, error } = await supabase
+      .from("user_state")
+      .select("user_id,data");
+    if(error) {
+      console.error("Organization membership search error:", error);
+      return null;
+    }
+    for(const row of (data || [])) {
+      if(!row?.user_id || row.user_id === userId) continue;
+      const ownerState = normalizeLoadedUserState(row.data || {}, row.user_id);
+      const users = Array.isArray(ownerState.organizationUsers) ? ownerState.organizationUsers : [];
+      const member = users.find(u =>
+        (userId && (String(u.userId || "") === userId || String(u.id || "") === userId)) ||
+        (email && normalizeEmail(u.email) === email)
+      );
+      if(member) {
+        const role = normalizeRole(member.role || "viewer");
+        const facilityIds = Array.isArray(member.facilityIds) ? member.facilityIds : (member.locationId ? [member.locationId] : []);
+        const invite = {
+          token:member.inviteToken || ownerState.inviteToken || "",
+          email:member.email || email,
+          role,
+          facilityIds,
+          locationId:member.locationId || facilityIds[0] || "",
+        };
+        return { ownerRow:row, ownerState, member, invite, ownerUserId:row.user_id };
+      }
+    }
+  } catch(e) {
+    console.error("Organization membership search exception:", e);
+  }
+  return null;
+}
+
 function buildInvitePointerState(userId="", ownerUserId="", email="", invite={}) {
   const facilityIds = Array.isArray(invite?.facilityIds) ? invite.facilityIds : (invite?.locationId ? [invite.locationId] : []);
   return {
@@ -10123,7 +10162,7 @@ export default function App() {
             // Save the organization update immediately, then replace the invited user's old standalone
             // workspace row with a lightweight pointer. This intentionally removes anything the invited
             // user created before accepting the invite, so future logins open the invited organization.
-            await saveOrganizationInviteAcceptance(inviteMatch.ownerUserId, acceptedState);
+            await saveOrganizationInviteAcceptance(inviteMatch.ownerUserId, prepareSharedOrganizationStateForCloudSave(acceptedState, null));
             await saveInvitePointerForUser(session.user.id, inviteMatch.ownerUserId, session.user.email, inviteMatch.invite);
             dispatch({ type:"REPLACE_STATE", payload:acceptedState });
             setAuthInfoMsg(`✓ Invite accepted. Your old standalone workspace was cleared and you are connected to ${acceptedState.settings?.companyName || acceptedState.organization?.name || inviteMatch.invite.organizationName || "the organization"} as ${roleLabel(acceptedState.userRole)}.`);
@@ -10135,6 +10174,19 @@ export default function App() {
             return;
           }
           setAuthInfoMsg("Invite link found, but the invite record was not found in the organization data. Ask the organization administrator to create a fresh invite link.");
+        }
+
+        // Emergency invite hardening: existing users may already have an old personal workspace.
+        // Before loading that standalone data, look for this signed-in account inside any
+        // organization user list. If found, force this account into the shared organization row
+        // and replace the user's personal row with a pointer so future logins always land there.
+        const membershipMatch = await findOrganizationMembershipForUser(session.user);
+        if(membershipMatch?.ownerState && membershipMatch?.ownerUserId) {
+          const scopedOrgState = ensureCurrentOrganizationAdmin({ ...membershipMatch.ownerState, ownerUserId:membershipMatch.ownerUserId }, session.user);
+          await saveInvitePointerForUser(session.user.id, membershipMatch.ownerUserId, session.user.email, membershipMatch.invite || membershipMatch.member || {});
+          if (cancelled) return;
+          dispatch({ type:"REPLACE_STATE", payload:scopedOrgState });
+          return;
         }
 
         const linkedOwnerId = ownData && ownData.ownerUserId && ownData.ownerUserId !== session.user.id ? ownData.ownerUserId : "";
