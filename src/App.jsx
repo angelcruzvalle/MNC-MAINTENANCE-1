@@ -8878,7 +8878,7 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
       ownerUserId,
       organizationId:state.organization?.id || "",
       organizationName:form.companyName || state.organization?.name || form.department || "",
-      note:"Manual invite URL generated. Existing users should not be invited again; update their role instead.",
+      note:"Manual invite URL generated. Existing users can accept the invite and will be connected to this organization.",
     };
   };
   const saveRegisteredUserRole = (user, patch={}) => {
@@ -8894,7 +8894,7 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
     const payload = createInvitePayload();
     dispatch({ type:"ADD_USER_INVITE", payload });
     copyTextToClipboard(payload.inviteUrl)
-      .then(()=>alert("Invite URL created and copied. Share it manually with the new user. Existing registered users should not use invite links; change their role instead."))
+      .then(()=>alert("Invite URL created and copied. Share it manually with the new user. Existing registered users can sign in from this invite link to connect to this organization."))
       .catch(()=>alert(`Invite URL created. Copy it from the Pending Invite Records section:
 
 ${payload.inviteUrl}`));
@@ -9164,7 +9164,7 @@ ${payload.inviteUrl}`));
             <div style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"flex-start", marginBottom:10 }}>
               <div>
                 <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:900, color:T.text }}>👥 Users & Roles</div>
-                <div style={{ fontSize:11, color:T.muted, marginTop:3 }}>The signed-in creator is automatically the Organization Administrator. Existing registered users cannot be invited again; update their role here instead.</div>
+                <div style={{ fontSize:11, color:T.muted, marginTop:3 }}>The signed-in creator is automatically the Organization Administrator. Invited users can be new or existing accounts; accepting the invite connects them to this shared organization.</div>
               </div>
               <span style={{ fontSize:11, fontWeight:800, color:T.green, background:T.greenLt, border:`1px solid ${T.border}`, borderRadius:999, padding:"5px 9px", whiteSpace:"nowrap" }}>Current Admin: {currentUserEmail || "Signed-in user"}</span>
             </div>
@@ -9212,7 +9212,7 @@ ${payload.inviteUrl}`));
                 <input style={inp} placeholder="Email to invite" value={inviteForm.email} onChange={e=>setInviteForm(f=>({...f,email:e.target.value}))} />
                 <select style={sel} value={inviteForm.role} onChange={e=>setInviteForm(f=>({...f,role:e.target.value}))}>{ROLE_OPTIONS.filter(r=>r.value!=="organization_admin").map(r=><option key={r.value} value={r.value}>{r.label}</option>)}</select>
                 <div style={{ fontSize:11, color:existingUserForInvite?T.red:T.muted, alignSelf:"center" }}>
-                  {existingUserForInvite ? `Already registered as ${roleLabel(existingUserForInvite.role)}. Do not invite again.` : existingInviteForEmail ? "Pending invite already exists. Creating a new one will replace it." : "New users can be invited after you assign role and facility access."}
+                  {existingUserForInvite ? `Already registered as ${roleLabel(existingUserForInvite.role)}. Do not invite again.` : existingInviteForEmail ? "Pending invite already exists. Creating a new one will replace it." : "New or existing users can accept after you assign role and facility access."}
                 </div>
               </div>
               <div style={{ marginTop:10, display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:6 }}>
@@ -9222,7 +9222,7 @@ ${payload.inviteUrl}`));
                 </label>)}
               </div>
               <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginTop:10, alignItems:"center", flexWrap:"wrap" }}>
-                <div style={{ fontSize:11, color:T.muted }}>Manual mode: create an invite URL, copy it, and send it yourself. Existing registered users should be managed by changing their role, not by inviting them again.</div>
+                <div style={{ fontSize:11, color:T.muted }}>Manual mode: create an invite URL, copy it, and send it yourself. Existing registered users can sign in from the invite link to join this organization.</div>
                 <Btn small onClick={createSafeInvite}>Create Invite</Btn>
               </div>
             </div>
@@ -9996,6 +9996,48 @@ async function saveInvitePointerForUser(userId="", ownerUserId="", email="", inv
   }
 }
 
+
+function buildMemberPointerFromOrganizationState(state={}, currentUser=null) {
+  const email = normalizeEmail(currentUser?.email);
+  const users = Array.isArray(state.organizationUsers) ? state.organizationUsers : [];
+  const member = users.find(u =>
+    (currentUser?.id && (u.userId === currentUser.id || u.id === currentUser.id)) ||
+    (email && normalizeEmail(u.email) === email)
+  ) || {};
+  return {
+    token:state.inviteToken || member.inviteToken || "",
+    role:normalizeRole(member.role || state.userRole || "viewer"),
+    facilityIds:Array.isArray(member.facilityIds) ? member.facilityIds : (Array.isArray(state.userFacilityIds) ? state.userFacilityIds : (member.locationId ? [member.locationId] : [])),
+    locationId:member.locationId || (Array.isArray(member.facilityIds) ? member.facilityIds[0] : ""),
+  };
+}
+
+function prepareSharedOrganizationStateForCloudSave(state={}, currentUser=null) {
+  const ownerUserId = state.ownerUserId || state.organizationOwnerId || currentUser?.id || "";
+  const normalized = normalizeLoadedUserState(state, ownerUserId);
+  const ownerEmail = normalizeEmail(normalized.ownerEmail || normalized.organizationOwnerEmail || "");
+  const ownerUser = ownerEmail ? { id:ownerUserId, email:ownerEmail } : null;
+  const organizationUsers = ownerUser ? normalizeOrgUsers(normalized, ownerUser) : normalizeOrgUsers(normalized);
+
+  // The owner row is the single shared organization workspace. Invited users save their work
+  // into this row, but we do not persist their dashboard role, active facility, or currentUser
+  // as the organization default. Those are recalculated on each login from organizationUsers.
+  return {
+    ...normalized,
+    ownerUserId,
+    ownerEmail:normalized.ownerEmail || ownerEmail,
+    organizationOwnerId:ownerUserId,
+    organizationOwnerEmail:normalized.organizationOwnerEmail || ownerEmail,
+    organizationUsers,
+    currentUser:ownerUser ? { id:ownerUserId, email:ownerEmail } : null,
+    userRole:"organization_admin",
+    userFacilityIds:[],
+    activeLocationId:"__all",
+    invitedMember:false,
+    inviteAccepted:false,
+  };
+}
+
 export default function App() {
   /* Start empty, then load the signed-in user's data from Supabase */
   const emptyState = blankUserState();
@@ -10130,8 +10172,8 @@ export default function App() {
     setSyncStatus("saving");
     const timer = setTimeout(async () => {
       try {
-        const cloudOwnerId = state.ownerUserId || session.user.id;
-        const cloudState = ensureCurrentOrganizationAdmin(normalizeLoadedUserState(state, cloudOwnerId), session.user);
+        const cloudOwnerId = state.ownerUserId || state.organizationOwnerId || session.user.id;
+        const cloudState = prepareSharedOrganizationStateForCloudSave(state, session.user);
         const { error } = await supabase
           .from("user_state")
           .upsert({
@@ -10144,9 +10186,16 @@ export default function App() {
           console.error("Save error:", error);
           setSyncStatus("error");
         } else {
-          if(cloudOwnerId !== session.user.id) await saveInvitePointerForUser(session.user.id, cloudOwnerId, session.user.email);
+          if(cloudOwnerId !== session.user.id) {
+            await saveInvitePointerForUser(
+              session.user.id,
+              cloudOwnerId,
+              session.user.email,
+              buildMemberPointerFromOrganizationState(state, session.user)
+            );
+          }
           setSyncStatus("saved");
-          try { localStorage.setItem("ncaState", JSON.stringify(cloudState)); localStorage.setItem("ncaState:lastUserId", session.user.id); } catch(e) {}
+          try { localStorage.setItem("ncaState", JSON.stringify(ensureCurrentOrganizationAdmin(cloudState, session.user))); localStorage.setItem("ncaState:lastUserId", session.user.id); } catch(e) {}
           setTimeout(() => setSyncStatus("idle"), 2000);
         }
       } catch (e) {
