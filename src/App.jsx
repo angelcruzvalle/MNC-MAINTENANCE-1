@@ -9948,14 +9948,49 @@ async function findOrganizationStateForInvite(inviteInfo={}, currentUser=null) {
   return null;
 }
 
-async function saveInvitePointerForUser(userId="", ownerUserId="", email="") {
+function buildInvitePointerState(userId="", ownerUserId="", email="", invite={}) {
+  const facilityIds = Array.isArray(invite?.facilityIds) ? invite.facilityIds : (invite?.locationId ? [invite.locationId] : []);
+  return {
+    ownerUserId,
+    invitedMember:true,
+    inviteAccepted:true,
+    personalWorkspaceCleared:true,
+    email:normalizeEmail(email),
+    userRole:normalizeRole(invite?.role || "viewer"),
+    userFacilityIds:facilityIds,
+    activeLocationId:normalizeRole(invite?.role || "viewer") === "organization_admin" ? "__all" : (facilityIds[0] || "__all"),
+    inviteToken:invite?.token || "",
+    acceptedOrganizationOwnerId:ownerUserId,
+    acceptedAt:new Date().toISOString(),
+    updatedAt:new Date().toISOString(),
+  };
+}
+
+async function saveOrganizationInviteAcceptance(ownerUserId="", acceptedState={}) {
+  if(!ownerUserId || !acceptedState) return;
+  try {
+    await supabase.from("user_state").upsert({
+      user_id:ownerUserId,
+      data:acceptedState,
+      updated_at:new Date().toISOString(),
+    }, { onConflict:"user_id" });
+  } catch(e) {
+    console.error("Could not save invite acceptance to organization:", e);
+  }
+}
+
+async function saveInvitePointerForUser(userId="", ownerUserId="", email="", invite={}) {
   if(!userId || !ownerUserId || userId === ownerUserId) return;
   try {
     await supabase.from("user_state").upsert({
       user_id:userId,
-      data:{ ownerUserId, invitedMember:true, email:normalizeEmail(email), updatedAt:new Date().toISOString() },
+      data:buildInvitePointerState(userId, ownerUserId, email, invite),
       updated_at:new Date().toISOString(),
     }, { onConflict:"user_id" });
+    try {
+      localStorage.removeItem("ncaState");
+      localStorage.removeItem("ncaState:lastUserId");
+    } catch(e) {}
   } catch(e) {
     console.error("Could not save invite pointer:", e);
   }
@@ -10043,9 +10078,13 @@ export default function App() {
           const inviteMatch = await findOrganizationStateForInvite(manualInviteInfo, session.user);
           if(inviteMatch?.invite) {
             const acceptedState = applyInviteToOrganizationState({ ...inviteMatch.ownerState, ownerUserId:inviteMatch.ownerUserId }, inviteMatch.invite, session.user);
+            // Save the organization update immediately, then replace the invited user's old standalone
+            // workspace row with a lightweight pointer. This intentionally removes anything the invited
+            // user created before accepting the invite, so future logins open the invited organization.
+            await saveOrganizationInviteAcceptance(inviteMatch.ownerUserId, acceptedState);
+            await saveInvitePointerForUser(session.user.id, inviteMatch.ownerUserId, session.user.email, inviteMatch.invite);
             dispatch({ type:"REPLACE_STATE", payload:acceptedState });
-            await saveInvitePointerForUser(session.user.id, inviteMatch.ownerUserId, session.user.email);
-            setAuthInfoMsg(`✓ Invite accepted. You are connected to ${acceptedState.settings?.companyName || acceptedState.organization?.name || inviteMatch.invite.organizationName || "the organization"} as ${roleLabel(acceptedState.userRole)}.`);
+            setAuthInfoMsg(`✓ Invite accepted. Your old standalone workspace was cleared and you are connected to ${acceptedState.settings?.companyName || acceptedState.organization?.name || inviteMatch.invite.organizationName || "the organization"} as ${roleLabel(acceptedState.userRole)}.`);
             try {
               const url = new URL(window.location.href);
               url.searchParams.delete("invite"); url.searchParams.delete("email"); url.searchParams.delete("owner");
