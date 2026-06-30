@@ -10110,6 +10110,7 @@ function buildInvitePointerState(userId="", ownerUserId="", email="", invite={})
   const facilityIds = invitedUserFacilityIdsFrom(invite);
   return {
     ownerUserId,
+    setupComplete:true,
     invitedMember:true,
     inviteAccepted:true,
     personalWorkspaceCleared:true,
@@ -10288,6 +10289,14 @@ export default function App() {
           const inviteMatch = await findOrganizationStateForInvite(pendingInviteInfo, session.user);
           if(inviteMatch?.invite) {
             const acceptedState = applyInviteToOrganizationState({ ...inviteMatch.ownerState, ownerUserId:inviteMatch.ownerUserId }, inviteMatch.invite, session.user);
+            const invitedUiState = {
+              ...acceptedState,
+              setupComplete:true,
+              invitedMember:true,
+              inviteAccepted:true,
+              personalWorkspaceCleared:true,
+              acceptedOrganizationOwnerId:inviteMatch.ownerUserId,
+            };
             // Save the organization update immediately, then replace the invited user's old standalone
             // workspace row with a lightweight pointer. This intentionally removes anything the invited
             // user created before accepting the invite, so future logins open the invited organization.
@@ -10295,7 +10304,7 @@ export default function App() {
             await saveInvitePointerForUser(session.user.id, inviteMatch.ownerUserId, session.user.email, inviteMatch.invite);
             clearPendingInviteInfo();
             try { localStorage.removeItem("ncaState"); localStorage.removeItem("ncaState:lastUserId"); } catch(e) {}
-            dispatch({ type:"REPLACE_STATE", payload:acceptedState });
+            dispatch({ type:"REPLACE_STATE", payload:invitedUiState });
             setAuthInfoMsg(`✓ Invite accepted. Your old standalone workspace was cleared and you are connected to ${acceptedState.settings?.companyName || acceptedState.organization?.name || inviteMatch.invite.organizationName || "the organization"} as ${roleLabel(acceptedState.userRole)}.`);
             try {
               const url = new URL(window.location.href);
@@ -10322,9 +10331,17 @@ export default function App() {
         const membershipMatch = await findOrganizationMembershipForUser(session.user);
         if(membershipMatch?.ownerState && membershipMatch?.ownerUserId) {
           const scopedOrgState = ensureCurrentOrganizationAdmin({ ...membershipMatch.ownerState, ownerUserId:membershipMatch.ownerUserId }, session.user);
+          const invitedUiState = {
+            ...scopedOrgState,
+            setupComplete:true,
+            invitedMember:true,
+            inviteAccepted:true,
+            personalWorkspaceCleared:true,
+            acceptedOrganizationOwnerId:membershipMatch.ownerUserId,
+          };
           await saveInvitePointerForUser(session.user.id, membershipMatch.ownerUserId, session.user.email, membershipMatch.invite || membershipMatch.member || {});
           if (cancelled) return;
-          dispatch({ type:"REPLACE_STATE", payload:scopedOrgState });
+          dispatch({ type:"REPLACE_STATE", payload:invitedUiState });
           return;
         }
 
@@ -10333,9 +10350,35 @@ export default function App() {
           const ownerRow = await fetchUserStateRow(linkedOwnerId);
           if(ownerRow?.data) {
             const ownerState = normalizeLoadedUserState(ownerRow.data, linkedOwnerId);
-            dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(ownerState, session.user) });
+            const scopedOrgState = ensureCurrentOrganizationAdmin(ownerState, session.user);
+            const invitedUiState = ownData?.invitedMember ? {
+              ...scopedOrgState,
+              setupComplete:true,
+              invitedMember:true,
+              inviteAccepted:true,
+              personalWorkspaceCleared:true,
+              acceptedOrganizationOwnerId:linkedOwnerId,
+            } : scopedOrgState;
+            dispatch({ type:"REPLACE_STATE", payload:invitedUiState });
             return;
           }
+          if(ownData?.invitedMember) {
+            dispatch({ type:"REPLACE_STATE", payload:{
+              ...blankUserState(session.user.id),
+              setupComplete:true,
+              inviteConnectionError:"This account has an accepted invite pointer, but the organization workspace could not be loaded. Ask the Organization Administrator to send a fresh invite or verify the organization data is saved in the cloud.",
+            } });
+            return;
+          }
+        }
+
+        if (ownData?.invitedMember) {
+          dispatch({ type:"REPLACE_STATE", payload:{
+            ...blankUserState(session.user.id),
+            setupComplete:true,
+            inviteConnectionError:"This account is marked as invited, but it does not have a valid organization connection. Ask the Organization Administrator to send a fresh invite link.",
+          } });
+          return;
         }
 
         if (ownData && Object.keys(ownData).length > 0 && !ownData.invitedMember) {
