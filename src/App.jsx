@@ -854,8 +854,39 @@ function woPartsTotal(wo={}) {
   return partsUsed.length ? partsUsed.reduce((sum, item) => sum + lineItemTotal(item), 0) : (+wo.partsCost || 0);
 }
 
+function woCostBreakdown(wo={}) {
+  const parts = woPartsTotal(wo);
+  const outsideServices = outsideServicesTotal(wo.outsideServices);
+  const labor = +wo.laborCost || 0;
+  const laborHours = +wo.laborHours || 0;
+  return {
+    parts,
+    outsideServices,
+    services: outsideServices,
+    labor,
+    laborHours,
+    nonLabor: parts + outsideServices,
+    total: parts + outsideServices + labor,
+  };
+}
+
 function woTotalCost(wo={}) {
-  return (+wo.laborCost || 0) + woPartsTotal(wo) + outsideServicesTotal(wo.outsideServices);
+  return woCostBreakdown(wo).total;
+}
+
+function spendingIncludesLabor(settingsOrValue={}) {
+  if(typeof settingsOrValue === "boolean") return settingsOrValue;
+  const settings = settingsOrValue || {};
+  return settings.includeLaborInSpending !== false && settings.showLaborInSpending !== false && settings.excludeLaborFromSpending !== true;
+}
+
+function woSpendingTotal(wo={}, settingsOrValue={}) {
+  const b = woCostBreakdown(wo);
+  return spendingIncludesLabor(settingsOrValue) ? b.total : b.nonLabor;
+}
+
+function spendingTotalLabel(settingsOrValue={}) {
+  return spendingIncludesLabor(settingsOrValue) ? "Total" : "Parts + Services";
 }
 
 function exactDecimalText(value=0, { minFractionDigits=0, maxFractionDigits=6 }={}) {
@@ -930,7 +961,7 @@ function equipmentFinancialSummary(state={}, eq={}) {
   const wos = (state.workOrders || []).filter(w => String(workOrderEquipmentId(w) || w.equipment || "") === eqId);
   const byDate = wos.map(w => ({ wo:w, date:dateValue(workOrderDate(w)) }));
   const fyWos = byDate.filter(x => x.date && x.date >= fyStart).map(x => x.wo);
-  const sumCost = rows => rows.reduce((sum,w) => sum + woTotalCost(w), 0);
+  const sumCost = rows => rows.reduce((sum,w) => sum + woSpendingTotal(w, state.settings), 0);
   const sumLabor = rows => rows.reduce((sum,w) => sum + (+w.laborHours || 0), 0);
   const countType = (rows, name) => rows.filter(w => String(w.woType || w.type || '').toLowerCase().includes(name)).length;
   return {
@@ -1329,16 +1360,33 @@ function reducer(state, { type, payload }) {
 const genId = p => `${p}-${String(Date.now()).slice(-5)}`;
 const today = () => new Date().toISOString().split("T")[0];
 const isValidISODate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || "")) && !Number.isNaN(new Date(`${value}T00:00:00`).getTime());
+const formatDateMMDDYYYY = (value = today()) => {
+  const iso = isValidISODate(String(value || "").slice(0,10)) ? String(value).slice(0,10) : today();
+  const [yyyy, mm, dd] = iso.split("-");
+  return `${mm}/${dd}/${yyyy}`;
+};
+const parseDateMMDDYYYY = (value) => {
+  const raw = String(value || "").trim();
+  const mmddyyyy = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if(mmddyyyy) {
+    const [, m, d, y] = mmddyyyy;
+    const iso = `${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    return isValidISODate(iso) ? iso : "";
+  }
+  const isoRaw = raw.slice(0,10);
+  return isValidISODate(isoRaw) ? isoRaw : "";
+};
 
 function askCompletedDate(defaultDate = today()) {
   const baseDate = isValidISODate(String(defaultDate || "").slice(0,10)) ? String(defaultDate).slice(0,10) : today();
-  const useToday = confirm(`Completed today (${today()})?\n\nOK = use today\nCancel = choose a different completed date`);
+  const todayDisplay = formatDateMMDDYYYY(today());
+  const useToday = confirm(`Completed today (${todayDisplay})?\n\nOK = use today\nCancel = choose a different completed date`);
   if(useToday) return today();
-  const entered = prompt("Enter completed date (YYYY-MM-DD):", baseDate);
+  const entered = prompt("Enter completed date (MM/DD/YYYY):", formatDateMMDDYYYY(baseDate));
   if(entered === null) return null;
-  const clean = String(entered || "").trim().slice(0,10);
-  if(!isValidISODate(clean)) {
-    alert("Completed date must be in YYYY-MM-DD format.");
+  const clean = parseDateMMDDYYYY(entered);
+  if(!clean) {
+    alert("Completed date must be in MM/DD/YYYY format.");
     return null;
   }
   return clean;
@@ -1435,11 +1483,22 @@ const equipmentReportLabel = (state={}, id="") => {
 const htmlEscape = v => String(v ?? "").replace(/[&<>\"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
 const workOrderBrandFontSize = (name="") => {
   const len = String(name || "").trim().length;
-  if(len > 58) return 12;
-  if(len > 48) return 13;
-  if(len > 40) return 14;
-  if(len > 32) return 15;
-  return 18;
+  if(len > 72) return 10.5;
+  if(len > 62) return 11.5;
+  if(len > 52) return 12.5;
+  if(len > 44) return 13.5;
+  if(len > 36) return 15;
+  if(len > 24) return 17;
+  if(len > 12) return 19;
+  return 21;
+};
+const workOrderFacilityFontSize = (name="") => {
+  const len = String(name || "").trim().length;
+  if(len > 64) return 8.5;
+  if(len > 52) return 9.5;
+  if(len > 40) return 10.5;
+  if(len > 28) return 11.5;
+  return 12.5;
 };
 
 const workOrderFacilityIdForBranding = (state={}, wo={}, eq={}) => {
@@ -2096,7 +2155,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   const lowStock = parts.filter(p=>p.lowStockAlert !== false && (+p.qty || 0) <= (+p.minQty || 0));
   const openRequests = requests.filter(r=>!["Converted","Dismissed","Completed"].includes(r.status));
   const completedThisMonth = wos.filter(w=>w.status === "Completed" && String(w.completed || w.completedDate || "").slice(0,7) === todayStr.slice(0,7));
-  const monthSpend = completedThisMonth.reduce((sum,w)=>sum + woTotalCost(w), 0);
+  const monthSpend = completedThisMonth.reduce((sum,w)=>sum + woSpendingTotal(w, state.settings), 0);
   const overdueWOs = activeWOs.filter(w => w.due && w.due < todayStr);
   const dueTodayWOs = activeWOs.filter(w => w.due === todayStr);
   const dueSoonWOs = activeWOs.filter(w => w.due && w.due >= todayStr && w.due <= soonStr);
@@ -2193,7 +2252,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     requests: { title:"Operator Requests", size:"small", tab:"wo_requests", roles:["organization_admin","facility_admin","supervisor"], render:()=> <SmallCard title="Requests" value={openRequests.length} sub="Operator QR requests waiting review" color={openRequests.length?T.amber:T.green} tab="wo_requests" /> },
     low_stock: { title:"Low Stock", size:"small", tab:"parts", roles:["organization_admin","facility_admin","supervisor"], render:()=> <SmallCard title="Low Stock" value={lowStock.length} sub="Parts at or below minimum" color={lowStock.length?T.red:T.green} tab="parts" /> },
     completed_month: { title:"Completed This Month", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <SmallCard title="Completed This Month" value={completedThisMonth.length} sub="Closed work orders" color={T.green} tab="workorders" /> },
-    month_spend: { title:"Month Spend", size:"small", tab:"spending", roles:["organization_admin","facility_admin"], render:()=> <SmallCard title="Month Spend" value={moneyFmt(monthSpend)} sub="Completed work order costs" color={T.accent} tab="spending" /> },
+    month_spend: { title:"Month Spend", size:"small", tab:"spending", roles:["organization_admin","facility_admin"], render:()=> <SmallCard title="Month Spend" value={moneyFmt(monthSpend)} sub={`${spendingTotalLabel(state.settings)} completed WO costs`} color={T.accent} tab="spending" /> },
     fuel_low: { title:"Low Fuel", size:"small", tab:"fuel", roles:["organization_admin","facility_admin","supervisor"], render:()=> <SmallCard title="Low Fuel" value={lowFuel.length} sub="Fuel containers at or below 25%" color={lowFuel.length?T.red:T.green} tab="fuel" /> },
     usage_updates: { title:"Usage Updates", size:"small", tab:"usage", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="Usage Logs" value={usageLogs.length} sub="Equipment usage entries on record" color={T.accent} tab="usage" /> },
     overdue_work: { title:"Overdue Work", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="Overdue Work" value={overdueWOs.length} sub={`${dueTodayWOs.length} due today • ${dueSoonWOs.length} due within 14 days`} color={overdueWOs.length?T.red:dueTodayWOs.length?T.amber:T.green} tab="workorders" /> },
@@ -2505,7 +2564,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const newPart = { ...newPartForm, equipmentId:"", category:String(newPartForm.category||"").trim(), modelFit:String(newPartForm.modelFit||"").trim(), id:genId("PT"), qty:+(newPartForm.qty||requestedQty||0), unit:String(newPartForm.unit||"ea").trim()||"ea", unitCost:+(newPartForm.unitCost||0), minQty:+(newPartForm.minQty||1) };
     delete newPart.requestedQty;
     dispatch({ type:"ADD_PART", payload:newPart });
-    setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[rowIdx]={name:newPart.name,qty:requestedQty||1,unit:newPart.unit||newPart.unitType||"ea",unitCost:newPart.unitCost,partId:newPart.id}; return {...f,partsUsed:arr}; });
+    setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[rowIdx]={name:newPart.name,partNumber:newPart.partNumber||"",qty:requestedQty||1,unit:newPart.unit||newPart.unitType||"ea",unitCost:newPart.unitCost,partId:newPart.id,availableQty:+(newPart.qty||0),partSearch:newPart.name||newPart.partNumber||""}; return {...f,partsUsed:arr}; });
     setNewPartForm({});
     setShowNewPart(null);
   };
@@ -2709,8 +2768,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       .logoBox img{width:100%;max-width:1.65in;max-height:.82in;object-fit:contain;display:block}
       .logoText{font-weight:900;text-align:center;color:#111827;font-size:13px;line-height:1.2}
       .companyBox{display:flex;flex-direction:column;align-items:center;justify-content:center;background:${C.soft};padding:8px 14px;text-align:center;min-width:0}
-      .company{font-size:18px;font-weight:900;letter-spacing:.35px;text-transform:uppercase;color:#111827;line-height:1.05;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:clip;text-align:center}
-      .facilityName{margin-top:3px;width:100%;font-size:12px;font-weight:800;letter-spacing:.45px;color:#334155;text-transform:uppercase;line-height:1.1;text-align:center}
+      .company{font-weight:900;letter-spacing:.25px;text-transform:uppercase;color:#111827;line-height:1.02;white-space:normal;max-width:100%;overflow-wrap:anywhere;word-break:normal;text-align:center;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+      .facilityName{margin-top:3px;width:100%;font-weight:800;letter-spacing:.35px;color:#334155;text-transform:uppercase;line-height:1.08;text-align:center;white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
       .typePill{margin-top:4px;border:1.5px solid ${C.border};background:${C.accent};color:#111827;border-radius:999px;padding:4px 18px;font-size:12px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;display:inline-flex;gap:6px;align-items:center}
       .numberBox{border-left:1.5px solid #111827;display:grid;grid-template-rows:1fr .32in;text-align:center;background:white;min-width:0}
       .woNumber{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px}
@@ -2754,7 +2813,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       <div class="outer">
         <header class="top">
           <div class="logoBox">${companyLogo?`<img src="${companyLogo}" alt="Logo">`:`<div class="logoText">LOGO</div>`}</div>
-          <div class="companyBox"><div class="company" style="font-size:${workOrderBrandFontSize(companyName)}px">${h(companyName)}</div>${printableFacilityName ? `<div class="facilityName">${h(printableFacilityName)}</div>` : ""}<div class="typePill"><span>${typeIcon}</span><span>${h(workType)}</span></div></div>
+          <div class="companyBox"><div class="company" style="font-size:${workOrderBrandFontSize(companyName)}px">${h(companyName)}</div>${printableFacilityName ? `<div class="facilityName" style="font-size:${workOrderFacilityFontSize(printableFacilityName)}px">${h(printableFacilityName)}</div>` : ""}<div class="typePill"><span>${typeIcon}</span><span>${h(workType)}</span></div></div>
           <div class="numberBox"><div class="woNumber"><div class="label">Work Order Number</div><div class="number">${h(wo.id || "")}</div></div><div class="status ${statusClass}">${h(wo.status || "Open")}</div></div>
         </header>
 
@@ -3794,8 +3853,8 @@ function Equipment({ state, dispatch }) {
       .logoBox img{width:100%;max-width:1.65in;max-height:.82in;object-fit:contain;display:block}
       .logoText{font-weight:900;text-align:center;color:#111827;font-size:13px;line-height:1.2}
       .companyBox{display:flex;flex-direction:column;align-items:center;justify-content:center;background:${C.soft};padding:8px 14px;text-align:center;min-width:0}
-      .company{font-size:18px;font-weight:900;letter-spacing:.35px;text-transform:uppercase;color:#111827;line-height:1.05;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:clip;text-align:center}
-      .facilityName{margin-top:3px;width:100%;font-size:12px;font-weight:800;letter-spacing:.45px;color:#334155;text-transform:uppercase;line-height:1.1;text-align:center}
+      .company{font-weight:900;letter-spacing:.25px;text-transform:uppercase;color:#111827;line-height:1.02;white-space:normal;max-width:100%;overflow-wrap:anywhere;word-break:normal;text-align:center;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+      .facilityName{margin-top:3px;width:100%;font-weight:800;letter-spacing:.35px;color:#334155;text-transform:uppercase;line-height:1.08;text-align:center;white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
       .typePill{margin-top:4px;border:1.5px solid ${C.border};background:${C.accent};color:#111827;border-radius:999px;padding:4px 18px;font-size:12px;font-weight:900;letter-spacing:.8px;text-transform:uppercase}
       .numberBox{border-left:1.5px solid #111827;display:grid;grid-template-rows:1fr .32in;text-align:center;background:white;min-width:0}
       .woNumber{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px}
@@ -3832,7 +3891,7 @@ function Equipment({ state, dispatch }) {
       <div class="page"><div class="outer">
         <header class="top">
           <div class="logoBox">${historyCompanyLogo ? `<img src="${historyCompanyLogo}" alt="Logo">` : `<div class="logoText">LOGO</div>`}</div>
-          <div class="companyBox"><div class="company" style="font-size:${workOrderBrandFontSize(gs.companyName || "Maintenance Department")}px">${h(gs.companyName || "Maintenance Department")}</div>${historyFacilityName ? `<div class="facilityName">${h(historyFacilityName)}</div>` : ""}<div class="typePill">${h(type.toUpperCase())}</div></div>
+          <div class="companyBox"><div class="company" style="font-size:${workOrderBrandFontSize(gs.companyName || "Maintenance Department")}px">${h(gs.companyName || "Maintenance Department")}</div>${historyFacilityName ? `<div class="facilityName" style="font-size:${workOrderFacilityFontSize(historyFacilityName)}px">${h(historyFacilityName)}</div>` : ""}<div class="typePill">${h(type.toUpperCase())}</div></div>
           <div class="numberBox"><div class="woNumber"><div class="label">Work Order Number</div><div class="number">${h(wo.id || "")}</div></div><div class="status">${h(wo.status || "Open")}</div></div>
         </header>
         <div class="dateGrid">
@@ -6506,6 +6565,8 @@ function PM({ state, dispatch }) {
 
 function Spending({ state }) {
   const [period, setPeriod] = useState("all");
+  const includeLabor = spendingIncludesLabor(state.settings);
+  const spendingLabel = spendingTotalLabel(state.settings);
 
   /* Period filtering */
   const now = new Date();
@@ -6534,22 +6595,23 @@ function Spending({ state }) {
   const PERIODS = [["all","All Time"],["monthly","This Month"],["biannual","Last 6 Months"],["fy","Fiscal Year"],["annual","Last 12 Months"]];
 
   const wos = state.workOrders.filter(filterByPeriod);
-  const totalCost = w => woTotalCost(w);
-  const totLabor  = wos.reduce((s,w)=>s+(+w.laborCost||0),0);
-  const totParts  = wos.reduce((s,w)=>s+totalCost(w)-(+w.laborCost||0),0);
-  const grand     = totLabor+totParts;
+  const totalCost = w => woSpendingTotal(w, includeLabor);
+  const totLabor  = wos.reduce((s,w)=>s+woCostBreakdown(w).labor,0);
+  const totParts  = wos.reduce((s,w)=>s+woCostBreakdown(w).parts,0);
+  const totServices = wos.reduce((s,w)=>s+woCostBreakdown(w).outsideServices,0);
+  const grand     = wos.reduce((s,w)=>s+totalCost(w),0);
 
   /* By Equipment */
   const byEq = {};
-  wos.forEach(w=>{ if(!byEq[w.equipment])byEq[w.equipment]={labor:0,parts:0,count:0}; byEq[w.equipment].labor+=(+w.laborCost||0); byEq[w.equipment].parts+=totalCost(w)-(+w.laborCost||0); byEq[w.equipment].count++; });
+  wos.forEach(w=>{ const b=woCostBreakdown(w); if(!byEq[w.equipment])byEq[w.equipment]={labor:0,parts:0,services:0,count:0}; byEq[w.equipment].labor+=b.labor; byEq[w.equipment].parts+=b.parts; byEq[w.equipment].services+=b.outsideServices; byEq[w.equipment].count++; });
 
   /* By Category (equipment category) */
   const byCat = {};
-  wos.forEach(w=>{ const eq=state.equipment.find(e=>e.id===w.equipment); const cat=eq?.category||eq?.type||"Uncategorized"; if(!byCat[cat])byCat[cat]={total:0,count:0}; byCat[cat].total+=totalCost(w); byCat[cat].count++; });
+  wos.forEach(w=>{ const eq=state.equipment.find(e=>e.id===w.equipment); const cat=eq?.category||eq?.type||"Uncategorized"; const b=woCostBreakdown(w); if(!byCat[cat])byCat[cat]={total:0,labor:0,parts:0,services:0,count:0}; byCat[cat].total+=totalCost(w); byCat[cat].labor+=b.labor; byCat[cat].parts+=b.parts; byCat[cat].services+=b.outsideServices; byCat[cat].count++; });
 
   /* By Month */
   const byMonth = {};
-  wos.forEach(w=>{ const m=(w.completed||w.created||"").slice(0,7); if(m){ if(!byMonth[m])byMonth[m]={labor:0,parts:0}; byMonth[m].labor+=(+w.laborCost||0); byMonth[m].parts+=totalCost(w)-(+w.laborCost||0); }});
+  wos.forEach(w=>{ const m=(w.completed||w.created||"").slice(0,7); if(m){ const b=woCostBreakdown(w); if(!byMonth[m])byMonth[m]={labor:0,parts:0,services:0}; byMonth[m].labor+=b.labor; byMonth[m].parts+=b.parts; byMonth[m].services+=b.outsideServices; }});
 
   /* By WO Type */
   const byType = {};
@@ -6569,10 +6631,13 @@ function Spending({ state }) {
           <button key={v} onClick={()=>setPeriod(v)} style={{ padding:"7px 16px", borderRadius:7, border:`1px solid ${period===v?T.accent:T.border}`, background:period===v?T.accentLt:"#fff", color:period===v?T.accent:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:period===v?700:400 }}>{l}</button>
         ))}
       </div>
+      <div style={{ marginBottom:12, padding:"10px 12px", border:`1px solid ${T.border}`, borderRadius:10, background:T.grayLt, fontFamily:T.sans, fontSize:12, color:T.subtext }}>
+        Spending totals are currently showing <b>{includeLabor ? "parts + outside services + labor" : "parts + outside services only"}</b>. Change this in Settings → Work Order Defaults.
+      </div>
 
       {/* Summary cards */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12, marginBottom:20 }}>
-        {[["Total Labor",moneyFmt(totLabor),T.accent],["Total Parts",moneyFmt(totParts),"#7c3aed"],["Grand Total",moneyFmt(grand),T.text],["Work Orders",wos.length,T.muted]].map(([l,v,c])=>(
+        {[["Labor",moneyFmt(totLabor),T.accent],["Parts",moneyFmt(totParts),"#7c3aed"],["Outside Services",moneyFmt(totServices),T.green],[spendingLabel,moneyFmt(grand),T.text],["Work Orders",wos.length,T.muted]].map(([l,v,c])=>(
           <Card key={l} style={{ padding:"14px 16px" }}>
             <div style={{ fontFamily:T.sans, fontSize:22, fontWeight:700, color:c }}>{v}</div>
             <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{l}</div>
@@ -6584,9 +6649,9 @@ function Spending({ state }) {
         {/* By Equipment */}
         <Card>
           <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginBottom:14 }}>By Equipment</div>
-          {Object.entries(byEq).sort((a,b)=>(b[1].labor+b[1].parts)-(a[1].labor+a[1].parts)).slice(0,8).map(([eqId,d])=>{
+          {Object.entries(byEq).sort((a,b)=>((includeLabor?b[1].labor:0)+b[1].parts+b[1].services)-((includeLabor?a[1].labor:0)+a[1].parts+a[1].services)).slice(0,8).map(([eqId,d])=>{
             const eq=state.equipment.find(e=>e.id===eqId);
-            const tot=d.labor+d.parts;
+            const tot=includeLabor ? d.labor+d.parts+d.services : d.parts+d.services;
             const pct=grand>0?tot/grand*100:0;
             return (
               <div key={eqId} style={{ marginBottom:12 }}>
@@ -6598,7 +6663,7 @@ function Spending({ state }) {
                   <Bar pct={pct} />
                   <span style={{ fontFamily:T.mono, fontSize:10, color:T.muted, minWidth:28 }}>{Math.round(pct)}%</span>
                 </div>
-                <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, marginTop:2 }}>{d.count} WOs · Labor ${moneyFmt(d.labor)} · Parts ${moneyFmt(d.parts)}</div>
+                <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, marginTop:2 }}>{d.count} WOs · Parts {moneyFmt(d.parts)} · Services {moneyFmt(d.services)} · Labor {moneyFmt(d.labor)}</div>
               </div>
             );
           })}
@@ -6620,7 +6685,7 @@ function Spending({ state }) {
                   <Bar pct={pct} color="#7c3aed" />
                   <span style={{ fontFamily:T.mono, fontSize:10, color:T.muted, minWidth:28 }}>{Math.round(pct)}%</span>
                 </div>
-                <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, marginTop:2 }}>{d.count} WOs</div>
+                <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, marginTop:2 }}>{d.count} WOs · Parts {moneyFmt(d.parts)} · Services {moneyFmt(d.services)} · Labor {moneyFmt(d.labor)}</div>
               </div>
             );
           })}
@@ -6633,7 +6698,7 @@ function Spending({ state }) {
         <Card>
           <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, marginBottom:14 }}>Monthly Trend</div>
           {Object.entries(byMonth).sort().reverse().slice(0,12).map(([m,d])=>{
-            const tot=d.labor+d.parts;
+            const tot=includeLabor ? d.labor+d.parts+d.services : d.parts+d.services;
             const pct=grand>0?tot/grand*100:0;
             return (
               <div key={m} style={{ marginBottom:12 }}>
@@ -7745,13 +7810,18 @@ function ReportSpending({ state }) {
   const fy_end = new Date(fyYear + 1, 9, 1); // exclusive
   const month_start = new Date(now.getFullYear(), now.getMonth(), 1);
   const wos = state.workOrders;
-  const totalCost = (w) => woTotalCost(w);
+  const includeLabor = spendingIncludesLabor(state.settings);
+  const spendingLabel = spendingTotalLabel(state.settings);
+  const totalCost = (w) => woSpendingTotal(w, includeLabor);
   const monthly = wos.filter(w=>w.completed&&new Date(w.completed)>=month_start);
   const annual  = wos.filter(w=>w.completed&&new Date(w.completed)>=fy_start&&new Date(w.completed)<fy_end);
   const monthTotal = monthly.reduce((s,w)=>s+totalCost(w),0);
   const fyTotal    = annual.reduce((s,w)=>s+totalCost(w),0);
+  const totalsFor = (list) => list.reduce((acc,w)=>{ const b=woCostBreakdown(w); acc.parts+=b.parts; acc.services+=b.outsideServices; acc.labor+=b.labor; acc.laborHours+=b.laborHours; acc.total+=totalCost(w); return acc; }, { parts:0, services:0, labor:0, laborHours:0, total:0 });
+  const monthBreakdown = totalsFor(monthly);
+  const fyBreakdown = totalsFor(annual);
 
-  const spendingRows = (list) => list.map(w=>({"Equipment #":w.equipment||"", Nomenclature:state.equipment.find(e=>e.id===w.equipment)?.name||"", "WO #":w.id, Title:w.title||"", Mechanic:w.tech||"", Date:w.completed||w.created||"", Labor:moneyText(w.laborCost), Parts:moneyText(woPartsTotal(w)), "Outside Services":moneyText(outsideServicesTotal(w.outsideServices)), Total:moneyText(totalCost(w))}));
+  const spendingRows = (list) => list.map(w=>{ const b=woCostBreakdown(w); return {"Equipment #":w.equipment||"", Nomenclature:state.equipment.find(e=>e.id===w.equipment)?.name||"", "WO #":w.id, Title:w.title||"", Mechanic:w.tech||"", Date:w.completed||w.created||"", "Labor Hours":b.laborHours.toFixed(1), Labor:moneyText(b.labor), Parts:moneyText(b.parts), "Outside Services":moneyText(b.outsideServices), [spendingLabel]:moneyText(totalCost(w))}; });
   const printSpending = (list, title) => {
     const rows = spendingRows(list);
     const win = window.open("","_blank","width=900,height=700");
@@ -7759,9 +7829,10 @@ function ReportSpending({ state }) {
     win.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
       <style>body{font-family:Arial,sans-serif;padding:24px}h1{font-size:18px;margin:0}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px;text-transform:uppercase}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}@media print{button{display:none}}</style>
       </head><body>${reportHeaderHTML(state, title)}
-      <table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO #</th><th>Title</th><th>Mechanic</th><th>Date</th><th>Labor</th><th>Parts</th><th>Outside Services</th><th>Total</th></tr>
-      ${list.map(w=>`<tr><td><b>${w.equipment||"—"}</b></td><td>${state.equipment.find(e=>e.id===w.equipment)?.name||"—"}</td><td>${w.id}</td><td>${w.title}</td><td>${w.tech||"—"}</td><td>${w.completed||w.created||"—"}</td><td>${moneyFmt(w.laborCost)}</td><td>${moneyFmt(woPartsTotal(w))}</td><td>${moneyFmt(outsideServicesTotal(w.outsideServices))}</td><td><b>${moneyFmt(totalCost(w))}</b></td></tr>`).join("")}
-      <tr style="font-weight:700;background:#f3f4f6"><td colspan="8">TOTAL</td><td>${moneyFmt(list.reduce((s,w)=>s+totalCost(w),0))}</td></tr>
+      ${(()=>{ const t=totalsFor(list); return `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0 14px"><div><b>Parts</b><br>${moneyFmt(t.parts)}</div><div><b>Outside Services</b><br>${moneyFmt(t.services)}</div><div><b>Labor</b><br>${moneyFmt(t.labor)} (${t.laborHours.toFixed(1)} hrs)</div><div><b>${spendingLabel}</b><br>${moneyFmt(t.total)}</div></div>`; })()}
+      <table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO #</th><th>Title</th><th>Mechanic</th><th>Date</th><th>Labor Hrs</th><th>Labor</th><th>Parts</th><th>Outside Services</th><th>${spendingLabel}</th></tr>
+      ${list.map(w=>{ const b=woCostBreakdown(w); return `<tr><td><b>${w.equipment||"—"}</b></td><td>${state.equipment.find(e=>e.id===w.equipment)?.name||"—"}</td><td>${w.id}</td><td>${w.title}</td><td>${w.tech||"—"}</td><td>${w.completed||w.created||"—"}</td><td>${b.laborHours.toFixed(1)}</td><td>${moneyFmt(b.labor)}</td><td>${moneyFmt(b.parts)}</td><td>${moneyFmt(b.outsideServices)}</td><td><b>${moneyFmt(totalCost(w))}</b></td></tr>`; }).join("")}
+      ${(()=>{ const t=totalsFor(list); return `<tr style="font-weight:700;background:#f3f4f6"><td colspan="7">TOTAL</td><td>${moneyFmt(t.labor)}</td><td>${moneyFmt(t.parts)}</td><td>${moneyFmt(t.services)}</td><td>${moneyFmt(t.total)}</td></tr>`; })()}
       </table>${reportButtonsHtml(rows)}</body></html>`);
     win.document.close();
   };
@@ -7772,13 +7843,15 @@ function ReportSpending({ state }) {
         <Card style={{ padding:"16px 20px" }}>
           <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>This Month</div>
           <div style={{ fontFamily:T.sans, fontSize:32, fontWeight:800, color:T.accent, margin:"6px 0" }}>{moneyFmt(monthTotal)}</div>
-          <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>{monthly.length} completed WOs</div>
+          <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>{monthly.length} completed WOs · {spendingLabel}</div>
+          <div style={{ fontFamily:T.sans, fontSize:11, color:T.subtext, marginTop:6 }}>Parts {moneyFmt(monthBreakdown.parts)} · Services {moneyFmt(monthBreakdown.services)} · Labor {moneyFmt(monthBreakdown.labor)}</div>
           <div style={{ display:"flex", gap:8, marginTop:10 }}><Btn small onClick={()=>printSpending(monthly,"Monthly Spending Report")}>Print / PDF</Btn><Btn small variant="secondary" onClick={()=>downloadCSV("monthly-spending-report.csv", spendingRows(monthly))}>Excel CSV</Btn></div>
         </Card>
         <Card style={{ padding:"16px 20px" }}>
           <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Fiscal Year (Oct-Sep)</div>
           <div style={{ fontFamily:T.sans, fontSize:32, fontWeight:800, color:T.accent, margin:"6px 0" }}>{moneyFmt(fyTotal)}</div>
-          <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>{annual.length} completed WOs</div>
+          <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>{annual.length} completed WOs · {spendingLabel}</div>
+          <div style={{ fontFamily:T.sans, fontSize:11, color:T.subtext, marginTop:6 }}>Parts {moneyFmt(fyBreakdown.parts)} · Services {moneyFmt(fyBreakdown.services)} · Labor {moneyFmt(fyBreakdown.labor)}</div>
           <div style={{ display:"flex", gap:8, marginTop:10 }}><Btn small onClick={()=>printSpending(annual,"FY Spending Report")}>Print / PDF</Btn><Btn small variant="secondary" onClick={()=>downloadCSV("fy-spending-report.csv", spendingRows(annual))}>Excel CSV</Btn></div>
         </Card>
       </div>
@@ -7793,7 +7866,9 @@ function ReportCombined({ state }) {
     const win = window.open("","_blank","width=900,height=700");
     if(!win) return;
     const eqName = id => state.equipment.find(e=>e.id===id)?.name||id;
-    const totalCost = w => woTotalCost(w);
+    const includeLabor = spendingIncludesLabor(state.settings);
+    const spendingLabel = spendingTotalLabel(state.settings);
+    const totalCost = w => woSpendingTotal(w, includeLabor);
     const allLogs = state.usageLogs || [];
     const currentReading = (eqId, field) => { const l = allLogs.filter(x=>x.equipmentId===eqId&&x[field]).sort((a,b)=>b.date.localeCompare(a.date))[0]; return l?+(l[field]||0):0; };
 
@@ -7811,8 +7886,8 @@ function ReportCombined({ state }) {
     }
     if(selected.spending) {
       const wos = state.workOrders.filter(w=>w.completed);
-      const total = wos.reduce((s,w)=>s+totalCost(w),0);
-      body += `<h2>Completed Work Orders — Total ${moneyFmt(total)}</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO#</th><th>Title</th><th>Description</th><th>Mechanic</th><th>Completed</th><th>Total</th></tr>${wos.map(w=>`<tr><td><b>${w.equipment||"—"}</b></td><td>${eqName(w.equipment)}</td><td>${w.id}</td><td>${w.title}</td><td>${htmlEscape(workOrderDescription(w)||"—")}</td><td>${w.tech||"—"}</td><td>${w.completed||"—"}</td><td>${moneyFmt(totalCost(w))}</td></tr>`).join("")}</table>`;
+      const totals = wos.reduce((acc,w)=>{ const b=woCostBreakdown(w); acc.parts+=b.parts; acc.services+=b.outsideServices; acc.labor+=b.labor; acc.total+=totalCost(w); return acc; }, {parts:0,services:0,labor:0,total:0});
+      body += `<h2>Completed Work Orders — ${spendingLabel} ${moneyFmt(totals.total)}</h2><p style="font-size:12px;margin:0 0 8px"><b>Parts:</b> ${moneyFmt(totals.parts)} &nbsp; <b>Outside Services:</b> ${moneyFmt(totals.services)} &nbsp; <b>Labor:</b> ${moneyFmt(totals.labor)}</p><table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO#</th><th>Title</th><th>Description</th><th>Mechanic</th><th>Completed</th><th>Parts</th><th>Outside Services</th><th>Labor</th><th>${spendingLabel}</th></tr>${wos.map(w=>{ const b=woCostBreakdown(w); return `<tr><td><b>${w.equipment||"—"}</b></td><td>${eqName(w.equipment)}</td><td>${w.id}</td><td>${w.title}</td><td>${htmlEscape(workOrderDescription(w)||"—")}</td><td>${w.tech||"—"}</td><td>${w.completed||"—"}</td><td>${moneyFmt(b.parts)}</td><td>${moneyFmt(b.outsideServices)}</td><td>${moneyFmt(b.labor)}</td><td>${moneyFmt(totalCost(w))}</td></tr>`; }).join("")}</table>`;
     }
     if(selected.parts) {
       const lowStock = state.parts.filter(p=>p.lowStockAlert!==false&&(+(p.qty||0))<=(+(p.minQty||0)));
@@ -8408,6 +8483,7 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
     currency:      s.currency      || "USD",
     defaultPriority: s.defaultPriority || "Medium",
     laborRateDefault: s.laborRateDefault || 45,
+    includeLaborInSpending: s.includeLaborInSpending !== false,
     logo:          s.logo          || "",
     logoMode:      s.logoMode || s.brandLogoMode || "company",
     requireTech:   s.requireTech   || false,
@@ -8721,6 +8797,7 @@ ${payload.inviteUrl}`));
               </select>
             </Field>
           </div>
+          <Toggle label="Include labor in spending totals" k="includeLaborInSpending" sub="Turn off to show parts + outside services only on spending cards and reports. Labor still appears as its own breakdown line." />
           <Toggle label="Require mechanic on work orders" k="requireTech" sub="Work orders cannot be saved without a mechanic assigned" />
         </div>
 
@@ -8991,6 +9068,7 @@ function SetupWizard({ onComplete }) {
     dateFormat: "MM/DD/YYYY",
     currency: "USD",
     showCostsOnWO: true,
+    includeLaborInSpending: true,
     requireTech: false,
   });
 
@@ -9039,6 +9117,7 @@ function SetupWizard({ onComplete }) {
       dateFormat: data.dateFormat,
       currency: data.currency,
       showCostsOnWO: data.showCostsOnWO,
+      includeLaborInSpending: data.includeLaborInSpending !== false,
       requireTech: data.requireTech,
     };
     const profile = {
