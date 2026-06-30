@@ -1502,120 +1502,9 @@ const rowsToDataUri = rows => {
 };
 
 function printCustomizePanelHtml(layoutType="Report") {
-  const safeLayoutType = String(layoutType || "Report").replace(/[^a-z0-9_-]/gi, "_");
-  return `<details class="print-customize" open style="margin:14px auto;max-width:900px;border:1px solid #cbd5e1;border-radius:10px;padding:10px 12px;background:#f8fafc;font-family:Arial,sans-serif">
-    <summary style="cursor:pointer;font-weight:800;color:#111827">Choose What To Print</summary>
-    <div style="font-size:12px;color:#475569;margin:6px 0 10px">Turn any section or table column on/off before printing or saving as PDF. This layout is saved for ${safeLayoutType} work orders.</div>
-    <div style="font-size:11px;font-weight:800;color:#334155;text-transform:uppercase;letter-spacing:.4px;margin:8px 0 5px">Work Order Components</div>
-    <div id="printComponentToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px;margin-bottom:10px"></div>
-    <div style="font-size:11px;font-weight:800;color:#334155;text-transform:uppercase;letter-spacing:.4px;margin:8px 0 5px">Sections</div>
-    <div id="printSectionToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px;margin-bottom:10px"></div>
-    <div style="font-size:11px;font-weight:800;color:#334155;text-transform:uppercase;letter-spacing:.4px;margin:8px 0 5px">Table Columns</div>
-    <div id="printColumnToggles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:6px"></div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button onclick="window.print()" style="padding:8px 18px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer">Print Selected Layout</button><button onclick="localStorage.removeItem(\'ncaPrintLayout_${safeLayoutType}\');location.reload()" style="padding:8px 14px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;font-weight:700;cursor:pointer">Reset Saved Layout</button></div>
-  </details>
-  <style>@media print{.print-customize,.pbtn{display:none!important}}</style>
-  <script>
-  (function(){
-    var layoutKey = 'ncaPrintLayout_${safeLayoutType}';
-    var savedLayout = {};
-    try { savedLayout = JSON.parse(localStorage.getItem(layoutKey) || '{}') || {}; } catch(e) { savedLayout = {}; }
-    function saveLayout(){ try { localStorage.setItem(layoutKey, JSON.stringify(savedLayout)); } catch(e) {} }
-    function clean(txt){ return (txt||'').replace(/\s+/g,' ').trim(); }
-    function addToggle(container, label, checked, onChange, key){
-      if(!container || !label) return;
-      key = key || label;
-      var initial = Object.prototype.hasOwnProperty.call(savedLayout, key) ? savedLayout[key] !== false : checked !== false;
-      var wrap=document.createElement('label');
-      wrap.style.cssText='display:flex;align-items:center;gap:7px;font-size:12px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:7px 9px;cursor:pointer';
-      var cb=document.createElement('input'); cb.type='checkbox'; cb.checked=initial;
-      cb.onchange=function(){ savedLayout[key]=cb.checked; saveLayout(); onChange(cb.checked); };
-      var span=document.createElement('span'); span.textContent=label; span.style.fontWeight='700';
-      wrap.appendChild(cb); wrap.appendChild(span); container.appendChild(wrap);
-      onChange(initial);
-    }
-    function sectionLabel(el, i){
-      if(el.classList.contains('hdr') || el.classList.contains('top')) return 'Header';
-      if(el.classList.contains('sigs') || el.classList.contains('signatureGrid')) return 'Signature Block';
-      if(el.classList.contains('ftr') || el.classList.contains('footerBar')) return 'Footer Bar';
-      if(el.classList.contains('row') || el.classList.contains('dateGrid')) return 'Dates / Status Row';
-      if(el.classList.contains('infoGrid')) return 'Equipment and Work Order Details';
-      var h=el.querySelector('.sh,.section-title,.summaryTitle,h1,h2,h3');
-      return clean(h && h.textContent) || ('Section '+(i+1));
-    }
-    function setup(){
-      var compBox=document.getElementById('printComponentToggles');
-      var secBox=document.getElementById('printSectionToggles');
-      var colBox=document.getElementById('printColumnToggles');
-
-      function addGroupedComponent(label, nodes, defaultShow){
-        nodes = Array.from(nodes || []).filter(function(el){ return el && !el.closest('.print-customize,.pbtn'); });
-        if(!nodes.length) return;
-        addToggle(compBox, label, defaultShow !== false, function(show){
-          nodes.forEach(function(el){ el.style.display = show ? '' : 'none'; });
-        }, 'component:'+label);
-      }
-
-      var componentGroups = {};
-      Array.from(document.querySelectorAll('[data-print-item]')).forEach(function(el){
-        var label = clean(el.getAttribute('data-print-item'));
-        if(!label) return;
-        (componentGroups[label] = componentGroups[label] || []).push(el);
-      });
-      Object.keys(componentGroups).sort().forEach(function(label){ addGroupedComponent(label, componentGroups[label], true); });
-
-      var fieldGroups = {};
-      Array.from(document.querySelectorAll('.cell')).forEach(function(cell){
-        if(cell.closest('.print-customize,.pbtn')) return;
-        var labelNode = cell.querySelector('.fieldLabel');
-        var label = clean(labelNode && labelNode.textContent);
-        if(!label) return;
-        (fieldGroups['Field: '+label] = fieldGroups['Field: '+label] || []).push(cell);
-      });
-      Object.keys(fieldGroups).sort().forEach(function(label){ addGroupedComponent(label, fieldGroups[label], true); });
-
-      addGroupedComponent('Parts Subtotal Row', document.querySelectorAll('.subRow'), true);
-      addGroupedComponent('Grand Total Bar', document.querySelectorAll('.grandTotal'), true);
-      addGroupedComponent('Signature Lines', document.querySelectorAll('.signatureGrid,.sigs'), true);
-      addGroupedComponent('WO Status Bar', document.querySelectorAll('.status'), true);
-      addGroupedComponent('WO Type Badge', document.querySelectorAll('.typePill'), true);
-      addGroupedComponent('Logo Box', document.querySelectorAll('.logoBox'), true);
-
-      var sections=Array.from(document.querySelectorAll('.page .hdr,.page .top,.page .row,.page .dateGrid,.page .infoGrid,.page .sec,.page .section,.page .sigs,.page .signatureGrid,.page .ftr,.page .footerBar, body > h1, body > h2')).filter(function(el){ return !el.closest('.print-customize,.pbtn'); });
-      var seen={};
-      sections.forEach(function(el,i){
-        var label=sectionLabel(el,i);
-        var key=label+'-'+i;
-        if(seen[key]) return; seen[key]=true;
-        addToggle(secBox,label,true,function(show){ el.style.display=show?'':'none'; }, 'section:'+label+':'+i);
-      });
-      var tables=Array.from(document.querySelectorAll('table')).filter(function(t){ return !t.closest('.print-customize'); });
-      tables.forEach(function(table,tIndex){
-        var headers=Array.from(table.querySelectorAll('thead th'));
-        if(!headers.length){ headers=Array.from(table.querySelectorAll('tr:first-child th, tr:first-child td')); }
-        var tableName='Table '+(tIndex+1);
-        var prev=table.previousElementSibling;
-        if(prev && clean(prev.textContent)) tableName=clean(prev.textContent);
-        else {
-          var section=table.closest('.section,.sec');
-          var title=section && section.querySelector('.summaryTitle,.section-title,.sh,h2,h3');
-          if(title && clean(title.textContent)) tableName=clean(title.textContent);
-        }
-        headers.forEach(function(th,idx){
-          var label=clean(th.textContent) || ('Column '+(idx+1));
-          addToggle(colBox,tableName+': '+label,true,function(show){
-            Array.from(table.rows).forEach(function(row){ if(row.cells[idx]) row.cells[idx].style.display=show?'':'none'; });
-          }, 'table:'+tableName+':column:'+idx+':'+label);
-        });
-      });
-      if(compBox && !compBox.children.length) compBox.innerHTML='<div style="font-size:12px;color:#64748b">No separate components detected.</div>';
-      if(secBox && !secBox.children.length) secBox.innerHTML='<div style="font-size:12px;color:#64748b">No separate sections detected.</div>';
-      if(colBox && !colBox.children.length) colBox.innerHTML='<div style="font-size:12px;color:#64748b">No table columns detected.</div>';
-    }
-    if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', setup); else setup();
-  })();
-  <\/script>`;
+  return "";
 }
+
 
 const reportButtonsHtml = (rows=[], title="report") => {
   const dataUri = rowsToDataUri(rows);
@@ -2735,7 +2624,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   /* ---- Print Work Order ---- */
   const printWO = (wo) => {
     const ws = woSettings || {};
-    const printOpt = (key) => ws[key] !== false;
+    const printOpt = () => true;
     const gs = state.settings || {};
     const eq = state.equipment.find(e=>e.id===wo.equipment);
 
@@ -6840,43 +6729,12 @@ function WOSettings({ state, dispatch, onClose }) {
   const s = state.woSettings || {};
   const [form, setForm] = useState({
     headerText:  s.headerText||"Maintenance Work Order",
-    showEquipment: s.showEquipment!==false,
-    showTech:      s.showTech!==false,
-    showDates:     s.showDates!==false,
-    showCosts:     s.showCosts!==false,
-    showPriority:  s.showPriority!==false,
-    showFaultDescription: s.showFaultDescription!==false,
-    showDescription: s.showDescription!==false,
-    showTypeSpecific: s.showTypeSpecific!==false,
-    showMechanicNotes: s.showMechanicNotes!==false,
-    showParts:     s.showParts!==false,
-    showPartsUnitPrice: s.showPartsUnitPrice!==false,
-    showPartsLineTotal: s.showPartsLineTotal!==false,
-    showPartsSubtotal: s.showPartsSubtotal!==false,
-    showOutsideServices: s.showOutsideServices!==false,
-    showOutsideServicesUnitPrice: s.showOutsideServicesUnitPrice!==false,
-    showOutsideServicesLineTotal: s.showOutsideServicesLineTotal!==false,
-    showOutsideServicesSubtotal: s.showOutsideServicesSubtotal!==false,
-    showLaborHours: s.showLaborHours!==false,
-    showLaborTotal: s.showLaborTotal!==false,
-    showGrandTotal: s.showGrandTotal!==false,
-    showSignature: s.showSignature!==false,
-    showFooterText: s.showFooterText!==false,
-    showFooterBar: s.showFooterBar!==false,
     repairPrintColor: s.repairPrintColor || "blue",
     inspectionPrintColor: s.inspectionPrintColor || "mint",
     servicePrintColor: s.servicePrintColor || "yellow",
     footerText:  s.footerText||"",
   });
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
-  const Toggle = ({label,k}) => (
-    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:`1px solid ${T.border}` }}>
-      <span style={{ fontFamily:T.sans, fontSize:13, color:T.text }}>{label}</span>
-      <button onClick={()=>setForm(f=>({...f,[k]:!f[k]}))} style={{ width:40, height:22, borderRadius:11, border:"none", background:form[k]?T.accent:"#d1d5db", cursor:"pointer", position:"relative", transition:"background .2s" }}>
-        <span style={{ position:"absolute", top:2, left:form[k]?18:2, width:18, height:18, borderRadius:"50%", background:T.card, transition:"left .2s", display:"block" }}/>
-      </button>
-    </div>
-  );
   const printColorOptions = [
     ["blue", "Blue"],
     ["mint", "Green"],
@@ -6891,20 +6749,13 @@ function WOSettings({ state, dispatch, onClose }) {
     </Field>
   );
 
-  const handleLogo = e => {
-    const file = e.target.files[0]; if(!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => setForm(f=>({...f,logo:ev.target.result}));
-    reader.readAsDataURL(file);
-  };
-
-  const save = () => { const { companyName, logo, ...cleanForm } = form; dispatch({ type:"UPDATE_WO_SETTINGS", payload:cleanForm }); onClose(); };
+  const save = () => { dispatch({ type:"UPDATE_WO_SETTINGS", payload:form }); onClose(); };
 
   return (
     <Modal title="Work Order Settings" onClose={onClose}>
       <div style={{ display:"flex", flexDirection:"column", gap:14, marginBottom:14 }}>
         <div style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt, fontFamily:T.sans, fontSize:12, color:T.subtext }}>
-          Company / Organization name and logo are controlled in main Settings.
+          Printed work orders now use a standardized layout. Company / Organization name and logo are controlled in main Settings.
         </div>
         <Field label="Work Order Header Title">
           <input style={inp} value={form.headerText} onChange={F("headerText")} />
@@ -6919,29 +6770,6 @@ function WOSettings({ state, dispatch, onClose }) {
           <ColorSelect label="Preventive / Service Work Orders" k="servicePrintColor" />
         </div>
       </div>
-      <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:8 }}>Fields to show on printed Work Order</div>
-      <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginBottom:8 }}>Assigned mechanic and priority are kept inside the system but are no longer printed on the work order.</div>
-      <Toggle label="Equipment Information" k="showEquipment" />
-      <Toggle label="Usage Reading / Mileage / Hours" k="showUsageReading" />
-      <Toggle label="Dates (Created / Due / Completed)" k="showDates" />
-      <Toggle label="Description" k="showFaultDescription" />
-      <Toggle label="Work/Service Description & Work Performed" k="showDescription" />
-      <Toggle label="Service / Inspection Details" k="showTypeSpecific" />
-      <Toggle label="Mechanic Notes" k="showMechanicNotes" />
-      <Toggle label="Parts Table" k="showParts" />
-      <Toggle label="Parts Unit Price Column" k="showPartsUnitPrice" />
-      <Toggle label="Parts Line Total Column" k="showPartsLineTotal" />
-      <Toggle label="Parts Subtotal Row" k="showPartsSubtotal" />
-      <Toggle label="Outside Services Table" k="showOutsideServices" />
-      <Toggle label="Outside Services Unit Cost Column" k="showOutsideServicesUnitPrice" />
-      <Toggle label="Outside Services Line Total Column" k="showOutsideServicesLineTotal" />
-      <Toggle label="Outside Services Subtotal Row" k="showOutsideServicesSubtotal" />
-      <Toggle label="Labor Hours Column" k="showLaborHours" />
-      <Toggle label="Labor Total $ Column" k="showLaborTotal" />
-      <Toggle label="Grand Total $ Bar" k="showGrandTotal" />
-      <Toggle label="Mechanic Signature Block" k="showSignature" />
-      <Toggle label="Remarks / Footer Notes" k="showFooterText" />
-      <Toggle label="Bottom Footer Bar" k="showFooterBar" />
       <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:16 }}>
         <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
         <Btn onClick={save}>Save Settings</Btn>
@@ -6949,6 +6777,7 @@ function WOSettings({ state, dispatch, onClose }) {
     </Modal>
   );
 }
+
 
 
 /* USAGE TRACKING */
@@ -7958,9 +7787,7 @@ function ReportSpending({ state }) {
 }
 
 function ReportCombined({ state }) {
-  const [selected, setSelected] = useState({ deadline:true, pm:true, spending:false, parts:false, usage:false, fuel:false, equipment:false, workorders:false });
-  const [lookAhead, setLookAhead] = useState(30);
-  const toggle = k => setSelected(s=>({...s,[k]:!s[k]}));
+  const selected = { deadline:true, pm:true, spending:true, parts:true, usage:true, fuel:true, equipment:true, workorders:true };
 
   const printCombined = () => {
     const win = window.open("","_blank","width=900,height=700");
@@ -8014,43 +7841,33 @@ function ReportCombined({ state }) {
     win.document.close();
   };
 
-  const sections = [
-    ["workorders","📋 Active Work Orders","All non-completed work orders"],
-    ["deadline","🚨 Deadline Equipment","OOS and equipment with deficiencies"],
-    ["pm","🔧 PM Overdue / Due Soon","Services that need attention"],
-    ["spending","💰 Work Order Spending","Completed WOs with costs"],
-    ["parts","📦 Parts Inventory","All parts with stock levels"],
-    ["usage","📊 Equipment Usage","Current readings for tracked equipment"],
-    ["fuel","⛽ Fuel Report","Fuel on hand, usage, and refills by container"],
-    ["equipment","🚜 Equipment Roster","Complete equipment list"],
+  const standardSections = [
+    "Active Work Orders",
+    "Deadline / Deficiency Equipment",
+    "PM Overdue / Due Soon",
+    "Completed Work Order Spending",
+    "Parts Inventory",
+    "Equipment Usage",
+    "Fuel Report",
+    "Equipment Roster",
   ];
-
-  const allOn  = () => setSelected(Object.fromEntries(sections.map(([k])=>[k,true])));
-  const allOff = () => setSelected({});
-  const selectedCount = Object.values(selected).filter(Boolean).length;
 
   return (
     <div>
       <Card style={{ marginBottom:16 }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
-          <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text }}>Build Your Combined Report</div>
-          <div style={{ display:"flex", gap:6 }}>
-            <Btn small variant="secondary" onClick={allOn}>Select All</Btn>
-            <Btn small variant="secondary" onClick={allOff}>Clear</Btn>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap", marginBottom:12 }}>
+          <div>
+            <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:800, color:T.text }}>Standard Combined Report</div>
+            <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:4 }}>The combined report now uses a fixed standardized layout and includes the core maintenance sections automatically.</div>
           </div>
+          <Btn onClick={printCombined}>Generate Combined Report</Btn>
         </div>
-        <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginBottom:12 }}>Choose which sections to include. The report combines them into one printable document with your company header.</div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(280px, 1fr))", gap:10 }}>
-          {sections.map(([k,l,desc])=>(
-            <button key={k} onClick={()=>toggle(k)} style={{ padding:"12px 14px", borderRadius:8, border:`2px solid ${selected[k]?T.accent:T.border}`, background:selected[k]?T.accentLt:"#fff", color:selected[k]?T.accent:T.text, cursor:"pointer", fontFamily:T.sans, textAlign:"left", display:"flex", flexDirection:"column", gap:3 }}>
-              <span style={{ fontSize:13, fontWeight:selected[k]?700:600 }}>{selected[k]?"☑ ":"☐ "}{l}</span>
-              <span style={{ fontSize:11, color:T.muted }}>{desc}</span>
-            </button>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(220px, 1fr))", gap:8 }}>
+          {standardSections.map(label=>(
+            <div key={label} style={{ padding:"10px 12px", borderRadius:8, border:`1px solid ${T.border}`, background:T.grayLt, fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text }}>
+              ✓ {label}
+            </div>
           ))}
-        </div>
-        <div style={{ marginTop:18, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>{selectedCount} section{selectedCount!==1?"s":""} selected</span>
-          <Btn onClick={printCombined} disabled={selectedCount===0}>Generate Combined Report</Btn>
         </div>
       </Card>
     </div>
@@ -8593,7 +8410,6 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
     laborRateDefault: s.laborRateDefault || 45,
     logo:          s.logo          || "",
     logoMode:      s.logoMode || s.brandLogoMode || "company",
-    showCostsOnWO: s.showCostsOnWO !== false,
     requireTech:   s.requireTech   || false,
   });
   const foundationState = { ...state, settings:form, locations:normalizeMaintForgeLocations({ ...state, settings:form }) };
@@ -8905,7 +8721,6 @@ ${payload.inviteUrl}`));
               </select>
             </Field>
           </div>
-          <Toggle label="Show costs on printed work order" k="showCostsOnWO" sub="Labor and parts costs visible on printed WOs" />
           <Toggle label="Require mechanic on work orders" k="requireTech" sub="Work orders cannot be saved without a mechanic assigned" />
         </div>
 
