@@ -7182,6 +7182,9 @@ function EquipmentInventory({ state, dispatch }) {
   const invOnly = (state.inventoryItems||[]).map(i=>({...i, _source:"inventory"}));
   const items    = [...eqAsInventory, ...attachmentAsInventory, ...invOnly];
   const orgLocations = normalizeMaintForgeLocations(state).filter(l=>l.active!==false);
+  const inventoryLocationOptions = orgLocations.length
+    ? orgLocations.map(l=>({ id:l.id || l.name, name:l.name || String(l.id || "Facility") }))
+    : ["Main Shop","Motor Pool","Storage"].map(name=>({ id:name, name }));
   const active   = items.filter(i=>!["Turned-in","Disposed"].includes(i.turnInStatus));
   const archived = items.filter(i=>["Turned-in","Disposed"].includes(i.turnInStatus));
 
@@ -7374,8 +7377,7 @@ function EquipmentInventory({ state, dispatch }) {
             <Field label="Location" half>
               <select style={sel} value={form.location||""} onChange={F("location")}>
                 <option value="">-- Select Location --</option>
-                {(state.settings?.locations||[]).map(l=><option key={l}>{l}</option>)}
-                {!(state.settings?.locations?.length) && ["Main Shop","Motor Pool","Storage"].map(l=><option key={l}>{l}</option>)}
+                {inventoryLocationOptions.map(l=><option key={l.id || l.name} value={l.name}>{l.name}</option>)}
               </select>
             </Field>
             <Field label="Make / Manufacturer" half><input style={inp} value={form.make||""} onChange={F("make")} /></Field>
