@@ -58,6 +58,38 @@ const DARK_THEME = {
 
 const T = { ...LIGHT_THEME };
 
+
+class PageErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidUpdate(prevProps) {
+    if(prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false, error: null });
+    }
+  }
+  render() {
+    if(this.state.hasError) {
+      const message = this.state.error?.message || "This page could not be opened.";
+      return (
+        <div style={{ padding: 24 }}>
+          <div style={{ maxWidth: 760, margin: "40px auto", background: T.card, border: `1px solid ${T.border}`, borderRadius: 22, padding: 24, boxShadow: T.shadowMd }}>
+            <h2 style={{ margin: "0 0 8px", color: T.text }}>Page could not open</h2>
+            <p style={{ margin: "0 0 16px", color: T.subtext }}>The app stopped this page from turning into a white screen. Go back to the dashboard and try the page again.</p>
+            <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, background: T.grayLt, color: T.muted, fontSize: 12, overflowWrap: "anywhere" }}>{message}</div>
+            <button type="button" onClick={this.props.onReset} style={{ border: "none", borderRadius: 12, background: T.accent, color: "white", padding: "10px 14px", fontWeight: 800, cursor: "pointer" }}>Back to Dashboard</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function applyThemeMode(mode="light") {
   Object.assign(T, mode === "dark" ? DARK_THEME : LIGHT_THEME);
 }
@@ -2269,7 +2301,11 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     const eq = eqs.find(e=>String(e.id)===String(id));
     return eq ? `${eq.id} — ${eq.name || eq.nomenclature || "Equipment"}` : (id || "No equipment");
   };
-  const click = (tab) => setTab && setTab(tab);
+  const dashboardTabIds = new Set(["dashboard","workorders","wo_requests","inspections","equipment","parts","pm","usage","fuel","spending","inventory","reports_deadline","reports_parts_inv","reports_pm","reports_usage","reports_fuel","reports_spending","reports_combined"]);
+  const click = (tab) => {
+    if(!setTab) return;
+    setTab(dashboardTabIds.has(tab) ? tab : "dashboard");
+  };
   const roleRank = { organization_admin:5, facility_admin:4, supervisor:3, mechanic:2, viewer:1 };
   const roleAtLeast = (minimum) => (roleRank[role] || 1) >= (roleRank[minimum] || 1);
   const roleCanSee = (roles) => !roles || roles.includes(role) || (role === "organization_admin" && !roles.includes("__none"));
@@ -10233,6 +10269,10 @@ export default function App() {
     reports_combined: <ReportCombined   state={visibleState} />,
   };
 
+  useEffect(() => {
+    if(!pages[tab]) setTab("dashboard");
+  }, [tab]);
+
   const selectedTheme = state.settings?.theme || "light";
   const effectiveTheme = getEffectiveThemeMode(selectedTheme);
   applyThemeMode(effectiveTheme);
@@ -10814,7 +10854,9 @@ export default function App() {
           <div style={{ width:32, height:3, background:T.accent, borderRadius:2, marginTop:6 }} />
         </div>
         <LegacyDataRepairBanner state={state} dispatch={dispatch} />
-        {pages[tab] || pages.dashboard}
+        <PageErrorBoundary resetKey={tab} onReset={()=>setTab("dashboard")}>
+          {pages[tab] || pages.dashboard}
+        </PageErrorBoundary>
       </main>
 
       {showProfile    && <UserProfile    state={state} dispatch={dispatch} onClose={()=>setShowProfile(false)} />}
