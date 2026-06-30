@@ -159,6 +159,17 @@ function parseNumber(value, fallback=0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function sanitizeDecimalInput(value) {
+  let text = String(value ?? "").replace(/,/g, ".").replace(/[^0-9.]/g, "");
+  const firstDot = text.indexOf(".");
+  if(firstDot !== -1) text = text.slice(0, firstDot + 1) + text.slice(firstDot + 1).replace(/\./g, "");
+  return text;
+}
+
+function decimalInputAttrs(extra={}) {
+  return { type:"text", inputMode:"decimal", pattern:"[0-9]*[.]?[0-9]*", ...extra };
+}
+
 function parseInches(value, fallback=0) {
   if(typeof value === "number") return Number.isFinite(value) ? value : fallback;
   let text = String(value ?? "").trim();
@@ -2982,7 +2993,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                   {getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}
                   <option value="__new_unit__">+ Add new...</option>
                 </select>
-                <input style={inp} type="number" min="0" step="0.01" placeholder="Unit $" value={p.unitCost||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],unitCost:e.target.value}; return {...f,partsUsed:arr}; })} />
+                <input style={inp} {...decimalInputAttrs({ placeholder:"Unit $" })} value={p.unitCost||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],unitCost:sanitizeDecimalInput(e.target.value)}; return {...f,partsUsed:arr}; })} />
                 <button onClick={()=>setShowNewPart(showNewPart===idx?null:idx)} style={{ padding:"6px 8px", border:`1px solid ${T.border}`, borderRadius:6, background:T.grayLt, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.accent, whiteSpace:"nowrap" }}>
                   {showNewPart===idx?"Close":"Inventory"}
                 </button>
@@ -3034,7 +3045,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                     <input style={inp} placeholder="Stock" type="number" value={newPartForm.qty||""} onChange={e=>setNewPartForm(f=>({...f,qty:e.target.value}))} />
                     <input style={inp} placeholder="Min" type="number" value={newPartForm.minQty||""} onChange={e=>setNewPartForm(f=>({...f,minQty:e.target.value}))} />
                     <select style={sel} value={newPartForm.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, newPartForm.unit||"ea", v=>setNewPartForm(f=>({...f,unit:v})))}>{getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}<option value="__new_unit__">+ Add new...</option></select>
-                    <input style={inp} placeholder="$/unit" type="number" step="0.01" value={newPartForm.unitCost||""} onChange={e=>setNewPartForm(f=>({...f,unitCost:e.target.value}))} />
+                    <input style={inp} {...decimalInputAttrs({ placeholder:"$/unit" })} value={newPartForm.unitCost||""} onChange={e=>setNewPartForm(f=>({...f,unitCost:sanitizeDecimalInput(e.target.value)}))} />
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr auto", gap:6 }}>
                     <input style={inp} list="wo-part-category-options" placeholder="Category" value={newPartForm.category||""} onChange={e=>setNewPartForm(f=>({...f,category:e.target.value}))} />
@@ -3063,7 +3074,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             <div key={idx} style={{ display:"grid", gridTemplateColumns:"1fr 80px 110px 110px auto", gap:8, marginBottom:8, alignItems:"center" }}>
               <input style={inp} placeholder="Service description..." value={svc.description||svc.name||""} onChange={e=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr[idx]={...arr[idx],description:e.target.value}; return {...f,outsideServices:arr}; })} />
               <input style={{ ...inp, textAlign:"center" }} type="number" min="1" step="0.01" placeholder="Qty" value={svc.qty||""} onChange={e=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr[idx]={...arr[idx],qty:e.target.value}; return {...f,outsideServices:arr}; })} />
-              <input style={inp} type="number" min="0" step="0.01" placeholder="Unit Cost" value={svc.unitCost ?? svc.cost ?? ""} onChange={e=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr[idx]={...arr[idx],unitCost:e.target.value}; return {...f,outsideServices:arr}; })} />
+              <input style={inp} {...decimalInputAttrs({ placeholder:"Unit Cost" })} value={svc.unitCost ?? svc.cost ?? ""} onChange={e=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr[idx]={...arr[idx],unitCost:sanitizeDecimalInput(e.target.value)}; return {...f,outsideServices:arr}; })} />
               <div style={{ fontFamily:T.mono, fontSize:12, fontWeight:700, color:T.text, textAlign:"right" }}>${lineItemTotal(svc).toFixed(2)}</div>
               <button onClick={()=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr.splice(idx,1); return {...f,outsideServices:arr}; })} style={{ padding:"6px 10px", border:`1px solid ${T.red}`, borderRadius:6, background:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>
             </div>
@@ -3111,7 +3122,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               </div>
               <div>
                 <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, display:"block", marginBottom:4 }}>Labor Rate ($/hr)</label>
-                <input style={inp} type="number" value={newTech.laborRate} onChange={e=>setNewTech(n=>({...n,laborRate:e.target.value}))} placeholder="45" />
+                <input style={inp} {...decimalInputAttrs({ placeholder:"45" })} value={newTech.laborRate} onChange={e=>setNewTech(n=>({...n,laborRate:sanitizeDecimalInput(e.target.value)}))} />
               </div>
               <div style={{ display:"flex", gap:6 }}>
                 <Btn small onClick={addNewTech}>Save</Btn>
@@ -3125,7 +3136,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <input style={inp} type="number" value={form.laborHours||0} onChange={e=>{ const hrs=+e.target.value; const rate=techObj?.laborRate||0; setForm(f=>({...f,laborHours:hrs,laborCost:rate?hrs*rate:f.laborCost})); }} />
         </Field>
         <Field label="Labor Cost ($)" half>
-          <input style={inp} type="number" value={form.laborCost||0} onChange={e=>setForm(f=>({...f,laborCost:e.target.value}))} />
+          <input style={inp} {...decimalInputAttrs()} value={form.laborCost ?? ""} onChange={e=>setForm(f=>({...f,laborCost:sanitizeDecimalInput(e.target.value)}))} />
         </Field>
 
 
@@ -3634,7 +3645,7 @@ function AttachmentsCard({ eq, dispatch }) {
             </div>
             <div style={{ marginBottom:12 }}>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Purchase Price ($)</label>
-              <input style={inp} type="number" value={form.acquisitionCost||""} onChange={F("acquisitionCost")} placeholder="0.00" />
+              <input style={inp} {...decimalInputAttrs({ placeholder:"0.00" })} value={form.acquisitionCost||""} onChange={e=>setForm(f=>({...f,acquisitionCost:sanitizeDecimalInput(e.target.value)}))} />
             </div>
             <div style={{ marginBottom:12, gridColumn:"span 2" }}>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Notes</label>
@@ -4024,7 +4035,7 @@ function Equipment({ state, dispatch }) {
         <input style={inp} type="date" value={form.acquisitionDate||""} onChange={e=>setForm(f=>({...f,acquisitionDate:e.target.value}))} />
       </Field>
       <Field label="Purchase Price ($)" half>
-        <SmartInput historyKey="equipment.acquisitionCost" style={inp} type="number" value={form.acquisitionCost||""} onChange={e=>setForm(f=>({...f,acquisitionCost:e.target.value}))} placeholder="0.00" />
+        <SmartInput historyKey="equipment.acquisitionCost" style={inp} {...decimalInputAttrs({ placeholder:"0.00" })} value={form.acquisitionCost||""} onChange={e=>setForm(f=>({...f,acquisitionCost:sanitizeDecimalInput(e.target.value)}))} />
       </Field>
       <Field label="Warranty Start Date" half>
         <input style={inp} type="date" value={form.warrantyStart||""} onChange={e=>setForm(f=>({...f,warrantyStart:e.target.value}))} />
@@ -4876,7 +4887,7 @@ function Parts({ state, dispatch }) {
             <Field label="PO Number" half><input style={inp} value={form.poNumber||""} onChange={F("poNumber")} /></Field>
             <Field label="Facility" half><input style={inp} value={form.location||""} onChange={F("location")} /></Field>
             <Field label="Date Received" half><input style={inp} type="date" value={form.dateReceived||""} onChange={F("dateReceived")} /></Field>
-            <Field label="Unit Cost ($)" half><input style={inp} type="number" value={form.unitCost||0} onChange={F("unitCost")} /></Field>
+            <Field label="Unit Cost ($)" half><input style={inp} {...decimalInputAttrs()} value={form.unitCost ?? ""} onChange={e=>setForm(f=>({...f,unitCost:sanitizeDecimalInput(e.target.value)}))} /></Field>
             <Field label="Qty on Hand" half><input style={inp} type="number" value={form.qty||0} onChange={F("qty")} /></Field>
             <Field label="Unit Type" half><select style={sel} value={form.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, form.unit||"ea", v=>setForm(f=>({...f,unit:v})))}>{getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}<option value="__new_unit__">+ Add new...</option></select></Field>
             <Field label="Min Qty (Low Stock)" half><input style={inp} type="number" value={form.minQty||1} onChange={F("minQty")} /></Field>
@@ -4913,7 +4924,7 @@ function Parts({ state, dispatch }) {
               <input style={inp} list="part-category-options" placeholder="Category" value={p.category} onChange={e=>setPoRow(i,"category",e.target.value)} />
               <input style={inp} type="number" placeholder="Qty" value={p.qty} onChange={e=>setPoRow(i,"qty",e.target.value)} />
               <select style={sel} value={p.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, p.unit||"ea", v=>setPoRow(i,"unit",v))}>{getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}<option value="__new_unit__">+ Add new...</option></select>
-              <input style={inp} type="number" step="0.01" placeholder="0.00" value={p.unitCost} onChange={e=>setPoRow(i,"unitCost",e.target.value)} />
+              <input style={inp} {...decimalInputAttrs({ placeholder:"0.00" })} value={p.unitCost} onChange={e=>setPoRow(i,"unitCost",sanitizeDecimalInput(e.target.value))} />
               <input style={inp} placeholder="Facility" value={p.location} onChange={e=>setPoRow(i,"location",e.target.value)} />
               <input style={inp} list="po-model-options" placeholder="Fits model" value={p.modelFit||""} onChange={e=>setPoRow(i,"modelFit",e.target.value)} />
               <datalist id="po-model-options">{modelOptions.map(m=><option key={m} value={m} />)}</datalist>
@@ -6570,7 +6581,7 @@ function UserProfile({ state, dispatch, onClose }) {
         <Field label="Last Name"  half><input style={inp} value={form.lastName}  onChange={F("lastName")}  placeholder="Martinez" /></Field>
         <Field label="Position"><input style={inp} value={form.position} onChange={F("position")} placeholder="Mechanic, Supervisor..." /></Field>
         <Field label="Work Location"><input style={inp} value={form.workLocation} onChange={F("workLocation")} placeholder="Main Shop, Maintenance Bay, Warehouse..." /></Field>
-        <Field label="Labor Rate ($/hr)" half><input style={inp} type="number" value={form.laborRate||""} onChange={F("laborRate")} placeholder="45.00" /></Field>
+        <Field label="Labor Rate ($/hr)" half><input style={inp} {...decimalInputAttrs({ placeholder:"45.00" })} value={form.laborRate||""} onChange={e=>setForm(f=>({...f,laborRate:sanitizeDecimalInput(e.target.value)}))} /></Field>
       </div>
       <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:8 }}>
         <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
@@ -7235,7 +7246,7 @@ function EquipmentInventory({ state, dispatch }) {
             <Field label="Model" half><input style={inp} value={form.model||""} onChange={F("model")} /></Field>
             <Field label="Year" half><input style={inp} type="number" value={form.year||""} onChange={F("year")} /></Field>
             <Field label="Acquisition Date" half><input style={inp} type="date" value={form.acquisitionDate||""} onChange={F("acquisitionDate")} /></Field>
-            <Field label="Acquisition Cost ($)" half><input style={inp} type="number" value={form.acquisitionCost||""} onChange={F("acquisitionCost")} /></Field>
+            <Field label="Acquisition Cost ($)" half><input style={inp} {...decimalInputAttrs()} value={form.acquisitionCost||""} onChange={e=>setForm(f=>({...f,acquisitionCost:sanitizeDecimalInput(e.target.value)}))} /></Field>
             <Field label="Notes"><textarea style={{ ...inp, minHeight:60, resize:"vertical" }} value={form.notes||""} onChange={F("notes")} /></Field>
             <div style={{ gridColumn:"span 2", marginBottom:14 }}>
               <DocUploader label="Documents Folder (receipts, manuals, inspections, repairs, etc.)" category="General" documents={form.documents||[]} onChange={docs=>setForm(f=>({...f,documents:docs}))} />
@@ -8639,7 +8650,7 @@ ${payload.inviteUrl}`));
               </select>
             </Field>
             <Field label="Default Labor Rate ($/hr)" half>
-              <input style={inp} type="number" value={form.laborRateDefault} onChange={F("laborRateDefault")} />
+              <input style={inp} {...decimalInputAttrs()} value={form.laborRateDefault} onChange={e=>setForm(f=>({...f,laborRateDefault:sanitizeDecimalInput(e.target.value)}))} />
             </Field>
             <Field label="Date Format" half>
               <select style={sel} value={form.dateFormat} onChange={F("dateFormat")}>
@@ -9088,7 +9099,7 @@ function SetupWizard({ onComplete }) {
               <Field label="First Name *" half><input style={inp} value={data.firstName} onChange={F("firstName")} placeholder="John" autoFocus /></Field>
               <Field label="Last Name" half><input style={inp} value={data.lastName} onChange={F("lastName")} placeholder="Smith" /></Field>
               <Field label="Position" half><input style={inp} value={data.position} onChange={F("position")} placeholder="Mechanic, Supervisor..." /></Field>
-              <Field label="Labor Rate ($/hr)" half><input style={inp} type="number" value={data.laborRate} onChange={F("laborRate")} placeholder="45" /></Field>
+              <Field label="Labor Rate ($/hr)" half><input style={inp} {...decimalInputAttrs({ placeholder:"45" })} value={data.laborRate} onChange={e=>setData(d=>({...d,laborRate:sanitizeDecimalInput(e.target.value)}))} /></Field>
               <Field label="Phone" half><input style={inp} value={data.profilePhone} onChange={F("profilePhone")} /></Field>
               <Field label="Email" half><input style={inp} type="email" value={data.profileEmail} onChange={F("profileEmail")} /></Field>
             </div>
@@ -9098,7 +9109,7 @@ function SetupWizard({ onComplete }) {
               <p style={{ margin:"0 0 8px", fontFamily:T.sans, fontSize:12, color:T.muted }}>Add other mechanics in your shop. You can add more later.</p>
               <div style={{ display:"grid", gridTemplateColumns:"2fr 100px auto", gap:6, marginBottom:8 }}>
                 <input style={inp} placeholder="Full name" value={data._newMechName} onChange={F("_newMechName")} onKeyDown={e=>e.key==="Enter"&&addMechanic()} />
-                <input style={inp} type="number" placeholder="$/hr" value={data._newMechRate} onChange={F("_newMechRate")} />
+                <input style={inp} {...decimalInputAttrs({ placeholder:"$/hr" })} value={data._newMechRate} onChange={e=>setData(d=>({...d,_newMechRate:sanitizeDecimalInput(e.target.value)}))} />
                 <Btn small onClick={addMechanic}>Add</Btn>
               </div>
               {data.mechanics.length>0 && (
