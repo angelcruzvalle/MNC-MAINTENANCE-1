@@ -8419,6 +8419,40 @@ function readInviteInfoFromCurrentUrl() {
   } catch(e) { return null; }
 }
 
+function inviteInfoFromManualEntry(value="", fallbackEmail="") {
+  const raw = String(value || "").trim();
+  if(!raw) return null;
+  try {
+    const url = raw.includes("?") ? new URL(raw, window.location.origin) : null;
+    if(url) {
+      const params = url.searchParams;
+      const token = params.get("invite") || params.get("code") || params.get("token") || "";
+      if(token) return cleanInviteInfo({
+        token,
+        email:params.get("email") || fallbackEmail || "",
+        ownerUserId:params.get("owner") || params.get("ownerUserId") || "",
+        role:params.get("role") || "",
+        facilities:params.get("facilities") || params.get("facilityIds") || params.get("facility") || "",
+        capturedAt:new Date().toISOString(),
+      });
+    }
+  } catch(e) {}
+  try {
+    const maybeParams = new URLSearchParams(raw.replace(/^#/, "").replace(/^\?/, ""));
+    const token = maybeParams.get("invite") || maybeParams.get("code") || maybeParams.get("token") || "";
+    if(token) return cleanInviteInfo({
+      token,
+      email:maybeParams.get("email") || fallbackEmail || "",
+      ownerUserId:maybeParams.get("owner") || maybeParams.get("ownerUserId") || "",
+      role:maybeParams.get("role") || "",
+      facilities:maybeParams.get("facilities") || maybeParams.get("facilityIds") || maybeParams.get("facility") || "",
+      capturedAt:new Date().toISOString(),
+    });
+  } catch(e) {}
+  const token = raw.replace(/[^a-zA-Z0-9_-]/g, "").trim();
+  return token ? cleanInviteInfo({ token, email:fallbackEmail || "", capturedAt:new Date().toISOString() }) : null;
+}
+
 function copyTextToClipboard(text="") {
   if(!text) return Promise.reject(new Error("Nothing to copy."));
   if(navigator?.clipboard?.writeText) return navigator.clipboard.writeText(text);
@@ -9331,14 +9365,19 @@ ${payload.inviteUrl}`));
 
             {(state.userInvites||[]).length===0 ? <div style={{ marginTop:10, padding:10, border:`1px dashed ${T.border}`, borderRadius:8, background:T.surface, fontSize:12, color:T.muted }}>No pending invite records. Create one to generate a manual invite URL you can copy and send.</div> : <div style={{ marginTop:10, display:"grid", gap:6 }}>
               <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text }}>Pending Invite Records</div>
-              {(state.userInvites||[]).slice(0,8).map(inv=>{ const url = inv.inviteUrl || inviteUrlForToken(inv.token, inv.email, inv.ownerUserId || state.ownerUserId || currentUser?.id || "", inv.role, inv.facilityIds || (inv.locationId ? [inv.locationId] : [])); return <div key={inv.id} style={{ display:"grid", gridTemplateColumns:"minmax(190px,1fr) minmax(140px,.65fr) minmax(220px,1.2fr) auto", gap:8, alignItems:"center", fontSize:12, color:T.subtext, padding:8, border:`1px solid ${T.border}`, borderRadius:6, background:T.surface }}>
+              {(state.userInvites||[]).slice(0,8).map(inv=>{ const url = inv.inviteUrl || inviteUrlForToken(inv.token, inv.email, inv.ownerUserId || state.ownerUserId || currentUser?.id || "", inv.role, inv.facilityIds || (inv.locationId ? [inv.locationId] : [])); return <div key={inv.id} style={{ display:"grid", gridTemplateColumns:"minmax(190px,1fr) minmax(140px,.65fr) minmax(160px,.9fr) minmax(220px,1.2fr) auto", gap:8, alignItems:"center", fontSize:12, color:T.subtext, padding:8, border:`1px solid ${T.border}`, borderRadius:6, background:T.surface }}>
                 <div><b style={{ color:T.text }}>{inv.email}</b><div style={{ color:T.muted, fontSize:11 }}>{inv.name || "No name entered"}</div><div style={{ color:T.muted, fontSize:11 }}>{inv.locationName || (inv.facilityIds||[]).map(id=>locationNameForId(foundationState,id)).join(", ") || "No facility selected"}</div></div>
                 <div>{roleLabel(normalizeRole(inv.role))}</div>
+                <div style={{ minWidth:0 }}>
+                  <div style={{ fontSize:10, color:T.muted, fontWeight:800, textTransform:"uppercase", letterSpacing:.4 }}>Invite Code</div>
+                  <input readOnly value={inv.token || ""} onFocus={e=>e.target.select()} style={{ ...inp, fontSize:11, padding:"7px 8px", height:34, width:"100%", fontFamily:"monospace" }} />
+                </div>
                 <div style={{ minWidth:0 }}>
                   <div style={{ fontSize:10, color:T.muted, fontWeight:800, textTransform:"uppercase", letterSpacing:.4 }}>Invite URL</div>
                   <input readOnly value={url} onFocus={e=>e.target.select()} style={{ ...inp, fontSize:11, padding:"7px 8px", height:34, width:"100%" }} />
                 </div>
                 <div style={{ display:"flex", gap:6, justifyContent:"flex-end", flexWrap:"wrap" }}>
+                  <Btn small variant="secondary" onClick={()=>copyTextToClipboard(inv.token || "").then(()=>alert("Invite code copied.")).catch(()=>prompt("Copy this invite code:", inv.token || ""))}>Copy Code</Btn>
                   <Btn small variant="secondary" onClick={()=>copyInviteUrl(inv)}>Copy URL</Btn>
                   <Btn small variant="danger" onClick={()=>dispatch({type:"DELETE_USER_INVITE", payload:inv.id})}>Remove</Btn>
                 </div>
@@ -10216,6 +10255,9 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authInfoMsg, setAuthInfoMsg] = useState("");
   const [manualInviteInfo, setManualInviteInfo] = useState(null);
+  const [inviteCodeInput, setInviteCodeInput] = useState("");
+  const [inviteCodeBusy, setInviteCodeBusy] = useState(false);
+  const [inviteCodeError, setInviteCodeError] = useState("");
   const publicWORequestMode = isPublicWORequestPage();
   const [publicPortal, setPublicPortal] = useState(null);
   const [publicPortalLoading, setPublicPortalLoading] = useState(false);
@@ -10650,6 +10692,93 @@ export default function App() {
     }
   }
 
+  async function acceptInviteInfoForSignedInUser(inviteInfo) {
+    if(!session?.user) return false;
+    const clean = cleanInviteInfo({ ...inviteInfo, email:inviteInfo?.email || session.user.email });
+    if(!clean?.token) { setInviteCodeError("Enter a valid invite code."); return false; }
+    const invitedEmail = normalizeEmail(clean.email || "");
+    const signedInEmail = normalizeEmail(session.user.email || "");
+    if(invitedEmail && signedInEmail && invitedEmail !== signedInEmail) {
+      setInviteCodeError(`This invite was created for ${invitedEmail}, but you are signed in as ${signedInEmail}.`);
+      return false;
+    }
+    setInviteCodeBusy(true);
+    setInviteCodeError("");
+    try {
+      const inviteMatch = await findOrganizationStateForInvite(clean, session.user);
+      if(!inviteMatch?.invite) {
+        setInviteCodeError("Invite code was not found. Ask the Organization Administrator to create a fresh invite and give you the code shown in Pending Invite Records.");
+        return false;
+      }
+      const acceptedState = applyInviteToOrganizationState({ ...inviteMatch.ownerState, ownerUserId:inviteMatch.ownerUserId }, inviteMatch.invite, session.user);
+      const invitedUiState = {
+        ...acceptedState,
+        setupComplete:true,
+        invitedMember:true,
+        inviteAccepted:true,
+        personalWorkspaceCleared:true,
+        inviteConnectionError:null,
+        acceptedOrganizationOwnerId:inviteMatch.ownerUserId,
+      };
+      await saveOrganizationInviteAcceptance(inviteMatch.ownerUserId, prepareSharedOrganizationStateForCloudSave(acceptedState, null));
+      await saveInvitePointerForUser(session.user.id, inviteMatch.ownerUserId, session.user.email, inviteMatch.invite);
+      clearPendingInviteInfo();
+      try { localStorage.removeItem("ncaState"); localStorage.removeItem("ncaState:lastUserId"); } catch(e) {}
+      dispatch({ type:"REPLACE_STATE", payload:invitedUiState });
+      setInviteCodeInput("");
+      setAuthInfoMsg(`✓ Invite accepted. You are connected to ${acceptedState.settings?.companyName || acceptedState.organization?.name || inviteMatch.invite.organizationName || "the organization"} as ${roleLabel(acceptedState.userRole)}.`);
+      return true;
+    } catch(e) {
+      console.error("Manual invite code acceptance failed:", e);
+      setInviteCodeError("The invite code could not be connected. Check the code or ask for a fresh invite.");
+      return false;
+    } finally {
+      setInviteCodeBusy(false);
+    }
+  }
+
+  async function handleInviteCodeSubmit() {
+    setInviteCodeError("");
+    const clean = inviteInfoFromManualEntry(inviteCodeInput, session?.user?.email || authEmail);
+    if(!clean?.token) { setInviteCodeError("Enter an invite code or paste the invite link."); return; }
+    if(session?.user) {
+      await acceptInviteInfoForSignedInUser(clean);
+      return;
+    }
+    savePendingInviteInfo(clean);
+    setManualInviteInfo(clean);
+    if(clean.email) setAuthEmail(clean.email);
+    setAuthMode("login");
+    setAuthInfoMsg("Invite code saved. Sign in with the invited email to join the organization/facility.");
+  }
+
+  function InviteCodeJoinPanel({ compact=false }={}) {
+    return (
+      <div style={{ padding:compact?10:14, border:`1px solid ${compact?"#475569":T.border}`, borderRadius:compact?8:14, background:compact?"#111827":T.surface, marginTop:compact?12:0, marginBottom:compact?0:14 }}>
+        <div style={{ fontSize:compact?12:14, fontWeight:900, color:compact?"#e5e7eb":T.text, marginBottom:6 }}>Join with Invite Code</div>
+        <div style={{ fontSize:compact?11:12, color:compact?"#9ca3af":T.subtext, lineHeight:1.4, marginBottom:8 }}>
+          Existing users can enter the invite code here. This links the account to the invited organization and assigned facility/facilities.
+        </div>
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          <input
+            value={inviteCodeInput}
+            onChange={e=>{ setInviteCodeInput(e.target.value); setInviteCodeError(""); }}
+            placeholder="Paste invite code or invite link"
+            style={{ flex:"1 1 240px", minWidth:0, padding:"11px 12px", borderRadius:8, border:`1px solid ${compact?"#374151":T.border}`, background:compact?"#0f172a":T.card, color:compact?"white":T.text, fontSize:13, outline:"none", fontFamily:T.sans }}
+            onKeyDown={e=>{ if(e.key==="Enter") handleInviteCodeSubmit(); }}
+            disabled={inviteCodeBusy}
+          />
+          <button
+            onClick={handleInviteCodeSubmit}
+            disabled={inviteCodeBusy}
+            style={{ padding:"11px 14px", borderRadius:8, border:"none", cursor:inviteCodeBusy?"wait":"pointer", background:inviteCodeBusy?"#64748b":"#2563eb", color:"white", fontWeight:900, fontSize:12, fontFamily:T.sans }}
+          >{inviteCodeBusy ? "Connecting..." : "Join"}</button>
+        </div>
+        {inviteCodeError && <div style={{ marginTop:8, color:compact?"#fca5a5":T.red, fontSize:12, lineHeight:1.35 }}>⚠ {inviteCodeError}</div>}
+      </div>
+    );
+  }
+
   function switchAuthMode(mode) {
     setAuthMode(mode);
     setAuthError(""); setAuthInfoMsg("");
@@ -10869,6 +10998,8 @@ export default function App() {
             </div>
           )}
 
+          <InviteCodeJoinPanel compact />
+
           {/* Email */}
           <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#9ca3af", marginBottom:5 }}>Email</label>
           <input
@@ -10994,6 +11125,7 @@ export default function App() {
           <div style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:12, background:T.surface, color:T.subtext, fontSize:13, lineHeight:1.45, marginBottom:14 }}>
             This screen intentionally blocks the old personal workspace from loading. Use a fresh invite link that includes the owner/organization connection, then sign in with the invited email.
           </div>
+          <InviteCodeJoinPanel />
           <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
             <Btn onClick={async()=>{ clearPendingInviteInfo(); try { await supabase.auth.signOut(); } catch(e) {} window.location.href = window.location.origin + window.location.pathname; }}>Sign out and use fresh invite</Btn>
             <Btn variant="secondary" onClick={()=>{ clearPendingInviteInfo(); window.location.href = window.location.origin + window.location.pathname; }}>Clear invite link</Btn>
@@ -11004,7 +11136,14 @@ export default function App() {
   }
 
   if(!state.setupComplete) {
-    return <SetupWizard onComplete={(setupData)=>dispatch({type:"COMPLETE_SETUP",payload:setupData})} />;
+    return (
+      <div style={{ minHeight:"100vh", background:T.bg }}>
+        <div style={{ maxWidth:760, margin:"0 auto", padding:"16px 16px 0", fontFamily:T.sans }}>
+          <InviteCodeJoinPanel />
+        </div>
+        <SetupWizard onComplete={(setupData)=>dispatch({type:"COMPLETE_SETUP",payload:setupData})} />
+      </div>
+    );
   }
 
   return (
