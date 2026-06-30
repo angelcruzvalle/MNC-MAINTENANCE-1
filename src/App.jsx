@@ -587,7 +587,7 @@ function recordMatchesActiveLocation(record={}, state={}) {
   const locNorm = normalizeFacilityText(loc.name);
   if(recNorm && recNorm === locNorm) return true;
   // Safety net for old single-facility data: anything without a real facility stamp
-  // belongs to the original Morovis National Cemetery facility, not to Organization only.
+  // belongs to the original single-facility setup, not to Organization only.
   if(isMorovisFacilityName(loc.name) && (!recId || isOrganizationOnlyFacilityName(recId)) && isOrganizationOnlyFacilityName(recName)) return true;
   if(isMorovisFacilityName(loc.name) && isMorovisFacilityName(recName)) return true;
   return false;
@@ -1737,7 +1737,7 @@ function HelpCenter({ state, onClose }) {
   const facilityName = locationNameForId(state, state.activeLocationId || "__all");
   const glossary = [
     ["Organization", "The top-level company/account. Organization Owners can manage all facilities and company-wide reports."],
-    ["Facility", "A separate shop, cemetery, branch, or site. Facility data is isolated from other facilities."],
+    ["Facility", "A separate shop, branch, building, warehouse, or site. Facility data is isolated from other facilities."],
     ["Area", "A building, department, zone, section, or physical area inside one facility."],
     ["Foundation", "The Settings section where the Organization, Facilities, Areas, Users, Roles, Invitations, Numbering, and Migration Center are managed."],
     ["Migration", "Copies PM tasks, inspection tasks, and task templates from one facility to another. The copy is independent and can be edited without changing the original."],
@@ -6569,7 +6569,7 @@ function UserProfile({ state, dispatch, onClose }) {
         <Field label="First Name" half><input style={inp} value={form.firstName} onChange={F("firstName")} placeholder="Juan" /></Field>
         <Field label="Last Name"  half><input style={inp} value={form.lastName}  onChange={F("lastName")}  placeholder="Martinez" /></Field>
         <Field label="Position"><input style={inp} value={form.position} onChange={F("position")} placeholder="Mechanic, Supervisor..." /></Field>
-        <Field label="Work Location"><input style={inp} value={form.workLocation} onChange={F("workLocation")} placeholder="Main Shop, Section C..." /></Field>
+        <Field label="Work Location"><input style={inp} value={form.workLocation} onChange={F("workLocation")} placeholder="Main Shop, Maintenance Bay, Warehouse..." /></Field>
         <Field label="Labor Rate ($/hr)" half><input style={inp} type="number" value={form.laborRate||""} onChange={F("laborRate")} placeholder="45.00" /></Field>
       </div>
       <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:8 }}>
@@ -7340,7 +7340,7 @@ function EquipmentInventory({ state, dispatch }) {
 
 function reportHeaderHTML(state, title) {
   const s = state.settings || {};
-  const companyName = s.companyName || "National Cemetery Administration";
+  const companyName = s.companyName || "Maintenance Department";
   const dept = s.department || "Maintenance Department";
   const logo = resolveMaintForgeLogo(state, state.activeLocationId || "__all");
   return `<div style="display:flex;align-items:center;gap:16px;border-bottom:3px solid #1a1a2e;padding-bottom:14px;margin-bottom:16px">
@@ -8316,7 +8316,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
 function SystemSettings({ state, dispatch, onClose, currentUser }) {
   const s = state.settings || {};
   const [form, setForm] = useState({
-    companyName:   s.companyName   || "National Cemetery Administration",
+    companyName:   s.companyName   || "Maintenance Department",
     department:    s.department    || "Maintenance Department",
     location:      s.location      || "",
     phone:         s.phone         || "",
@@ -8583,13 +8583,13 @@ ${payload.inviteUrl}`));
           <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Organization</div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
             <Field label="Company / Organization Name">
-              <input style={inp} value={form.companyName} onChange={F("companyName")} placeholder="National Cemetery Administration" />
+              <input style={inp} value={form.companyName} onChange={F("companyName")} placeholder="Maintenance Department" />
             </Field>
             <Field label="Department" half>
               <input style={inp} value={form.department} onChange={F("department")} placeholder="Maintenance Department" />
             </Field>
             <Field label="Location / Site" half>
-              <input style={inp} value={form.location} onChange={F("location")} placeholder="e.g. VA Cemetery - Miami" />
+              <input style={inp} value={form.location} onChange={F("location")} placeholder="e.g. Miami Maintenance Shop" />
             </Field>
             <Field label="Phone" half>
               <input style={inp} value={form.phone} onChange={F("phone")} placeholder="(555) 000-0000" />
@@ -8661,7 +8661,7 @@ ${payload.inviteUrl}`));
           <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Foundation — Facilities & Areas</div>
           <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginBottom:10 }}>Create separate Facilities for independent shops/sites. Add Areas for buildings, departments, zones, or sections inside a Facility.</div>
           <div style={{ display:"flex", gap:8, marginBottom:10 }}>
-            <input style={{ ...inp, flex:1 }} placeholder="Add facility (e.g. MNC, PRNC, San Juan Shop)..." value={form._newLoc||""} onChange={e=>setForm(f=>({...f,_newLoc:e.target.value}))} onKeyDown={e=>{ if(e.key==="Enter"&&form._newLoc?.trim()){ e.preventDefault(); setForm(f=>{ const name=f._newLoc.trim(); const list=normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations }); const exists=list.some(x=>x.name.toLowerCase()===name.toLowerCase()); const next=exists?list:[...list,{ id:`FAC-${Date.now()}`, name, address:"", cityState:"", phone:"", email:"", manager:"", active:true }]; const selectedId=exists?(f._selectedFacilityId||list[0]?.id||""):next[next.length-1].id; return {...f,locations:next,_selectedFacilityId:selectedId,_areaFacilityId:selectedId,_newAreaFacilityId:selectedId,_newLoc:""}; }); }}} />
+            <input style={{ ...inp, flex:1 }} placeholder="Add facility (e.g. Main Shop, Warehouse, San Juan Branch)..." value={form._newLoc||""} onChange={e=>setForm(f=>({...f,_newLoc:e.target.value}))} onKeyDown={e=>{ if(e.key==="Enter"&&form._newLoc?.trim()){ e.preventDefault(); setForm(f=>{ const name=f._newLoc.trim(); const list=normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations }); const exists=list.some(x=>x.name.toLowerCase()===name.toLowerCase()); const next=exists?list:[...list,{ id:`FAC-${Date.now()}`, name, address:"", cityState:"", phone:"", email:"", manager:"", active:true }]; const selectedId=exists?(f._selectedFacilityId||list[0]?.id||""):next[next.length-1].id; return {...f,locations:next,_selectedFacilityId:selectedId,_areaFacilityId:selectedId,_newAreaFacilityId:selectedId,_newLoc:""}; }); }}} />
             <Btn small onClick={()=>{ if(form._newLoc?.trim()) setForm(f=>{ const name=f._newLoc.trim(); const list=normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations }); const exists=list.some(x=>x.name.toLowerCase()===name.toLowerCase()); const next=exists?list:[...list,{ id:`FAC-${Date.now()}`, name, address:"", cityState:"", phone:"", email:"", manager:"", active:true }]; const selectedId=exists?(f._selectedFacilityId||list[0]?.id||""):next[next.length-1].id; return {...f,locations:next,_selectedFacilityId:selectedId,_areaFacilityId:selectedId,_newAreaFacilityId:selectedId,_newLoc:""}; }); }}>Add Facility</Btn>
           </div>
           {facilityListForForm().length===0 ? (
@@ -8833,7 +8833,7 @@ ${payload.inviteUrl}`));
             <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginBottom:8 }}>Daily screens and reports use the active Facility information above. These fields are only fallback defaults when no Facility is selected.</div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
               <Field label="Site / Facility Name">
-                <input style={inp} value={form.siteName||""} onChange={e=>setForm(f=>({...f,siteName:e.target.value}))} placeholder="e.g. Miami National Cemetery" />
+                <input style={inp} value={form.siteName||""} onChange={e=>setForm(f=>({...f,siteName:e.target.value}))} placeholder="e.g. Miami Maintenance Facility" />
               </Field>
               <Field label="Region / District" half>
                 <input style={inp} value={form.region||""} onChange={e=>setForm(f=>({...f,region:e.target.value}))} placeholder="e.g. Southeast Region" />
@@ -9010,7 +9010,7 @@ function SetupWizard({ onComplete }) {
             </div>
             <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Step 1 of {totalSteps} — Your Organization</div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
-              <Field label="Company / Organization Name *"><input style={inp} value={data.companyName} onChange={F("companyName")} placeholder="e.g. National Cemetery Administration" autoFocus /></Field>
+              <Field label="Company / Organization Name *"><input style={inp} value={data.companyName} onChange={F("companyName")} placeholder="e.g. ABC Facilities" autoFocus /></Field>
               <Field label="Department" half><input style={inp} value={data.department} onChange={F("department")} placeholder="e.g. Maintenance Department" /></Field>
               <Field label="Phone" half><input style={inp} value={data.phone} onChange={F("phone")} placeholder="(555) 000-0000" /></Field>
               <Field label="Email"><input style={inp} type="email" value={data.email} onChange={F("email")} placeholder="maintenance@example.gov" /></Field>
@@ -9041,7 +9041,7 @@ function SetupWizard({ onComplete }) {
             </div>
             <div style={{ marginBottom:14 }}>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Equipment Locations (optional)</label>
-              <p style={{ margin:"0 0 8px", fontFamily:T.sans, fontSize:12, color:T.muted }}>Add the locations where your equipment is stored (e.g. Main Shop, Motor Pool, Section A). You can add more later.</p>
+              <p style={{ margin:"0 0 8px", fontFamily:T.sans, fontSize:12, color:T.muted }}>Add the locations where your equipment is stored (e.g. Main Shop, Maintenance Bay, Storage Yard). You can add more later.</p>
               <div style={{ display:"flex", gap:8, marginBottom:8 }}>
                 <input style={{ ...inp, flex:1 }} placeholder="Location name..." value={data._newLoc} onChange={F("_newLoc")} onKeyDown={e=>e.key==="Enter"&&addLocation()} />
                 <Btn small onClick={addLocation}>Add</Btn>
