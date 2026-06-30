@@ -895,6 +895,9 @@ function workOrderDate(wo={}) {
 }
 
 function equipmentUsageSummary(state={}, eq={}) {
+  if (eq && eq.trackUsage === false) {
+    return { type:"na", value:null, label:"Hours", display:"N/A", hours:null, miles:null };
+  }
   const eqId = String(eq.id || "");
   const logs = (state.usageLogs || []).filter(l => String(l.equipmentId || l.equipment || l.eqId || "") === eqId);
   const latestHours = Math.max(0, ...logs.map(l => +(l.hours || l.usageHours || 0)).filter(Number.isFinite));
@@ -909,6 +912,7 @@ function equipmentUsageSummary(state={}, eq={}) {
     type,
     value: type === 'mileage' ? currentMiles : currentHours,
     label: type === 'mileage' ? 'Miles' : 'Hours',
+    display: Number(type === 'mileage' ? currentMiles : currentHours).toLocaleString(undefined,{maximumFractionDigits:1}),
     hours: currentHours,
     miles: currentMiles,
   };
@@ -2774,9 +2778,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       @page{size:Letter;margin:0}
       .page{width:8.5in;min-height:auto;margin:0 auto;padding:.24in .28in;display:flex;flex-direction:column;gap:4px}
       .outer{border:1.5px solid #111827;border-radius:8px;overflow:hidden;background:white}
-      .top{display:grid;grid-template-columns:1.65in minmax(0,1fr) 1.65in;border-bottom:1.5px solid #111827;min-height:.78in}
+      .top{display:grid;grid-template-columns:1.85in minmax(0,1fr) 1.85in;border-bottom:1.5px solid #111827;min-height:.95in}
       .logoBox{display:flex;align-items:center;justify-content:center;border-right:1.5px solid #111827;padding:6px 8px;background:white;overflow:hidden;min-width:0}
-      .logoBox img{width:100%;max-width:1.38in;max-height:.66in;object-fit:contain;display:block}
+      .logoBox img{width:100%;max-width:1.65in;max-height:.82in;object-fit:contain;display:block}
       .logoText{font-weight:900;text-align:center;color:#111827;font-size:13px;line-height:1.2}
       .companyBox{display:flex;flex-direction:column;align-items:center;justify-content:center;background:${C.soft};padding:8px 14px;text-align:center;min-width:0}
       .company{font-size:18px;font-weight:900;letter-spacing:.35px;text-transform:uppercase;color:#111827;line-height:1.05;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:clip;text-align:center}
@@ -3774,7 +3778,7 @@ function Equipment({ state, dispatch }) {
       { Item:"Equipment #", Value:eq.id || "" },
       { Item:"Nomenclature", Value:eq.name || eq.nomenclature || "" },
       { Item:"Year", Value:eq.year || "" },
-      { Item:`Current ${usage.label}`, Value:Number(usage.value||0).toLocaleString(undefined,{maximumFractionDigits:1}) },
+      { Item:`Current ${usage.label}`, Value:usage.display ?? Number(usage.value||0).toLocaleString(undefined,{maximumFractionDigits:1}) },
       { Item:"Lifetime Spent", Value:moneyFmt(fin.lifetimeSpent) },
       { Item:"FY Spent", Value:moneyFmt(fin.fySpent) },
       { Item:"Total Work Orders", Value:fin.totalWOs },
@@ -3788,7 +3792,7 @@ function Equipment({ state, dispatch }) {
     </style></head><body>`);
     const summaryLogo = resolveWorkOrderBrandLogo(state, {}, eq || {});
     win.document.write(`<div class="header">${summaryLogo?`<img class="logo" src="${summaryLogo}" alt="Logo">`:""}<div class="titleBlock"><h1>${esc(settings.companyName || "Maintenance Department")}</h1><div class="eqNum">Equipment Summary — ${esc(eq.id||"—")}</div><div class="subtitle">${esc(eq.name || eq.nomenclature || "—")} · ${esc([eq.year,eq.make,eq.model].filter(Boolean).join(" ") || "—")}</div></div><div style="text-align:right;color:#667085;font-size:11px">Generated: ${new Date().toLocaleDateString()}</div></div>`);
-    win.document.write(`<div class="metrics">${metric("Current " + usage.label, Number(usage.value||0).toLocaleString(undefined,{maximumFractionDigits:1}))}${metric("Lifetime Spent", moneyFmt(fin.lifetimeSpent))}${metric("FY Spent", moneyFmt(fin.fySpent))}${metric("Total WOs", fin.totalWOs)}${metric("Lifetime Labor", fin.lifetimeLaborHours.toFixed(1)+"h")}${metric("FY Labor", fin.fyLaborHours.toFixed(1)+"h")}${metric("Open WOs", fin.openWOs)}${metric("Completed WOs", fin.completedWOs)}</div>`);
+    win.document.write(`<div class="metrics">${metric("Current " + usage.label, usage.display ?? Number(usage.value||0).toLocaleString(undefined,{maximumFractionDigits:1}))}${metric("Lifetime Spent", moneyFmt(fin.lifetimeSpent))}${metric("FY Spent", moneyFmt(fin.fySpent))}${metric("Total WOs", fin.totalWOs)}${metric("Lifetime Labor", fin.lifetimeLaborHours.toFixed(1)+"h")}${metric("FY Labor", fin.fyLaborHours.toFixed(1)+"h")}${metric("Open WOs", fin.openWOs)}${metric("Completed WOs", fin.completedWOs)}</div>`);
     win.document.write(`<div class="sectionTitle">Equipment Information</div><div class="grid">${[["Equipment #",eq.id],["Nomenclature",eq.name||eq.nomenclature],["Year",eq.year],["Make",eq.make],["Model",eq.model],["Serial #",eq.serial],["EIL #",eq.eilNumber],["Facility",eq.location],["Area",eq.area],["Category",eq.category||eq.type],["Acquisition Date",eq.acquisitionDate],["Purchase Price",eq.acquisitionCost?moneyFmt(eq.acquisitionCost):""],["Status",eq.status||"Fully Operational"]].map(([k,v])=>`<div class="field"><div class="label">${esc(k)}</div><div class="value">${esc(v||"—")}</div></div>`).join("")}</div>`);
     win.document.write(`<div class="sectionTitle">Work Order Totals</div><table><tr><th>Type</th><th class="right">Count</th></tr><tr><td>Repair</td><td class="right">${fin.repairWOs}</td></tr><tr><td>Service / PM</td><td class="right">${fin.serviceWOs}</td></tr><tr><td>Inspection</td><td class="right">${fin.inspectionWOs}</td></tr></table>`);
     win.document.write(`<div class="sectionTitle">Work Order History</div><table><tr><th>WO #</th><th>Type</th><th>Status</th><th>Date</th><th>Description</th><th class="right">Labor</th><th class="right">Cost</th></tr>${wos.map(w=>`<tr><td>${esc(w.id||"—")}</td><td>${esc(w.woType||w.type||"—")}</td><td>${esc(w.status||"—")}</td><td>${esc(workOrderDate(w)||"—")}</td><td>${esc(w.title||w.faultDescription||w.description||"—")}</td><td class="right">${esc((+w.laborHours||0).toFixed(1))}h</td><td class="right">${esc(moneyFmt(woTotalCost(w)))}</td></tr>`).join("")}${!wos.length?`<tr><td colspan="7" style="text-align:center;color:#667085;padding:18px">No work orders for this equipment.</td></tr>`:""}</table>`);
@@ -3858,9 +3862,9 @@ function Equipment({ state, dispatch }) {
       body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#111827;font-size:12px;line-height:1.35}
       .page{width:8.5in;min-height:11in;margin:0 auto;padding:.38in .45in}
       .outer{border:1.5px solid #111827;border-radius:8px;overflow:hidden;background:white}
-      .top{display:grid;grid-template-columns:1.65in minmax(0,1fr) 1.65in;border-bottom:1.5px solid #111827;min-height:.78in}
+      .top{display:grid;grid-template-columns:1.85in minmax(0,1fr) 1.85in;border-bottom:1.5px solid #111827;min-height:.95in}
       .logoBox{display:flex;align-items:center;justify-content:center;border-right:1.5px solid #111827;padding:6px 8px;background:white;overflow:hidden;min-width:0}
-      .logoBox img{width:100%;max-width:1.38in;max-height:.66in;object-fit:contain;display:block}
+      .logoBox img{width:100%;max-width:1.65in;max-height:.82in;object-fit:contain;display:block}
       .logoText{font-weight:900;text-align:center;color:#111827;font-size:13px;line-height:1.2}
       .companyBox{display:flex;flex-direction:column;align-items:center;justify-content:center;background:${C.soft};padding:8px 14px;text-align:center;min-width:0}
       .company{font-size:18px;font-weight:900;letter-spacing:.35px;text-transform:uppercase;color:#111827;line-height:1.05;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:clip;text-align:center}
@@ -4012,9 +4016,34 @@ function Equipment({ state, dispatch }) {
   };
   const del = id => { if(confirm("Delete this equipment record?")){ dispatch({type:"DELETE_EQ",payload:id}); setDetail(null); }};
   const closeHistoryWO = () => { setHistoryWO(null); setHistoryEdit(false); };
+  const setHistoryWOField = (key, value) => setHistoryWO(w=>({...w,[key]:value}));
+  const setHistoryPart = (idx, changes) => setHistoryWO(w=>{ const arr=[...(w.partsUsed||[])]; arr[idx]={...(arr[idx]||{}),...changes}; return {...w,partsUsed:arr}; });
+  const removeHistoryPart = (idx) => setHistoryWO(w=>{ const arr=[...(w.partsUsed||[])]; arr.splice(idx,1); return {...w,partsUsed:arr}; });
+  const setHistoryOutsideService = (idx, changes) => setHistoryWO(w=>{ const arr=[...(w.outsideServices||[])]; arr[idx]={...(arr[idx]||{}),...changes}; return {...w,outsideServices:arr}; });
+  const removeHistoryOutsideService = (idx) => setHistoryWO(w=>{ const arr=[...(w.outsideServices||[])]; arr.splice(idx,1); return {...w,outsideServices:arr}; });
   const saveHistoryWO = () => {
     if(!historyWO) return;
-    dispatch({ type:"UPDATE_WO", payload:historyWO });
+    const partsUsed = Array.isArray(historyWO.partsUsed) ? historyWO.partsUsed : [];
+    const outsideServices = Array.isArray(historyWO.outsideServices) ? historyWO.outsideServices : [];
+    const partsCost = partsUsed.reduce((s,p)=>s+lineItemTotal(p),0);
+    const outsideServicesCost = outsideServicesTotal(outsideServices);
+    const completedDate = historyWO.completed || historyWO.completedDate || historyWO.dateCompleted || historyWO.closedDate || historyWO.closedAt || historyWO.completedAt || (historyWO.status === "Completed" ? today() : "");
+    const normalizedCreatedDate = String(historyWO.created || historyWO.date || today()).slice(0,10);
+    const normalizedDueDate = historyWO.due ? String(historyWO.due).slice(0,10) : "";
+    const payload = {
+      ...historyWO,
+      created: normalizedCreatedDate,
+      due: normalizedDueDate,
+      woType: historyWO.woType || historyWO.type || "Repair",
+      title: historyWO.faultDescription || historyWO.description || historyWO.title || historyWO.woType || "Work Order",
+      partsUsed,
+      outsideServices,
+      partsCost,
+      outsideServicesCost,
+      ...(historyWO.status === "Completed" ? { completed:completedDate, completedDate:completedDate } : {})
+    };
+    dispatch({ type:"UPDATE_WO", payload });
+    setHistoryWO(payload);
     setHistoryEdit(false);
   };
 
@@ -4289,19 +4318,134 @@ function Equipment({ state, dispatch }) {
                 </div>
               </div>
             ) : (
-              <div style={{ fontFamily:T.sans }}>
-                <Field label="Status">
-                  <select style={inp} value={historyWO.status||""} onChange={e=>setHistoryWO(w=>({...w,status:e.target.value}))}>
+              <div style={{ fontFamily:T.sans, display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
+                <Field label="Work Order Type" half>
+                  <select style={inp} value={historyWO.woType || historyWO.type || "Repair"} onChange={e=>setHistoryWOField("woType", e.target.value)}>
+                    {["Repair","Service","Inspection"].map(t=><option key={t} value={t}>{t}</option>)}
+                  </select>
+                </Field>
+                <Field label="Status" half>
+                  <select
+                    style={inp}
+                    value={historyWO.status||"Open"}
+                    onChange={e=>setHistoryWO(w=>{
+                      const nextStatus = e.target.value;
+                      const completedDate = w.completed || w.completedDate || w.dateCompleted || w.closedDate || w.closedAt || w.completedAt || (nextStatus === "Completed" ? today() : "");
+                      return {...w,status:nextStatus,...(nextStatus === "Completed" ? { completed:completedDate, completedDate:completedDate } : {})};
+                    })}
+                  >
                     {WORK_ORDER_STATUS_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}
                   </select>
                 </Field>
-                <Field label="Description">
-                  <textarea style={{...inp,minHeight:80}} value={historyWO.description || historyWO.faultDescription || ""} onChange={e=>setHistoryWO(w=>({...w,description:e.target.value,faultDescription:e.target.value}))} />
+                <Field label="Equipment Status" half>
+                  <select style={inp} value={historyWO.equipmentStatus||"Fully Operational"} onChange={e=>setHistoryWOField("equipmentStatus", e.target.value)}>
+                    {["Fully Operational","Operational with Deficiencies","Out of Service / Deadline"].map(s=><option key={s} value={s}>{s}</option>)}
+                  </select>
                 </Field>
-                <Field label="Mechanic Notes / Work Performed">
-                  <textarea style={{...inp,minHeight:90}} value={historyWO.mechanicNotes || ""} onChange={e=>setHistoryWO(w=>({...w,mechanicNotes:e.target.value}))} />
+                <Field label="Priority" half>
+                  <select style={inp} value={historyWO.priority||"Medium"} onChange={e=>setHistoryWOField("priority", e.target.value)}>
+                    {["High","Medium","Low"].map(p=><option key={p} value={p}>{p}</option>)}
+                  </select>
                 </Field>
-                <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
+                <Field label="Date Created" half>
+                  <input style={inp} type="date" value={String(historyWO.created || historyWO.date || today()).slice(0,10)} onChange={e=>setHistoryWOField("created", e.target.value)} />
+                </Field>
+                <Field label="Due Date" half>
+                  <input style={inp} type="date" value={historyWO.due ? String(historyWO.due).slice(0,10) : ""} onChange={e=>setHistoryWOField("due", e.target.value)} />
+                </Field>
+                <Field label="Completed Date" half>
+                  <input
+                    style={inp}
+                    type="date"
+                    value={String(historyWO.completed || historyWO.completedDate || historyWO.dateCompleted || historyWO.closedDate || historyWO.completedAt || (historyWO.status === "Completed" ? today() : "")).slice(0,10)}
+                    onChange={e=>setHistoryWO(w=>({...w,completed:e.target.value,completedDate:e.target.value}))}
+                  />
+                </Field>
+                <Field label="Mechanic" half>
+                  <input style={inp} value={historyWO.tech||""} onChange={e=>setHistoryWOField("tech", e.target.value)} placeholder="Mechanic name" />
+                </Field>
+
+                <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.card }}>
+                  <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:6 }}>Description</label>
+                  <textarea style={{...inp,minHeight:80}} value={historyWO.faultDescription || historyWO.description || ""} onChange={e=>setHistoryWO(w=>({...w,description:e.target.value,faultDescription:e.target.value}))} />
+                </div>
+                <Field label="Work Description / Work Performed">
+                  <textarea style={{...inp,minHeight:90}} value={historyWO.description || historyWO.workPerformed || ""} onChange={e=>setHistoryWO(w=>({...w,description:e.target.value,workPerformed:e.target.value}))} />
+                </Field>
+                <Field label="Mechanic Notes">
+                  <textarea style={{...inp,minHeight:90}} value={historyWO.mechanicNotes || ""} onChange={e=>setHistoryWOField("mechanicNotes", e.target.value)} />
+                </Field>
+
+                <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.grayLt }}>
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, marginBottom:8 }}>
+                    <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text }}>Current Usage at Work Order</div>
+                    <label style={{ display:"flex", alignItems:"center", gap:6, fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, cursor:"pointer" }}>
+                      <input type="checkbox" checked={!!historyWO.usageNA} onChange={e=>setHistoryWO(w=>({...w,usageNA:e.target.checked,usageHours:e.target.checked?"":w.usageHours,usageMileage:e.target.checked?"":w.usageMileage}))} /> N/A
+                    </label>
+                  </div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, opacity:historyWO.usageNA ? .65 : 1 }}>
+                    <div>
+                      <label style={{ display:"block", fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, marginBottom:4 }}>Current Hours</label>
+                      <input style={inp} disabled={!!historyWO.usageNA} type="number" step="0.1" value={historyWO.usageHours||""} onChange={e=>setHistoryWOField("usageHours", e.target.value)} />
+                    </div>
+                    <div>
+                      <label style={{ display:"block", fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, marginBottom:4 }}>Current Mileage</label>
+                      <input style={inp} disabled={!!historyWO.usageNA} type="number" step="1" value={historyWO.usageMileage||""} onChange={e=>setHistoryWOField("usageMileage", e.target.value)} />
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.grayLt }}>
+                  <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:8 }}>Parts</label>
+                  {(historyWO.partsUsed||[]).map((p,idx)=>(
+                    <div key={idx} style={{ display:"grid", gridTemplateColumns:"1fr 70px 90px 110px 110px auto", gap:8, marginBottom:8, alignItems:"center" }}>
+                      <input style={inp} placeholder="Part name" value={p.name||p.partName||""} onChange={e=>setHistoryPart(idx,{name:e.target.value})} />
+                      <input style={{...inp,textAlign:"center"}} type="number" min="0" step="0.01" placeholder="Qty" value={p.qty||""} onChange={e=>setHistoryPart(idx,{qty:e.target.value})} />
+                      <select style={inp} value={p.unit||"ea"} onChange={e=>setHistoryPart(idx,{unit:e.target.value})}>{getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}</select>
+                      <input style={inp} {...decimalInputAttrs({ placeholder:"Unit $ (0.0000)" })} value={p.unitCost ?? ""} onChange={e=>setHistoryPart(idx,{unitCost:sanitizeDecimalInput(e.target.value)})} />
+                      <div style={{ fontFamily:T.mono, fontSize:12, fontWeight:700, color:T.text, textAlign:"right" }}>{moneyFmt(lineItemTotal(p))}</div>
+                      <button onClick={()=>removeHistoryPart(idx)} style={{ padding:"6px 10px", border:`1px solid ${T.red}`, borderRadius:6, background:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>
+                    </div>
+                  ))}
+                  <button onClick={()=>setHistoryWO(w=>({...w,partsUsed:[...(w.partsUsed||[]),{name:"",qty:1,unit:"ea",unitCost:""}]}))} style={{ background:"none", border:`1px dashed ${T.borderHi}`, borderRadius:6, padding:"7px 16px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600, width:"100%" }}>+ Add Part</button>
+                </div>
+
+                <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.grayLt }}>
+                  <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:8 }}>Outside Services</label>
+                  {(historyWO.outsideServices||[]).map((svc,idx)=>(
+                    <div key={idx} style={{ display:"grid", gridTemplateColumns:"1fr 80px 120px 120px auto", gap:8, marginBottom:8, alignItems:"center" }}>
+                      <input style={inp} placeholder="Service description" value={svc.description||svc.name||""} onChange={e=>setHistoryOutsideService(idx,{description:e.target.value})} />
+                      <input style={{...inp,textAlign:"center"}} type="number" min="0" step="0.01" placeholder="Qty" value={svc.qty||""} onChange={e=>setHistoryOutsideService(idx,{qty:e.target.value})} />
+                      <input style={inp} {...decimalInputAttrs({ placeholder:"Unit Cost (0.0000)" })} value={svc.unitCost ?? svc.cost ?? ""} onChange={e=>setHistoryOutsideService(idx,{unitCost:sanitizeDecimalInput(e.target.value)})} />
+                      <div style={{ fontFamily:T.mono, fontSize:12, fontWeight:700, color:T.text, textAlign:"right" }}>{moneyFmt(lineItemTotal(svc))}</div>
+                      <button onClick={()=>removeHistoryOutsideService(idx)} style={{ padding:"6px 10px", border:`1px solid ${T.red}`, borderRadius:6, background:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>
+                    </div>
+                  ))}
+                  <button onClick={()=>setHistoryWO(w=>({...w,outsideServices:[...(w.outsideServices||[]),{description:"",qty:1,unitCost:""}]}))} style={{ background:"none", border:`1px dashed ${T.borderHi}`, borderRadius:6, padding:"7px 16px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600, width:"100%" }}>+ Add Outside Service</button>
+                </div>
+
+                <Field label="Labor Hours" half>
+                  <input style={inp} type="number" step="0.1" value={historyWO.laborHours||""} onChange={e=>setHistoryWOField("laborHours", e.target.value)} />
+                </Field>
+                <Field label="Labor Cost ($)" half>
+                  <input style={inp} {...decimalInputAttrs({ placeholder:"0.0000" })} value={historyWO.laborCost ?? ""} onChange={e=>setHistoryWOField("laborCost", sanitizeDecimalInput(e.target.value))} />
+                </Field>
+
+                {getInspectionRowsForWO(historyWO).length>0 && (
+                  <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.card }}>
+                    <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, textTransform:"uppercase", letterSpacing:.5, marginBottom:8 }}>Inspection Checklist Results</div>
+                    {getInspectionRowsForWO(historyWO).map((r,i)=>(
+                      <div key={r.id||i} style={{ display:"grid", gridTemplateColumns:"minmax(220px,1fr) 90px 90px minmax(180px,.8fr)", gap:8, alignItems:"center", padding:8, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt, marginBottom:8 }}>
+                        <div style={{ fontFamily:T.sans, fontSize:13 }}><b>{i+1}.</b> {r.step}</div>
+                        <button type="button" onClick={()=>{ const rows=getInspectionRowsForWO(historyWO); rows[i]={...rows[i],result:"Pass"}; setHistoryWOField("inspectionStepResults", rows); }} style={{...inp, padding:"7px 10px", background:r.result==="Pass"?"#dcfce7":"#fff", borderColor:r.result==="Pass"?"#16a34a":T.border, fontWeight:700}}>Pass</button>
+                        <button type="button" onClick={()=>{ const rows=getInspectionRowsForWO(historyWO); rows[i]={...rows[i],result:"Fail"}; setHistoryWOField("inspectionStepResults", rows); }} style={{...inp, padding:"7px 10px", background:r.result==="Fail"?"#fee2e2":"#fff", borderColor:r.result==="Fail"?"#dc2626":T.border, fontWeight:700}}>Fail</button>
+                        <input style={inp} value={r.comment||""} onChange={e=>{ const rows=getInspectionRowsForWO(historyWO); rows[i]={...rows[i],comment:e.target.value}; setHistoryWOField("inspectionStepResults", rows); }} placeholder="Comment" />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ gridColumn:"span 2", display:"flex", justifyContent:"flex-end", gap:8 }}>
                   <Btn variant="secondary" onClick={()=>setHistoryEdit(false)}>Cancel</Btn>
                   <Btn onClick={saveHistoryWO}>Save Work Order</Btn>
                 </div>
@@ -4388,7 +4532,7 @@ function Equipment({ state, dispatch }) {
               const fin = equipmentFinancialSummary(state, eq);
               const summaryRows = [
                 ["Year", eq.year || "—", T.text],
-                [`Current ${usage.label}`, Number(usage.value||0).toLocaleString(undefined,{maximumFractionDigits:1}), T.text],
+                [`Current ${usage.label}`, usage.display ?? usage.display ?? Number(usage.value||0).toLocaleString(undefined,{maximumFractionDigits:1}), T.text],
                 ["Lifetime Spent", moneyFmt(fin.lifetimeSpent), T.accent],
                 ["FY Spent", moneyFmt(fin.fySpent), T.accent],
                 ["Total Work Orders", fin.totalWOs, T.text],
