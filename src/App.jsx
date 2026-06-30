@@ -8352,16 +8352,19 @@ function requestUrlForFacility(facility="", settings={}, ownerUserId="") {
   }
 }
 
-function inviteUrlForToken(token="", email="", ownerUserId="") {
+function inviteUrlForToken(token="", email="", ownerUserId="", role="", facilityIds=[]) {
+  const facilityList = Array.isArray(facilityIds) ? facilityIds.filter(Boolean) : String(facilityIds || "").split(",").map(x=>x.trim()).filter(Boolean);
   try {
     const base = window.location.origin + window.location.pathname;
     const params = new URLSearchParams();
     params.set("invite", token || "");
     if(email) params.set("email", normalizeEmail(email));
     if(ownerUserId) params.set("owner", ownerUserId);
+    if(role) params.set("role", normalizeRole(role));
+    if(facilityList.length) params.set("facilities", facilityList.join(","));
     return `${base}?${params.toString()}`;
   } catch(e) {
-    return `?invite=${encodeURIComponent(token || "")}${email?`&email=${encodeURIComponent(normalizeEmail(email))}`:""}${ownerUserId?`&owner=${encodeURIComponent(ownerUserId)}`:""}`;
+    return `?invite=${encodeURIComponent(token || "")}${email?`&email=${encodeURIComponent(normalizeEmail(email))}`:""}${ownerUserId?`&owner=${encodeURIComponent(ownerUserId)}`:""}${role?`&role=${encodeURIComponent(normalizeRole(role))}`:""}${facilityList.length?`&facilities=${encodeURIComponent(facilityList.join(","))}`:""}`;
   }
 }
 
@@ -8370,10 +8373,17 @@ const PENDING_INVITE_STORAGE_KEY = "maintforge:pendingInvite";
 function cleanInviteInfo(inviteInfo={}) {
   const token = String(inviteInfo?.token || "").trim();
   if(!token) return null;
+  const facilityIds = Array.isArray(inviteInfo?.facilityIds)
+    ? inviteInfo.facilityIds.filter(Boolean)
+    : String(inviteInfo?.facilities || inviteInfo?.facilityIds || inviteInfo?.locationId || "").split(",").map(x=>x.trim()).filter(Boolean);
   return {
     token,
     email:normalizeEmail(inviteInfo?.email || ""),
     ownerUserId:String(inviteInfo?.ownerUserId || inviteInfo?.owner || "").trim(),
+    role:inviteInfo?.role ? normalizeRole(inviteInfo.role) : "",
+    facilityIds,
+    locationId:inviteInfo?.locationId || facilityIds[0] || "",
+    organizationName:inviteInfo?.organizationName || "",
     capturedAt:inviteInfo?.capturedAt || new Date().toISOString(),
   };
 }
@@ -8391,6 +8401,22 @@ function readPendingInviteInfo() {
 
 function clearPendingInviteInfo() {
   try { localStorage.removeItem(PENDING_INVITE_STORAGE_KEY); } catch(e) {}
+}
+
+function readInviteInfoFromCurrentUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("invite") || "";
+    if(!token) return null;
+    return cleanInviteInfo({
+      token,
+      email:params.get("email") || "",
+      ownerUserId:params.get("owner") || "",
+      role:params.get("role") || "",
+      facilities:params.get("facilities") || "",
+      capturedAt:new Date().toISOString(),
+    });
+  } catch(e) { return null; }
 }
 
 function copyTextToClipboard(text="") {
@@ -8923,7 +8949,7 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
     const locationNames = facilityIds.map(id => locationNameForId(foundationState, id)).filter(Boolean);
     const email = normalizeEmail(inviteForm.email);
     const ownerUserId = state.ownerUserId || currentUser?.id || "";
-    const inviteUrl = inviteUrlForToken(token, email, ownerUserId);
+    const inviteUrl = inviteUrlForToken(token, email, ownerUserId, inviteForm.role, facilityIds);
     return {
       ...inviteForm,
       email,
@@ -8943,23 +8969,41 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
     const next = { ...user, ...patch, role:normalizeRole(patch.role || user.role), status:"Active" };
     dispatch({ type:"UPSERT_ORG_USER", payload:next });
   };
-  const createSafeInvite = () => {
+  const createSafeInvite = async () => {
     if(!inviteEmail) return alert("Enter an email first.");
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inviteEmail)) return alert("Enter a valid email address.");
     if(inviteEmail === currentUserEmail) return alert("That is your current account. You are already the Organization Administrator. Use the registered user list to change roles, but do not invite yourself.");
     if(existingUserForInvite) return alert(`${existingUserForInvite.email} is already registered in this organization. Change their role in the Registered Users list instead of inviting them again.`);
     if(existingInviteForEmail && !confirm("There is already a pending invite for this email. Replace it with a new invite?")) return;
     const payload = createInvitePayload();
+    const email = normalizeEmail(payload.email);
+    const inviteRecord = { id:`INV-${Date.now()}`, status:"Pending", created:today(), ...payload, email, role:normalizeRole(payload.role) };
+    const existingInvites = (state.userInvites||[]).filter(inv => normalizeEmail(inv.email) !== email);
+    const nextState = { ...state, userInvites:[inviteRecord, ...existingInvites] };
     dispatch({ type:"ADD_USER_INVITE", payload });
+    try {
+      const ownerId = state.ownerUserId || currentUser?.id || "";
+      if(ownerId) {
+        await supabase.from("user_state").upsert({
+          user_id:ownerId,
+          data:prepareSharedOrganizationStateForCloudSave(nextState, currentUser),
+          updated_at:new Date().toISOString(),
+        }, { onConflict:"user_id" });
+      }
+    } catch(e) {
+      console.error("Invite immediate save failed:", e);
+      alert("Invite was created on this screen, but the cloud save failed. Do not send the link yet. Check your connection and try again.");
+      return;
+    }
     copyTextToClipboard(payload.inviteUrl)
-      .then(()=>alert("Invite URL created and copied. Share it manually with the new user. Existing registered users can sign in from this invite link to connect to this organization."))
-      .catch(()=>alert(`Invite URL created. Copy it from the Pending Invite Records section:
+      .then(()=>alert("Invite URL created, saved to the cloud, and copied. Share it manually with the new user. Existing registered users can sign in from this invite link to connect to this organization."))
+      .catch(()=>alert(`Invite URL created and saved to the cloud. Copy it from the Pending Invite Records section:
 
 ${payload.inviteUrl}`));
     setInviteForm(f=>({...f,email:"",name:""}));
   };
   const copyInviteUrl = (inv) => {
-    const url = inv.inviteUrl || inviteUrlForToken(inv.token, inv.email, inv.ownerUserId || state.ownerUserId || currentUser?.id || "");
+    const url = inv.inviteUrl || inviteUrlForToken(inv.token, inv.email, inv.ownerUserId || state.ownerUserId || currentUser?.id || "", inv.role, inv.facilityIds || (inv.locationId ? [inv.locationId] : []));
     copyTextToClipboard(url)
       .then(()=>alert("Invite URL copied."))
       .catch(()=>prompt("Copy this invite URL:", url));
@@ -9287,7 +9331,7 @@ ${payload.inviteUrl}`));
 
             {(state.userInvites||[]).length===0 ? <div style={{ marginTop:10, padding:10, border:`1px dashed ${T.border}`, borderRadius:8, background:T.surface, fontSize:12, color:T.muted }}>No pending invite records. Create one to generate a manual invite URL you can copy and send.</div> : <div style={{ marginTop:10, display:"grid", gap:6 }}>
               <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text }}>Pending Invite Records</div>
-              {(state.userInvites||[]).slice(0,8).map(inv=>{ const url = inv.inviteUrl || inviteUrlForToken(inv.token, inv.email, inv.ownerUserId || state.ownerUserId || currentUser?.id || ""); return <div key={inv.id} style={{ display:"grid", gridTemplateColumns:"minmax(190px,1fr) minmax(140px,.65fr) minmax(220px,1.2fr) auto", gap:8, alignItems:"center", fontSize:12, color:T.subtext, padding:8, border:`1px solid ${T.border}`, borderRadius:6, background:T.surface }}>
+              {(state.userInvites||[]).slice(0,8).map(inv=>{ const url = inv.inviteUrl || inviteUrlForToken(inv.token, inv.email, inv.ownerUserId || state.ownerUserId || currentUser?.id || "", inv.role, inv.facilityIds || (inv.locationId ? [inv.locationId] : [])); return <div key={inv.id} style={{ display:"grid", gridTemplateColumns:"minmax(190px,1fr) minmax(140px,.65fr) minmax(220px,1.2fr) auto", gap:8, alignItems:"center", fontSize:12, color:T.subtext, padding:8, border:`1px solid ${T.border}`, borderRadius:6, background:T.surface }}>
                 <div><b style={{ color:T.text }}>{inv.email}</b><div style={{ color:T.muted, fontSize:11 }}>{inv.name || "No name entered"}</div><div style={{ color:T.muted, fontSize:11 }}>{inv.locationName || (inv.facilityIds||[]).map(id=>locationNameForId(foundationState,id)).join(", ") || "No facility selected"}</div></div>
                 <div>{roleLabel(normalizeRole(inv.role))}</div>
                 <div style={{ minWidth:0 }}>
@@ -9986,6 +10030,23 @@ async function findOrganizationStateForInvite(inviteInfo={}, currentUser=null) {
     const ownerState = normalizeLoadedUserState(ownerRow?.data || {}, ownerId);
     const invite = findMatchingInviteInState(ownerState, { ...inviteInfo, email }, currentUser);
     if(invite) return { ownerRow, ownerState, invite, ownerUserId:ownerId };
+    // Reliability fallback: fresh invite URLs now carry the assigned role and facilities.
+    // If the owner row exists but the pending invite record was not saved yet, still connect
+    // the invited account using the URL scope instead of sending them back to old data.
+    if(ownerRow?.data && inviteInfo?.role && invitedUserFacilityIdsFrom(inviteInfo).length && email) {
+      const fallbackInvite = {
+        id:`URL-${inviteInfo.token}`,
+        token:inviteInfo.token,
+        email,
+        role:normalizeRole(inviteInfo.role),
+        facilityIds:invitedUserFacilityIdsFrom(inviteInfo),
+        locationId:inviteInfo.locationId || invitedUserFacilityIdsFrom(inviteInfo)[0] || "",
+        ownerUserId:ownerId,
+        organizationName:inviteInfo.organizationName || ownerState.organization?.name || ownerState.settings?.companyName || "",
+        status:"Accepted from URL",
+      };
+      return { ownerRow, ownerState, invite:fallbackInvite, ownerUserId:ownerId };
+    }
   }
   try {
     const { data, error } = await supabase
@@ -10161,16 +10222,17 @@ export default function App() {
   useEffect(() => {
     if(publicWORequestMode) { setAuthLoading(false); return; }
     try {
-      const params = new URLSearchParams(window.location.search);
-      const inviteToken = params.get("invite") || "";
-      const inviteEmail = normalizeEmail(params.get("email") || "");
-      const inviteOwner = params.get("owner") || "";
-      if(inviteToken) {
-        const inviteInfo = savePendingInviteInfo({ token:inviteToken, email:inviteEmail, ownerUserId:inviteOwner });
+      const inviteInfo = readInviteInfoFromCurrentUrl();
+      if(inviteInfo?.token) {
+        savePendingInviteInfo(inviteInfo);
         setManualInviteInfo(inviteInfo);
-        if(inviteEmail) setAuthEmail(inviteEmail);
+        if(inviteInfo.email) setAuthEmail(inviteInfo.email);
         setAuthMode("signup");
-        setAuthInfoMsg(inviteEmail ? `Invite link detected for ${inviteEmail}. Create an account with this email, or sign in if you already registered.` : "Invite link detected. Create an account, or sign in if you already registered.");
+        setAuthInfoMsg(inviteInfo.email ? `Invite link detected for ${inviteInfo.email}. Create an account with this email, or sign in if you already registered.` : "Invite link detected. Create an account, or sign in if you already registered.");
+      } else {
+        // A stale pending invite from an old failed attempt should never block a normal login.
+        // Fresh invite acceptance is driven by the invite URL currently open in the browser.
+        clearPendingInviteInfo();
       }
     } catch(e) {}
     loadSession(setSession, setAuthLoading);
@@ -10214,7 +10276,8 @@ export default function App() {
         const ownData = ownRow?.data || null;
         if (cancelled) return;
 
-        const pendingInviteInfo = manualInviteInfo?.token ? manualInviteInfo : readPendingInviteInfo();
+        const currentUrlInviteInfo = readInviteInfoFromCurrentUrl();
+        const pendingInviteInfo = currentUrlInviteInfo?.token ? currentUrlInviteInfo : (manualInviteInfo?.token ? manualInviteInfo : null);
         if (pendingInviteInfo?.token) {
           const invitedEmail = normalizeEmail(pendingInviteInfo.email || "");
           const signedInEmail = normalizeEmail(session.user.email || "");
