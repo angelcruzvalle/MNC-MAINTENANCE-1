@@ -9024,6 +9024,14 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
           updated_at:new Date().toISOString(),
         }, { onConflict:"user_id" });
       }
+      const accessSave = await upsertInviteAccessRecord({ ...inviteRecord, ownerUserId:ownerId }, nextState, currentUser);
+      if(!accessSave.ok) {
+        const extra = accessSave.missingTable
+          ? "\n\nThe organization invite access tables/policies are missing. Run the supplied Supabase SQL migration before sending invites."
+          : "\n\nThe organization invite access record could not be saved. Check Supabase permissions and try again.";
+        alert("Invite was created on this screen, but the reliable invite access record did not save. Do not send the link yet." + extra);
+        return;
+      }
     } catch(e) {
       console.error("Invite immediate save failed:", e);
       alert("Invite was created on this screen, but the cloud save failed. Do not send the link yet. Check your connection and try again.");
@@ -10061,6 +10069,177 @@ async function fetchUserStateRow(userId="") {
   return data || null;
 }
 
+
+const ORG_INVITES_TABLE = "organization_invites";
+const ORG_MEMBERSHIPS_TABLE = "organization_memberships";
+
+function isMissingRelationError(error) {
+  const msg = String(error?.message || error?.details || "").toLowerCase();
+  return error?.code === "42P01" || error?.code === "PGRST205" || msg.includes("does not exist") || msg.includes("could not find the table");
+}
+
+function normalizeInviteAccessRow(row={}, fallback={}) {
+  const facilityIds = Array.isArray(row.facility_ids) ? row.facility_ids : invitedUserFacilityIdsFrom(row.facility_ids || row.facilityIds || row.facilities || fallback.facilityIds || fallback.facilities || "");
+  return cleanInviteInfo({
+    token:row.token || fallback.token || "",
+    email:row.invited_email || row.email || fallback.email || "",
+    ownerUserId:row.owner_user_id || row.ownerUserId || fallback.ownerUserId || "",
+    role:row.role || fallback.role || "viewer",
+    facilityIds,
+    locationId:row.location_id || row.locationId || facilityIds[0] || "",
+    organizationName:row.organization_name || row.organizationName || fallback.organizationName || "",
+    capturedAt:row.created_at || fallback.capturedAt || new Date().toISOString(),
+  });
+}
+
+async function upsertInviteAccessRecord(invite={}, ownerState={}, currentUser=null) {
+  const clean = cleanInviteInfo(invite);
+  if(!clean.token || !clean.ownerUserId || !clean.email) return { ok:false, reason:"missing_invite_fields" };
+  try {
+    const payload = {
+      token:clean.token,
+      owner_user_id:clean.ownerUserId,
+      invited_email:normalizeEmail(clean.email),
+      invited_name:invite.name || "",
+      role:normalizeRole(clean.role || invite.role || "viewer"),
+      facility_ids:invitedUserFacilityIdsFrom(clean),
+      organization_name:clean.organizationName || ownerState?.settings?.companyName || ownerState?.organization?.name || "",
+      status:"pending",
+      created_by:currentUser?.id || clean.ownerUserId,
+      created_at:new Date().toISOString(),
+      updated_at:new Date().toISOString(),
+    };
+    const { error } = await supabase.from(ORG_INVITES_TABLE).upsert(payload, { onConflict:"token" });
+    if(error) {
+      console.error("Invite access record save failed:", error);
+      return { ok:false, error, missingTable:isMissingRelationError(error) };
+    }
+    return { ok:true };
+  } catch(error) {
+    console.error("Invite access record save exception:", error);
+    return { ok:false, error };
+  }
+}
+
+async function findInviteAccessRecord(inviteInfo={}, currentUser=null) {
+  const clean = cleanInviteInfo({ ...inviteInfo, email:inviteInfo?.email || currentUser?.email || "" });
+  if(!clean.token) return null;
+  try {
+    let query = supabase.from(ORG_INVITES_TABLE).select("*").eq("token", clean.token).limit(1);
+    const { data, error } = await query.maybeSingle();
+    if(error) {
+      console.error("Invite access lookup failed:", error);
+      return { error, missingTable:isMissingRelationError(error) };
+    }
+    if(!data) return null;
+    const invite = normalizeInviteAccessRow(data, clean);
+    const signedInEmail = normalizeEmail(currentUser?.email || "");
+    if(invite.email && signedInEmail && invite.email !== signedInEmail) return { emailMismatch:true, invite };
+    return { invite, ownerUserId:invite.ownerUserId, row:data };
+  } catch(error) {
+    console.error("Invite access lookup exception:", error);
+    return { error };
+  }
+}
+
+async function upsertOrganizationMembershipFromInvite(invite={}, currentUser=null) {
+  const clean = cleanInviteInfo({ ...invite, email:invite?.email || currentUser?.email || "" });
+  if(!currentUser?.id || !clean.ownerUserId || currentUser.id === clean.ownerUserId) return { ok:false, reason:"missing_membership_fields" };
+  try {
+    const payload = {
+      org_owner_user_id:clean.ownerUserId,
+      user_id:currentUser.id,
+      email:normalizeEmail(currentUser.email || clean.email),
+      role:normalizeRole(clean.role || "viewer"),
+      facility_ids:invitedUserFacilityIdsFrom(clean),
+      invite_token:clean.token || "",
+      status:"active",
+      accepted_at:new Date().toISOString(),
+      updated_at:new Date().toISOString(),
+    };
+    const { error } = await supabase.from(ORG_MEMBERSHIPS_TABLE).upsert(payload, { onConflict:"org_owner_user_id,user_id" });
+    if(error) {
+      console.error("Organization membership save failed:", error);
+      return { ok:false, error, missingTable:isMissingRelationError(error) };
+    }
+    return { ok:true };
+  } catch(error) {
+    console.error("Organization membership save exception:", error);
+    return { ok:false, error };
+  }
+}
+
+async function markInviteAccessAccepted(inviteToken="", currentUser=null) {
+  if(!inviteToken) return;
+  try {
+    await supabase.from(ORG_INVITES_TABLE).update({
+      status:"accepted",
+      accepted_by:currentUser?.id || null,
+      accepted_at:new Date().toISOString(),
+      updated_at:new Date().toISOString(),
+    }).eq("token", inviteToken);
+  } catch(e) {
+    console.error("Invite accepted status update failed:", e);
+  }
+}
+
+async function findOrganizationMembershipAccessForUser(currentUser=null) {
+  if(!currentUser?.id) return null;
+  try {
+    const { data, error } = await supabase
+      .from(ORG_MEMBERSHIPS_TABLE)
+      .select("*")
+      .eq("user_id", currentUser.id)
+      .eq("status", "active")
+      .order("updated_at", { ascending:false })
+      .limit(1)
+      .maybeSingle();
+    if(error) {
+      console.error("Organization membership direct lookup failed:", error);
+      return { error, missingTable:isMissingRelationError(error) };
+    }
+    if(!data?.org_owner_user_id) return null;
+    const invite = normalizeInviteAccessRow({
+      token:data.invite_token || "",
+      owner_user_id:data.org_owner_user_id,
+      invited_email:data.email || currentUser.email || "",
+      role:data.role || "viewer",
+      facility_ids:data.facility_ids || [],
+      status:data.status || "active",
+    }, { email:currentUser.email || "" });
+    const ownerRow = await fetchUserStateRow(data.org_owner_user_id);
+    if(!ownerRow?.data) return { error:new Error("Membership exists, but organization workspace could not be read."), membership:data, invite, ownerUserId:data.org_owner_user_id };
+    const ownerState = applyInviteToOrganizationState(normalizeLoadedUserState(ownerRow.data || {}, data.org_owner_user_id), invite, currentUser);
+    return { ownerRow, ownerState, member:data, invite, ownerUserId:data.org_owner_user_id };
+  } catch(error) {
+    console.error("Organization membership direct lookup exception:", error);
+    return { error };
+  }
+}
+
+async function resolveInviteToOrganizationState(inviteInfo={}, currentUser=null) {
+  const clean = cleanInviteInfo({ ...inviteInfo, email:inviteInfo?.email || currentUser?.email || "" });
+  if(!clean?.token) return null;
+
+  const accessLookup = await findInviteAccessRecord(clean, currentUser);
+  if(accessLookup?.emailMismatch) return { emailMismatch:true, invite:accessLookup.invite };
+  if(accessLookup?.invite?.ownerUserId) {
+    const membership = await upsertOrganizationMembershipFromInvite(accessLookup.invite, currentUser);
+    if(membership?.ok) {
+      const ownerRow = await fetchUserStateRow(accessLookup.invite.ownerUserId);
+      if(ownerRow?.data) {
+        const ownerState = normalizeLoadedUserState(ownerRow.data || {}, accessLookup.invite.ownerUserId);
+        return { ownerRow, ownerState, invite:accessLookup.invite, ownerUserId:accessLookup.invite.ownerUserId, source:"access_table" };
+      }
+      return { error:new Error("Invite was found and membership was created, but the organization workspace could not be read. Check the user_state RLS membership policies."), invite:accessLookup.invite, ownerUserId:accessLookup.invite.ownerUserId };
+    }
+    return { error:membership?.error || new Error("Invite was found, but membership could not be created. Check organization_memberships RLS policies."), invite:accessLookup.invite, ownerUserId:accessLookup.invite.ownerUserId, missingTable:membership?.missingTable };
+  }
+
+  // Legacy fallback for older invites that were only stored inside the owner's app data.
+  return await findOrganizationStateForInvite(clean, currentUser);
+}
+
 async function findOrganizationStateForInvite(inviteInfo={}, currentUser=null) {
   const ownerId = inviteInfo?.ownerUserId || "";
   const email = normalizeEmail(inviteInfo?.email || currentUser?.email || "");
@@ -10328,7 +10507,7 @@ export default function App() {
             dispatch({ type:"REPLACE_STATE", payload:{ ...blankUserState(session.user.id), setupComplete:true, inviteConnectionError:`This invite was created for ${invitedEmail}, but you are signed in as ${signedInEmail}. Sign out and sign in with the invited email.` } });
             return;
           }
-          const inviteMatch = await findOrganizationStateForInvite(pendingInviteInfo, session.user);
+          const inviteMatch = await resolveInviteToOrganizationState(pendingInviteInfo, session.user);
           if(inviteMatch?.invite) {
             const acceptedState = applyInviteToOrganizationState({ ...inviteMatch.ownerState, ownerUserId:inviteMatch.ownerUserId }, inviteMatch.invite, session.user);
             const invitedUiState = {
@@ -10344,6 +10523,7 @@ export default function App() {
             // user created before accepting the invite, so future logins open the invited organization.
             await saveOrganizationInviteAcceptance(inviteMatch.ownerUserId, prepareSharedOrganizationStateForCloudSave(acceptedState, null));
             await saveInvitePointerForUser(session.user.id, inviteMatch.ownerUserId, session.user.email, inviteMatch.invite);
+            await markInviteAccessAccepted(inviteMatch.invite?.token || pendingInviteInfo.token, session.user);
             clearPendingInviteInfo();
             try { localStorage.removeItem("ncaState"); localStorage.removeItem("ncaState:lastUserId"); } catch(e) {}
             dispatch({ type:"REPLACE_STATE", payload:invitedUiState });
@@ -10370,7 +10550,10 @@ export default function App() {
         // Before loading that standalone data, look for this signed-in account inside any
         // organization user list. If found, force this account into the shared organization row
         // and replace the user's personal row with a pointer so future logins always land there.
-        const membershipMatch = await findOrganizationMembershipForUser(session.user);
+        const directMembershipMatch = await findOrganizationMembershipAccessForUser(session.user);
+        const membershipMatch = (directMembershipMatch?.ownerState && directMembershipMatch?.ownerUserId)
+          ? directMembershipMatch
+          : await findOrganizationMembershipForUser(session.user);
         if(membershipMatch?.ownerState && membershipMatch?.ownerUserId) {
           const scopedOrgState = ensureCurrentOrganizationAdmin({ ...membershipMatch.ownerState, ownerUserId:membershipMatch.ownerUserId }, session.user);
           const invitedUiState = {
@@ -10705,7 +10888,7 @@ export default function App() {
     setInviteCodeBusy(true);
     setInviteCodeError("");
     try {
-      const inviteMatch = await findOrganizationStateForInvite(clean, session.user);
+      const inviteMatch = await resolveInviteToOrganizationState(clean, session.user);
       if(!inviteMatch?.invite) {
         setInviteCodeError("Invite code was not found. Ask the Organization Administrator to create a fresh invite and give you the code shown in Pending Invite Records.");
         return false;
@@ -10722,6 +10905,7 @@ export default function App() {
       };
       await saveOrganizationInviteAcceptance(inviteMatch.ownerUserId, prepareSharedOrganizationStateForCloudSave(acceptedState, null));
       await saveInvitePointerForUser(session.user.id, inviteMatch.ownerUserId, session.user.email, inviteMatch.invite);
+      await markInviteAccessAccepted(inviteMatch.invite?.token || clean.token, session.user);
       clearPendingInviteInfo();
       try { localStorage.removeItem("ncaState"); localStorage.removeItem("ncaState:lastUserId"); } catch(e) {}
       dispatch({ type:"REPLACE_STATE", payload:invitedUiState });
