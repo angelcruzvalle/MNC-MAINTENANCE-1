@@ -2182,6 +2182,35 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   const fuelLevels = fuelContainers.map(c => ({ ...c, _percent:fuelPercentFor(c), _gallons:fuelGallonsFor(c) })).sort((a,b)=>a._percent-b._percent);
   const lowFuel = fuelLevels.filter(c => c._percent > 0 && c._percent <= 25);
   const recentActivity = [...notifications].sort((a,b)=>String(b.createdAt||b.time||"").localeCompare(String(a.createdAt||a.time||""))).slice(0,6);
+  const facilities = normalizeMaintForgeLocations(state).filter(f => f.active !== false);
+  const facilityDashboardRows = facilities.map((facility) => {
+    const facilityState = { ...state, activeLocationId: facility.id };
+    const facilityEqs = allEqs.filter(e => recordMatchesActiveLocation(e, facilityState));
+    const facilityEqIds = new Set(facilityEqs.map(e => String(e.id || e.equipmentId || "")).filter(Boolean));
+    const facilityWos = allWos.filter(w => {
+      const woEqId = workOrderEquipmentId(w) || w.equipmentId || w.equipment || w.parentEquipmentId || w.parentId || "";
+      return recordMatchesActiveLocation(w, facilityState) || (woEqId && facilityEqIds.has(String(woEqId)));
+    });
+    const facilityActiveWos = facilityWos.filter(w => w.status !== "Completed");
+    const facilityReady = facilityEqs.filter(e => (e.status || "Fully Operational") === "Fully Operational");
+    const facilityDeficient = facilityEqs.filter(e => e.status === "Operational with Deficiencies");
+    const facilityDeadline = facilityEqs.filter(e => e.status === "Out of Service / Deadline");
+    const facilityReadiness = facilityEqs.length ? Math.round((facilityReady.length / facilityEqs.length) * 100) : 100;
+    const facilitySpend = facilityWos
+      .filter(w => w.status === "Completed" && String(w.completed || w.completedDate || "").slice(0,7) === todayStr.slice(0,7))
+      .reduce((sum,w)=>sum + woSpendingTotal(w, state.settings), 0);
+    return {
+      id: facility.id,
+      name: facility.name,
+      assets: facilityEqs.length,
+      ready: facilityReady.length,
+      deficient: facilityDeficient.length,
+      deadline: facilityDeadline.length,
+      readiness: facilityReadiness,
+      activeWork: facilityActiveWos.length,
+      monthSpend: facilitySpend
+    };
+  }).sort((a,b)=>a.name.localeCompare(b.name));
 
   const eqName = id => {
     const eq = eqs.find(e=>String(e.id)===String(id));
@@ -2235,12 +2264,13 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   ].sort((a,b)=>String(a.due||"").localeCompare(String(b.due||""))).slice(0,6);
 
   const defaultLayoutForRole = (r) => {
-    if(r === "mechanic") return ["quick_links","my_work","active_work","due_today","awaiting_parts","schedule_due_count","priority_queue","equipment_watch","schedule_due","recent_activity"];
+    if(r === "mechanic") return ["quick_links","active_work","due_today","awaiting_parts","schedule_due_count","my_work","priority_queue","equipment_watch","schedule_due","recent_activity"];
     if(r === "viewer") return ["quick_links","readiness","active_work","deadline","completed_month","fuel_low","readiness_breakdown","equipment_watch","fuel_levels","recent_activity"];
-    if(r === "supervisor") return ["quick_links","readiness","active_work","overdue_work","deadline","due_today","schedule_due_count","today_focus","priority_queue","equipment_watch","schedule_due","inventory_requests"];
-    return ["quick_links","readiness","active_work","overdue_work","deadline","fuel_low","schedule_due_count","requests","low_stock","month_spend","today_focus","readiness_breakdown","fuel_levels","priority_queue","schedule_due","equipment_watch","inventory_requests"];
+    if(r === "supervisor") return ["quick_links","readiness","active_work","overdue_work","deadline","due_today","schedule_due_count","requests","today_focus","priority_queue","equipment_watch","schedule_due","inventory_requests"];
+    if(r === "organization_admin") return ["quick_links","readiness","active_work","overdue_work","deadline","fuel_low","schedule_due_count","requests","low_stock","month_spend","facility_readiness","readiness_breakdown","fuel_levels","today_focus","priority_queue","schedule_due","equipment_watch","inventory_requests"];
+    return ["quick_links","readiness","active_work","overdue_work","deadline","fuel_low","schedule_due_count","requests","low_stock","month_spend","readiness_breakdown","fuel_levels","today_focus","priority_queue","schedule_due","equipment_watch","inventory_requests"];
   };
-  const layoutKey = `maintforge_dashboard_layout_v4_role_based_${role}`;
+  const layoutKey = `maintforge_dashboard_layout_v5_adaptive_${role}`;
   const loadLayout = () => {
     try {
       const saved = JSON.parse(localStorage.getItem(layoutKey) || "null");
@@ -2286,7 +2316,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   );
 
   const widgetRegistry = {
-    quick_links: { title:"Quick Links", size:"full", tab:"dashboard", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title="Quick Links" action={canUseSettings ? <Btn small variant="secondary" onClick={onSettings}>Settings</Btn> : null}><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(165px,1fr))", gap:10, marginTop:8 }}>{quickLinks.map(link => <QuickLinkButton key={link.tab} link={link} />)}</div></Panel> },
+    quick_links: { title:"Quick Links", size:"full", tab:"dashboard", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title="Quick Links"><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(180px,100%),1fr))", gap:10, marginTop:8 }}>{quickLinks.map(link => <QuickLinkButton key={link.tab} link={link} />)}</div></Panel> },
     readiness: { title:"Operational Ready", size:"small", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <SmallCard title="Operational Ready" value={`${readiness}%`} sub={`${readyEqs.length} of ${eqs.length} assets fully operational`} color={readiness>=85?T.green:readiness>=65?T.amber:T.red} tab="equipment" /> },
     active_work: { title:"Active Work", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <SmallCard title="Active Work" value={activeWOs.length} sub={`${highPriority.length} high priority • ${awaitingParts.length} awaiting parts`} color={highPriority.length?T.red:T.accent} tab="workorders" /> },
     high_priority: { title:"High Priority", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="High Priority" value={highPriority.length} sub="Work orders needing fast attention" color={highPriority.length?T.red:T.green} tab="workorders" /> },
@@ -2303,7 +2333,8 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     overdue_work: { title:"Overdue Work", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="Overdue Work" value={overdueWOs.length} sub={`${dueTodayWOs.length} due today • ${dueSoonWOs.length} due within 14 days`} color={overdueWOs.length?T.red:dueTodayWOs.length?T.amber:T.green} tab="workorders" /> },
     due_today: { title:"Due Today", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="Due Today" value={dueTodayWOs.length} sub={`${inProgressWOs.length} in progress • ${openWOs.length} open`} color={dueTodayWOs.length?T.amber:T.green} tab="workorders" /> },
     work_mix: { title:"Work Mix", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <SmallCard title="Work Mix" value={`${repairsOpen}/${serviceOpen}/${inspectionOpen}`} sub="Repair / Service / Inspection active WOs" color={repairsOpen?T.red:serviceOpen?T.amber:T.green} tab="workorders" /> },
-    readiness_breakdown: { title:"Readiness Breakdown", size:"wide", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <Panel title={`Readiness Breakdown — ${facilityScopeLabel}`} action={<Btn small variant="secondary" onClick={()=>click("equipment")}>Equipment</Btn>}><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(135px,1fr))", gap:10, marginTop:8 }}><SmallCard title="Ready" value={readyEqs.length} sub="Fully operational" color={T.green} tab="equipment" /><SmallCard title="Deficient" value={deficientEqs.length} sub="Can work, needs attention" color={T.amber} tab="equipment" /><SmallCard title="Deadline" value={deadlineEqs.length} sub="Out of service" color={T.red} tab="equipment" /></div></Panel> },
+    readiness_breakdown: { title:"Readiness Breakdown", size:"wide", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <Panel title={`Readiness Breakdown — ${facilityScopeLabel}`} action={<Btn small variant="secondary" onClick={()=>click("equipment")}>Equipment</Btn>}><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(150px,100%),1fr))", gap:10, marginTop:8 }}><SmallCard title="Ready" value={readyEqs.length} sub="Fully operational" color={T.green} tab="equipment" /><SmallCard title="Deficient" value={deficientEqs.length} sub="Can work, needs attention" color={T.amber} tab="equipment" /><SmallCard title="Deadline" value={deadlineEqs.length} sub="Out of service" color={T.red} tab="equipment" /></div></Panel> },
+    facility_readiness: { title:"Facility Readiness", size:"full", tab:"equipment", roles:["organization_admin"], render:()=> <Panel title="Facility Readiness" action={<Btn small variant="secondary" onClick={()=>click("equipment")}>Equipment</Btn>}>{facilityDashboardRows.length ? <div style={{ overflowX:"auto", marginTop:8 }}><table style={{ width:"100%", borderCollapse:"collapse", minWidth:760 }}><thead><tr>{["Facility","Readiness","Assets","Ready","Deficient","Deadline","Active WOs","Month Spend"].map(h=><th key={h} style={{ textAlign:h==="Facility"?"left":"right", color:T.muted, fontSize:12, letterSpacing:.35, textTransform:"uppercase", padding:"9px 8px", borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead><tbody>{facilityDashboardRows.map(row => <tr key={row.id} onClick={()=>click("equipment")} style={{ cursor:"pointer" }}><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, fontWeight:900, color:T.text }}>{row.name}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", fontWeight:950, color:row.readiness>=85?T.green:row.readiness>=65?T.amber:T.red }}>{row.readiness}%</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right" }}>{row.assets}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", color:T.green, fontWeight:900 }}>{row.ready}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", color:T.amber, fontWeight:900 }}>{row.deficient}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", color:T.red, fontWeight:900 }}>{row.deadline}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", fontWeight:900 }}>{row.activeWork}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", fontWeight:900 }}>{moneyFmt(row.monthSpend)}</td></tr>)}</tbody></table></div> : <div style={{ padding:14, color:T.muted }}>No facilities found yet. Add facilities in Settings to see readiness by facility.</div>}</Panel> },
     fuel_levels: { title:"Fuel Levels", size:"wide", tab:"fuel", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <Panel title={`Fuel Levels — ${facilityScopeLabel}`} action={<Btn small variant="secondary" onClick={()=>click("fuel")}>Fuel</Btn>}>{fuelLevels.length ? fuelLevels.slice(0,6).map(c=><ActionRow key={c.id || c.name} title={c.name || c.containerName || "Fuel Container"} sub={`${Math.round(c._percent || 0)}% full${c._gallons ? ` • ${Math.round(c._gallons).toLocaleString()} gallons` : ""}${c.latestInches || c.inches ? ` • ${c.latestInches || c.inches} in` : ""}`} badge={c._percent <= 25 && c._percent > 0 ? "Low" : c._percent >= 75 ? "Full" : "OK"} color={c._percent <= 25 && c._percent > 0 ? T.red : c._percent >= 75 ? T.green : T.amber} tab="fuel" />) : <div style={{ padding:14, color:T.muted }}>No fuel containers found for this facility.</div>}</Panel> },
     today_focus: { title:"Facility Manager Focus", size:"wide", tab:"workorders", roles:["organization_admin","facility_admin","supervisor"], render:()=> <Panel title={`Facility Manager Focus — ${facilityScopeLabel}`} action={<Btn small onClick={()=>click("workorders")}>Work Orders</Btn>}>{overdueWOs.slice(0,3).map(w=><ActionRow key={`od-${w.id}`} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "Overdue Work Order"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • Due ${w.due || "No due date"} • ${w.status || "Open"}`} badge="Overdue" color={T.red} tab="workorders" />)}{highPriority.slice(0,3).map(w=><ActionRow key={`hp-${w.id}`} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "High Priority"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • ${w.status || "Open"}${w.due ? ` • Due ${w.due}` : ""}`} badge="High" color={T.red} tab="workorders" />)}{deadlineEqs.slice(0,3).map(e=><ActionRow key={`dl-${e.id}`} title={`${e.id} — ${e.name || e.nomenclature || "Deadline Equipment"}`} sub={`${e.locationName || e.location || facilityScopeLabel} • ${e.category || e.type || "Equipment"}`} badge="Deadline" color={T.red} tab="equipment" />)}{!overdueWOs.length && !highPriority.length && !deadlineEqs.length && <div style={{ padding:14, color:T.muted }}>No urgent overdue work, high-priority WOs, or deadline equipment right now.</div>}</Panel> },
     my_work: { title:"My Work", size:"wide", tab:"workorders", roles:["mechanic","supervisor","facility_admin","organization_admin"], render:()=> <Panel title="My Work / Assigned Work" action={<Btn small onClick={()=>click("workorders")}>Open</Btn>}>{(assignedToMe.length ? assignedToMe : activeWOs.slice(0,4)).slice(0,6).map(w=><ActionRow key={w.id} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "Work Order"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • ${w.status || "Open"}`} badge={w.priority || "Normal"} color={w.priority==="High"?T.red:w.priority==="Medium"?T.amber:T.accent} tab="workorders" />)}{!activeWOs.length && <div style={{ padding:14, color:T.muted }}>No active assigned work.</div>}</Panel> },
@@ -2340,43 +2371,40 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     setDragWidgetId(null);
   };
 
-  return <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+  return <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
     <style>{`
-      .mf-dashboard-grid > div{ min-width:0; }
-      @media (max-width: 1120px){
-        .mf-dashboard-grid{ grid-template-columns:repeat(6,minmax(0,1fr)) !important; }
-        .mf-dashboard-widget-small{ grid-column:span 3 !important; }
+      .mf-dashboard-grid > div{ min-width:0; height:100%; }
+      .mf-dashboard-widget-small{ grid-column:span 1; }
+      .mf-dashboard-widget-wide{ grid-column:span 2; }
+      .mf-dashboard-widget-full{ grid-column:1 / -1; }
+      @media (max-width: 980px){
         .mf-dashboard-widget-wide,.mf-dashboard-widget-full{ grid-column:1 / -1 !important; }
       }
-      @media (max-width: 700px){
+      @media (max-width: 620px){
         .mf-dashboard-grid{ grid-template-columns:1fr !important; }
         .mf-dashboard-widget-small,.mf-dashboard-widget-wide,.mf-dashboard-widget-full{ grid-column:1 / -1 !important; }
-        .mf-dashboard-hero{ border-radius:20px !important; padding:16px !important; }
-        .mf-dashboard-hero h2{ font-size:27px !important; }
-        .mf-dashboard-hero{ grid-template-columns:1fr !important; }
-        .mf-dashboard-actions{ width:100%; justify-content:flex-start !important; }
       }
     `}</style>
-    <div className="mf-dashboard-hero" style={{ display:"grid", gridTemplateColumns:"minmax(0,1fr) auto", alignItems:"center", gap:14, padding:"18px 20px", borderRadius:26, background:T.card, color:T.text, border:`1px solid ${T.border}`, boxShadow:"0 12px 30px rgba(15,23,42,.08)" }}>
-      <div style={{ minWidth:0 }}><div style={{ fontSize:12, fontWeight:900, letterSpacing:.6, textTransform:"uppercase", color:T.muted }}>Dashboard • {facilityScopeLabel}</div><h2 style={{ margin:"6px 0 8px", fontSize:32, lineHeight:1, letterSpacing:-.8 }}>Dashboard</h2><div style={{ color:T.muted, fontSize:14, maxWidth:760 }}>{roleLabel(role)} view with live data, alerts, and shortcuts. Click a card or quick link to jump directly to the section you need.</div></div>
-      <div className="mf-dashboard-actions" style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end" }}><Btn onClick={()=>setEditDashboard(v=>!v)}>{editDashboard ? "Done Customizing" : "Customize Dashboard"}</Btn><Btn variant="secondary" onClick={()=>click("workorders")}>Work Orders</Btn><Btn variant="secondary" onClick={()=>click("equipment")}>Equipment</Btn>{canUseSettings && <Btn variant="secondary" onClick={onSettings}>Settings</Btn>}</div>
+    <div style={{ display:"flex", justifyContent:"flex-end", gap:8, flexWrap:"wrap" }}>
+      <Btn onClick={()=>setEditDashboard(v=>!v)}>{editDashboard ? "Done Customizing" : "Customize Dashboard"}</Btn>
+      {editDashboard && <Btn variant="secondary" onClick={resetDashboard}>Reset Default</Btn>}
     </div>
 
     {editDashboard && <Card style={{ borderRadius:22, padding:16, border:`1px solid ${T.border}`, background:T.card, boxShadow:"0 10px 24px rgba(15,23,42,.06)" }}>
       <div style={{ display:"flex", justifyContent:"space-between", gap:12, flexWrap:"wrap", alignItems:"center", marginBottom:12 }}>
         <div><h3 style={{ margin:"0 0 4px", fontSize:18 }}>Customize dashboard</h3><div style={{ color:T.muted, fontSize:13 }}>Drag widgets, use the arrows on iPhone, remove cards, or add more useful widgets. Layout saves on this device for your role.</div></div>
-        <Btn variant="secondary" onClick={resetDashboard}>Reset Default</Btn>
+        <div style={{ color:T.muted, fontSize:12, fontWeight:800 }}>Same-size cards stay grouped in the default layout, and you can still move, remove, or add widgets.</div>
       </div>
       <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
         {addableWidgets.length ? addableWidgets.map(([id,w]) => <button key={id} type="button" onClick={()=>addWidget(id)} style={{ border:`1px solid ${T.border}`, background:T.grayLt, color:T.text, borderRadius:999, padding:"9px 12px", fontWeight:800, cursor:"pointer" }}>+ {w.title}</button>) : <div style={{ color:T.muted, fontSize:13 }}>All available widgets for your role are already on the dashboard.</div>}
       </div>
     </Card>}
 
-    <div className="mf-dashboard-grid" style={{ display:"grid", gridTemplateColumns:"repeat(12,minmax(0,1fr))", gap:12, alignItems:"stretch" }}>
+    <div className="mf-dashboard-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(230px,100%),1fr))", gap:12, alignItems:"stretch", gridAutoFlow:"row dense" }}>
       {safeLayout.map((id, index) => {
         const w = widgetRegistry[id];
         const widgetClass = w.size === "full" ? "mf-dashboard-widget-full" : w.size === "wide" ? "mf-dashboard-widget-wide" : "mf-dashboard-widget-small";
-        const widgetSpan = w.size === "full" ? "1 / -1" : w.size === "wide" ? "span 6" : "span 3";
+        const widgetSpan = w.size === "full" ? "1 / -1" : w.size === "wide" ? "span 2" : "span 1";
         return <div key={id} className={widgetClass} draggable={editDashboard} onDragStart={()=>setDragWidgetId(id)} onDragOver={e=>{ if(editDashboard) e.preventDefault(); }} onDrop={()=>onDropWidget(id)} style={{ gridColumn:widgetSpan, position:"relative", minWidth:0 }}>
           {editDashboard && <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, marginBottom:6, background:T.card, border:`1px dashed ${T.border}`, borderRadius:14, padding:"7px 8px" }}>
             <span style={{ fontSize:12, color:T.muted, fontWeight:900, cursor:"grab" }}>☰ Drag • {w.title}</span>
