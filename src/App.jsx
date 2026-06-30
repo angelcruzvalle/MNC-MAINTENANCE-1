@@ -1328,6 +1328,27 @@ function reducer(state, { type, payload }) {
 
 const genId = p => `${p}-${String(Date.now()).slice(-5)}`;
 const today = () => new Date().toISOString().split("T")[0];
+const isValidISODate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || "")) && !Number.isNaN(new Date(`${value}T00:00:00`).getTime());
+
+function askCompletedDate(defaultDate = today()) {
+  const baseDate = isValidISODate(String(defaultDate || "").slice(0,10)) ? String(defaultDate).slice(0,10) : today();
+  const useToday = confirm(`Completed today (${today()})?\n\nOK = use today\nCancel = choose a different completed date`);
+  if(useToday) return today();
+  const entered = prompt("Enter completed date (YYYY-MM-DD):", baseDate);
+  if(entered === null) return null;
+  const clean = String(entered || "").trim().slice(0,10);
+  if(!isValidISODate(clean)) {
+    alert("Completed date must be in YYYY-MM-DD format.");
+    return null;
+  }
+  return clean;
+}
+
+function printablePartNameWithNumber(part) {
+  const name = String(part?.name || part?.partName || part?.description || "—").trim();
+  const num = String(part?.partNumber || part?.number || part?.partNo || part?.sku || "").trim();
+  return num && num.toLowerCase() !== name.toLowerCase() ? `${name} (${num})` : name;
+}
 
 function normalizeStepLines(value) {
   if(Array.isArray(value)) {
@@ -2652,10 +2673,16 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const normalizedCreatedDate = String(formWithLatestUsage.created || formWithLatestUsage.date || today()).slice(0,10);
     const normalizedDueDate = formWithLatestUsage.due ? String(formWithLatestUsage.due).slice(0,10) : "";
     if(isEdit) {
-      const payload = {...formWithLatestUsage, created:normalizedCreatedDate, due:normalizedDueDate, woType:formWithLatestUsage.woType||"Repair", title:formWithLatestUsage.faultDescription||formWithLatestUsage.woType||"Work Order", faultEnabled:true, outsideServices, partsCost:partsTotal, outsideServicesCost:outsideServicesSubtotal};
+      let payload = {...formWithLatestUsage, created:normalizedCreatedDate, due:normalizedDueDate, woType:formWithLatestUsage.woType||"Repair", title:formWithLatestUsage.faultDescription||formWithLatestUsage.woType||"Work Order", faultEnabled:true, outsideServices, partsCost:partsTotal, outsideServicesCost:outsideServicesSubtotal};
+      const isClosingNow = prevWO && prevWO.status !== "Completed" && payload.status === "Completed";
       if(prevWO && payload.status !== prevWO.status && !confirmWOStatusChange(prevWO, payload.status)) return;
+      if(isClosingNow) {
+        const completedDate = askCompletedDate(payload.completed || payload.completedDate || today());
+        if(!completedDate) return;
+        payload = { ...payload, completed:completedDate, completedDate:completedDate, equipmentStatus:"Fully Operational" };
+      }
       dispatch({type:"UPDATE_WO", payload});
-      if(prevWO && prevWO.status !== "Completed" && payload.status === "Completed") {
+      if(isClosingNow) {
         setTimeout(() => {
           if(confirm(`Work order ${payload.id || payload.woNumber || ""} was completed. Print it now?`)) printWO(payload);
         }, 0);
@@ -2676,7 +2703,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     if(currentStatus === nextStatus) return true;
     const woLabel = wo?.id || wo?.woNumber || "this work order";
     if(nextStatus === "Completed") {
-      return confirm(`Close ${woLabel}?\n\nThis will mark the work order completed, set the equipment back to Fully Operational, and consume any parts listed on the work order from inventory.`);
+      return confirm(`Close ${woLabel}?\n\nThis will mark the work order completed, set the equipment back to Fully Operational, consume any parts listed, and ask for the completed date.`);
     }
     if(currentStatus === "Completed" && nextStatus !== "Completed") {
       return confirm(`Re-open ${woLabel}?\n\nAny parts previously consumed by this work order will be restocked until the work order is closed again.`);
@@ -2686,13 +2713,16 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const quickUpdateWO = (wo, changes) => {
     const nextStatus = changes.status || wo.status || "Open";
+    const isClosingNow = changes.status && (wo.status || "Open") !== "Completed" && nextStatus === "Completed";
     if(changes.status && !confirmWOStatusChange(wo, nextStatus)) return;
+    const selectedCompletedDate = isClosingNow ? askCompletedDate(wo.completed || wo.completedDate || wo.dateCompleted || wo.closedDate || today()) : null;
+    if(isClosingNow && !selectedCompletedDate) return;
     const next = {
       ...wo,
       ...changes,
       equipmentStatus: nextStatus === "Completed" ? "Fully Operational" : (changes.equipmentStatus || wo.equipmentStatus || "Fully Operational"),
-      completed: nextStatus === "Completed" ? (wo.completed || wo.completedDate || wo.dateCompleted || wo.closedDate || today()) : (changes.status && changes.status !== "Completed" ? "" : wo.completed),
-      completedDate: nextStatus === "Completed" ? (wo.completedDate || wo.completed || wo.dateCompleted || wo.closedDate || today()) : (changes.status && changes.status !== "Completed" ? "" : wo.completedDate),
+      completed: nextStatus === "Completed" ? (selectedCompletedDate || wo.completed || wo.completedDate || wo.dateCompleted || wo.closedDate || today()) : (changes.status && changes.status !== "Completed" ? "" : wo.completed),
+      completedDate: nextStatus === "Completed" ? (selectedCompletedDate || wo.completedDate || wo.completed || wo.dateCompleted || wo.closedDate || today()) : (changes.status && changes.status !== "Completed" ? "" : wo.completedDate),
     };
     dispatch({ type:"UPDATE_WO", payload:next });
     if(changes.status && (wo.status || "Open") !== "Completed" && nextStatus === "Completed") {
@@ -2869,9 +2899,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div class="summaryTitle">Parts and Labor Summary</div>
           ${printOpt("showParts") ? `<div class="miniTitle">Parts Used</div>
           <table class="data-table">
-            <thead><tr><th style="width:50%">Description</th><th style="width:13%" class="center">Quantity</th>${printOpt("showPartsUnitPrice") ? `<th style="width:18%" class="right">Unit Price</th>` : ""}${printOpt("showPartsLineTotal") ? `<th style="width:19%" class="right">Total</th>` : ""}</tr></thead>
+            <thead><tr><th style="width:50%">Part Name / Part Number</th><th style="width:13%" class="center">Quantity</th>${printOpt("showPartsUnitPrice") ? `<th style="width:18%" class="right">Unit Price</th>` : ""}${printOpt("showPartsLineTotal") ? `<th style="width:19%" class="right">Total</th>` : ""}</tr></thead>
             <tbody>
-              ${partsUsed.length>0 ? partsUsed.map(part=>{ const q=+(part.qty||1); const u=+(part.unitCost||0); return `<tr><td>${h(part.name || part.description || "—")}</td><td class="center">${h(q)} ${h(part.unit||"ea")}</td>${printOpt("showPartsUnitPrice") ? `<td class="right">${money(u)}</td>` : ""}${printOpt("showPartsLineTotal") ? `<td class="right">${money(q*u)}</td>` : ""}</tr>`; }).join("") : `<tr><td colspan="${2 + (printOpt("showPartsUnitPrice") ? 1 : 0) + (printOpt("showPartsLineTotal") ? 1 : 0)}" style="color:#64748b;font-style:italic">No parts listed</td></tr>`}
+              ${partsUsed.length>0 ? partsUsed.map(part=>{ const q=+(part.qty||1); const u=+(part.unitCost||0); return `<tr><td>${h(printablePartNameWithNumber(part))}</td><td class="center">${h(q)} ${h(part.unit||"ea")}</td>${printOpt("showPartsUnitPrice") ? `<td class="right">${money(u)}</td>` : ""}${printOpt("showPartsLineTotal") ? `<td class="right">${money(q*u)}</td>` : ""}</tr>`; }).join("") : `<tr><td colspan="${2 + (printOpt("showPartsUnitPrice") ? 1 : 0) + (printOpt("showPartsLineTotal") ? 1 : 0)}" style="color:#64748b;font-style:italic">No parts listed</td></tr>`}
               ${printOpt("showPartsSubtotal") ? `<tr class="subRow"><td colspan="${2 + (printOpt("showPartsUnitPrice") ? 1 : 0) + (printOpt("showPartsLineTotal") ? 1 : 0)}">Parts Subtotal: ${money(partsTotal)}</td></tr>` : ""}
             </tbody>
           </table>` : ""}
@@ -3212,7 +3242,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
     const completeWO = () => {
       if(!confirmWOStatusChange(wo, "Completed")) return;
-      const completedDate = today();
+      const completedDate = askCompletedDate(wo.completed || wo.completedDate || today());
+      if(!completedDate) return;
       const updated = { ...wo, status:"Completed", equipmentStatus:"Fully Operational", completed:completedDate, completedDate:completedDate };
       dispatch({ type:"UPDATE_WO", payload:updated });
       setModal(null); setDetailWO(null);
@@ -3243,7 +3274,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             <Btn small variant="secondary" onClick={()=>printWO(wo)}>Print</Btn>
             <Btn small variant="danger" onClick={()=>del(wo.id)}>Delete</Btn>
             {!isCompleted && !editMode && <Btn small onClick={()=>setEditMode(true)} style={{ background:"#1e40af", borderColor:"#1e40af" }}>Update Work Order</Btn>}
-            {!isCompleted && editMode && <Btn small onClick={()=>{ const payload={ ...wo, ...form }; if(payload.status!==wo.status && !confirmWOStatusChange(wo, payload.status)) return; dispatch({ type:"UPDATE_WO", payload }); setEditMode(false); setDetailWO(payload); }} style={{ background:T.green, borderColor:T.green }}>Save Changes</Btn>}
+            {!isCompleted && editMode && <Btn small onClick={()=>{ let payload={ ...wo, ...form }; const isClosingNow = payload.status!==wo.status && payload.status==="Completed"; if(payload.status!==wo.status && !confirmWOStatusChange(wo, payload.status)) return; if(isClosingNow){ const completedDate = askCompletedDate(payload.completed || payload.completedDate || today()); if(!completedDate) return; payload={ ...payload, completed:completedDate, completedDate:completedDate, equipmentStatus:"Fully Operational" }; } dispatch({ type:"UPDATE_WO", payload }); setEditMode(false); setDetailWO(payload); }} style={{ background:T.green, borderColor:T.green }}>Save Changes</Btn>}
             {!isCompleted && editMode && <Btn small variant="secondary" onClick={()=>{ setEditMode(false); setForm({...wo, partsUsed:wo.partsUsed||[], outsideServices:wo.outsideServices||[]}); }}>Cancel Edit</Btn>}
             {!isCompleted && !editMode && <Btn small onClick={completeWO} style={{ background:T.green, borderColor:T.green }}>Complete Work Order</Btn>}
             <Btn small variant="danger" onClick={()=>del(wo.id)}>Delete</Btn>
@@ -3942,9 +3973,9 @@ function Equipment({ state, dispatch }) {
           <div class="summaryTitle">Parts and Labor Summary</div>
           <div class="miniTitle" data-print-item="Parts Used Table">Parts Used</div>
           <table class="data-table">
-            <thead><tr><th style="width:50%">Description</th><th style="width:13%" class="center">Quantity</th><th style="width:18%" class="right">Unit Price</th><th style="width:19%" class="right">Total</th></tr></thead>
+            <thead><tr><th style="width:50%">Part Name / Part Number</th><th style="width:13%" class="center">Quantity</th><th style="width:18%" class="right">Unit Price</th><th style="width:19%" class="right">Total</th></tr></thead>
             <tbody>
-              ${partsUsed.length ? partsUsed.map(part => { const q=+(part.qty||1); const u=+(part.unitCost||0); return `<tr><td>${h(part.name || part.description || "—")}</td><td class="center">${h(q)} ${h(part.unit||"ea")}</td><td class="right">${money(u)}</td><td class="right">${money(q*u)}</td></tr>`; }).join("") : `<tr><td colspan="4" style="color:#64748b;font-style:italic">No parts listed</td></tr>`}
+              ${partsUsed.length ? partsUsed.map(part => { const q=+(part.qty||1); const u=+(part.unitCost||0); return `<tr><td>${h(printablePartNameWithNumber(part))}</td><td class="center">${h(q)} ${h(part.unit||"ea")}</td><td class="right">${money(u)}</td><td class="right">${money(q*u)}</td></tr>`; }).join("") : `<tr><td colspan="4" style="color:#64748b;font-style:italic">No parts listed</td></tr>`}
               <tr class="subRow"><td colspan="3">Parts Subtotal</td><td class="right">${money(partsTotal)}</td></tr>
             </tbody>
           </table>
@@ -4030,11 +4061,15 @@ function Equipment({ state, dispatch }) {
   const removeHistoryOutsideService = (idx) => setHistoryWO(w=>{ const arr=[...(w.outsideServices||[])]; arr.splice(idx,1); return {...w,outsideServices:arr}; });
   const saveHistoryWO = () => {
     if(!historyWO) return;
+    const previousWO = state.workOrders.find(w=>String(w.id||w.woNumber||"")===String(historyWO.id||historyWO.woNumber||""));
+    const isClosingNow = (previousWO?.status || "Open") !== "Completed" && historyWO.status === "Completed";
     const partsUsed = Array.isArray(historyWO.partsUsed) ? historyWO.partsUsed : [];
     const outsideServices = Array.isArray(historyWO.outsideServices) ? historyWO.outsideServices : [];
     const partsCost = partsUsed.reduce((s,p)=>s+lineItemTotal(p),0);
     const outsideServicesCost = outsideServicesTotal(outsideServices);
-    const completedDate = historyWO.completed || historyWO.completedDate || historyWO.dateCompleted || historyWO.closedDate || historyWO.closedAt || historyWO.completedAt || (historyWO.status === "Completed" ? today() : "");
+    const selectedCompletedDate = isClosingNow ? askCompletedDate(historyWO.completed || historyWO.completedDate || historyWO.dateCompleted || historyWO.closedDate || today()) : null;
+    if(isClosingNow && !selectedCompletedDate) return;
+    const completedDate = selectedCompletedDate || historyWO.completed || historyWO.completedDate || historyWO.dateCompleted || historyWO.closedDate || historyWO.closedAt || historyWO.completedAt || (historyWO.status === "Completed" ? today() : "");
     const normalizedCreatedDate = String(historyWO.created || historyWO.date || today()).slice(0,10);
     const normalizedDueDate = historyWO.due ? String(historyWO.due).slice(0,10) : "";
     const payload = {
