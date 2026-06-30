@@ -8365,6 +8365,34 @@ function inviteUrlForToken(token="", email="", ownerUserId="") {
   }
 }
 
+const PENDING_INVITE_STORAGE_KEY = "maintforge:pendingInvite";
+
+function cleanInviteInfo(inviteInfo={}) {
+  const token = String(inviteInfo?.token || "").trim();
+  if(!token) return null;
+  return {
+    token,
+    email:normalizeEmail(inviteInfo?.email || ""),
+    ownerUserId:String(inviteInfo?.ownerUserId || inviteInfo?.owner || "").trim(),
+    capturedAt:inviteInfo?.capturedAt || new Date().toISOString(),
+  };
+}
+
+function savePendingInviteInfo(inviteInfo={}) {
+  const clean = cleanInviteInfo(inviteInfo);
+  if(!clean) return null;
+  try { localStorage.setItem(PENDING_INVITE_STORAGE_KEY, JSON.stringify(clean)); } catch(e) {}
+  return clean;
+}
+
+function readPendingInviteInfo() {
+  try { return cleanInviteInfo(JSON.parse(localStorage.getItem(PENDING_INVITE_STORAGE_KEY) || "null") || {}); } catch(e) { return null; }
+}
+
+function clearPendingInviteInfo() {
+  try { localStorage.removeItem(PENDING_INVITE_STORAGE_KEY); } catch(e) {}
+}
+
 function copyTextToClipboard(text="") {
   if(!text) return Promise.reject(new Error("Nothing to copy."));
   if(navigator?.clipboard?.writeText) return navigator.clipboard.writeText(text);
@@ -9259,7 +9287,7 @@ ${payload.inviteUrl}`));
 
             {(state.userInvites||[]).length===0 ? <div style={{ marginTop:10, padding:10, border:`1px dashed ${T.border}`, borderRadius:8, background:T.surface, fontSize:12, color:T.muted }}>No pending invite records. Create one to generate a manual invite URL you can copy and send.</div> : <div style={{ marginTop:10, display:"grid", gap:6 }}>
               <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text }}>Pending Invite Records</div>
-              {(state.userInvites||[]).slice(0,8).map(inv=>{ const url = inv.inviteUrl || inviteUrlForToken(inv.token, inv.email); return <div key={inv.id} style={{ display:"grid", gridTemplateColumns:"minmax(190px,1fr) minmax(140px,.65fr) minmax(220px,1.2fr) auto", gap:8, alignItems:"center", fontSize:12, color:T.subtext, padding:8, border:`1px solid ${T.border}`, borderRadius:6, background:T.surface }}>
+              {(state.userInvites||[]).slice(0,8).map(inv=>{ const url = inv.inviteUrl || inviteUrlForToken(inv.token, inv.email, inv.ownerUserId || state.ownerUserId || currentUser?.id || ""); return <div key={inv.id} style={{ display:"grid", gridTemplateColumns:"minmax(190px,1fr) minmax(140px,.65fr) minmax(220px,1.2fr) auto", gap:8, alignItems:"center", fontSize:12, color:T.subtext, padding:8, border:`1px solid ${T.border}`, borderRadius:6, background:T.surface }}>
                 <div><b style={{ color:T.text }}>{inv.email}</b><div style={{ color:T.muted, fontSize:11 }}>{inv.name || "No name entered"}</div><div style={{ color:T.muted, fontSize:11 }}>{inv.locationName || (inv.facilityIds||[]).map(id=>locationNameForId(foundationState,id)).join(", ") || "No facility selected"}</div></div>
                 <div>{roleLabel(normalizeRole(inv.role))}</div>
                 <div style={{ minWidth:0 }}>
@@ -10138,7 +10166,8 @@ export default function App() {
       const inviteEmail = normalizeEmail(params.get("email") || "");
       const inviteOwner = params.get("owner") || "";
       if(inviteToken) {
-        setManualInviteInfo({ token:inviteToken, email:inviteEmail, ownerUserId:inviteOwner });
+        const inviteInfo = savePendingInviteInfo({ token:inviteToken, email:inviteEmail, ownerUserId:inviteOwner });
+        setManualInviteInfo(inviteInfo);
         if(inviteEmail) setAuthEmail(inviteEmail);
         setAuthMode("signup");
         setAuthInfoMsg(inviteEmail ? `Invite link detected for ${inviteEmail}. Create an account with this email, or sign in if you already registered.` : "Invite link detected. Create an account, or sign in if you already registered.");
@@ -10185,8 +10214,15 @@ export default function App() {
         const ownData = ownRow?.data || null;
         if (cancelled) return;
 
-        if (manualInviteInfo?.token) {
-          const inviteMatch = await findOrganizationStateForInvite(manualInviteInfo, session.user);
+        const pendingInviteInfo = manualInviteInfo?.token ? manualInviteInfo : readPendingInviteInfo();
+        if (pendingInviteInfo?.token) {
+          const invitedEmail = normalizeEmail(pendingInviteInfo.email || "");
+          const signedInEmail = normalizeEmail(session.user.email || "");
+          if(invitedEmail && signedInEmail && invitedEmail !== signedInEmail) {
+            dispatch({ type:"REPLACE_STATE", payload:{ ...blankUserState(session.user.id), setupComplete:true, inviteConnectionError:`This invite was created for ${invitedEmail}, but you are signed in as ${signedInEmail}. Sign out and sign in with the invited email.` } });
+            return;
+          }
+          const inviteMatch = await findOrganizationStateForInvite(pendingInviteInfo, session.user);
           if(inviteMatch?.invite) {
             const acceptedState = applyInviteToOrganizationState({ ...inviteMatch.ownerState, ownerUserId:inviteMatch.ownerUserId }, inviteMatch.invite, session.user);
             // Save the organization update immediately, then replace the invited user's old standalone
@@ -10194,6 +10230,8 @@ export default function App() {
             // user created before accepting the invite, so future logins open the invited organization.
             await saveOrganizationInviteAcceptance(inviteMatch.ownerUserId, prepareSharedOrganizationStateForCloudSave(acceptedState, null));
             await saveInvitePointerForUser(session.user.id, inviteMatch.ownerUserId, session.user.email, inviteMatch.invite);
+            clearPendingInviteInfo();
+            try { localStorage.removeItem("ncaState"); localStorage.removeItem("ncaState:lastUserId"); } catch(e) {}
             dispatch({ type:"REPLACE_STATE", payload:acceptedState });
             setAuthInfoMsg(`✓ Invite accepted. Your old standalone workspace was cleared and you are connected to ${acceptedState.settings?.companyName || acceptedState.organization?.name || inviteMatch.invite.organizationName || "the organization"} as ${roleLabel(acceptedState.userRole)}.`);
             try {
@@ -10203,7 +10241,15 @@ export default function App() {
             } catch(e) {}
             return;
           }
-          setAuthInfoMsg("Invite link found, but the invite record was not found in the organization data. Ask the organization administrator to create a fresh invite link.");
+          // Critical: never silently fall back to the invited user's old personal workspace when an
+          // invite link is being accepted. That is what made existing users keep seeing old data.
+          dispatch({ type:"REPLACE_STATE", payload:{
+            ...blankUserState(session.user.id),
+            setupComplete:true,
+            inviteConnectionError:"Invite link was detected, but the organization invite record could not be found. Ask the Organization Administrator to create and send a fresh invite link after this update is installed.",
+          } });
+          setAuthInfoMsg("Invite link found, but the invite record was not found. The app did not load your old standalone workspace.");
+          return;
         }
 
         // Emergency invite hardening: existing users may already have an old personal workspace.
@@ -10251,6 +10297,7 @@ export default function App() {
   /* Save state to Supabase, debounced */
   useEffect(() => {
     if (!session || !dataLoaded) return;
+    if (state.inviteConnectionError) { setSyncStatus("idle"); return; }
     setSyncStatus("saving");
     const timer = setTimeout(async () => {
       try {
@@ -10826,6 +10873,25 @@ export default function App() {
         <div style={{ textAlign:"center" }}>
           <div style={{ fontSize:32, marginBottom:12 }}>⟳</div>
           <div style={{ fontSize:14, color:T.muted }}>Loading your data from the cloud...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if(state.inviteConnectionError) {
+    return (
+      <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, color:T.text, fontFamily:T.sans, padding:20 }}>
+        <div style={{ width:"100%", maxWidth:620, border:`1px solid ${T.border}`, borderRadius:16, background:T.card, boxShadow:T.shadow, padding:22 }}>
+          <div style={{ fontSize:34, marginBottom:8 }}>⚠️</div>
+          <h1 style={{ margin:"0 0 8px", fontSize:22 }}>Invite connection needed</h1>
+          <p style={{ margin:"0 0 14px", color:T.subtext, lineHeight:1.5 }}>{state.inviteConnectionError}</p>
+          <div style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:12, background:T.surface, color:T.subtext, fontSize:13, lineHeight:1.45, marginBottom:14 }}>
+            This screen intentionally blocks the old personal workspace from loading. Use a fresh invite link that includes the owner/organization connection, then sign in with the invited email.
+          </div>
+          <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+            <Btn onClick={async()=>{ clearPendingInviteInfo(); try { await supabase.auth.signOut(); } catch(e) {} window.location.href = window.location.origin + window.location.pathname; }}>Sign out and use fresh invite</Btn>
+            <Btn variant="secondary" onClick={()=>{ clearPendingInviteInfo(); window.location.href = window.location.origin + window.location.pathname; }}>Clear invite link</Btn>
+          </div>
         </div>
       </div>
     );
