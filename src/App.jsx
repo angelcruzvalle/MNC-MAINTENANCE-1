@@ -858,8 +858,25 @@ function woTotalCost(wo={}) {
   return (+wo.laborCost || 0) + woPartsTotal(wo) + outsideServicesTotal(wo.outsideServices);
 }
 
+function exactDecimalText(value=0, { minFractionDigits=0, maxFractionDigits=6 }={}) {
+  const n = Number(value || 0);
+  if(!Number.isFinite(n)) {
+    return (0).toLocaleString(undefined, { minimumFractionDigits:minFractionDigits, maximumFractionDigits:minFractionDigits });
+  }
+  const raw = String(value ?? "").trim();
+  const decimalPart = raw.includes(".") ? raw.split(".")[1].replace(/[^0-9].*$/, "") : "";
+  const precision = Math.min(Math.max(minFractionDigits, decimalPart.length), maxFractionDigits);
+  const factor = 10 ** precision;
+  const exact = n < 0 ? Math.ceil(n * factor) / factor : Math.floor(n * factor) / factor;
+  return exact.toLocaleString(undefined, { minimumFractionDigits:minFractionDigits, maximumFractionDigits:precision });
+}
+
+function moneyText(value=0) {
+  return exactDecimalText(value, { minFractionDigits:2, maxFractionDigits:6 });
+}
+
 function moneyFmt(value=0) {
-  return `$${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits:2, maximumFractionDigits:2 })}`;
+  return `$${moneyText(value)}`;
 }
 
 function fiscalYearStartDate(now=new Date()) {
@@ -2253,7 +2270,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     requests: { title:"Operator Requests", size:"small", tab:"wo_requests", roles:["organization_admin","facility_admin","supervisor"], render:()=> <SmallCard title="Requests" value={openRequests.length} sub="Operator QR requests waiting review" color={openRequests.length?T.amber:T.green} tab="wo_requests" /> },
     low_stock: { title:"Low Stock", size:"small", tab:"parts", roles:["organization_admin","facility_admin","supervisor"], render:()=> <SmallCard title="Low Stock" value={lowStock.length} sub="Parts at or below minimum" color={lowStock.length?T.red:T.green} tab="parts" /> },
     completed_month: { title:"Completed This Month", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <SmallCard title="Completed This Month" value={completedThisMonth.length} sub="Closed work orders" color={T.green} tab="workorders" /> },
-    month_spend: { title:"Month Spend", size:"small", tab:"spending", roles:["organization_admin","facility_admin"], render:()=> <SmallCard title="Month Spend" value={`$${monthSpend.toFixed(2)}`} sub="Completed work order costs" color={T.accent} tab="spending" /> },
+    month_spend: { title:"Month Spend", size:"small", tab:"spending", roles:["organization_admin","facility_admin"], render:()=> <SmallCard title="Month Spend" value={moneyFmt(monthSpend)} sub="Completed work order costs" color={T.accent} tab="spending" /> },
     fuel_low: { title:"Low Fuel", size:"small", tab:"fuel", roles:["organization_admin","facility_admin","supervisor"], render:()=> <SmallCard title="Low Fuel" value={lowFuel.length} sub="Fuel containers at or below 25%" color={lowFuel.length?T.red:T.green} tab="fuel" /> },
     usage_updates: { title:"Usage Updates", size:"small", tab:"usage", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="Usage Logs" value={usageLogs.length} sub="Equipment usage entries on record" color={T.accent} tab="usage" /> },
     overdue_work: { title:"Overdue Work", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="Overdue Work" value={overdueWOs.length} sub={`${dueTodayWOs.length} due today • ${dueSoonWOs.length} due within 14 days`} color={overdueWOs.length?T.red:dueTodayWOs.length?T.amber:T.green} tab="workorders" /> },
@@ -2676,7 +2693,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const eq = state.equipment.find(e=>e.id===wo.equipment);
 
     const h = (value) => String(value ?? "").replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[ch]));
-    const money = (value) => `$${(+value || 0).toFixed(2)}`;
+    const money = moneyFmt;
 
     const companyName = gs.companyName || "Maintenance Department";
     const companyLogo = resolveWorkOrderBrandLogo(state, wo, eq || {});
@@ -2729,7 +2746,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     };
     const C = colorMap[colorKey] || colorMap[defaultTypeColors[printTypeKey]] || colorMap.blue;
 
-    const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", "Labor Hours":laborHoursTotal.toFixed(1), Labor:laborTotal.toFixed(2), Parts:partsTotal.toFixed(2), Total:grandTotal.toFixed(2), Description:printableDescription, "Work Performed":wo.description||"", Notes:wo.mechanicNotes||""}];
+    const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", "Labor Hours":laborHoursTotal.toFixed(1), Labor:moneyText(laborTotal), Parts:moneyText(partsTotal), Total:moneyText(grandTotal), Description:printableDescription, "Work Performed":wo.description||"", Notes:wo.mechanicNotes||""}];
     const woCsv = rowsToDataUri(woRows);
 
     const inspectionChecklistPrint = (() => {
@@ -2854,7 +2871,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           ${(printOpt("showLaborHours") || printOpt("showLaborTotal")) ? `<div class="miniTitle" data-print-item="Labor Table">Labor</div>
           <table class="data-table">
             <thead><tr><th style="width:63%">Work Performed</th>${printOpt("showLaborHours") ? `<th style="width:15%" class="center">Hours</th>` : ""}${printOpt("showLaborTotal") ? `<th style="width:22%" class="right">Total</th>` : ""}</tr></thead>
-            <tbody><tr><td>${h(wo.laborDescription || wo.laborTask || "Diagnosis and Repair")}</td>${printOpt("showLaborHours") ? `<td class="center">${laborHoursTotal.toFixed(1)}</td>` : ""}${printOpt("showLaborTotal") ? `<td class="right">${money(laborTotal)}</td>` : ""}</tr></tbody>
+            <tbody><tr><td>${h(wo.laborDescription || wo.laborTask || "Diagnostics and Repair")}</td>${printOpt("showLaborHours") ? `<td class="center">${laborHoursTotal.toFixed(1)}</td>` : ""}${printOpt("showLaborTotal") ? `<td class="right">${money(laborTotal)}</td>` : ""}</tr></tbody>
           </table>` : ""}
           ${printOpt("showGrandTotal") ? `<div class="grandTotal"><div>Grand Total</div><div>${money(grandTotal)}</div></div>` : ""}
         </section>` : ""}
@@ -3075,7 +3092,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               <input style={inp} placeholder="Service description..." value={svc.description||svc.name||""} onChange={e=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr[idx]={...arr[idx],description:e.target.value}; return {...f,outsideServices:arr}; })} />
               <input style={{ ...inp, textAlign:"center" }} type="number" min="1" step="0.01" placeholder="Qty" value={svc.qty||""} onChange={e=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr[idx]={...arr[idx],qty:e.target.value}; return {...f,outsideServices:arr}; })} />
               <input style={inp} {...decimalInputAttrs({ placeholder:"Unit Cost" })} value={svc.unitCost ?? svc.cost ?? ""} onChange={e=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr[idx]={...arr[idx],unitCost:sanitizeDecimalInput(e.target.value)}; return {...f,outsideServices:arr}; })} />
-              <div style={{ fontFamily:T.mono, fontSize:12, fontWeight:700, color:T.text, textAlign:"right" }}>${lineItemTotal(svc).toFixed(2)}</div>
+              <div style={{ fontFamily:T.mono, fontSize:12, fontWeight:700, color:T.text, textAlign:"right" }}>{moneyFmt(lineItemTotal(svc))}</div>
               <button onClick={()=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr.splice(idx,1); return {...f,outsideServices:arr}; })} style={{ padding:"6px 10px", border:`1px solid ${T.red}`, borderRadius:6, background:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>
             </div>
           ))}
@@ -3294,8 +3311,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                   <tr key={i} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
                     <td style={{ padding:"8px 12px", color:T.text, fontWeight:500 }}>{p.name}</td>
                     <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{p.qty}</td>
-                    <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>${(+(p.unitCost||0)).toFixed(2)}</td>
-                    <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, fontWeight:600 }}>${((+(p.qty||1))*(+(p.unitCost||0))).toFixed(2)}</td>
+                    <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{moneyFmt(p.unitCost)}</td>
+                    <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, fontWeight:600 }}>{moneyFmt((+(p.qty||1))*(+(p.unitCost||0)))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -3312,8 +3329,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                   <tr key={i} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
                     <td style={{ padding:"8px 12px", color:T.text, fontWeight:500 }}>{svc.description || svc.name || "Outside service"}</td>
                     <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{svc.qty || 1}</td>
-                    <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>${(+(svc.unitCost ?? svc.cost ?? 0)).toFixed(2)}</td>
-                    <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, fontWeight:600 }}>${lineItemTotal(svc).toFixed(2)}</td>
+                    <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{moneyFmt(svc.unitCost ?? svc.cost ?? 0)}</td>
+                    <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, fontWeight:600 }}>{moneyFmt(lineItemTotal(svc))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -3321,7 +3338,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           )}
           {partsUsed.length===0 && outsideServices.length===0 && <div style={{ padding:"10px 12px", fontFamily:T.sans, fontSize:13, color:T.muted, fontStyle:"italic" }}>No parts or outside services recorded.</div>}
           <div style={{ background:T.grayLt, borderTop:`2px solid ${T.border}`, padding:"10px 14px", display:"flex", gap:24, flexWrap:"wrap" }}>
-            {[["Labor ("+wo.laborHours+"hrs)",`$${(+wo.laborCost||0).toFixed(2)}`],["Parts",`$${partsTotal.toFixed(2)}`],["Outside Services",`$${outsideServicesSubtotal.toFixed(2)}`],["GRAND TOTAL",`$${total.toFixed(2)}`]].map(([k,v])=>(
+            {[["Labor ("+wo.laborHours+"hrs)",moneyFmt(wo.laborCost)],["Parts",moneyFmt(partsTotal)],["Outside Services",moneyFmt(outsideServicesSubtotal)],["GRAND TOTAL",moneyFmt(total)]].map(([k,v])=>(
               <div key={k}><div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase" }}>{k}</div><div style={{ fontFamily:T.sans, fontSize:k==="GRAND TOTAL"?18:14, fontWeight:700, color:k==="GRAND TOTAL"?T.accent:T.text, marginTop:2 }}>{v}</div></div>
             ))}
           </div>
@@ -3456,7 +3473,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                   {filter==="Completed" && (
                     <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:T.green, fontWeight:700, whiteSpace:"nowrap" }}>{completedDate || "—"}</td>
                   )}
-                  <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:T.subtext, whiteSpace:"nowrap" }}>{total>0?`$${total.toFixed(0)}`:"—"}</td>
+                  <td style={{ padding:"11px 14px", fontFamily:T.mono, fontSize:12, color:T.subtext, whiteSpace:"nowrap" }}>{total>0?moneyFmt(total):"—"}</td>
                   <td style={{ padding:"4px 10px", whiteSpace:"nowrap", display:"flex", gap:6, alignItems:"center" }} onClick={e=>e.stopPropagation()}>
                     <select title="Change Work Order Status" value={wo.status||"Open"} onChange={e=>quickUpdateWO(wo,{status:e.target.value})} style={{ ...sel, width:145, minWidth:145, padding:"7px 10px", fontSize:12 }}>
                       {WO_STATUS_OPTIONS.map(s=><option key={s}>{s}</option>)}
@@ -3687,7 +3704,7 @@ function AttachmentsCard({ eq, dispatch }) {
                 <td style={{ padding:"10px 12px", color:T.subtext }}>{[at.make,at.model].filter(Boolean).join(" ")||"—"}</td>
                 <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{at.serial||"—"}</td>
                 <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{at.acquisitionDate||"—"}</td>
-                <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{at.acquisitionCost?`$${Number(at.acquisitionCost).toLocaleString()}`:"—"}</td>
+                <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{at.acquisitionCost?moneyFmt(at.acquisitionCost):"—"}</td>
                 <td style={{ padding:"10px 12px", color:T.muted, fontSize:12, maxWidth:200 }}>{at.notes||"—"}</td>
                 <td style={{ padding:"10px 12px", whiteSpace:"nowrap" }}>
                   <Btn small variant="secondary" onClick={()=>openEdit(at)} style={{ marginRight:4 }}>Edit</Btn>
@@ -3783,7 +3800,7 @@ function Equipment({ state, dispatch }) {
         comment: r?.comment || r?.notes || ""
       })).filter(r=>String(r.step||"").trim());
     })();
-    const money = (value) => `$${(+value || 0).toFixed(2)}`;
+    const money = moneyFmt;
     const partsUsed = Array.isArray(wo.partsUsed) ? wo.partsUsed : [];
     const partsTotal = partsUsed.reduce((sum, part) => sum + lineItemTotal(part), 0);
     const outsideServices = Array.isArray(wo.outsideServices) ? wo.outsideServices : [];
@@ -3900,7 +3917,7 @@ function Equipment({ state, dispatch }) {
           <div class="miniTitle" data-print-item="Labor Table">Labor</div>
           <table class="data-table">
             <thead><tr><th style="width:63%">Work Performed</th><th style="width:15%" class="center">Hours</th><th style="width:22%" class="right">Total</th></tr></thead>
-            <tbody><tr><td>${h(wo.laborDescription || wo.laborTask || "Diagnosis and Repair")}</td><td class="center">${laborHoursTotal.toFixed(1)}</td><td class="right">${money(laborTotal)}</td></tr></tbody>
+            <tbody><tr><td>${h(wo.laborDescription || wo.laborTask || "Diagnostics and Repair")}</td><td class="center">${laborHoursTotal.toFixed(1)}</td><td class="right">${money(laborTotal)}</td></tr></tbody>
           </table>
           <div class="grandTotal"><div>Grand Total</div><div>${money(grandTotal)}</div></div>
         </section>
@@ -4140,7 +4157,7 @@ function Equipment({ state, dispatch }) {
                   <td style={{ padding:"9px 12px", fontWeight:500, color:T.text }}>{historyLabel(wo, fallbackTitle)}</td>
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{wo.completed||wo.closedDate||"—"}</td>
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{historyUsage(wo)}</td>
-                  <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>${historyCost(wo).toFixed(2)}</td>
+                  <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{moneyFmt(historyCost(wo))}</td>
                   <td style={{ padding:"6px 12px" }}>
                     <button
                       type="button"
@@ -4204,7 +4221,7 @@ function Equipment({ state, dispatch }) {
                         ["Created", historyWO.created],
                         ["Due", historyWO.due],
                         ["Usage", historyUsage(historyWO)],
-                        ["Cost", `$${historyCost(historyWO)}`],
+                        ["Cost", moneyFmt(historyCost(historyWO))],
                         ["Equipment", eq?.name || historyWO.equipment],
                         ["Type", historyWO.woType || historyWO.type],
                       ].map(([k,v])=>(
@@ -4314,7 +4331,7 @@ function Equipment({ state, dispatch }) {
           <Card>
             <h4 style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Equipment Details</h4>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"12px 20px" }}>
-              {[["Type",eq.type],["Facility",eq.location],["Area",eq.area],["Serial Number",eq.serial],["EIL #",eq.eilNumber],["Year",eq.year],["Make",eq.make],["Model",eq.model],["Acquisition Date",eq.acquisitionDate],["Purchase Price",eq.acquisitionCost?`$${Number(eq.acquisitionCost).toLocaleString()}`:"—"],["Warranty Start",eq.warrantyStart],["Warranty End",eq.warrantyEnd]].map(([k,v])=>(
+              {[["Type",eq.type],["Facility",eq.location],["Area",eq.area],["Serial Number",eq.serial],["EIL #",eq.eilNumber],["Year",eq.year],["Make",eq.make],["Model",eq.model],["Acquisition Date",eq.acquisitionDate],["Purchase Price",eq.acquisitionCost?moneyFmt(eq.acquisitionCost):"—"],["Warranty Start",eq.warrantyStart],["Warranty End",eq.warrantyEnd]].map(([k,v])=>(
                 <div key={k}>
                   <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div>
                   <div style={{ fontFamily:T.sans, fontSize:13, color:T.text, marginTop:3 }}>{v||"—"}</div>
@@ -4631,7 +4648,7 @@ function Equipment({ state, dispatch }) {
               ["Model",          attachDetail.at.model],
               ["Serial Number",  attachDetail.at.serial],
               ["Acquisition Date", attachDetail.at.acquisitionDate],
-              ["Purchase Price", attachDetail.at.acquisitionCost ? `$${Number(attachDetail.at.acquisitionCost).toLocaleString()}` : "—"],
+              ["Purchase Price", attachDetail.at.acquisitionCost ? moneyFmt(attachDetail.at.acquisitionCost) : "—"],
             ].map(([k,v])=>(
               <div key={k}>
                 <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div>
@@ -4692,7 +4709,7 @@ function Parts({ state, dispatch }) {
   const totalVal = parts.reduce((s,p)=>s+((+p.qty||0)*(+p.unitCost||0)),0);
   const lowParts = parts.filter(p=>getPartStockStatus(p)==="Low Stock");
   const outParts = parts.filter(p=>getPartStockStatus(p)==="Out of Stock");
-  const exportRows = sortedParts.map(p=>{ const eq = p.equipmentId ? (state.equipment||[]).find(e=>e.id===p.equipmentId) : null; return {"Part #":p.partNumber||"", Nomenclature:p.name||"", Category:p.category||"", Location:p.location||"", "Equipment / Model":eq?`${eq.id} - ${eq.name}`:(p.modelFit||""), "Unit $":(+p.unitCost||0).toFixed(2), "Unit Type":p.unit||"ea", Qty:p.qty||0, "Total $":((+p.qty||0)*(+p.unitCost||0)).toFixed(2)}; });
+  const exportRows = sortedParts.map(p=>{ const eq = p.equipmentId ? (state.equipment||[]).find(e=>e.id===p.equipmentId) : null; return {"Part #":p.partNumber||"", Nomenclature:p.name||"", Category:p.category||"", Location:p.location||"", "Equipment / Model":eq?`${eq.id} - ${eq.name}`:(p.modelFit||""), "Unit $":moneyText(p.unitCost), "Unit Type":p.unit||"ea", Qty:p.qty||0, "Total $":moneyText((+p.qty||0)*(+p.unitCost||0))}; });
   const openAdd  = () => { setForm({qty:0,minQty:1,unit:"ea",unitCost:0,lowStockAlert:true,modelFit:"",equipmentId:""}); setModal("add"); };
   const openEdit = p  => { setForm({...p}); setModal(p); };
   const save = () => {
@@ -4726,15 +4743,15 @@ function Parts({ state, dispatch }) {
       <style>body{font-family:Arial,sans-serif;padding:24px}h1{font-size:18px;margin-bottom:4px}p{font-size:12px;color:#666;margin:0 0 16px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:10px;text-transform:uppercase}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}.low{background:#fff5f5}.total-row{font-weight:700;background:#f3f4f6}@media print{button{display:none}}</style>
       </head><body>
       ${reportHeaderHTML(state, "Parts Inventory Report")}
-      <p style="font-size:12px;color:#666;margin-bottom:12px">SKUs: ${parts.length} | Total Value: $${totalVal.toFixed(2)} | Low Stock: ${lowParts.length}</p>
+      <p style="font-size:12px;color:#666;margin-bottom:12px">SKUs: ${parts.length} | Total Value: ${moneyFmt(totalVal)} | Low Stock: ${lowParts.length}</p>
       <table>
         <tr><th>Part #</th><th>Nomenclature</th><th>Category</th><th>Location</th><th>Equipment / Model</th><th style="text-align:right">Unit $</th><th>Unit Type</th><th style="text-align:right">Qty</th><th style="text-align:right">Total $</th><th>New Count</th></tr>
         ${sortedParts.map(p=>{
           const eq = p.equipmentId ? (state.equipment||[]).find(e=>e.id===p.equipmentId) : null;
           const total = (+p.qty||0) * (+p.unitCost||0);
-          return `<tr class="${(+p.qty||0)<=(+p.minQty||0)?"low":""}"><td>${esc(p.partNumber||"—")}</td><td>${esc(p.name||"—")}</td><td>${esc(p.category||"—")}</td><td>${esc(p.location||"—")}</td><td>${esc(eq?`${eq.id} - ${eq.name}`:(p.modelFit||"—"))}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td>${esc(p.unit||"ea")}</td><td style="text-align:right">${(+p.qty||0).toLocaleString()}</td><td style="text-align:right">$${total.toFixed(2)}</td><td style="border-bottom:1px solid #bbb;min-width:80px">&nbsp;</td></tr>`;
+          return `<tr class="${(+p.qty||0)<=(+p.minQty||0)?"low":""}"><td>${esc(p.partNumber||"—")}</td><td>${esc(p.name||"—")}</td><td>${esc(p.category||"—")}</td><td>${esc(p.location||"—")}</td><td>${esc(eq?`${eq.id} - ${eq.name}`:(p.modelFit||"—"))}</td><td style="text-align:right">${moneyFmt(p.unitCost)}</td><td>${esc(p.unit||"ea")}</td><td style="text-align:right">${(+p.qty||0).toLocaleString()}</td><td style="text-align:right">${moneyFmt(total)}</td><td style="border-bottom:1px solid #bbb;min-width:80px">&nbsp;</td></tr>`;
         }).join("")}
-        <tr class="total-row"><td colspan="8" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">$${totalVal.toFixed(2)}</td><td></td></tr>
+        <tr class="total-row"><td colspan="8" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">${moneyFmt(totalVal)}</td><td></td></tr>
       </table>
       ${reportButtonsHtml(exportRows)}
       </body></html>`);
@@ -4758,7 +4775,7 @@ function Parts({ state, dispatch }) {
     <div>
       <datalist id="part-category-options">{partCategories.map(c=><option key={c} value={c} />)}</datalist>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12, marginBottom:16 }}>
-        {[["Inventory Value","$"+totalVal.toLocaleString("en-US",{minimumFractionDigits:2}),T.accent],["Total SKUs",parts.length,T.text],["Low Stock",lowParts.length,T.amber],["Out of Stock",outParts.length,T.red]].map(([l,v,c])=>(
+        {[["Inventory Value",moneyFmt(totalVal),T.accent],["Total SKUs",parts.length,T.text],["Low Stock",lowParts.length,T.amber],["Out of Stock",outParts.length,T.red]].map(([l,v,c])=>(
           <Card key={l} style={{ padding:"14px 16px" }}>
             <div style={{ fontFamily:T.sans, fontSize:22, fontWeight:700, color:c }}>{v}</div>
             <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{l}</div>
@@ -4839,10 +4856,10 @@ function Parts({ state, dispatch }) {
                       {!linkedEq&&p.modelFit&&<div style={{ fontSize:10, color:T.muted, marginTop:1 }}>Fits: {p.modelFit}</div>}
                     </td>
                     <td style={{ padding:"10px 12px", color:T.subtext }}>{p.category||"—"}</td>
-                    <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12 }}>${(+p.unitCost||0).toFixed(2)}</td>
+                    <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12 }}>{moneyFmt(p.unitCost)}</td>
                     <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12 }}>{p.unit||"ea"}</td>
                     <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:13, fontWeight:700, color:isOut?T.red:isLow?T.amber:T.green }}>{p.qty}<div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600 }}>{stockStatus}</div></td>
-                    <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>${(p.qty*(+p.unitCost||0)).toFixed(2)}</td>
+                    <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{moneyFmt((+p.qty||0)*(+p.unitCost||0))}</td>
                     <td style={{ padding:"10px 12px" }} onClick={e=>e.stopPropagation()}>
                       <Btn small variant="secondary" onClick={()=>openEdit(p)} style={{ marginRight:4 }}>Edit</Btn>
                       <Btn small variant="danger" onClick={()=>del(p.id)}>Del</Btn>
@@ -6441,7 +6458,7 @@ function Spending({ state }) {
 
       {/* Summary cards */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12, marginBottom:20 }}>
-        {[["Total Labor","$"+totLabor.toLocaleString(),T.accent],["Total Parts","$"+totParts.toLocaleString(),"#7c3aed"],["Grand Total","$"+grand.toLocaleString(),T.text],["Work Orders",wos.length,T.muted]].map(([l,v,c])=>(
+        {[["Total Labor",moneyFmt(totLabor),T.accent],["Total Parts",moneyFmt(totParts),"#7c3aed"],["Grand Total",moneyFmt(grand),T.text],["Work Orders",wos.length,T.muted]].map(([l,v,c])=>(
           <Card key={l} style={{ padding:"14px 16px" }}>
             <div style={{ fontFamily:T.sans, fontSize:22, fontWeight:700, color:c }}>{v}</div>
             <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{l}</div>
@@ -6461,13 +6478,13 @@ function Spending({ state }) {
               <div key={eqId} style={{ marginBottom:12 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
                   <span style={{ fontFamily:T.sans, fontSize:12, fontWeight:500, color:T.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"65%" }}>{eq?.name||eqId}</span>
-                  <span style={{ fontFamily:T.mono, fontSize:12, color:T.subtext }}>${tot.toLocaleString()}</span>
+                  <span style={{ fontFamily:T.mono, fontSize:12, color:T.subtext }}>{moneyFmt(tot)}</span>
                 </div>
                 <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                   <Bar pct={pct} />
                   <span style={{ fontFamily:T.mono, fontSize:10, color:T.muted, minWidth:28 }}>{Math.round(pct)}%</span>
                 </div>
-                <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, marginTop:2 }}>{d.count} WOs · Labor ${d.labor.toFixed(0)} · Parts ${d.parts.toFixed(0)}</div>
+                <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, marginTop:2 }}>{d.count} WOs · Labor ${moneyFmt(d.labor)} · Parts ${moneyFmt(d.parts)}</div>
               </div>
             );
           })}
@@ -6483,7 +6500,7 @@ function Spending({ state }) {
               <div key={cat} style={{ marginBottom:12 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
                   <span style={{ fontFamily:T.sans, fontSize:12, fontWeight:500, color:T.text }}>{cat}</span>
-                  <span style={{ fontFamily:T.mono, fontSize:12, color:T.subtext }}>${d.total.toFixed(0)}</span>
+                  <span style={{ fontFamily:T.mono, fontSize:12, color:T.subtext }}>{moneyFmt(d.total)}</span>
                 </div>
                 <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                   <Bar pct={pct} color="#7c3aed" />
@@ -6508,7 +6525,7 @@ function Spending({ state }) {
               <div key={m} style={{ marginBottom:12 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
                   <span style={{ fontFamily:T.sans, fontSize:12, color:T.text }}>{m}</span>
-                  <span style={{ fontFamily:T.mono, fontSize:12, color:T.subtext }}>${tot.toFixed(0)}</span>
+                  <span style={{ fontFamily:T.mono, fontSize:12, color:T.subtext }}>{moneyFmt(tot)}</span>
                 </div>
                 <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                   <Bar pct={pct} color={T.green} />
@@ -6530,7 +6547,7 @@ function Spending({ state }) {
               <div key={type} style={{ marginBottom:12 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
                   <span style={{ fontFamily:T.sans, fontSize:12, fontWeight:500, color:typeColors[type]||T.text }}>{type}</span>
-                  <span style={{ fontFamily:T.mono, fontSize:12, color:T.subtext }}>${tot.toFixed(0)}</span>
+                  <span style={{ fontFamily:T.mono, fontSize:12, color:T.subtext }}>{moneyFmt(tot)}</span>
                 </div>
                 <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                   <Bar pct={pct} color={typeColors[type]||T.accent} />
@@ -7205,7 +7222,7 @@ function EquipmentInventory({ state, dispatch }) {
                 <td style={{ padding:"10px 12px" }}>
                   <span style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:statusColor(item.turnInStatus||"Active") }}>{item.turnInStatus||"Active"}</span>
                 </td>
-                <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12 }}>${(+(item.acquisitionCost||0)).toLocaleString()}</td>
+                <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12 }}>{moneyFmt(item.acquisitionCost)}</td>
                 <td style={{ padding:"10px 12px" }} onClick={e=>e.stopPropagation()}>
                   <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
                     {tab==="active" && item._source==="equipment" && <Btn small variant="secondary" onClick={()=>openTransfer(item)}>Transfer</Btn>}
@@ -7373,7 +7390,7 @@ function ReportPartsInv({ state }) {
   const totalVal = parts.reduce((s,p)=>s+((+p.qty||0)*(+p.unitCost||0)),0);
   const lowParts = parts.filter(p=>p.lowStockAlert!==false&&(+p.qty||0)<=(+p.minQty||0));
   const sorted = [...parts].sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||""));
-  const exportRows = sorted.map(p=>{ const eq = p.equipmentId?state.equipment.find(e=>e.id===p.equipmentId):null; return {"Part #":p.partNumber||"", Name:p.name||"", Category:p.category||"", Location:p.location||"", "Equipment / Model":eq?`${eq.id} - ${eq.name}`:(p.modelFit||""), "Unit $":(+p.unitCost||0).toFixed(2), Qty:p.qty||0, "Total $":(p.qty*(+p.unitCost||0)).toFixed(2)}; });
+  const exportRows = sorted.map(p=>{ const eq = p.equipmentId?state.equipment.find(e=>e.id===p.equipmentId):null; return {"Part #":p.partNumber||"", Name:p.name||"", Category:p.category||"", Location:p.location||"", "Equipment / Model":eq?`${eq.id} - ${eq.name}`:(p.modelFit||""), "Unit $":moneyText(p.unitCost), Qty:p.qty||0, "Total $":moneyText((+p.qty||0)*(+p.unitCost||0))}; });
 
   const print = () => {
     const esc = htmlEscape;
@@ -7383,16 +7400,16 @@ function ReportPartsInv({ state }) {
       <style>body{font-family:Arial,sans-serif;padding:24px}h1{font-size:18px;margin-bottom:2px}p{font-size:12px;color:#666;margin:0 0 14px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.5px}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}.low{background:#fff5f5}.total-row td{font-weight:700;background:#f3f4f6;font-size:13px;border-top:2px solid #1a1a2e}@media print{button{display:none}}</style>
       </head><body>
       <h1>Parts Inventory Report</h1>
-      <p>Generated: ${new Date().toLocaleDateString()} | Total SKUs: ${parts.length} | Total Value: $${totalVal.toFixed(2)} | Low Stock Items: ${lowParts.length}</p>
+      <p>Generated: ${new Date().toLocaleDateString()} | Total SKUs: ${parts.length} | Total Value: ${moneyFmt(totalVal)} | Low Stock Items: ${lowParts.length}</p>
       <table>
         <tr><th>Part #</th><th>Nomenclature</th><th>Category</th><th>Location</th><th>Equipment / Model</th><th style="text-align:right">Unit $</th><th>Unit Type</th><th style="text-align:right">Qty</th><th style="text-align:right">Total $</th><th>New Count</th></tr>
         ${sorted.map(p=>{
           const eq = p.equipmentId?(state.equipment||[]).find(e=>e.id===p.equipmentId):null;
           const low = (+p.qty||0)<=(+p.minQty||0)&&p.lowStockAlert!==false;
           const total = (+p.qty||0) * (+p.unitCost||0);
-          return `<tr class="${low?"low":""}"><td>${esc(p.partNumber||"—")}</td><td>${esc(p.name||"—")}${low?" &#9888;":""}</td><td>${esc(p.category||"—")}</td><td>${esc(p.location||"—")}</td><td>${esc(eq?`${eq.id} - ${eq.name}`:(p.modelFit||"—"))}</td><td style="text-align:right">$${(+p.unitCost||0).toFixed(2)}</td><td>${esc(p.unit||"ea")}</td><td style="text-align:right">${(+p.qty||0).toLocaleString()}</td><td style="text-align:right">$${total.toFixed(2)}</td><td style="border-bottom:1px solid #999;min-width:80px">&nbsp;</td></tr>`;
+          return `<tr class="${low?"low":""}"><td>${esc(p.partNumber||"—")}</td><td>${esc(p.name||"—")}${low?" &#9888;":""}</td><td>${esc(p.category||"—")}</td><td>${esc(p.location||"—")}</td><td>${esc(eq?`${eq.id} - ${eq.name}`:(p.modelFit||"—"))}</td><td style="text-align:right">${moneyFmt(p.unitCost)}</td><td>${esc(p.unit||"ea")}</td><td style="text-align:right">${(+p.qty||0).toLocaleString()}</td><td style="text-align:right">${moneyFmt(total)}</td><td style="border-bottom:1px solid #999;min-width:80px">&nbsp;</td></tr>`;
         }).join("")}
-        <tr class="total-row"><td colspan="8" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">$${totalVal.toFixed(2)}</td><td></td></tr>
+        <tr class="total-row"><td colspan="8" style="text-align:right;padding:8px 10px">TOTAL INVENTORY VALUE</td><td style="text-align:right;padding:8px 10px">${moneyFmt(totalVal)}</td><td></td></tr>
       </table>
       ${reportButtonsHtml(exportRows)}
       </body></html>`);
@@ -7402,7 +7419,7 @@ function ReportPartsInv({ state }) {
   return (
     <div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12, marginBottom:16 }}>
-        {[["Total SKUs",parts.length,T.text],["Total Value","$"+totalVal.toFixed(2),T.accent],["Low Stock",lowParts.length,T.red]].map(([l,v,c])=>(
+        {[["Total SKUs",parts.length,T.text],["Total Value",moneyFmt(totalVal),T.accent],["Low Stock",lowParts.length,T.red]].map(([l,v,c])=>(
           <Card key={l} style={{ padding:"14px 16px" }}><div style={{ fontFamily:T.sans, fontSize:22, fontWeight:700, color:c }}>{v}</div><div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{l}</div></Card>
         ))}
       </div>
@@ -7425,15 +7442,15 @@ function ReportPartsInv({ state }) {
                   <td style={{ padding:"9px 12px", color:T.subtext }}>{p.category||"—"}</td>
                   <td style={{ padding:"9px 12px", color:T.muted }}>{p.location||"—"}</td>
                   <td style={{ padding:"9px 12px", color:T.subtext }}>{eq?`${eq.id} - ${eq.name}`:p.modelFit||"—"}</td>
-                  <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12 }}>${(+p.unitCost||0).toFixed(2)}</td>
+                  <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12 }}>{moneyFmt(p.unitCost)}</td>
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:13, fontWeight:700, color:isLow?T.red:T.green }}>{p.qty}</td>
-                  <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12 }}>${(p.qty*(+p.unitCost||0)).toFixed(2)}</td>
+                  <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12 }}>{moneyFmt((+p.qty||0)*(+p.unitCost||0))}</td>
                 </tr>
               );
             })}
             <tr style={{ background:T.grayLt, borderTop:`2px solid ${T.border}` }}>
               <td colSpan={7} style={{ padding:"10px 12px", fontFamily:T.sans, fontSize:13, fontWeight:700, textAlign:"right" }}>TOTAL VALUE</td>
-              <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:14, fontWeight:700, color:T.accent }}>${totalVal.toFixed(2)}</td>
+              <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:14, fontWeight:700, color:T.accent }}>{moneyFmt(totalVal)}</td>
             </tr>
           </tbody>
         </table>
@@ -7680,7 +7697,7 @@ function ReportSpending({ state }) {
   const monthTotal = monthly.reduce((s,w)=>s+totalCost(w),0);
   const fyTotal    = annual.reduce((s,w)=>s+totalCost(w),0);
 
-  const spendingRows = (list) => list.map(w=>({"Equipment #":w.equipment||"", Nomenclature:state.equipment.find(e=>e.id===w.equipment)?.name||"", "WO #":w.id, Title:w.title||"", Mechanic:w.tech||"", Date:w.completed||w.created||"", Labor:(+w.laborCost||0).toFixed(2), Parts:woPartsTotal(w).toFixed(2), "Outside Services":outsideServicesTotal(w.outsideServices).toFixed(2), Total:totalCost(w).toFixed(2)}));
+  const spendingRows = (list) => list.map(w=>({"Equipment #":w.equipment||"", Nomenclature:state.equipment.find(e=>e.id===w.equipment)?.name||"", "WO #":w.id, Title:w.title||"", Mechanic:w.tech||"", Date:w.completed||w.created||"", Labor:moneyText(w.laborCost), Parts:moneyText(woPartsTotal(w)), "Outside Services":moneyText(outsideServicesTotal(w.outsideServices)), Total:moneyText(totalCost(w))}));
   const printSpending = (list, title) => {
     const rows = spendingRows(list);
     const win = window.open("","_blank","width=900,height=700");
@@ -7689,8 +7706,8 @@ function ReportSpending({ state }) {
       <style>body{font-family:Arial,sans-serif;padding:24px}h1{font-size:18px;margin:0}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px;text-transform:uppercase}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}@media print{button{display:none}}</style>
       </head><body>${reportHeaderHTML(state, title)}
       <table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO #</th><th>Title</th><th>Mechanic</th><th>Date</th><th>Labor</th><th>Parts</th><th>Outside Services</th><th>Total</th></tr>
-      ${list.map(w=>`<tr><td><b>${w.equipment||"—"}</b></td><td>${state.equipment.find(e=>e.id===w.equipment)?.name||"—"}</td><td>${w.id}</td><td>${w.title}</td><td>${w.tech||"—"}</td><td>${w.completed||w.created||"—"}</td><td>$${(+w.laborCost||0).toFixed(2)}</td><td>$${woPartsTotal(w).toFixed(2)}</td><td>$${outsideServicesTotal(w.outsideServices).toFixed(2)}</td><td><b>$${totalCost(w).toFixed(2)}</b></td></tr>`).join("")}
-      <tr style="font-weight:700;background:#f3f4f6"><td colspan="8">TOTAL</td><td>$${list.reduce((s,w)=>s+totalCost(w),0).toFixed(2)}</td></tr>
+      ${list.map(w=>`<tr><td><b>${w.equipment||"—"}</b></td><td>${state.equipment.find(e=>e.id===w.equipment)?.name||"—"}</td><td>${w.id}</td><td>${w.title}</td><td>${w.tech||"—"}</td><td>${w.completed||w.created||"—"}</td><td>${moneyFmt(w.laborCost)}</td><td>${moneyFmt(woPartsTotal(w))}</td><td>${moneyFmt(outsideServicesTotal(w.outsideServices))}</td><td><b>${moneyFmt(totalCost(w))}</b></td></tr>`).join("")}
+      <tr style="font-weight:700;background:#f3f4f6"><td colspan="8">TOTAL</td><td>${moneyFmt(list.reduce((s,w)=>s+totalCost(w),0))}</td></tr>
       </table>${reportButtonsHtml(rows)}</body></html>`);
     win.document.close();
   };
@@ -7700,13 +7717,13 @@ function ReportSpending({ state }) {
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
         <Card style={{ padding:"16px 20px" }}>
           <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>This Month</div>
-          <div style={{ fontFamily:T.sans, fontSize:32, fontWeight:800, color:T.accent, margin:"6px 0" }}>${monthTotal.toFixed(2)}</div>
+          <div style={{ fontFamily:T.sans, fontSize:32, fontWeight:800, color:T.accent, margin:"6px 0" }}>{moneyFmt(monthTotal)}</div>
           <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>{monthly.length} completed WOs</div>
           <div style={{ display:"flex", gap:8, marginTop:10 }}><Btn small onClick={()=>printSpending(monthly,"Monthly Spending Report")}>Print / PDF</Btn><Btn small variant="secondary" onClick={()=>downloadCSV("monthly-spending-report.csv", spendingRows(monthly))}>Excel CSV</Btn></div>
         </Card>
         <Card style={{ padding:"16px 20px" }}>
           <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Fiscal Year (Oct-Sep)</div>
-          <div style={{ fontFamily:T.sans, fontSize:32, fontWeight:800, color:T.accent, margin:"6px 0" }}>${fyTotal.toFixed(2)}</div>
+          <div style={{ fontFamily:T.sans, fontSize:32, fontWeight:800, color:T.accent, margin:"6px 0" }}>{moneyFmt(fyTotal)}</div>
           <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>{annual.length} completed WOs</div>
           <div style={{ display:"flex", gap:8, marginTop:10 }}><Btn small onClick={()=>printSpending(annual,"FY Spending Report")}>Print / PDF</Btn><Btn small variant="secondary" onClick={()=>downloadCSV("fy-spending-report.csv", spendingRows(annual))}>Excel CSV</Btn></div>
         </Card>
@@ -7743,14 +7760,14 @@ function ReportCombined({ state }) {
     if(selected.spending) {
       const wos = state.workOrders.filter(w=>w.completed);
       const total = wos.reduce((s,w)=>s+totalCost(w),0);
-      body += `<h2>Completed Work Orders — Total $${total.toFixed(2)}</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO#</th><th>Title</th><th>Description</th><th>Mechanic</th><th>Completed</th><th>Total</th></tr>${wos.map(w=>`<tr><td><b>${w.equipment||"—"}</b></td><td>${eqName(w.equipment)}</td><td>${w.id}</td><td>${w.title}</td><td>${htmlEscape(workOrderDescription(w)||"—")}</td><td>${w.tech||"—"}</td><td>${w.completed||"—"}</td><td>$${totalCost(w).toFixed(2)}</td></tr>`).join("")}</table>`;
+      body += `<h2>Completed Work Orders — Total ${moneyFmt(total)}</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO#</th><th>Title</th><th>Description</th><th>Mechanic</th><th>Completed</th><th>Total</th></tr>${wos.map(w=>`<tr><td><b>${w.equipment||"—"}</b></td><td>${eqName(w.equipment)}</td><td>${w.id}</td><td>${w.title}</td><td>${htmlEscape(workOrderDescription(w)||"—")}</td><td>${w.tech||"—"}</td><td>${w.completed||"—"}</td><td>${moneyFmt(totalCost(w))}</td></tr>`).join("")}</table>`;
     }
     if(selected.parts) {
       const lowStock = state.parts.filter(p=>p.lowStockAlert!==false&&(+(p.qty||0))<=(+(p.minQty||0)));
       const totalVal = state.parts.reduce((s,p)=>s+(+(p.qty||0))*(+(p.unitCost||0)),0);
-      body += `<h2>Parts Inventory — ${state.parts.length} SKUs, Total Value $${totalVal.toFixed(2)}</h2>`;
+      body += `<h2>Parts Inventory — ${state.parts.length} SKUs, Total Value ${moneyFmt(totalVal)}</h2>`;
       if(lowStock.length>0) body += `<p style="color:#b91c1c;font-size:12px"><b>⚠ Low stock alerts: ${lowStock.length} items</b></p>`;
-      body += `<table><tr><th>Part #</th><th>Nomenclature</th><th>Category</th><th>Qty</th><th>Min</th><th>Unit $</th><th>Total $</th></tr>${state.parts.map(p=>`<tr style="${(+(p.qty||0))<=(+(p.minQty||0))?'background:#fee2e2':''}"><td>${p.partNumber||"—"}</td><td>${p.name}</td><td>${p.category||"—"}</td><td>${p.qty||0}</td><td>${p.minQty||0}</td><td>$${(+(p.unitCost||0)).toFixed(2)}</td><td>$${((+(p.qty||0))*(+(p.unitCost||0))).toFixed(2)}</td></tr>`).join("")}</table>`;
+      body += `<table><tr><th>Part #</th><th>Nomenclature</th><th>Category</th><th>Qty</th><th>Min</th><th>Unit $</th><th>Total $</th></tr>${state.parts.map(p=>`<tr style="${(+(p.qty||0))<=(+(p.minQty||0))?'background:#fee2e2':''}"><td>${p.partNumber||"—"}</td><td>${p.name}</td><td>${p.category||"—"}</td><td>${p.qty||0}</td><td>${p.minQty||0}</td><td>${moneyFmt(p.unitCost)}</td><td>${moneyFmt((+(p.qty||0))*(+(p.unitCost||0)))}</td></tr>`).join("")}</table>`;
     }
     if(selected.usage) {
       const trackable = state.equipment.filter(e=>e.trackUsage);
