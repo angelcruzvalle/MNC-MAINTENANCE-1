@@ -894,8 +894,14 @@ function workOrderDate(wo={}) {
   return wo.completed || wo.closedDate || wo.created || wo.date || wo.due || '';
 }
 
+function usageTrackingIsOff(eq={}) {
+  const trackRaw = eq?.trackUsage;
+  const usageRaw = String(eq?.usageType || eq?.usageMode || "").trim().toLowerCase();
+  return trackRaw === false || trackRaw === 0 || String(trackRaw).trim().toLowerCase() === "false" || usageRaw === "n/a" || usageRaw === "na" || usageRaw === "none" || usageRaw === "off";
+}
+
 function equipmentUsageSummary(state={}, eq={}) {
-  if (eq && eq.trackUsage === false) {
+  if (usageTrackingIsOff(eq)) {
     return { type:"na", value:null, label:"Hours", display:"N/A", hours:null, miles:null };
   }
   const eqId = String(eq.id || "");
@@ -1748,15 +1754,16 @@ const Field = ({ label, children, half }) => (
   </div>
 );
 
-function Modal({ title, onClose, children, maxWidth=560 }) {
+function Modal({ title, onClose, children, maxWidth=560, fullScreen=true }) {
+  const isFullScreen = fullScreen !== false;
   return (
-    <div className="mf-modal-backdrop" style={{ position:"fixed", inset:0, background:"rgba(15,23,42,.56)", zIndex:2000, display:"flex", alignItems:"center", justifyContent:"center", padding:16, backdropFilter:"blur(6px)", WebkitBackdropFilter:"blur(6px)" }}>
-      <div className="mf-modal-panel" style={{ background:T.card, borderRadius:18, border:`1px solid ${T.border}`, width:"100%", maxWidth, maxHeight:"92vh", overflowY:"auto", overflowX:"hidden", boxShadow:"0 24px 80px rgba(15,23,42,.28)", minWidth:0 }}>
-        <div className="mf-modal-header" style={{ padding:"16px 20px", borderBottom:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, position:"sticky", top:0, background:T.card, zIndex:3 }}>
+    <div className="mf-modal-backdrop" style={{ position:"fixed", inset:0, background:"rgba(15,23,42,.56)", zIndex:2000, display:"flex", alignItems:"stretch", justifyContent:"center", padding:isFullScreen?8:16, backdropFilter:"blur(6px)", WebkitBackdropFilter:"blur(6px)" }}>
+      <div className="mf-modal-panel" style={{ background:T.card, borderRadius:isFullScreen?14:18, border:`1px solid ${T.border}`, width:isFullScreen?"calc(100vw - 16px)":"100%", maxWidth:isFullScreen?"none":maxWidth, height:isFullScreen?"calc(100vh - 16px)":"auto", maxHeight:isFullScreen?"calc(100vh - 16px)":"92vh", overflowY:"auto", overflowX:"auto", boxShadow:"0 24px 80px rgba(15,23,42,.28)", minWidth:0 }}>
+        <div className="mf-modal-header" style={{ padding:isFullScreen?"16px 24px":"16px 20px", borderBottom:`1px solid ${T.border}`, display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, position:"sticky", top:0, background:T.card, zIndex:3 }}>
           <h3 style={{ margin:0, fontFamily:T.sans, fontSize:17, fontWeight:900, color:T.text, minWidth:0, overflowWrap:"anywhere" }}>{title}</h3>
           <button aria-label="Close" onClick={onClose} style={{ background:T.grayLt, border:`1px solid ${T.border}`, color:T.subtext, fontSize:22, cursor:"pointer", lineHeight:1, padding:0, width:40, height:40, borderRadius:12, flex:"0 0 auto" }}>×</button>
         </div>
-        <div className="mf-modal-body" style={{ padding:"18px 20px", minWidth:0 }}>{children}</div>
+        <div className="mf-modal-body" style={{ padding:isFullScreen?"20px 24px":"18px 20px", minWidth:0 }}>{children}</div>
       </div>
     </div>
   );
@@ -2510,7 +2517,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const openAdd = () => {
     setEqSearch("");
-    setForm(applyDefaultMechanic({ woType:"Repair", status:"Open", equipmentStatus:"Fully Operational", priority:"Medium", created:today(), due:today(), tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], outsideServices:[], mechanicNotes:"", faultEnabled:true, faultDescription:"", usageHours:"", usageMileage:"", usageNA:false, repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"" }));
+    setForm(applyDefaultMechanic({ woType:"Repair", status:"Open", equipmentStatus:"Fully Operational", priority:"Medium", created:today(), due:"", tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], outsideServices:[], mechanicNotes:"", faultEnabled:true, faultDescription:"", usageHours:"", usageMileage:"", usageNA:false, repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"" }));
     setModal("pick");
   };
 
@@ -2954,7 +2961,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <input
             style={inp}
             type="date"
-            value={form.due || today()}
+            value={form.due ? String(form.due).slice(0,10) : ""}
             onChange={e=>setForm(f=>({...f,due:e.target.value}))}
           />
         </Field>
@@ -4460,7 +4467,7 @@ function Equipment({ state, dispatch }) {
 
         {/* -- EDIT MODE — fields open inline -- */}
         {editing ? (
-          <Card style={{ borderLeft:rs.leftBorder }}>
+          <Card style={{ borderLeft:rs.leftBorder, minHeight:"calc(100vh - 180px)", overflowX:"auto" }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20, flexWrap:"wrap", gap:8 }}>
               <div>
                 <h3 style={{ margin:0, fontFamily:T.sans, fontSize:18, fontWeight:700, color:T.text }}>Editing: {eq.name}</h3>
@@ -4684,6 +4691,9 @@ function Equipment({ state, dispatch }) {
           const attachments  = eq.attachments||[];
           const hasAttach    = attachments.length>0;
           const isExpanded   = !!expandedAt[eq.id];
+          const usageSummary = equipmentUsageSummary(state, eq);
+          const listUsageLabel = usageSummary.type === "mileage" ? "Current Miles" : "Current Hours";
+          const listUsageValue = usageSummary.display || "N/A";
 
           return (
             <div key={eq.id} style={{ display:"flex", flexDirection:"column", gap:0 }}>
@@ -4691,7 +4701,7 @@ function Equipment({ state, dispatch }) {
               <div onClick={()=>setDetail(eq.id)} style={{ background:rs.bg, border:`1px solid ${hasFault?rs.borderColor:T.border}`, borderLeft:rs.leftBorder, borderRadius:isExpanded&&hasAttach?"8px 8px 0 0":8, cursor:"pointer", overflow:"hidden", boxShadow:T.shadow }}>
 
                 <div style={{ overflowX:"auto" }}>
-                  <div style={{ display:"flex", alignItems:"center", padding:"14px 18px", gap:0, minWidth:720 }}>
+                  <div style={{ display:"flex", alignItems:"center", padding:"14px 18px", gap:0, minWidth:900 }}>
 
                     <div style={{ width:90, flexShrink:0, marginRight:20 }}>
                       <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Equip #</div>
@@ -4709,6 +4719,11 @@ function Equipment({ state, dispatch }) {
                     <div style={{ width:140, flexShrink:0, marginRight:20 }}>
                       <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Category</div>
                       <div style={{ fontFamily:T.sans, fontSize:13, color:T.subtext, marginTop:3 }}>{eq.category||"—"}</div>
+                    </div>
+
+                    <div style={{ width:120, flexShrink:0, marginRight:20 }}>
+                      <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{listUsageLabel}</div>
+                      <div style={{ fontFamily:T.mono, fontSize:12, color:usageSummary.type === "na" ? T.muted : T.subtext, marginTop:3, fontWeight:usageSummary.type === "na" ? 800 : 500 }}>{listUsageValue}</div>
                     </div>
 
                     <div style={{ width:120, flexShrink:0, marginRight:20 }}>
