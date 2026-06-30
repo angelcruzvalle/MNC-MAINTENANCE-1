@@ -377,6 +377,20 @@ function currentUserIsOrganizationOwner(state={}, currentUser=null) {
   return !ownerId && !ownerEmail;
 }
 
+function isOrganizationAdminRole(role="") {
+  return normalizeRole(role) === "organization_admin";
+}
+
+function invitedUserFacilityIdsFrom(value={}) {
+  return Array.from(new Set([
+    ...(Array.isArray(value?.facilityIds) ? value.facilityIds : []),
+    ...(Array.isArray(value?.userFacilityIds) ? value.userFacilityIds : []),
+    value?.facilityId,
+    value?.locationId,
+    value?.activeLocationId && value.activeLocationId !== "__all" ? value.activeLocationId : "",
+  ].filter(Boolean).map(String)));
+}
+
 function normalizeOrgUsers(state={}, currentUser=null) {
   const users = Array.isArray(state.organizationUsers) ? state.organizationUsers : [];
   const byEmail = new Map();
@@ -417,16 +431,25 @@ function normalizeOrgUsers(state={}, currentUser=null) {
 function ensureCurrentOrganizationAdmin(state={}, currentUser=null) {
   const currentEmail = normalizeEmail(currentUser?.email);
   if(!currentEmail) return state;
-  const ownerId = state.ownerUserId || currentUser?.id || "";
-  const base = { ...state, ownerUserId:ownerId, ownerEmail:state.ownerEmail || currentEmail };
+  const existingOwnerId = state.ownerUserId || state.organizationOwnerId || "";
+  const isOwner = currentUserIsOrganizationOwner(state, currentUser) || (!existingOwnerId && !state.ownerEmail && !state.organizationOwnerEmail);
+  const ownerId = existingOwnerId || (isOwner ? currentUser?.id : "") || "";
+  const base = {
+    ...state,
+    ownerUserId:ownerId,
+    ownerEmail:state.ownerEmail || state.organizationOwnerEmail || (isOwner ? currentEmail : ""),
+    organizationOwnerId:state.organizationOwnerId || ownerId,
+    organizationOwnerEmail:state.organizationOwnerEmail || state.ownerEmail || (isOwner ? currentEmail : ""),
+  };
   const users = normalizeOrgUsers(base, currentUser);
   const me = users.find(u => normalizeEmail(u.email) === currentEmail);
   const role = normalizeRole(me?.role || (currentUserIsOrganizationOwner(base, currentUser) ? "organization_admin" : "viewer"));
-  const facilityIds = Array.isArray(me?.facilityIds) ? me.facilityIds : [];
+  const facilityIds = invitedUserFacilityIdsFrom(me);
   const firstFacility = facilityIds[0] || "";
-  const activeLocationId = role === "organization_admin"
-    ? (base.activeLocationId || "__all")
-    : ((base.activeLocationId && base.activeLocationId !== "__all" && (!facilityIds.length || facilityIds.includes(base.activeLocationId))) ? base.activeLocationId : (firstFacility || base.activeLocationId || "__all"));
+  const baseActive = String(base.activeLocationId || "__all");
+  const activeLocationId = isOrganizationAdminRole(role)
+    ? (baseActive || "__all")
+    : ((baseActive && baseActive !== "__all" && facilityIds.includes(baseActive)) ? baseActive : (firstFacility || "__all"));
   return {
     ...base,
     currentUser:{ id:currentUser?.id || "", email:currentEmail },
@@ -441,7 +464,7 @@ function applyInviteToOrganizationState(ownerState={}, invite={}, currentUser=nu
   const email = normalizeEmail(currentUser?.email || invite?.email);
   if(!email || !invite?.token) return ownerState;
   const role = normalizeRole(invite.role || "viewer");
-  const facilityIds = Array.isArray(invite.facilityIds) ? invite.facilityIds : (invite.locationId ? [invite.locationId] : []);
+  const facilityIds = invitedUserFacilityIdsFrom(invite);
   const invitedUser = {
     id:currentUser?.id || `USER-${Date.now()}`,
     userId:currentUser?.id || "",
@@ -461,7 +484,7 @@ function applyInviteToOrganizationState(ownerState={}, invite={}, currentUser=nu
       : inv
   );
   const nextUsers = normalizeOrgUsers(ownerState).filter(u => normalizeEmail(u.email) !== email);
-  const activeLocationId = role === "organization_admin" ? (ownerState.activeLocationId || "__all") : (facilityIds[0] || ownerState.activeLocationId || "__all");
+  const activeLocationId = isOrganizationAdminRole(role) ? (ownerState.activeLocationId || "__all") : (facilityIds[0] || "__all");
   return ensureCurrentOrganizationAdmin({ ...ownerState, userInvites:nextInvites, organizationUsers:[invitedUser, ...nextUsers], activeLocationId }, currentUser);
 }
 
@@ -1328,7 +1351,14 @@ function reducer(state, { type, payload }) {
         legacyRepairNote:{ facilityId, facilityName, date:today() },
       };
     }
-    case "SET_ACTIVE_LOCATION": return { ...state, activeLocationId: payload || "__all" };
+    case "SET_ACTIVE_LOCATION": {
+      const requested = payload || "__all";
+      const role = normalizeRole(state.userRole || "viewer");
+      if(isOrganizationAdminRole(role)) return { ...state, activeLocationId: requested };
+      const allowed = invitedUserFacilityIdsFrom({ facilityIds:state.userFacilityIds });
+      if(requested !== "__all" && allowed.includes(String(requested))) return { ...state, activeLocationId: requested };
+      return { ...state, activeLocationId: allowed[0] || state.activeLocationId || "__all" };
+    }
     case "ADD_AREA": {
       const name = String(payload?.name || payload || "").trim();
       if(!name) return state;
@@ -9970,7 +10000,7 @@ async function findOrganizationMembershipForUser(currentUser=null) {
       );
       if(member) {
         const role = normalizeRole(member.role || "viewer");
-        const facilityIds = Array.isArray(member.facilityIds) ? member.facilityIds : (member.locationId ? [member.locationId] : []);
+        const facilityIds = invitedUserFacilityIdsFrom(member);
         const invite = {
           token:member.inviteToken || ownerState.inviteToken || "",
           email:member.email || email,
@@ -9988,7 +10018,7 @@ async function findOrganizationMembershipForUser(currentUser=null) {
 }
 
 function buildInvitePointerState(userId="", ownerUserId="", email="", invite={}) {
-  const facilityIds = Array.isArray(invite?.facilityIds) ? invite.facilityIds : (invite?.locationId ? [invite.locationId] : []);
+  const facilityIds = invitedUserFacilityIdsFrom(invite);
   return {
     ownerUserId,
     invitedMember:true,
@@ -9997,7 +10027,7 @@ function buildInvitePointerState(userId="", ownerUserId="", email="", invite={})
     email:normalizeEmail(email),
     userRole:normalizeRole(invite?.role || "viewer"),
     userFacilityIds:facilityIds,
-    activeLocationId:normalizeRole(invite?.role || "viewer") === "organization_admin" ? "__all" : (facilityIds[0] || "__all"),
+    activeLocationId:isOrganizationAdminRole(invite?.role || "viewer") ? "__all" : (facilityIds[0] || "__all"),
     inviteToken:invite?.token || "",
     acceptedOrganizationOwnerId:ownerUserId,
     acceptedAt:new Date().toISOString(),
@@ -10046,8 +10076,8 @@ function buildMemberPointerFromOrganizationState(state={}, currentUser=null) {
   return {
     token:state.inviteToken || member.inviteToken || "",
     role:normalizeRole(member.role || state.userRole || "viewer"),
-    facilityIds:Array.isArray(member.facilityIds) ? member.facilityIds : (Array.isArray(state.userFacilityIds) ? state.userFacilityIds : (member.locationId ? [member.locationId] : [])),
-    locationId:member.locationId || (Array.isArray(member.facilityIds) ? member.facilityIds[0] : ""),
+    facilityIds:invitedUserFacilityIdsFrom(member).length ? invitedUserFacilityIdsFrom(member) : invitedUserFacilityIdsFrom(state),
+    locationId:member.locationId || invitedUserFacilityIdsFrom(member)[0] || invitedUserFacilityIdsFrom(state)[0] || "",
   };
 }
 
@@ -10509,12 +10539,24 @@ export default function App() {
   useEffect(() => {
     if(!dataLoaded || !session) return;
     const savedFacilityId = readMFLocal(MF_LAST_FACILITY_KEY, "");
-    if(!savedFacilityId) return;
+    const role = normalizeRole(state.userRole || "viewer");
+    const assignedIds = invitedUserFacilityIdsFrom({ facilityIds:state.userFacilityIds });
+    const isOrgAdmin = isOrganizationAdminRole(role);
     const isValidFacility = savedFacilityId === "__all" || maintLocations.some(l => l.id === savedFacilityId);
-    if(isValidFacility && savedFacilityId !== (state.activeLocationId || "__all")) {
-      dispatch({ type:"SET_ACTIVE_LOCATION", payload:savedFacilityId });
+    if(isOrgAdmin) {
+      if(savedFacilityId && isValidFacility && savedFacilityId !== (state.activeLocationId || "__all")) {
+        dispatch({ type:"SET_ACTIVE_LOCATION", payload:savedFacilityId });
+      }
+      return;
     }
-  }, [dataLoaded, session?.user?.id, maintLocations.length]);
+    const fallbackAssigned = assignedIds[0] || "";
+    const currentAllowed = state.activeLocationId && state.activeLocationId !== "__all" && assignedIds.includes(String(state.activeLocationId));
+    const savedAllowed = savedFacilityId && savedFacilityId !== "__all" && assignedIds.includes(String(savedFacilityId));
+    const nextFacility = savedAllowed ? savedFacilityId : (currentAllowed ? state.activeLocationId : fallbackAssigned);
+    if(nextFacility && nextFacility !== (state.activeLocationId || "__all")) {
+      dispatch({ type:"SET_ACTIVE_LOCATION", payload:nextFacility });
+    }
+  }, [dataLoaded, session?.user?.id, maintLocations.length, state.userRole, JSON.stringify(state.userFacilityIds||[])]);
 
   useEffect(() => {
     if(!dataLoaded || !session) return;
@@ -11101,8 +11143,8 @@ export default function App() {
           <span style={{ color:T.border, fontSize:18 }}>›</span>
           <span style={{ fontFamily:T.sans, fontSize:13, color:T.subtext, fontWeight:500 }}>{PAGE_TITLES[tab] || "Dashboard"}</span>
           <select title="Switch facility" value={state.activeLocationId || "__all"} onChange={e=>dispatch({type:"SET_ACTIVE_LOCATION", payload:e.target.value})} style={{ ...sel, width:190, padding:"5px 9px", fontSize:12 }}>
-            <option value="__all">Organization Dashboard / All Facilities</option>
-            {maintLocations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
+            {isOrganizationAdminRole(state.userRole) && <option value="__all">Organization Dashboard / All Facilities</option>}
+            {maintLocations.filter(l => isOrganizationAdminRole(state.userRole) || invitedUserFacilityIdsFrom({ facilityIds:state.userFacilityIds }).includes(String(l.id))).map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
           </select>
           <span style={{ fontFamily:T.sans, fontSize:11, color:T.muted }}>Facility: {activeLocationLabel}</span>
         </div>
