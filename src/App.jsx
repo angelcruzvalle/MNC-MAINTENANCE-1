@@ -872,7 +872,9 @@ function exactDecimalText(value=0, { minFractionDigits=0, maxFractionDigits=6 }=
 }
 
 function moneyText(value=0) {
-  return exactDecimalText(value, { minFractionDigits:2, maxFractionDigits:6 });
+  const n = Number(value || 0);
+  const safe = Number.isFinite(n) ? n : 0;
+  return safe.toLocaleString(undefined, { minimumFractionDigits:2, maximumFractionDigits:2 });
 }
 
 function moneyFmt(value=0) {
@@ -2356,6 +2358,8 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   </div>;
 }
 
+const WORK_ORDER_STATUS_OPTIONS = ["Open","In Progress","Pending Diagnostic","Awaiting Parts","On Hold","Completed"];
+
 function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const [modal, setModal]     = useState(null); // null|"type"|"pick"|"form"|"detail"|"edit"
   const [form, setForm]       = useState({});
@@ -2388,7 +2392,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const getIntervals = (woType) => woType==="Inspection" ? INSPECT_INTERVALS : SERVICE_INTERVALS;
   const partCategories = getPartCategoryOptions(state);
 
-  const WO_STATUS_OPTIONS = ["Open","In Progress","Pending Diagnostic","Awaiting Parts","On Hold","Completed"];
+  const WO_STATUS_OPTIONS = WORK_ORDER_STATUS_OPTIONS;
   const STATUS_TABS = ["Active", ...WO_STATUS_OPTIONS, "All"];
   const PRIO_ORDER  = {"High":0,"Medium":1,"Low":2};
   const EQUIPMENT_STATUS_FILTERS = ["Fully Operational", "Operational with Deficiencies", "Out of Service / Deadline"];
@@ -3030,7 +3034,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                   {getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}
                   <option value="__new_unit__">+ Add new...</option>
                 </select>
-                <input style={inp} {...decimalInputAttrs({ placeholder:"Unit $" })} value={p.unitCost||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],unitCost:sanitizeDecimalInput(e.target.value)}; return {...f,partsUsed:arr}; })} />
+                <input style={inp} {...decimalInputAttrs({ placeholder:"Unit $ (0.0000)" })} value={p.unitCost||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],unitCost:sanitizeDecimalInput(e.target.value)}; return {...f,partsUsed:arr}; })} />
                 <button onClick={()=>setShowNewPart(showNewPart===idx?null:idx)} style={{ padding:"6px 8px", border:`1px solid ${T.border}`, borderRadius:6, background:T.grayLt, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.accent, whiteSpace:"nowrap" }}>
                   {showNewPart===idx?"Close":"Inventory"}
                 </button>
@@ -3061,7 +3065,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                       const renderRow = (pt, highlight) => (
                         <button key={pt.id} onClick={()=>{ addPartFromInventory(pt,idx); setShowNewPart(null); }} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"6px 10px", background:highlight?"#f0fdf4":"#fff", border:`1px solid ${highlight?"#86efac":T.border}`, borderRadius:6, cursor:"pointer", textAlign:"left", fontFamily:T.sans, fontSize:12 }}>
                           <span><b>{pt.name}</b> <span style={{ color:T.muted, fontSize:11 }}>{pt.partNumber?`#${pt.partNumber}`:"No part #"}</span> {highlight&&<span style={{ color:T.green, fontSize:10, fontWeight:700 }}>Model Match</span>}</span>
-                          <span style={{ color:T.green, fontFamily:T.mono, fontSize:11, marginLeft:8, flexShrink:0 }}>Qty:{pt.qty} {pt.unit||"ea"} | ${pt.unitCost||0}</span>
+                          <span style={{ color:T.green, fontFamily:T.mono, fontSize:11, marginLeft:8, flexShrink:0 }}>Qty:{pt.qty} {pt.unit||"ea"} | {moneyFmt(pt.unitCost)}</span>
                         </button>
                       );
                       return (<>
@@ -3082,7 +3086,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                     <input style={inp} placeholder="Stock" type="number" value={newPartForm.qty||""} onChange={e=>setNewPartForm(f=>({...f,qty:e.target.value}))} />
                     <input style={inp} placeholder="Min" type="number" value={newPartForm.minQty||""} onChange={e=>setNewPartForm(f=>({...f,minQty:e.target.value}))} />
                     <select style={sel} value={newPartForm.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, newPartForm.unit||"ea", v=>setNewPartForm(f=>({...f,unit:v})))}>{getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}<option value="__new_unit__">+ Add new...</option></select>
-                    <input style={inp} {...decimalInputAttrs({ placeholder:"$/unit" })} value={newPartForm.unitCost||""} onChange={e=>setNewPartForm(f=>({...f,unitCost:sanitizeDecimalInput(e.target.value)}))} />
+                    <input style={inp} {...decimalInputAttrs({ placeholder:"$/unit (0.0000)" })} value={newPartForm.unitCost||""} onChange={e=>setNewPartForm(f=>({...f,unitCost:sanitizeDecimalInput(e.target.value)}))} />
                   </div>
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr auto", gap:6 }}>
                     <input style={inp} list="wo-part-category-options" placeholder="Category" value={newPartForm.category||""} onChange={e=>setNewPartForm(f=>({...f,category:e.target.value}))} />
@@ -3111,7 +3115,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             <div key={idx} style={{ display:"grid", gridTemplateColumns:"1fr 80px 110px 110px auto", gap:8, marginBottom:8, alignItems:"center" }}>
               <input style={inp} placeholder="Service description..." value={svc.description||svc.name||""} onChange={e=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr[idx]={...arr[idx],description:e.target.value}; return {...f,outsideServices:arr}; })} />
               <input style={{ ...inp, textAlign:"center" }} type="number" min="1" step="0.01" placeholder="Qty" value={svc.qty||""} onChange={e=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr[idx]={...arr[idx],qty:e.target.value}; return {...f,outsideServices:arr}; })} />
-              <input style={inp} {...decimalInputAttrs({ placeholder:"Unit Cost" })} value={svc.unitCost ?? svc.cost ?? ""} onChange={e=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr[idx]={...arr[idx],unitCost:sanitizeDecimalInput(e.target.value)}; return {...f,outsideServices:arr}; })} />
+              <input style={inp} {...decimalInputAttrs({ placeholder:"Unit Cost (0.0000)" })} value={svc.unitCost ?? svc.cost ?? ""} onChange={e=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr[idx]={...arr[idx],unitCost:sanitizeDecimalInput(e.target.value)}; return {...f,outsideServices:arr}; })} />
               <div style={{ fontFamily:T.mono, fontSize:12, fontWeight:700, color:T.text, textAlign:"right" }}>{moneyFmt(lineItemTotal(svc))}</div>
               <button onClick={()=>setForm(f=>{ const arr=[...(f.outsideServices||[])]; arr.splice(idx,1); return {...f,outsideServices:arr}; })} style={{ padding:"6px 10px", border:`1px solid ${T.red}`, borderRadius:6, background:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>
             </div>
@@ -4269,7 +4273,7 @@ function Equipment({ state, dispatch }) {
                     {(historyWO.partsUsed||[]).length>0 && (
                       <div style={{ marginBottom:12 }}>
                         <div style={{ fontSize:11, fontWeight:900, color:T.text, textTransform:"uppercase", letterSpacing:.5, marginBottom:5 }}>Parts</div>
-                        {(historyWO.partsUsed||[]).map((p,i)=><div key={i} style={{ fontSize:13, padding:"4px 0", borderBottom:`1px solid ${T.border}` }}>{p.name || p.partName || "Part"} · Qty {p.qty || 1} {p.unit || "ea"} · ${p.unitCost || 0}</div>)}
+                        {(historyWO.partsUsed||[]).map((p,i)=><div key={i} style={{ fontSize:13, padding:"4px 0", borderBottom:`1px solid ${T.border}` }}>{p.name || p.partName || "Part"} · Qty {p.qty || 1} {p.unit || "ea"} · {moneyFmt(p.unitCost)}</div>)}
                       </div>
                     )}
                     {getInspectionRowsForWO(historyWO).length>0 && (
@@ -4288,7 +4292,7 @@ function Equipment({ state, dispatch }) {
               <div style={{ fontFamily:T.sans }}>
                 <Field label="Status">
                   <select style={inp} value={historyWO.status||""} onChange={e=>setHistoryWO(w=>({...w,status:e.target.value}))}>
-                    {WO_STATUS_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}
+                    {WORK_ORDER_STATUS_OPTIONS.map(s=><option key={s} value={s}>{s}</option>)}
                   </select>
                 </Field>
                 <Field label="Description">
