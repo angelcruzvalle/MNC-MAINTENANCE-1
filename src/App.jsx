@@ -671,7 +671,7 @@ function stampLegacyList(list=[], facilityId='', facilityName='') {
 }
 
 function morovisFacilityForState(state={}) {
-  const facilities = restrictedRole ? allFacilities.filter(f => roleFacilityIds.includes(String(f.id))) : allFacilities;
+  const facilities = normalizeMaintForgeLocations(state).filter(f => f.active !== false);
   return facilities.find(f => isMorovisFacilityName(f.name)) || null;
 }
 
