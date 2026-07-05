@@ -10619,6 +10619,7 @@ export default function App() {
   const [authError, setAuthError] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [authInfoMsg, setAuthInfoMsg] = useState("");
+  const [showOwnerSetup, setShowOwnerSetup] = useState(false);
   const [manualInviteInfo, setManualInviteInfo] = useState(null);
   const [inviteCodeInput, setInviteCodeInput] = useState("");
   const [inviteCodeBusy, setInviteCodeBusy] = useState(false);
@@ -11334,7 +11335,6 @@ export default function App() {
 
   if (!activeSession) {
     const isSignup = authMode==="signup";
-    const ownerSignupEnabled = isSignup;
     return (
       <div style={{
         minHeight:"100vh",
@@ -11360,27 +11360,42 @@ export default function App() {
             <div style={{ fontSize:36, marginBottom:6 }}>🔧</div>
             <h1 style={{ margin:0, fontSize:24, fontWeight:700 }}>WIN Maintenance</h1>
             <p style={{ opacity:.65, margin:"6px 0 0", fontSize:13 }}>
-              {ownerSignupEnabled ? "Owner setup only" : "Sign in with your assigned username or admin email"}
+              {isSignup ? "Create the owner/admin account only" : "Sign in with your username or email"}
             </p>
           </div>
 
           {manualInviteInfo && (
             <div style={{ padding:"10px 12px", background:"#1e3a8a", border:"1px solid #60a5fa", borderRadius:8, marginBottom:14, fontSize:13, lineHeight:1.4 }}>
-              Manual invite link detected. Use the invited email to create the account. If this email already has an account, choose <b>Sign In</b> instead.
+              Old invite link detected, but invites are no longer used. Sign in with an assigned username/password or an admin email/password.
+            </div>
+          )}
+          {isSignup && (
+            <div style={{ padding:"10px 12px", background:"#451a03", border:"1px solid #f59e0b", borderRadius:8, marginBottom:14, fontSize:13, lineHeight:1.4 }}>
+              Create Owner Account is only for the first company administrator. Mechanics, viewers, and facility users should use <b>Sign In</b> with the username/password created in Settings → Users & Roles.
             </div>
           )}
 
-          {/* Login is the default screen. Account creation is only for first owner setup. */}
+          {/* Sign-in stays as the default path. Owner creation is secondary so assigned users are not pushed into setup. */}
           <div style={{ display:"flex", background:"#111827", borderRadius:8, padding:4, marginBottom:20 }}>
             <button
               onClick={()=>switchAuthMode("login")}
               style={{
                 flex:1, padding:"10px", borderRadius:6, border:"none", cursor:"pointer",
-                background: !ownerSignupEnabled ? "#3b82f6" : "transparent",
-                color: !ownerSignupEnabled ? "white" : "#9ca3af",
-                fontWeight:700, fontSize:13, transition:"all .15s"
+                background: !isSignup ? "#3b82f6" : "transparent",
+                color: !isSignup ? "white" : "#9ca3af",
+                fontWeight:600, fontSize:13, transition:"all .15s"
               }}>
               Sign In
+            </button>
+            <button
+              onClick={()=>switchAuthMode("signup")}
+              style={{
+                flex:1, padding:"10px", borderRadius:6, border:"none", cursor:"pointer",
+                background: isSignup ? "#3b82f6" : "transparent",
+                color: isSignup ? "white" : "#9ca3af",
+                fontWeight:600, fontSize:13, transition:"all .15s"
+              }}>
+              Create Owner Account
             </button>
           </div>
 
@@ -11396,9 +11411,7 @@ export default function App() {
             </div>
           )}
 
-          <div style={{ padding:"10px 12px", background:"#111827", border:"1px solid #374151", borderRadius:8, marginBottom:14, fontSize:12, color:"#9ca3af", lineHeight:1.4 }}>
-            Created users sign in here with the username/password assigned in Settings → Users & Roles. Admins can also sign in with their email/password.
-          </div>
+          <div style={{ padding:"10px 12px", background:"#111827", border:"1px solid #374151", borderRadius:8, marginBottom:14, fontSize:12, color:"#9ca3af", lineHeight:1.4 }}>Admins use their email login. Created users use the username and password assigned in Settings → Users & Roles.</div>
 
           {/* Username / Email */}
           <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#9ca3af", marginBottom:5 }}>Username or Email</label>
@@ -11465,19 +11478,19 @@ export default function App() {
               color:"white", marginTop:6, fontFamily:T.sans,
               transition:"background .15s",
             }}>
-            {authBusy ? "Please wait..." : (isSignup ? "Create Account" : "Sign In")}
+            {authBusy ? "Please wait..." : (isSignup ? "Create Owner Account" : "Sign In")}
           </button>
 
-          {/* Owner setup is intentionally secondary so normal users are never pushed into organization creation. */}
+          {/* Footer toggle hint */}
           <div style={{ textAlign:"center", marginTop:16, fontSize:13, color:"#9ca3af" }}>
-            {ownerSignupEnabled ? (
+            {isSignup ? (
               <>Already have an account?{" "}
                 <button onClick={()=>switchAuthMode("login")} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontWeight:600, padding:0, fontSize:13 }}>
-                  Return to sign in
+                  Sign in
                 </button>
               </>
             ) : (
-              <>First owner/admin setup only?{" "}
+              <>Need to set up the owner/admin account?{" "}
                 <button onClick={()=>switchAuthMode("signup")} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontWeight:600, padding:0, fontSize:13 }}>
                   Create owner account
                 </button>
@@ -11520,15 +11533,14 @@ export default function App() {
       <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, color:T.text, fontFamily:T.sans, padding:20 }}>
         <div style={{ width:"100%", maxWidth:620, border:`1px solid ${T.border}`, borderRadius:16, background:T.card, boxShadow:T.shadow, padding:22 }}>
           <div style={{ fontSize:34, marginBottom:8 }}>⚠️</div>
-          <h1 style={{ margin:"0 0 8px", fontSize:22 }}>Invite connection needed</h1>
+          <h1 style={{ margin:"0 0 8px", fontSize:22 }}>Account connection needed</h1>
           <p style={{ margin:"0 0 14px", color:T.subtext, lineHeight:1.5 }}>{state.inviteConnectionError}</p>
           <div style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:12, background:T.surface, color:T.subtext, fontSize:13, lineHeight:1.45, marginBottom:14 }}>
-            This screen intentionally blocks the old personal workspace from loading. Use a fresh invite link that includes the owner/organization connection, then sign in with the invited email.
+            Invites are no longer used. Sign out, then sign in with the username/password assigned in Settings → Users & Roles.
           </div>
-          <InviteCodeJoinPanel />
           <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-            <Btn onClick={async()=>{ clearPendingInviteInfo(); try { await supabase.auth.signOut(); } catch(e) {} window.location.href = window.location.origin + window.location.pathname; }}>Sign out and use fresh invite</Btn>
-            <Btn variant="secondary" onClick={()=>{ clearPendingInviteInfo(); window.location.href = window.location.origin + window.location.pathname; }}>Clear invite link</Btn>
+            <Btn onClick={async()=>{ clearPendingInviteInfo(); try { await supabase.auth.signOut(); } catch(e) {} setAppSession(null); setDataLoaded(false); setAuthMode("login"); setAuthPassword(""); setAuthConfirmPassword(""); dispatch({ type:"REPLACE_STATE", payload:blankUserState() }); }}>Sign Out / Go to Login</Btn>
+            <Btn variant="secondary" onClick={()=>{ clearPendingInviteInfo(); window.location.href = window.location.origin + window.location.pathname; }}>Refresh</Btn>
           </div>
         </div>
       </div>
@@ -11536,9 +11548,29 @@ export default function App() {
   }
 
   if(!state.setupComplete) {
+    if(showOwnerSetup) {
+      return (
+        <div style={{ minHeight:"100vh", background:T.bg }}>
+          <SetupWizard onComplete={(setupData)=>{ dispatch({type:"COMPLETE_SETUP",payload:setupData}); setShowOwnerSetup(false); }} />
+        </div>
+      );
+    }
     return (
-      <div style={{ minHeight:"100vh", background:T.bg }}>
-        <SetupWizard onComplete={(setupData)=>dispatch({type:"COMPLETE_SETUP",payload:setupData})} />
+      <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, color:T.text, fontFamily:T.sans, padding:20 }}>
+        <div style={{ width:"100%", maxWidth:560, background:T.card, border:`1px solid ${T.border}`, borderRadius:18, boxShadow:T.shadow, padding:24 }}>
+          <div style={{ fontSize:38, marginBottom:10 }}>🔐</div>
+          <h1 style={{ margin:"0 0 8px", fontSize:24 }}>Sign in required</h1>
+          <p style={{ margin:"0 0 14px", color:T.subtext, lineHeight:1.5 }}>
+            This browser is signed into an account that does not have a completed MaintForge workspace. Assigned users should not create a new organization. Sign out, then use the username/password created in Settings → Users & Roles.
+          </p>
+          <div style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:12, background:T.surface, color:T.subtext, fontSize:13, lineHeight:1.45, marginBottom:16 }}>
+            Create Owner Workspace is only for the first company administrator. It is not for mechanics, viewers, or facility-assigned users.
+          </div>
+          <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
+            <Btn onClick={async()=>{ try { await supabase.auth.signOut(); } catch(e) {} setAppSession(null); setDataLoaded(false); setAuthMode("login"); setAuthPassword(""); setAuthConfirmPassword(""); dispatch({ type:"REPLACE_STATE", payload:blankUserState() }); }}>Sign Out / Go to Login</Btn>
+            <Btn variant="secondary" onClick={()=>setShowOwnerSetup(true)}>Create Owner Workspace</Btn>
+          </div>
+        </div>
       </div>
     );
   }
