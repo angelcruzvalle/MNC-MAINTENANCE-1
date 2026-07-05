@@ -1495,8 +1495,9 @@ function reducer(state, { type, payload }) {
     }
     case "REMOVE_ORG_USER": {
       const email = normalizeEmail(payload?.email || payload);
-      if(!email) return state;
-      const users = normalizeOrgUsers(state).filter(u => normalizeEmail(u.email) !== email && normalizeUsername(u.username) !== normalizeUsername(payload));
+      const username = normalizeUsername(payload?.username || payload);
+      if(!email && !username) return state;
+      const users = normalizeOrgUsers(state).filter(u => normalizeEmail(u.email) !== email && normalizeUsername(u.username) !== username);
       return { ...state, organizationUsers:users };
     }
     case "ADD_USER_INVITE": {
@@ -8994,6 +8995,8 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
   const orgLocations = normalizeMaintForgeLocations(foundationState);
   const orgAreas = normalizeMaintForgeAreas(foundationState);
   const [userForm, setUserForm] = useState({ username:"", password:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] });
+  const [userSaveBusy, setUserSaveBusy] = useState(false);
+  const [userSaveMsg, setUserSaveMsg] = useState("");
   const [inviteForm, setInviteForm] = useState({ email:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] });
   const organizationUsers = normalizeOrgUsers(state, currentUser);
   const currentUserEmail = normalizeEmail(currentUser?.email);
@@ -9077,43 +9080,69 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
     return { ...f, facilityIds:Array.from(set) };
   });
   const createAdminMadeUser = async () => {
+    if(userSaveBusy) return;
+    setUserSaveMsg("");
     const username = normalizeUsername(userForm.username);
-    if(!username) return alert("Enter a username.");
-    if(username.includes("@")) return alert("Use a simple username without @. Email login is only for the main Supabase account.");
-    if((userForm.password||"").length < 6) return alert("Password must be at least 6 characters.");
-    if(existingUsernameUser) return alert(`Username ${username} already exists. Choose a different username.`);
+    if(!username) { alert("Enter a username."); return; }
+    if(username.includes("@")) { alert("Use a simple username without @. Email login is only for the main Supabase account."); return; }
+    if((userForm.password||"").length < 6) { alert("Password must be at least 6 characters."); return; }
+    if(existingUsernameUser) { alert(`Username ${username} already exists. Choose a different username.`); return; }
     const facilityIds = Array.isArray(userForm.facilityIds) && userForm.facilityIds.length ? userForm.facilityIds : [];
-    if(!isOrganizationAdminRole(userForm.role) && facilityIds.length === 0) return alert("Assign at least one facility so this user can see data.");
-    const newUser = await buildMaintForgeAppUser({ ...userForm, username, facilityIds });
+    if(!isOrganizationAdminRole(userForm.role) && facilityIds.length === 0) { alert("Assign at least one facility so this user can see data."); return; }
 
-    // IMPORTANT: save the username user to the owner workspace immediately.
-    // Do not rely only on the delayed autosave, because admins often create a user,
-    // sign out right away, and then the username login cannot find the account.
-    const email = normalizeEmail(newUser.email);
-    const existingUsers = normalizeOrgUsers(state, currentUser).filter(u =>
-      normalizeEmail(u.email) !== email && normalizeUsername(u.username || "") !== username
-    );
-    const nextState = { ...state, organizationUsers:[newUser, ...existingUsers] };
-    const ownerId = state.ownerUserId || state.organizationOwnerId || currentUser?.id || activeUser?.id || "";
-    if(ownerId) {
+    setUserSaveBusy(true);
+    try {
+      const newUser = await buildMaintForgeAppUser({ ...userForm, username, facilityIds });
+
+      // Update the visible app state immediately so the button never feels dead.
+      // Then save that exact same state to Supabase right away so username login works after sign-out.
+      const email = normalizeEmail(newUser.email);
+      const existingUsers = normalizeOrgUsers(state, currentUser).filter(u =>
+        normalizeEmail(u.email) !== email && normalizeUsername(u.username || "") !== username
+      );
+      const nextState = { ...state, organizationUsers:[newUser, ...existingUsers] };
+      dispatch({ type:"UPSERT_ORG_USER", payload:newUser });
+
+      const ownerId = state.ownerUserId || state.organizationOwnerId || currentUser?.id || "";
+      if(!ownerId) {
+        setUserSaveMsg("User was added on this screen, but the owner workspace ID was not found. Sign out/in as the owner admin and create the user again.");
+        alert("User was added on this screen, but it could not be saved because the owner workspace ID was not found.");
+        return;
+      }
+
+      const cloudState = prepareSharedOrganizationStateForCloudSave(nextState, currentUser);
       const saveResult = await supabase
         .from("user_state")
         .upsert({
           user_id:ownerId,
-          data:prepareSharedOrganizationStateForCloudSave(nextState, currentUser || activeUser),
+          data:cloudState,
           updated_at:new Date().toISOString(),
         }, { onConflict:"user_id" });
+
       if(saveResult.error) {
         console.error("Create username user save error:", saveResult.error);
-        alert("The user was created on this screen, but it did not save to Supabase. Do not sign out yet. Check Supabase user_state policies or run the username login SQL helper.");
+        setSyncStatus("error");
+        setUserSaveMsg(`User was added on this screen, but cloud save failed: ${saveResult.error.message || "Supabase rejected the save."}`);
+        alert("The user was added on this screen, but it did NOT save to Supabase. Do not sign out yet. Check the console/Supabase policy error, then save Settings again.");
         return;
       }
-    }
 
-    dispatch({ type:"UPSERT_ORG_USER", payload:newUser });
-    setSyncStatus("saved");
-    setUserForm({ username:"", password:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] });
-    alert(`User ${username} created and saved. They can now sign in with that username and password and will only see their assigned facility data.`);
+      try {
+        localStorage.setItem("ncaState", JSON.stringify(ensureCurrentOrganizationAdmin(cloudState, currentUser)));
+        localStorage.setItem("ncaState:lastUserId", ownerId);
+      } catch(e) {}
+      setSyncStatus("saved");
+      setUserSaveMsg(`Saved: ${username} can now sign in with the assigned password and facility access.`);
+      setUserForm({ username:"", password:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] });
+      alert(`User ${username} created and saved. They can now sign in with that username/password and will only see their assigned facility data.`);
+    } catch(e) {
+      console.error("Create username user error:", e);
+      setSyncStatus("error");
+      setUserSaveMsg(`Create user failed: ${e?.message || "Check the browser console for details."}`);
+      alert(`Create user failed: ${e?.message || "Check the browser console for details."}`);
+    } finally {
+      setUserSaveBusy(false);
+    }
   };
   const resetAdminMadeUserPassword = async (user) => {
     const nextPass = prompt(`Enter a new password for ${user.username || user.name}:`);
@@ -9519,8 +9548,9 @@ ${payload.inviteUrl}`));
               </div>
               <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginTop:10, alignItems:"center", flexWrap:"wrap" }}>
                 <div style={{ fontSize:11, color:existingUsernameUser?T.red:T.muted }}>{existingUsernameUser ? "That username already exists." : "The user will log in with this username/password and the app will lock data to the assigned facilities."}</div>
-                <Btn small onClick={createAdminMadeUser}>Create User</Btn>
+                <Btn small onClick={createAdminMadeUser} style={userSaveBusy ? { opacity:.65, pointerEvents:"none" } : {}}>{userSaveBusy ? "Creating..." : "Create User"}</Btn>
               </div>
+              {userSaveMsg && <div style={{ marginTop:8, padding:"8px 10px", border:`1px solid ${userSaveMsg.toLowerCase().includes("fail") || userSaveMsg.toLowerCase().includes("not") ? T.red : T.green}`, borderRadius:8, fontSize:12, color:userSaveMsg.toLowerCase().includes("fail") || userSaveMsg.toLowerCase().includes("not") ? T.red : T.green, background:T.surface }}>{userSaveMsg}</div>}
             </div>
 
             {(state.userInvites||[]).length>0 && <div style={{ marginTop:10, padding:10, border:`1px dashed ${T.border}`, borderRadius:8, background:T.surface, fontSize:12, color:T.muted }}>
