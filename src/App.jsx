@@ -393,40 +393,136 @@ function invitedUserFacilityIdsFrom(value={}) {
 
 function normalizeOrgUsers(state={}, currentUser=null) {
   const users = Array.isArray(state.organizationUsers) ? state.organizationUsers : [];
-  const byEmail = new Map();
+  const byKey = new Map();
   users.forEach(u => {
     const email = normalizeEmail(u.email);
-    if(!email) return;
-    byEmail.set(email, {
+    const username = normalizeUsername(u.username || u.login || "");
+    const key = email || (username ? `username:${username}` : "");
+    if(!key) return;
+    byKey.set(key, {
       ...u,
       email,
-      name:u.name || u.displayName || email,
+      username,
+      name:u.name || u.displayName || username || email,
       role:normalizeRole(u.role || u.userRole),
       facilityIds:Array.isArray(u.facilityIds) ? u.facilityIds : (u.locationId ? [u.locationId] : []),
       status:u.status || "Active",
+      active:u.active !== false,
     });
   });
   const currentEmail = normalizeEmail(currentUser?.email);
-  if(currentEmail) {
-    const existing = byEmail.get(currentEmail) || {};
+  const currentUsername = normalizeUsername(currentUser?.username || currentUser?.user_metadata?.username || "");
+  if(currentEmail || currentUsername) {
+    const key = currentEmail || `username:${currentUsername}`;
+    const existing = byKey.get(key) || {};
     const isOwner = currentUserIsOrganizationOwner(state, currentUser);
-    byEmail.set(currentEmail, {
+    byKey.set(key, {
       ...existing,
       id:existing.id || currentUser?.id || `USER-${Date.now()}`,
       userId:currentUser?.id || existing.userId || "",
       email:currentEmail,
-      name:existing.name || currentUser?.user_metadata?.name || currentEmail,
+      username:existing.username || currentUsername,
+      name:existing.name || currentUser?.user_metadata?.name || currentUsername || currentEmail,
       role:normalizeRole(existing.role || (isOwner ? "organization_admin" : "viewer")),
       facilityIds:Array.isArray(existing.facilityIds) ? existing.facilityIds : (existing.locationId ? [existing.locationId] : []),
       status:existing.status || "Active",
+      active:existing.active !== false,
       isCurrentUser:true,
     });
   }
-  return Array.from(byEmail.values()).sort((a,b)=>{
+  return Array.from(byKey.values()).sort((a,b)=>{
     const rank = { organization_admin:0, facility_admin:1, supervisor:2, mechanic:3, viewer:4 };
-    return (rank[a.role]??9) - (rank[b.role]??9) || String(a.email).localeCompare(String(b.email));
+    return (rank[a.role]??9) - (rank[b.role]??9) || String(a.email || a.username).localeCompare(String(b.email || b.username));
   });
 }
+
+function normalizeUsername(value="") {
+  return String(value || "").trim().toLowerCase().replace(/\s+/g,"_");
+}
+
+function emailForUsername(username="") {
+  const clean = normalizeUsername(username);
+  return clean ? `${clean}@maintforge.local` : "";
+}
+
+function makeSalt() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+
+async function sha256Text(value="") {
+  const enc = new TextEncoder().encode(String(value || ""));
+  const buf = await crypto.subtle.digest("SHA-256", enc);
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+
+async function hashMaintForgePassword(password="", salt="") {
+  return await sha256Text(`${salt}:${password}`);
+}
+
+async function passwordMatchesMaintForgeUser(user={}, password="") {
+  if(!user || user.active === false || String(user.status||"Active").toLowerCase()==="disabled") return false;
+  if(user.passwordHash && user.passwordSalt) {
+    return await hashMaintForgePassword(password, user.passwordSalt) === user.passwordHash;
+  }
+  return false;
+}
+
+async function buildMaintForgeAppUser({ username="", password="", name="", role="mechanic", facilityIds=[] }={}) {
+  const cleanUsername = normalizeUsername(username);
+  const salt = makeSalt();
+  const passwordHash = await hashMaintForgePassword(password, salt);
+  const email = emailForUsername(cleanUsername);
+  return {
+    id:`APPUSER-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+    userId:`APPUSER-${cleanUsername}`,
+    email,
+    username:cleanUsername,
+    name:name || cleanUsername,
+    role:normalizeRole(role),
+    facilityIds:Array.isArray(facilityIds) ? facilityIds : [],
+    locationId:Array.isArray(facilityIds) ? facilityIds[0] || "" : "",
+    status:"Active",
+    active:true,
+    appLogin:true,
+    passwordSalt:salt,
+    passwordHash,
+    createdAt:new Date().toISOString(),
+  };
+}
+
+async function findMaintForgeUsernameLogin(username="", password="") {
+  const cleanUsername = normalizeUsername(username);
+  if(!cleanUsername || !password) return { ok:false, error:"Enter a username and password." };
+  try {
+    const rpc = await supabase.rpc("maintforge_username_login", { login_username:cleanUsername, login_password:password });
+    if(!rpc.error && rpc.data) {
+      const payload = Array.isArray(rpc.data) ? rpc.data[0] : rpc.data;
+      const ownerUserId = payload.owner_user_id || payload.ownerUserId || payload.user_id || "";
+      const ownerState = payload.organization_state || payload.owner_state || payload.data || null;
+      const appUser = payload.app_user || payload.user || null;
+      if(ownerUserId && ownerState && appUser) return { ok:true, ownerUserId, ownerState, appUser, source:"rpc" };
+    }
+  } catch(e) {}
+  try {
+    const { data, error } = await supabase.from("user_state").select("user_id,data").limit(1000);
+    if(error) return { ok:false, error:error.message || "Username login lookup failed." };
+    for(const row of (data || [])) {
+      const ownerState = normalizeLoadedUserState(row.data || {}, row.user_id || "");
+      const users = Array.isArray(ownerState.organizationUsers) ? ownerState.organizationUsers : [];
+      for(const u of users) {
+        if(normalizeUsername(u.username || "") !== cleanUsername) continue;
+        const passOk = await passwordMatchesMaintForgeUser(u, password);
+        if(!passOk) return { ok:false, error:"Invalid username or password." };
+        if(!(u.facilityIds||[]).length && !isOrganizationAdminRole(u.role)) return { ok:false, error:"Your account is not assigned to an active facility. Contact your administrator." };
+        return { ok:true, ownerUserId:row.user_id, ownerState, appUser:u, source:"user_state_scan" };
+      }
+    }
+    return { ok:false, error:"Invalid username or password." };
+  } catch(e) {
+    return { ok:false, error:e?.message || "Username login failed." };
+  }
+}
+
 
 function ensureCurrentOrganizationAdmin(state={}, currentUser=null) {
   const currentEmail = normalizeEmail(currentUser?.email);
@@ -1393,13 +1489,14 @@ function reducer(state, { type, payload }) {
         facilityIds:Array.isArray(payload.facilityIds) ? payload.facilityIds : (payload.locationId ? [payload.locationId] : []),
         updatedAt:new Date().toISOString(),
       };
-      const users = normalizeOrgUsers(state).filter(u => normalizeEmail(u.email) !== email);
+      const username = normalizeUsername(nextUser.username);
+      const users = normalizeOrgUsers(state).filter(u => normalizeEmail(u.email) !== email && (!username || normalizeUsername(u.username) !== username));
       return { ...state, organizationUsers:[nextUser, ...users] };
     }
     case "REMOVE_ORG_USER": {
       const email = normalizeEmail(payload?.email || payload);
       if(!email) return state;
-      const users = normalizeOrgUsers(state).filter(u => normalizeEmail(u.email) !== email);
+      const users = normalizeOrgUsers(state).filter(u => normalizeEmail(u.email) !== email && normalizeUsername(u.username) !== normalizeUsername(payload));
       return { ...state, organizationUsers:users };
     }
     case "ADD_USER_INVITE": {
@@ -1871,14 +1968,14 @@ function HelpCenter({ state, onClose }) {
     ["Organization", "The top-level company/account. Organization Owners can manage all facilities and company-wide reports."],
     ["Facility", "A separate shop, branch, building, warehouse, or site. Facility data is isolated from other facilities."],
     ["Area", "A building, department, zone, section, or physical area inside one facility."],
-    ["Foundation", "The Settings section where the Organization, Facilities, Areas, Users, Roles, Invitations, Numbering, and Migration Center are managed."],
+    ["Foundation", "The Settings section where the Organization, Facilities, Areas, Users, Roles, Numbering, and Migration Center are managed."],
     ["Migration", "Copies PM tasks, inspection tasks, and task templates from one facility to another. The copy is independent and can be edited without changing the original."],
     ["Legacy Unassigned Data", "Older records created before the facility system existed. Use the repair banner to assign them to the correct facility."],
   ];
   const topics = [
     isOwner && ["Create and manage facilities", "Go to Settings → Foundation → Facilities. Add the facility name, address, contact info, and save. Use the facility switcher in the header to work inside that facility."],
     isOwner && ["Fix records showing only under Organization", "Switch to the correct facility, use the unassigned data repair banner, and assign the old records to that facility. After that, the records show inside the facility and reports filter correctly."],
-    isOwner && ["Invite users", "Go to Settings → Foundation → Invitations. Enter the user's email, choose the role, assign the facility, and send the invite. The user creates their own account from the invite."],
+    isOwner && ["Create users", "Go to Settings → Users & Roles. Enter a username, temporary password, role, and facility access. The user signs in with that username and only sees assigned facility data."],
     isOwner && ["Migrate templates", "Go to Settings → Foundation → Migration Center. Choose From Facility and To Facility, select PM task library, inspection task library, or general tasks, then Copy Selected. The destination facility receives independent copies."],
     isAdmin && ["Manage equipment", "Open Equipment, add or edit equipment for the active facility, assign the Facility and Area, add usage type, status, attachments, and inventory-related details."],
     isAdmin && ["Manage inventory", "Open Parts or Equipment Inventory. Add parts, quantities, units, reorder levels, vendors, and link parts to models/equipment where needed."],
@@ -8598,7 +8695,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
   const [reviewRequest, setReviewRequest] = useState(null);
 
   useEffect(()=>{
-    if(isOperatorPortal || !session?.user?.id) return;
+    if(isOperatorPortal || !activeSession?.user?.id) return;
     let cancelled = false;
     async function loadPublicRequests(){
       try {
@@ -8631,7 +8728,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
       } catch(e) { console.warn("Public WO requests load failed:", e); }
     }
     loadPublicRequests();
-  }, [isOperatorPortal, session?.user?.id]);
+  }, [isOperatorPortal, activeSession?.user?.id]);
 
   useEffect(()=>{
     const missing = allFacilities.filter(f=>!facilityQrIds[f]);
@@ -8646,7 +8743,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
     if(isOperatorPortal && facilityFromToken && facility !== facilityFromToken) setFacility(facilityFromToken);
   }, [portalToken, facilityFromToken]);
   useEffect(()=>{
-    if(isOperatorPortal || !session?.user?.id) return;
+    if(isOperatorPortal || !activeSession?.user?.id) return;
     const timer = setTimeout(()=>{
       (allFacilities||[]).forEach(fac=>{
         const token = getFacilityQrToken(settings, fac);
@@ -8654,7 +8751,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
       });
     }, 600);
     return ()=>clearTimeout(timer);
-  }, [isOperatorPortal, session?.user?.id, allFacilities.join("|"), JSON.stringify(facilityQrIds), (state.equipment||[]).length, settings.companyName]);
+  }, [isOperatorPortal, activeSession?.user?.id, allFacilities.join("|"), JSON.stringify(facilityQrIds), (state.equipment||[]).length, settings.companyName]);
 
 
   const exactEqForFacility = equipmentSource.filter(e=>equipmentMatchesFacility(e, facility));
@@ -8698,7 +8795,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
       photos: requestForm.photos || [],
       status:"New",
       portalToken,
-      ownerUserId: publicPortal?.owner_user_id || session?.user?.id || "",
+      ownerUserId: publicPortal?.owner_user_id || activeSession?.user?.id || "",
     };
     if(isOperatorPortal && publicMode) {
       const ok = await submitPublicWORequest(req);
@@ -8745,8 +8842,8 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
 
   const printQR = async (fac) => {
     const token = getFacilityQrToken(settings, fac);
-    const url = requestUrlForFacility(fac, settings, session?.user?.id || "");
-    await upsertWORequestPortal({ token, ownerUserId:session?.user?.id, facility:fac, settings, equipment:state.equipment||[] });
+    const url = requestUrlForFacility(fac, settings, activeSession?.user?.id || "");
+    await upsertWORequestPortal({ token, ownerUserId:activeSession?.user?.id, facility:fac, settings, equipment:state.equipment||[] });
     const win = window.open("","_blank");
     if(!win) { alert("Pop-up blocked. Allow pop-ups to print the QR code."); return; }
     win.document.write(`<html><head><title>Work Order Request QR</title><style>
@@ -8896,9 +8993,11 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
   const foundationState = { ...state, settings:form, locations:normalizeMaintForgeLocations({ ...state, settings:form }) };
   const orgLocations = normalizeMaintForgeLocations(foundationState);
   const orgAreas = normalizeMaintForgeAreas(foundationState);
+  const [userForm, setUserForm] = useState({ username:"", password:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] });
   const [inviteForm, setInviteForm] = useState({ email:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] });
   const organizationUsers = normalizeOrgUsers(state, currentUser);
   const currentUserEmail = normalizeEmail(currentUser?.email);
+  const existingUsernameUser = organizationUsers.find(u => normalizeUsername(u.username) && normalizeUsername(u.username) === normalizeUsername(userForm.username));
   const inviteEmail = normalizeEmail(inviteForm.email);
   const existingUserForInvite = organizationUsers.find(u => normalizeEmail(u.email) === inviteEmail);
   const existingInviteForEmail = (state.userInvites||[]).find(inv => normalizeEmail(inv.email) === inviteEmail);
@@ -8914,7 +9013,7 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
     { id:"admin-organization", label:"Organization", icon:"🏢", sub:"Company info and logos" },
     { id:"admin-preferences", label:"Work Order Defaults", icon:"🛠️", sub:"Theme, costs, priority" },
     { id:"admin-facilities", label:"Facilities & Areas", icon:"🏭", sub:"Facility scope and areas" },
-    { id:"admin-users", label:"Users & Roles", icon:"👥", sub:"Access and invitations" },
+    { id:"admin-users", label:"Users & Roles", icon:"👥", sub:"Access and user accounts" },
     { id:"admin-appearance", label:"Appearance", icon:"🎨", sub:"Accent color" },
     { id:"admin-danger", label:"Danger Zone", icon:"⚠️", sub:"Reset tools" },
   ];
@@ -8972,6 +9071,33 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
   };
 
   const [migrationForm, setMigrationForm] = useState({ fromId:orgLocations[0]?.id || "", toId:orgLocations[1]?.id || orgLocations[0]?.id || "", pmTasks:true, inspectionTasks:true, tasks:true });
+  const toggleUserFacility = (id) => setUserForm(f => {
+    const set = new Set(Array.isArray(f.facilityIds) ? f.facilityIds : []);
+    if(set.has(id)) set.delete(id); else set.add(id);
+    return { ...f, facilityIds:Array.from(set) };
+  });
+  const createAdminMadeUser = async () => {
+    const username = normalizeUsername(userForm.username);
+    if(!username) return alert("Enter a username.");
+    if(username.includes("@")) return alert("Use a simple username without @. Email login is only for the main Supabase account.");
+    if((userForm.password||"").length < 6) return alert("Password must be at least 6 characters.");
+    if(existingUsernameUser) return alert(`Username ${username} already exists. Choose a different username.`);
+    const facilityIds = Array.isArray(userForm.facilityIds) && userForm.facilityIds.length ? userForm.facilityIds : [];
+    if(!isOrganizationAdminRole(userForm.role) && facilityIds.length === 0) return alert("Assign at least one facility so this user can see data.");
+    const newUser = await buildMaintForgeAppUser({ ...userForm, username, facilityIds });
+    dispatch({ type:"UPSERT_ORG_USER", payload:newUser });
+    setUserForm({ username:"", password:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] });
+    alert(`User ${username} created. They can now sign in with that username and password and will only see their assigned facility data.`);
+  };
+  const resetAdminMadeUserPassword = async (user) => {
+    const nextPass = prompt(`Enter a new password for ${user.username || user.name}:`);
+    if(!nextPass) return;
+    if(nextPass.length < 6) return alert("Password must be at least 6 characters.");
+    const salt = makeSalt();
+    const passwordHash = await hashMaintForgePassword(nextPass, salt);
+    dispatch({ type:"UPSERT_ORG_USER", payload:{ ...user, passwordSalt:salt, passwordHash, status:"Active", active:true } });
+    alert("Password reset. Give the new password to the user.");
+  };
   const toggleInviteFacility = (id) => setInviteForm(f => {
     const set = new Set(Array.isArray(f.facilityIds) ? f.facilityIds : []);
     if(set.has(id)) set.delete(id); else set.add(id);
@@ -9308,7 +9434,7 @@ ${payload.inviteUrl}`));
             <div style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"flex-start", marginBottom:10 }}>
               <div>
                 <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:900, color:T.text }}>👥 Users & Roles</div>
-                <div style={{ fontSize:11, color:T.muted, marginTop:3 }}>The signed-in creator is automatically the Organization Administrator. Invited users can be new or existing accounts; accepting the invite connects them to this shared organization.</div>
+                <div style={{ fontSize:11, color:T.muted, marginTop:3 }}>The signed-in creator is automatically the Organization Administrator. Create username/password users here, assign their role, and lock them to the correct facility data.</div>
               </div>
               <span style={{ fontSize:11, fontWeight:800, color:T.green, background:T.greenLt, border:`1px solid ${T.border}`, borderRadius:999, padding:"5px 9px", whiteSpace:"nowrap" }}>Current Admin: {currentUserEmail || "Signed-in user"}</span>
             </div>
@@ -9331,10 +9457,10 @@ ${payload.inviteUrl}`));
             <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:900, color:T.text, marginBottom:8 }}>Registered Users</div>
             <div style={{ display:"grid", gap:8, marginBottom:12 }}>
               {organizationUsers.map(user => (
-                <div key={user.email} style={{ display:"grid", gridTemplateColumns:"minmax(180px,1.2fr) minmax(160px,.9fr) minmax(160px,1fr) auto", gap:8, alignItems:"center", padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.surface }}>
+                <div key={user.email || user.username} style={{ display:"grid", gridTemplateColumns:"minmax(180px,1.2fr) minmax(160px,.9fr) minmax(160px,1fr) auto", gap:8, alignItems:"center", padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.surface }}>
                   <div style={{ minWidth:0 }}>
-                    <div style={{ fontSize:13, fontWeight:800, color:T.text, overflow:"hidden", textOverflow:"ellipsis" }}>{user.name || user.email}</div>
-                    <div style={{ fontSize:11, color:T.muted, overflow:"hidden", textOverflow:"ellipsis" }}>{user.email}{user.email===currentUserEmail ? " — you" : ""}</div>
+                    <div style={{ fontSize:13, fontWeight:800, color:T.text, overflow:"hidden", textOverflow:"ellipsis" }}>{user.name || user.username || user.email}</div>
+                    <div style={{ fontSize:11, color:T.muted, overflow:"hidden", textOverflow:"ellipsis" }}>{user.username ? `Username: ${user.username}` : user.email}{user.email===currentUserEmail ? " — you" : ""}{user.status==="Disabled" ? " — disabled" : ""}</div>
                   </div>
                   <select style={sel} value={normalizeRole(user.role)} onChange={e=>saveRegisteredUserRole(user, { role:e.target.value })}>
                     {ROLE_OPTIONS.map(r=><option key={r.value} value={r.value}>{r.label}</option>)}
@@ -9343,53 +9469,37 @@ ${payload.inviteUrl}`));
                     {(user.facilityIds||[]).length ? (user.facilityIds||[]).map(id=>locationNameForId(foundationState,id)).filter(Boolean).join(", ") : "All facilities / organization level"}
                   </div>
                   <div style={{ display:"flex", gap:6, justifyContent:"flex-end" }}>
-                    {user.email!==currentUserEmail && <Btn small variant="danger" onClick={()=>confirm(`Remove ${user.email} from this organization list?`)&&dispatch({type:"REMOVE_ORG_USER", payload:user.email})}>Remove</Btn>}
+                    {user.appLogin && <Btn small variant="secondary" onClick={()=>resetAdminMadeUserPassword(user)}>Reset Password</Btn>}
+                    {user.email!==currentUserEmail && user.appLogin && <Btn small variant="secondary" onClick={()=>dispatch({type:"UPSERT_ORG_USER", payload:{...user,status:user.status==="Disabled"?"Active":"Disabled",active:user.status==="Disabled"}})}>{user.status==="Disabled"?"Enable":"Disable"}</Btn>}
+                    {user.email!==currentUserEmail && <Btn small variant="danger" onClick={()=>confirm(`Remove ${user.username || user.email} from this organization list?`)&&dispatch({type:"REMOVE_ORG_USER", payload:user.email || user.username})}>Remove</Btn>}
                   </div>
                 </div>
               ))}
             </div>
 
             <div style={{ padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.card }}>
-              <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:8 }}>Invite New User</div>
+              <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:8 }}>Create Username / Password User</div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                <input style={inp} placeholder="Full name" value={inviteForm.name} onChange={e=>setInviteForm(f=>({...f,name:e.target.value}))} />
-                <input style={inp} placeholder="Email to invite" value={inviteForm.email} onChange={e=>setInviteForm(f=>({...f,email:e.target.value}))} />
-                <select style={sel} value={inviteForm.role} onChange={e=>setInviteForm(f=>({...f,role:e.target.value}))}>{ROLE_OPTIONS.filter(r=>r.value!=="organization_admin").map(r=><option key={r.value} value={r.value}>{r.label}</option>)}</select>
-                <div style={{ fontSize:11, color:existingUserForInvite?T.red:T.muted, alignSelf:"center" }}>
-                  {existingUserForInvite ? `Already registered as ${roleLabel(existingUserForInvite.role)}. Do not invite again.` : existingInviteForEmail ? "Pending invite already exists. Creating a new one will replace it." : "New or existing users can accept after you assign role and facility access."}
-                </div>
+                <input style={inp} placeholder="Full name" value={userForm.name} onChange={e=>setUserForm(f=>({...f,name:e.target.value}))} />
+                <input style={inp} placeholder="Username" value={userForm.username} onChange={e=>setUserForm(f=>({...f,username:e.target.value}))} />
+                <input style={inp} type="password" placeholder="Temporary password" value={userForm.password} onChange={e=>setUserForm(f=>({...f,password:e.target.value}))} />
+                <select style={sel} value={userForm.role} onChange={e=>setUserForm(f=>({...f,role:e.target.value}))}>{ROLE_OPTIONS.filter(r=>r.value!=="organization_admin").map(r=><option key={r.value} value={r.value}>{r.label}</option>)}</select>
               </div>
               <div style={{ marginTop:10, display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:6 }}>
                 {orgLocations.map(loc=><label key={loc.id} style={{ display:"flex", gap:7, alignItems:"center", fontSize:12, color:T.text, border:`1px solid ${T.border}`, borderRadius:8, padding:"7px 8px", background:T.surface }}>
-                  <input type="checkbox" checked={(inviteForm.facilityIds||[]).includes(loc.id)} onChange={()=>toggleInviteFacility(loc.id)} />
+                  <input type="checkbox" checked={(userForm.facilityIds||[]).includes(loc.id)} onChange={()=>toggleUserFacility(loc.id)} />
                   <span>{loc.name}</span>
                 </label>)}
               </div>
               <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginTop:10, alignItems:"center", flexWrap:"wrap" }}>
-                <div style={{ fontSize:11, color:T.muted }}>Manual mode: create an invite URL, copy it, and send it yourself. Existing registered users can sign in from the invite link to join this organization.</div>
-                <Btn small onClick={createSafeInvite}>Create Invite</Btn>
+                <div style={{ fontSize:11, color:existingUsernameUser?T.red:T.muted }}>{existingUsernameUser ? "That username already exists." : "The user will log in with this username/password and the app will lock data to the assigned facilities."}</div>
+                <Btn small onClick={createAdminMadeUser}>Create User</Btn>
               </div>
             </div>
 
-            {(state.userInvites||[]).length===0 ? <div style={{ marginTop:10, padding:10, border:`1px dashed ${T.border}`, borderRadius:8, background:T.surface, fontSize:12, color:T.muted }}>No pending invite records. Create one to generate a manual invite URL you can copy and send.</div> : <div style={{ marginTop:10, display:"grid", gap:6 }}>
-              <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text }}>Pending Invite Records</div>
-              {(state.userInvites||[]).slice(0,8).map(inv=>{ const url = inv.inviteUrl || inviteUrlForToken(inv.token, inv.email, inv.ownerUserId || state.ownerUserId || currentUser?.id || "", inv.role, inv.facilityIds || (inv.locationId ? [inv.locationId] : [])); return <div key={inv.id} style={{ display:"grid", gridTemplateColumns:"minmax(190px,1fr) minmax(140px,.65fr) minmax(160px,.9fr) minmax(220px,1.2fr) auto", gap:8, alignItems:"center", fontSize:12, color:T.subtext, padding:8, border:`1px solid ${T.border}`, borderRadius:6, background:T.surface }}>
-                <div><b style={{ color:T.text }}>{inv.email}</b><div style={{ color:T.muted, fontSize:11 }}>{inv.name || "No name entered"}</div><div style={{ color:T.muted, fontSize:11 }}>{inv.locationName || (inv.facilityIds||[]).map(id=>locationNameForId(foundationState,id)).join(", ") || "No facility selected"}</div></div>
-                <div>{roleLabel(normalizeRole(inv.role))}</div>
-                <div style={{ minWidth:0 }}>
-                  <div style={{ fontSize:10, color:T.muted, fontWeight:800, textTransform:"uppercase", letterSpacing:.4 }}>Invite Code</div>
-                  <input readOnly value={inv.token || ""} onFocus={e=>e.target.select()} style={{ ...inp, fontSize:11, padding:"7px 8px", height:34, width:"100%", fontFamily:"monospace" }} />
-                </div>
-                <div style={{ minWidth:0 }}>
-                  <div style={{ fontSize:10, color:T.muted, fontWeight:800, textTransform:"uppercase", letterSpacing:.4 }}>Invite URL</div>
-                  <input readOnly value={url} onFocus={e=>e.target.select()} style={{ ...inp, fontSize:11, padding:"7px 8px", height:34, width:"100%" }} />
-                </div>
-                <div style={{ display:"flex", gap:6, justifyContent:"flex-end", flexWrap:"wrap" }}>
-                  <Btn small variant="secondary" onClick={()=>copyTextToClipboard(inv.token || "").then(()=>alert("Invite code copied.")).catch(()=>prompt("Copy this invite code:", inv.token || ""))}>Copy Code</Btn>
-                  <Btn small variant="secondary" onClick={()=>copyInviteUrl(inv)}>Copy URL</Btn>
-                  <Btn small variant="danger" onClick={()=>dispatch({type:"DELETE_USER_INVITE", payload:inv.id})}>Remove</Btn>
-                </div>
-              </div>})}
+            {(state.userInvites||[]).length>0 && <div style={{ marginTop:10, padding:10, border:`1px dashed ${T.border}`, borderRadius:8, background:T.surface, fontSize:12, color:T.muted }}>
+              Old invite records are no longer used. You can remove them safely; username/password users replace the invite flow.
+              <div style={{ marginTop:8 }}><Btn small variant="danger" onClick={()=>{ if(confirm("Remove all old pending invite records?")) (state.userInvites||[]).forEach(inv=>dispatch({type:"DELETE_USER_INVITE", payload:inv.id || inv.email})); }}>Remove Old Invites</Btn></div>
             </div>}
           </div>
 
@@ -10498,6 +10608,9 @@ export default function App() {
   const [systemThemeTick, setSystemThemeTick] = useState(0);
 
   const [session, setSession] = useState(null);
+  const [appSession, setAppSession] = useState(null);
+  const activeSession = session || appSession;
+  const activeUser = activeSession?.user || null;
   const [authLoading, setAuthLoading] = useState(true);
   const [authMode, setAuthMode] = useState("login");
   const [authEmail, setAuthEmail] = useState("");
@@ -10516,20 +10629,7 @@ export default function App() {
 
   useEffect(() => {
     if(publicWORequestMode) { setAuthLoading(false); return; }
-    try {
-      const inviteInfo = readInviteInfoFromCurrentUrl();
-      if(inviteInfo?.token) {
-        savePendingInviteInfo(inviteInfo);
-        setManualInviteInfo(inviteInfo);
-        if(inviteInfo.email) setAuthEmail(inviteInfo.email);
-        setAuthMode("signup");
-        setAuthInfoMsg(inviteInfo.email ? `Invite link detected for ${inviteInfo.email}. Create an account with this email, or sign in if you already registered.` : "Invite link detected. Create an account, or sign in if you already registered.");
-      } else {
-        // A stale pending invite from an old failed attempt should never block a normal login.
-        // Fresh invite acceptance is driven by the invite URL currently open in the browser.
-        clearPendingInviteInfo();
-      }
-    } catch(e) {}
+    try { clearPendingInviteInfo(); } catch(e) {}
     loadSession(setSession, setAuthLoading);
   }, [publicWORequestMode]);
 
@@ -10560,14 +10660,15 @@ export default function App() {
 
   /* Load user data from Supabase after login; migrate local storage if cloud is empty */
   useEffect(() => {
-    if (!session) {
+    if (!activeSession) {
       setDataLoaded(false);
       return;
     }
+    if(appSession?.maintForgeAppLogin) return;
     let cancelled = false;
     async function loadData() {
       try {
-        const ownRow = await fetchUserStateRow(session.user.id);
+        const ownRow = await fetchUserStateRow(activeUser.id);
         const ownData = ownRow?.data || null;
         if (cancelled) return;
 
@@ -10577,7 +10678,7 @@ export default function App() {
           const invitedEmail = normalizeEmail(pendingInviteInfo.email || "");
           const signedInEmail = normalizeEmail(session.user.email || "");
           if(invitedEmail && signedInEmail && invitedEmail !== signedInEmail) {
-            dispatch({ type:"REPLACE_STATE", payload:{ ...blankUserState(session.user.id), setupComplete:true, inviteConnectionError:`This invite was created for ${invitedEmail}, but you are signed in as ${signedInEmail}. Sign out and sign in with the invited email.` } });
+            dispatch({ type:"REPLACE_STATE", payload:{ ...blankUserState(activeUser.id), setupComplete:true, inviteConnectionError:`This invite was created for ${invitedEmail}, but you are signed in as ${signedInEmail}. Sign out and sign in with the invited email.` } });
             return;
           }
           const inviteMatch = await resolveInviteToOrganizationState(pendingInviteInfo, session.user);
@@ -10611,7 +10712,7 @@ export default function App() {
           // Critical: never silently fall back to the invited user's old personal workspace when an
           // invite link is being accepted. That is what made existing users keep seeing old data.
           dispatch({ type:"REPLACE_STATE", payload:{
-            ...blankUserState(session.user.id),
+            ...blankUserState(activeUser.id),
             setupComplete:true,
             inviteConnectionError:"Invite link was detected, but the organization invite record could not be found. Ask the Organization Administrator to create and send a fresh invite link after this update is installed.",
           } });
@@ -10662,7 +10763,7 @@ export default function App() {
           }
           if(ownData?.invitedMember) {
             dispatch({ type:"REPLACE_STATE", payload:{
-              ...blankUserState(session.user.id),
+              ...blankUserState(activeUser.id),
               setupComplete:true,
               inviteConnectionError:"This account has an accepted invite pointer, but the organization workspace could not be loaded. Ask the Organization Administrator to send a fresh invite or verify the organization data is saved in the cloud.",
             } });
@@ -10672,7 +10773,7 @@ export default function App() {
 
         if (ownData?.invitedMember) {
           dispatch({ type:"REPLACE_STATE", payload:{
-            ...blankUserState(session.user.id),
+            ...blankUserState(activeUser.id),
             setupComplete:true,
             inviteConnectionError:"This account is marked as invited, but it does not have a valid organization connection. Ask the Organization Administrator to send a fresh invite link.",
           } });
@@ -10680,12 +10781,12 @@ export default function App() {
         }
 
         if (ownData && Object.keys(ownData).length > 0 && !ownData.invitedMember) {
-          const loadedState = normalizeLoadedUserState(ownData, session.user.id);
-          dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(loadedState, session.user) });
+          const loadedState = normalizeLoadedUserState(ownData, activeUser.id);
+          dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(loadedState, activeUser) });
         } else {
           // New users start with a clean platform, and the first signed-in account
           // becomes the Organization Administrator automatically.
-          dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(blankUserState(session.user.id), session.user) });
+          dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(blankUserState(activeUser.id), activeUser) });
           try { localStorage.removeItem("ncaState"); } catch(e) {}
         }
       } catch (e) {
@@ -10696,39 +10797,52 @@ export default function App() {
     }
     loadData();
     return () => { cancelled = true; };
-  }, [session, manualInviteInfo?.token, manualInviteInfo?.ownerUserId]);
+  }, [activeSession?.user?.id, manualInviteInfo?.token, manualInviteInfo?.ownerUserId]);
 
   /* Save state to Supabase, debounced */
   useEffect(() => {
-    if (!session || !dataLoaded) return;
+    if (!activeSession || !dataLoaded) return;
     if (state.inviteConnectionError) { setSyncStatus("idle"); return; }
     setSyncStatus("saving");
     const timer = setTimeout(async () => {
       try {
-        const cloudOwnerId = state.ownerUserId || state.organizationOwnerId || session.user.id;
-        const cloudState = prepareSharedOrganizationStateForCloudSave(state, session.user);
-        const { error } = await supabase
-          .from("user_state")
-          .upsert({
-            user_id: cloudOwnerId,
-            data: cloudState,
-            updated_at: new Date().toISOString(),
-          }, { onConflict:"user_id" });
+        const cloudOwnerId = state.ownerUserId || state.organizationOwnerId || activeUser.id;
+        const cloudState = prepareSharedOrganizationStateForCloudSave(state, activeUser);
+        let error = null;
+        if(appSession?.maintForgeAppLogin) {
+          const rpcSave = await supabase.rpc("maintforge_username_save", {
+            login_username:appSession.username || activeUser.username,
+            login_password:appSession.password || "",
+            organization_state:cloudState,
+          });
+          error = rpcSave.error || null;
+          if(error) console.error("Username save RPC error; falling back to user_state upsert:", error);
+        }
+        if(!appSession?.maintForgeAppLogin || error) {
+          const saveResult = await supabase
+            .from("user_state")
+            .upsert({
+              user_id: cloudOwnerId,
+              data: cloudState,
+              updated_at: new Date().toISOString(),
+            }, { onConflict:"user_id" });
+          error = saveResult.error;
+        }
 
         if (error) {
           console.error("Save error:", error);
           setSyncStatus("error");
         } else {
-          if(cloudOwnerId !== session.user.id) {
+          if(cloudOwnerId !== activeUser.id) {
             await saveInvitePointerForUser(
-              session.user.id,
+              activeUser.id,
               cloudOwnerId,
-              session.user.email,
-              buildMemberPointerFromOrganizationState(state, session.user)
+              activeUser.email,
+              buildMemberPointerFromOrganizationState(state, activeUser)
             );
           }
           setSyncStatus("saved");
-          try { localStorage.setItem("ncaState", JSON.stringify(ensureCurrentOrganizationAdmin(cloudState, session.user))); localStorage.setItem("ncaState:lastUserId", session.user.id); } catch(e) {}
+          try { localStorage.setItem("ncaState", JSON.stringify(ensureCurrentOrganizationAdmin(cloudState, activeUser))); localStorage.setItem("ncaState:lastUserId", activeUser.id); } catch(e) {}
           setTimeout(() => setSyncStatus("idle"), 2000);
         }
       } catch (e) {
@@ -10737,7 +10851,7 @@ export default function App() {
       }
     }, 1000);
     return () => clearTimeout(timer);
-  }, [state, session, dataLoaded]);
+  }, [state, activeSession?.user?.id, dataLoaded]);
 
 
   /* Auto-create Preventive Maintenance Service Work Orders when PM schedules are due */
@@ -10910,16 +11024,46 @@ export default function App() {
 
   async function handleLogin() {
     setAuthError(""); setAuthInfoMsg("");
-    if(!authEmail.trim()) { setAuthError("Please enter your email."); return; }
-    if(!validateEmail(authEmail.trim())) { setAuthError("Please enter a valid email address."); return; }
+    const loginId = authEmail.trim();
+    if(!loginId) { setAuthError("Please enter your username or email."); return; }
     if(!authPassword) { setAuthError("Please enter your password."); return; }
     setAuthBusy(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email: authEmail.trim(),
-      password: authPassword,
-    });
-    setAuthBusy(false);
-    if (error) setAuthError(error.message);
+    try {
+      if(loginId.includes("@")) {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: loginId,
+          password: authPassword,
+        });
+        if (error) setAuthError(error.message);
+      } else {
+        const result = await findMaintForgeUsernameLogin(loginId, authPassword);
+        if(!result.ok) {
+          setAuthError(result.error || "Invalid username or password.");
+        } else {
+          const appUser = result.appUser || {};
+          const user = {
+            id:appUser.userId || appUser.id || `APPUSER-${normalizeUsername(loginId)}`,
+            email:appUser.email || emailForUsername(loginId),
+            username:normalizeUsername(appUser.username || loginId),
+            user_metadata:{ name:appUser.name || appUser.username || loginId, username:normalizeUsername(appUser.username || loginId) },
+            appLogin:true,
+          };
+          const loaded = normalizeLoadedUserState(result.ownerState || {}, result.ownerUserId || "");
+          const scoped = ensureCurrentOrganizationAdmin({ ...loaded, ownerUserId:result.ownerUserId || loaded.ownerUserId, organizationOwnerId:result.ownerUserId || loaded.organizationOwnerId }, user);
+          if(!isOrganizationAdminRole(scoped.userRole) && !(scoped.userFacilityIds||[]).length) {
+            setAuthError("Your account is not assigned to an active facility. Contact your administrator.");
+          } else {
+            setAppSession({ user, maintForgeAppLogin:true, ownerUserId:result.ownerUserId, source:result.source, username:user.username, password:authPassword });
+            dispatch({ type:"REPLACE_STATE", payload:{ ...scoped, appLoginActive:true } });
+            setDataLoaded(true);
+            setAuthPassword("");
+            setAuthInfoMsg(`✓ Signed in as ${user.username}.`);
+          }
+        }
+      }
+    } finally {
+      setAuthBusy(false);
+    }
   }
 
   async function handleSignup() {
@@ -11049,6 +11193,7 @@ export default function App() {
 
   async function handleLogout() {
     try { localStorage.removeItem("ncaState"); } catch(e) {}
+    setAppSession(null);
     await supabase.auth.signOut();
   }
 
@@ -11081,7 +11226,7 @@ export default function App() {
   const maintLocations = normalizeMaintForgeLocations(state);
 
   useEffect(() => {
-    if(!dataLoaded || !session) return;
+    if(!dataLoaded || !activeSession) return;
     const savedFacilityId = readMFLocal(MF_LAST_FACILITY_KEY, "");
     const role = normalizeRole(state.userRole || "viewer");
     const assignedIds = invitedUserFacilityIdsFrom({ facilityIds:state.userFacilityIds });
@@ -11100,18 +11245,18 @@ export default function App() {
     if(nextFacility && nextFacility !== (state.activeLocationId || "__all")) {
       dispatch({ type:"SET_ACTIVE_LOCATION", payload:nextFacility });
     }
-  }, [dataLoaded, session?.user?.id, maintLocations.length, state.userRole, JSON.stringify(state.userFacilityIds||[])]);
+  }, [dataLoaded, activeSession?.user?.id, maintLocations.length, state.userRole, JSON.stringify(state.userFacilityIds||[])]);
 
   useEffect(() => {
-    if(!dataLoaded || !session) return;
+    if(!dataLoaded || !activeSession) return;
     writeMFLocal(MF_LAST_FACILITY_KEY, state.activeLocationId || "__all");
-  }, [dataLoaded, session?.user?.id, state.activeLocationId]);
+  }, [dataLoaded, activeSession?.user?.id, state.activeLocationId]);
 
   const activeLocationLabel = locationNameForId(state, state.activeLocationId || "__all");
   const visibleState = scopedStateForActiveLocation(state);
 
   useEffect(() => {
-    if(!dataLoaded || !session) return;
+    if(!dataLoaded || !activeSession) return;
     const morovis = morovisFacilityForState(state);
     if(!morovis?.id) return;
     const needsRepair = countLegacyUnassignedRecords(state).total > 0 ||
@@ -11119,7 +11264,7 @@ export default function App() {
     if(needsRepair && !state.legacyRepairNote?.morovisMigration) {
       dispatch({ type:"MIGRATE_LEGACY_TO_MOROVIS" });
     }
-  }, [dataLoaded, session?.user?.id, state.activeLocationId, state.equipment?.length, state.workOrders?.length, state.locations?.length]);
+  }, [dataLoaded, activeSession?.user?.id, state.activeLocationId, state.equipment?.length, state.workOrders?.length, state.locations?.length]);
 
   const initials = profile.firstName&&profile.lastName ? `${profile.firstName[0]}${profile.lastName[0]}`.toUpperCase() : "JM";
   const displayName = profile.firstName ? `${profile.firstName} ${profile.lastName}` : "J. Martinez";
@@ -11127,7 +11272,7 @@ export default function App() {
   const pages = {
     dashboard:        <Dashboard        state={visibleState} dispatch={dispatch} setTab={setTab} onSettings={()=>setShowSettings(true)} />,
     workorders:       <WorkOrders       state={visibleState} dispatch={dispatch} woSettings={state.woSettings} onWOSettings={()=>setShowWOSettings(true)} />,
-    wo_requests:      <WorkOrderRequests state={visibleState} dispatch={dispatch} session={session} />,
+    wo_requests:      <WorkOrderRequests state={visibleState} dispatch={dispatch} session={activeSession} />,
     inspections:      <Inspections      state={visibleState} dispatch={dispatch} />,
     equipment:        <Equipment        state={visibleState} dispatch={dispatch} />,
     parts:            <Parts            state={visibleState} dispatch={dispatch} />,
@@ -11187,7 +11332,7 @@ export default function App() {
     return <div style={{ padding:40, fontSize:20, fontFamily:T.sans }}>Loading...</div>;
   }
 
-  if (!session) {
+  if (!activeSession) {
     const isSignup = authMode==="signup";
     return (
       <div style={{
@@ -11260,13 +11405,13 @@ export default function App() {
             </div>
           )}
 
-          <InviteCodeJoinPanel compact />
+          <div style={{ padding:"10px 12px", background:"#111827", border:"1px solid #374151", borderRadius:8, marginBottom:14, fontSize:12, color:"#9ca3af", lineHeight:1.4 }}>Admins use their email login. Created users use the username and password assigned in Settings → Users & Roles.</div>
 
-          {/* Email */}
-          <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#9ca3af", marginBottom:5 }}>Email</label>
+          {/* Username / Email */}
+          <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#9ca3af", marginBottom:5 }}>Username or Email</label>
           <input
-            type="email"
-            placeholder="you@example.com"
+            type="text"
+            placeholder="username or you@example.com"
             value={authEmail}
             onChange={(e)=>{ setAuthEmail(e.target.value); setAuthError(""); }}
             onKeyDown={(e)=>{ if(e.key==="Enter") (isSignup?handleSignup:handleLogin)(); }}
@@ -11353,7 +11498,7 @@ export default function App() {
 
   /* First-run setup wizard */
   /* While Supabase loads the user's data, show a brief loading screen */
-  if (session && !dataLoaded) {
+  if (activeSession && !dataLoaded) {
     return (
       <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, fontFamily:T.sans, color:T.text }}>
         <div style={{ textAlign:"center" }}>
@@ -11366,7 +11511,7 @@ export default function App() {
 
 
   /* First-run setup wizard */
-  if (session && !dataLoaded) {
+  if (activeSession && !dataLoaded) {
     return (
       <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, fontFamily:T.sans, color:T.text }}>
         <div style={{ textAlign:"center" }}>
@@ -11400,9 +11545,6 @@ export default function App() {
   if(!state.setupComplete) {
     return (
       <div style={{ minHeight:"100vh", background:T.bg }}>
-        <div style={{ maxWidth:760, margin:"0 auto", padding:"16px 16px 0", fontFamily:T.sans }}>
-          <InviteCodeJoinPanel />
-        </div>
         <SetupWizard onComplete={(setupData)=>dispatch({type:"COMPLETE_SETUP",payload:setupData})} />
       </div>
     );
@@ -11766,7 +11908,7 @@ export default function App() {
 
       {showProfile    && <UserProfile    state={state} dispatch={dispatch} onClose={()=>setShowProfile(false)} />}
       {showWOSettings && <WOSettings     state={state} dispatch={dispatch} onClose={()=>setShowWOSettings(false)} />}
-      {showSettings   && <SystemSettings state={state} dispatch={dispatch} currentUser={session?.user} onClose={()=>setShowSettings(false)} />}
+      {showSettings   && <SystemSettings state={state} dispatch={dispatch} currentUser={activeUser} onClose={()=>setShowSettings(false)} />}
       {showHelp       && <HelpCenter state={state} onClose={()=>setShowHelp(false)} />}
     </div>
   );
