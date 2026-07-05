@@ -9085,9 +9085,35 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
     const facilityIds = Array.isArray(userForm.facilityIds) && userForm.facilityIds.length ? userForm.facilityIds : [];
     if(!isOrganizationAdminRole(userForm.role) && facilityIds.length === 0) return alert("Assign at least one facility so this user can see data.");
     const newUser = await buildMaintForgeAppUser({ ...userForm, username, facilityIds });
+
+    // IMPORTANT: save the username user to the owner workspace immediately.
+    // Do not rely only on the delayed autosave, because admins often create a user,
+    // sign out right away, and then the username login cannot find the account.
+    const email = normalizeEmail(newUser.email);
+    const existingUsers = normalizeOrgUsers(state, currentUser).filter(u =>
+      normalizeEmail(u.email) !== email && normalizeUsername(u.username || "") !== username
+    );
+    const nextState = { ...state, organizationUsers:[newUser, ...existingUsers] };
+    const ownerId = state.ownerUserId || state.organizationOwnerId || currentUser?.id || activeUser?.id || "";
+    if(ownerId) {
+      const saveResult = await supabase
+        .from("user_state")
+        .upsert({
+          user_id:ownerId,
+          data:prepareSharedOrganizationStateForCloudSave(nextState, currentUser || activeUser),
+          updated_at:new Date().toISOString(),
+        }, { onConflict:"user_id" });
+      if(saveResult.error) {
+        console.error("Create username user save error:", saveResult.error);
+        alert("The user was created on this screen, but it did not save to Supabase. Do not sign out yet. Check Supabase user_state policies or run the username login SQL helper.");
+        return;
+      }
+    }
+
     dispatch({ type:"UPSERT_ORG_USER", payload:newUser });
+    setSyncStatus("saved");
     setUserForm({ username:"", password:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] });
-    alert(`User ${username} created. They can now sign in with that username and password and will only see their assigned facility data.`);
+    alert(`User ${username} created and saved. They can now sign in with that username and password and will only see their assigned facility data.`);
   };
   const resetAdminMadeUserPassword = async (user) => {
     const nextPass = prompt(`Enter a new password for ${user.username || user.name}:`);
