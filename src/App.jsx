@@ -11334,6 +11334,7 @@ export default function App() {
 
   if (!activeSession) {
     const isSignup = authMode==="signup";
+    const ownerSignupEnabled = isSignup;
     return (
       <div style={{
         minHeight:"100vh",
@@ -11359,7 +11360,7 @@ export default function App() {
             <div style={{ fontSize:36, marginBottom:6 }}>🔧</div>
             <h1 style={{ margin:0, fontSize:24, fontWeight:700 }}>WIN Maintenance</h1>
             <p style={{ opacity:.65, margin:"6px 0 0", fontSize:13 }}>
-              {isSignup ? "Create your account to get started" : "Sign in to your account"}
+              {ownerSignupEnabled ? "Owner setup only" : "Sign in with your assigned username or admin email"}
             </p>
           </div>
 
@@ -11369,27 +11370,17 @@ export default function App() {
             </div>
           )}
 
-          {/* Tab switcher */}
+          {/* Login is the default screen. Account creation is only for first owner setup. */}
           <div style={{ display:"flex", background:"#111827", borderRadius:8, padding:4, marginBottom:20 }}>
             <button
               onClick={()=>switchAuthMode("login")}
               style={{
                 flex:1, padding:"10px", borderRadius:6, border:"none", cursor:"pointer",
-                background: !isSignup ? "#3b82f6" : "transparent",
-                color: !isSignup ? "white" : "#9ca3af",
-                fontWeight:600, fontSize:13, transition:"all .15s"
+                background: !ownerSignupEnabled ? "#3b82f6" : "transparent",
+                color: !ownerSignupEnabled ? "white" : "#9ca3af",
+                fontWeight:700, fontSize:13, transition:"all .15s"
               }}>
               Sign In
-            </button>
-            <button
-              onClick={()=>switchAuthMode("signup")}
-              style={{
-                flex:1, padding:"10px", borderRadius:6, border:"none", cursor:"pointer",
-                background: isSignup ? "#3b82f6" : "transparent",
-                color: isSignup ? "white" : "#9ca3af",
-                fontWeight:600, fontSize:13, transition:"all .15s"
-              }}>
-              Create Account
             </button>
           </div>
 
@@ -11405,7 +11396,9 @@ export default function App() {
             </div>
           )}
 
-          <div style={{ padding:"10px 12px", background:"#111827", border:"1px solid #374151", borderRadius:8, marginBottom:14, fontSize:12, color:"#9ca3af", lineHeight:1.4 }}>Admins use their email login. Created users use the username and password assigned in Settings → Users & Roles.</div>
+          <div style={{ padding:"10px 12px", background:"#111827", border:"1px solid #374151", borderRadius:8, marginBottom:14, fontSize:12, color:"#9ca3af", lineHeight:1.4 }}>
+            Created users sign in here with the username/password assigned in Settings → Users & Roles. Admins can also sign in with their email/password.
+          </div>
 
           {/* Username / Email */}
           <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#9ca3af", marginBottom:5 }}>Username or Email</label>
@@ -11475,18 +11468,18 @@ export default function App() {
             {authBusy ? "Please wait..." : (isSignup ? "Create Account" : "Sign In")}
           </button>
 
-          {/* Footer toggle hint */}
+          {/* Owner setup is intentionally secondary so normal users are never pushed into organization creation. */}
           <div style={{ textAlign:"center", marginTop:16, fontSize:13, color:"#9ca3af" }}>
-            {isSignup ? (
+            {ownerSignupEnabled ? (
               <>Already have an account?{" "}
                 <button onClick={()=>switchAuthMode("login")} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontWeight:600, padding:0, fontSize:13 }}>
-                  Sign in
+                  Return to sign in
                 </button>
               </>
             ) : (
-              <>Don't have an account?{" "}
+              <>First owner/admin setup only?{" "}
                 <button onClick={()=>switchAuthMode("signup")} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontWeight:600, padding:0, fontSize:13 }}>
-                  Create one
+                  Create owner account
                 </button>
               </>
             )}
