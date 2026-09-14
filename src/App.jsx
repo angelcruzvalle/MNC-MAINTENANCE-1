@@ -9326,12 +9326,12 @@ ${payload.inviteUrl}`));
             <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"flex-start", flexWrap:"wrap" }}>
               <div>
                 <div style={{ fontFamily:T.sans, fontSize:15, fontWeight:900, color:T.text }}>🛡️ Data Safety</div>
-                <div style={{ fontSize:12, color:T.subtext, marginTop:4 }}>Download a full local JSON backup before major changes. Restore only from a backup file you trust.</div>
+                <div style={{ fontSize:12, color:T.subtext, marginTop:4 }}>Download a full local JSON backup before major changes. Upload/restore only from a backup file you trust.</div>
                 <div style={{ fontSize:11, color:T.muted, marginTop:6 }}>Current loaded data: Equipment {backupCounts.equipment}, Work Orders {backupCounts.workOrders}, Parts {backupCounts.parts}, Facilities {backupCounts.facilities}</div>
               </div>
               <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                 <Btn onClick={downloadDataBackup}>Download Backup</Btn>
-                <Btn variant="secondary" onClick={()=>backupFileInputRef.current?.click()}>Restore From File</Btn>
+                <Btn variant="secondary" onClick={()=>backupFileInputRef.current?.click()}>Upload Last Known Backup</Btn>
                 <input ref={backupFileInputRef} type="file" accept="application/json,.json" onChange={loadDataBackup} style={{ display:"none" }} />
               </div>
             </div>
@@ -10762,6 +10762,7 @@ export default function App() {
   const [dataLoaded, setDataLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState("idle"); /* idle | saving | saved | error */
   const [ownerRecovery, setOwnerRecovery] = useState(null);
+  const ownerBackupUploadRef = useRef(null);
   const [systemThemeTick, setSystemThemeTick] = useState(0);
 
   const [session, setSession] = useState(null);
@@ -11176,6 +11177,93 @@ export default function App() {
       console.error("Owner recovery restore failed:", e);
       setSyncStatus("error");
       alert(`Recovery restore failed: ${e?.message || e}. No recovery source was deleted.`);
+    }
+  }
+
+  async function uploadLastKnownBackup(event) {
+    const file = event?.target?.files?.[0];
+    if(event?.target) event.target.value = "";
+    if(!file || !activeUser?.id) return;
+
+    try {
+      const raw = await file.text();
+      const parsedRaw = JSON.parse(raw || "{}");
+      // MaintForge backups are normally the state object itself. Accept a simple
+      // { data: state } wrapper too, but never guess beyond those two shapes.
+      const parsed = parsedRaw?.data && typeof parsedRaw.data === "object" && !Array.isArray(parsedRaw.data)
+        ? parsedRaw.data
+        : parsedRaw;
+
+      if(!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("The selected file is not a MaintForge state backup.");
+      }
+      if(!isSubstantiveMaintForgeWorkspace(parsed)) {
+        alert("This backup does not contain substantive MaintForge workspace data. Nothing was changed.");
+        return;
+      }
+
+      const counts = maintForgeWorkspaceCounts(parsed);
+      const orgName = parsed?.settings?.companyName || parsed?.organization?.name || "(organization name not set)";
+      const ok = window.confirm(
+        `Upload this Last Known Backup to your Organization Administrator account?\n\n` +
+        `File: ${file.name}\n` +
+        `Organization: ${orgName}\n` +
+        `Equipment: ${counts.equipment || 0}\n` +
+        `Work Orders: ${counts.workOrders || 0}\n` +
+        `Parts: ${counts.parts || 0}\n` +
+        `Facilities: ${counts.facilities || 0}\n\n` +
+        `A browser safety copy of the CURRENT state will be created first. The selected backup file will not be changed.`
+      );
+      if(!ok) return;
+
+      setSyncStatus("saving");
+      try {
+        localStorage.setItem(`MaintForge_before_backup_upload_${Date.now()}`, JSON.stringify(state));
+      } catch(e) {
+        console.warn("Could not create browser safety copy before backup upload:", e);
+      }
+
+      const normalized = normalizeLoadedUserState(parsed, activeUser.id);
+      const restored = prepareSharedOrganizationStateForCloudSave({
+        ...normalized,
+        setupComplete:true,
+        ownerUserId:activeUser.id,
+        organizationOwnerId:activeUser.id,
+        ownerEmail:activeUser.email || normalized.ownerEmail || "",
+        organizationOwnerEmail:activeUser.email || normalized.organizationOwnerEmail || "",
+        currentUser:{ id:activeUser.id, email:activeUser.email || "" },
+        userRole:"organization_admin",
+        invitedMember:false,
+        inviteAccepted:false,
+        inviteConnectionError:null,
+      }, activeUser);
+
+      const { error } = await supabase.from("user_state").upsert({
+        user_id:activeUser.id,
+        data:restored,
+        updated_at:new Date().toISOString(),
+      }, { onConflict:"user_id" });
+      if(error) throw error;
+
+      try {
+        localStorage.setItem("ncaState", JSON.stringify(restored));
+        localStorage.setItem("ncaState:lastUserId", activeUser.id);
+      } catch(e) {
+        console.warn("Backup restored to cloud, but browser cache could not be refreshed:", e);
+      }
+
+      dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(restored, activeUser) });
+      setOwnerRecovery(null);
+      setDataLoaded(true);
+      setShowOwnerSetup(false);
+      setSyncStatus("saved");
+      setAuthInfoMsg(`✓ Last Known Backup restored: ${counts.equipment || 0} equipment, ${counts.workOrders || 0} work orders, ${counts.facilities || 0} facilities.`);
+      alert("Last Known Backup restored successfully to this owner account and saved to Supabase.");
+      setTimeout(()=>setSyncStatus("idle"), 2500);
+    } catch(e) {
+      console.error("Last Known Backup upload failed:", e);
+      setSyncStatus("error");
+      alert(`Backup restore failed: ${e?.message || e}. Nothing from the selected backup was intentionally deleted.`);
     }
   }
 
@@ -11699,7 +11787,9 @@ export default function App() {
             Invites are no longer used. Sign out, then sign in with the username/password assigned in Settings → Users & Roles.
           </div>
           <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-            <Btn onClick={async()=>{ clearPendingInviteInfo(); try { await supabase.auth.signOut(); } catch(e) {} setAppSession(null); setDataLoaded(false); setAuthMode("login"); setAuthPassword(""); setAuthConfirmPassword(""); dispatch({ type:"REPLACE_STATE", payload:blankUserState() }); }}>Sign Out / Go to Login</Btn>
+            <Btn onClick={()=>ownerBackupUploadRef.current?.click()}>Upload Last Known Backup</Btn>
+            <input ref={ownerBackupUploadRef} type="file" accept="application/json,.json" onChange={uploadLastKnownBackup} style={{ display:"none" }} />
+            <Btn variant="secondary" onClick={async()=>{ clearPendingInviteInfo(); try { await supabase.auth.signOut(); } catch(e) {} setAppSession(null); setDataLoaded(false); setAuthMode("login"); setAuthPassword(""); setAuthConfirmPassword(""); dispatch({ type:"REPLACE_STATE", payload:blankUserState() }); }}>Sign Out / Go to Login</Btn>
             <Btn variant="secondary" onClick={()=>{ clearPendingInviteInfo(); window.location.href = window.location.origin + window.location.pathname; }}>Refresh</Btn>
           </div>
         </div>
@@ -11727,7 +11817,9 @@ export default function App() {
             Create Owner Workspace is only for the first company administrator. It is not for mechanics, viewers, or facility-assigned users.
           </div>
           <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-            <Btn onClick={async()=>{ try { await supabase.auth.signOut(); } catch(e) {} setAppSession(null); setDataLoaded(false); setAuthMode("login"); setAuthPassword(""); setAuthConfirmPassword(""); dispatch({ type:"REPLACE_STATE", payload:blankUserState() }); }}>Sign Out / Go to Login</Btn>
+            <Btn onClick={()=>ownerBackupUploadRef.current?.click()}>Upload Last Known Backup</Btn>
+            <input ref={ownerBackupUploadRef} type="file" accept="application/json,.json" onChange={uploadLastKnownBackup} style={{ display:"none" }} />
+            <Btn variant="secondary" onClick={async()=>{ try { await supabase.auth.signOut(); } catch(e) {} setAppSession(null); setDataLoaded(false); setAuthMode("login"); setAuthPassword(""); setAuthConfirmPassword(""); dispatch({ type:"REPLACE_STATE", payload:blankUserState() }); }}>Sign Out / Go to Login</Btn>
             <Btn variant="secondary" onClick={()=>setShowOwnerSetup(true)}>Create Owner Workspace</Btn>
           </div>
         </div>
