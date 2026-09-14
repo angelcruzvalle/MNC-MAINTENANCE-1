@@ -10261,16 +10261,69 @@ function isCompletedMaintForgeWorkspace(data={}) {
   return Boolean(companyName && (data.settings || data.profile || hasOperationalData));
 }
 
-function readValidLocalWorkspaceForUser(userId="") {
+function readValidLocalWorkspaceForUser(userId="", currentUser=null) {
   try {
     const cachedUserId = String(localStorage.getItem("ncaState:lastUserId") || "");
     const raw = localStorage.getItem("ncaState");
-    if(!raw || !userId || cachedUserId !== String(userId)) return null;
+    if(!raw || !userId) return null;
     const parsed = JSON.parse(raw);
-    return isCompletedMaintForgeWorkspace(parsed) ? parsed : null;
+    if(!isCompletedMaintForgeWorkspace(parsed)) return null;
+
+    // Normal path: this browser copy belongs to the same auth user id.
+    if(cachedUserId === String(userId)) return parsed;
+
+    // Recovery path: Supabase auth ids can change after account/auth repairs while the
+    // MaintForge organization row still contains the same owner email.  Accept the local
+    // copy only when that owner identity positively matches the signed-in email.
+    const signedInEmail = normalizeEmail(currentUser?.email || "");
+    const localOwnerEmail = normalizeEmail(parsed.ownerEmail || parsed.organizationOwnerEmail || parsed.currentUser?.email || "");
+    const adminMatch = Array.isArray(parsed.organizationUsers) && parsed.organizationUsers.some(u =>
+      normalizeEmail(u?.email || "") === signedInEmail && isOrganizationAdminRole(u?.role)
+    );
+    if(signedInEmail && (localOwnerEmail === signedInEmail || adminMatch)) return parsed;
+    return null;
   } catch(error) {
     console.error("Local MaintForge recovery read failed:", error);
     return null;
+  }
+}
+
+async function findExistingOwnerWorkspaceByIdentity(currentUser=null) {
+  const signedInEmail = normalizeEmail(currentUser?.email || "");
+  if(!signedInEmail) return null;
+  try {
+    // This is a recovery-only lookup.  It is used when the current auth user_id does not
+    // have a completed workspace, which can happen after an auth/account migration.
+    const { data, error } = await supabase
+      .from("user_state")
+      .select("user_id,data")
+      .limit(1000);
+    if(error) {
+      console.error("Owner workspace identity recovery lookup failed:", error);
+      return { error };
+    }
+
+    const candidates = [];
+    for(const row of (data || [])) {
+      const raw = row?.data;
+      if(!isCompletedMaintForgeWorkspace(raw)) continue;
+      const ownerEmail = normalizeEmail(raw?.ownerEmail || raw?.organizationOwnerEmail || "");
+      const ownerId = String(raw?.ownerUserId || raw?.organizationOwnerId || row?.user_id || "");
+      const users = Array.isArray(raw?.organizationUsers) ? raw.organizationUsers : [];
+      const adminUser = users.find(u => normalizeEmail(u?.email || "") === signedInEmail && isOrganizationAdminRole(u?.role));
+      const ownerEmailMatches = Boolean(ownerEmail && ownerEmail === signedInEmail);
+      const rowOwnerIdMatches = Boolean(currentUser?.id && ownerId === String(currentUser.id));
+      if(ownerEmailMatches || adminUser || rowOwnerIdMatches) {
+        candidates.push({ row, score:(ownerEmailMatches ? 100 : 0) + (adminUser ? 50 : 0) + (rowOwnerIdMatches ? 25 : 0) });
+      }
+    }
+    candidates.sort((a,b)=>b.score-a.score);
+    const best = candidates[0]?.row || null;
+    if(!best) return null;
+    return { ownerUserId:best.user_id, ownerState:best.data };
+  } catch(error) {
+    console.error("Owner workspace identity recovery exception:", error);
+    return { error };
   }
 }
 
@@ -10777,7 +10830,7 @@ export default function App() {
         // known-good browser copy for use, but keep cloud saving locked so a transient
         // failure can never overwrite the real organization with an empty workspace.
         if(ownRow?.error) {
-          const localRecovery = readValidLocalWorkspaceForUser(activeUser.id);
+          const localRecovery = readValidLocalWorkspaceForUser(activeUser.id, activeUser);
           if(localRecovery) {
             const recoveredState = ensureCurrentOrganizationAdmin(normalizeLoadedUserState(localRecovery, activeUser.id), activeUser);
             dispatch({ type:"REPLACE_STATE", payload:recoveredState });
@@ -10789,7 +10842,60 @@ export default function App() {
           return;
         }
 
-        const ownData = ownRow?.data || null;
+        let ownData = ownRow?.data || null;
+
+        // If the current auth user id has no completed owner workspace, do not immediately
+        // classify this as a brand-new account.  Search for the existing completed organization
+        // by the verified owner/admin email.  This repairs the exact failure mode where a user
+        // could work normally, then later sign in with an auth id that no longer matches the
+        // historical user_state row.
+        if(!isCompletedMaintForgeWorkspace(ownData) && !ownData?.invitedMember) {
+          const identityRecovery = await findExistingOwnerWorkspaceByIdentity(activeUser);
+          if(cancelled) return;
+          if(identityRecovery?.ownerState && identityRecovery?.ownerUserId) {
+            const recoveredOwnerId = identityRecovery.ownerUserId;
+            const recoveredRawState = identityRecovery.ownerState;
+            const recoveredState = ensureCurrentOrganizationAdmin(
+              normalizeLoadedUserState({
+                ...recoveredRawState,
+                ownerUserId:activeUser.id,
+                organizationOwnerId:activeUser.id,
+                ownerEmail:activeUser.email || recoveredRawState.ownerEmail || recoveredRawState.organizationOwnerEmail || "",
+                organizationOwnerEmail:activeUser.email || recoveredRawState.organizationOwnerEmail || recoveredRawState.ownerEmail || "",
+                setupComplete:true,
+              }, activeUser.id),
+              activeUser
+            );
+            const repairedCloudState = prepareSharedOrganizationStateForCloudSave(recoveredState, activeUser);
+            const relinkResult = await supabase.from("user_state").upsert({
+              user_id:activeUser.id,
+              data:repairedCloudState,
+              updated_at:new Date().toISOString(),
+            }, { onConflict:"user_id" });
+            if(relinkResult.error) {
+              console.error("MaintForge owner workspace relink failed:", relinkResult.error);
+              // Still let the owner work from the verified recovered organization, but keep
+              // autosave locked until the cloud relink succeeds.
+              dispatch({ type:"REPLACE_STATE", payload:{ ...recoveredState, setupComplete:true } });
+              setAuthInfoMsg("⚠ MaintForge found your existing owner workspace, but could not relink it to this sign-in yet. Your data is loaded read-only and cloud saving is blocked to protect it.");
+              setSyncStatus("error");
+              return;
+            }
+            // Do not delete the historical row automatically. Keeping it is safer until the
+            // administrator confirms the repaired account works normally.
+            ownData = repairedCloudState;
+            dispatch({ type:"REPLACE_STATE", payload:{ ...recoveredState, setupComplete:true } });
+            try {
+              localStorage.setItem("ncaState", JSON.stringify(recoveredState));
+              localStorage.setItem("ncaState:lastUserId", activeUser.id);
+            } catch(e) {}
+            setCloudLoadSafe(true);
+            setAuthInfoMsg(recoveredOwnerId === activeUser.id
+              ? "✓ MaintForge recovered your existing owner workspace."
+              : "✓ MaintForge found your existing owner workspace under its previous account link and safely relinked this sign-in to it.");
+            return;
+          }
+        }
 
         const currentUrlInviteInfo = readInviteInfoFromCurrentUrl();
         const pendingInviteInfo = currentUrlInviteInfo?.token ? currentUrlInviteInfo : (manualInviteInfo?.token ? manualInviteInfo : null);
@@ -10907,7 +11013,7 @@ export default function App() {
           // prefer a verified same-account browser backup instead of throwing the owner
           // into the "incomplete workspace" screen. Then repair the cloud row safely.
           if(!isCompletedMaintForgeWorkspace(ownData)) {
-            const localRecovery = readValidLocalWorkspaceForUser(activeUser.id);
+            const localRecovery = readValidLocalWorkspaceForUser(activeUser.id, activeUser);
             if(localRecovery) {
               const recoveredState = ensureCurrentOrganizationAdmin(normalizeLoadedUserState(localRecovery, activeUser.id), activeUser);
               const repairedCloudState = prepareSharedOrganizationStateForCloudSave({ ...recoveredState, setupComplete:true }, activeUser);
@@ -10934,11 +11040,40 @@ export default function App() {
           dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(loadedState, activeUser) });
           setCloudLoadSafe(true);
         } else {
-          // This is only considered a genuinely new owner account after Supabase
-          // successfully answered that no user_state row exists.
+          // Last safe recovery chance before classifying this as a genuinely new owner.
+          const localRecovery = readValidLocalWorkspaceForUser(activeUser.id, activeUser);
+          if(localRecovery) {
+            const recoveredState = ensureCurrentOrganizationAdmin(normalizeLoadedUserState({
+              ...localRecovery,
+              ownerUserId:activeUser.id,
+              organizationOwnerId:activeUser.id,
+              setupComplete:true,
+            }, activeUser.id), activeUser);
+            const repairedCloudState = prepareSharedOrganizationStateForCloudSave(recoveredState, activeUser);
+            const repairResult = await supabase.from("user_state").upsert({
+              user_id:activeUser.id,
+              data:repairedCloudState,
+              updated_at:new Date().toISOString(),
+            }, { onConflict:"user_id" });
+            if(!repairResult.error) {
+              dispatch({ type:"REPLACE_STATE", payload:{ ...recoveredState, setupComplete:true } });
+              setCloudLoadSafe(true);
+              try { localStorage.setItem("ncaState", JSON.stringify(recoveredState)); localStorage.setItem("ncaState:lastUserId", activeUser.id); } catch(e) {}
+              setAuthInfoMsg("✓ MaintForge recovered your existing owner workspace from this browser and repaired the cloud account link.");
+              return;
+            }
+            console.error("Final local owner recovery save failed:", repairResult.error);
+            dispatch({ type:"REPLACE_STATE", payload:{ ...recoveredState, setupComplete:true } });
+            setAuthInfoMsg("⚠ MaintForge recovered your existing browser workspace, but cloud saving is blocked until the account link can be repaired.");
+            setSyncStatus("error");
+            return;
+          }
+
+          // Only now is this treated as a genuinely new owner account: Supabase successfully
+          // reported no row, no existing owner/admin workspace matched this identity, and no
+          // verified local workspace exists.
           dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(blankUserState(activeUser.id), activeUser) });
           setCloudLoadSafe(true);
-          try { localStorage.removeItem("ncaState"); localStorage.removeItem("ncaState:lastUserId"); } catch(e) {}
         }
       } catch (e) {
         console.error("Load exception:", e);
