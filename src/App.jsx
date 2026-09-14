@@ -10250,15 +10250,77 @@ async function fetchUserStateRow(userId="", options={}) {
   return { user_id:userId, data:null, error:lastError || new Error("MaintForge workspace could not be read from the cloud.") };
 }
 
-function isCompletedMaintForgeWorkspace(data={}) {
-  if(!data || typeof data !== "object" || Array.isArray(data)) return false;
-  if(data.setupComplete === true) return true;
+function inspectMaintForgeWorkspace(data={}) {
+  if(!data || typeof data !== "object" || Array.isArray(data)) {
+    return { valid:false, strong:false, score:0, reasons:[] };
+  }
+
+  const reasons = [];
+  let score = 0;
+
+  if(data.setupComplete === true) { score += 100; reasons.push("setupComplete"); }
+
   const companyName = String(data.settings?.companyName || data.organization?.name || "").trim();
-  const hasOperationalData = [
-    data.equipment, data.workOrders, data.parts, data.locations, data.pmTasks,
-    data.inspectionTasks, data.organizationUsers, data.fuelContainers
-  ].some(list => Array.isArray(list) && list.length > 0);
-  return Boolean(companyName && (data.settings || data.profile || hasOperationalData));
+  if(companyName) { score += 20; reasons.push("organization-name"); }
+
+  const collectionKeys = [
+    "equipment", "workOrders", "parts", "locations", "facilities", "areas",
+    "pmTasks", "assignedPmTasks", "inspectionTasks", "assignedInspections",
+    "organizationUsers", "fuelContainers", "fuelEntries", "serviceHistory",
+    "repairHistory", "inspectionHistory", "attachments", "categories", "technicians"
+  ];
+  let nonEmptyCollections = 0;
+  let knownCollections = 0;
+  for(const key of collectionKeys) {
+    if(Array.isArray(data[key])) {
+      knownCollections++;
+      if(data[key].length > 0) {
+        nonEmptyCollections++;
+        score += 8;
+        reasons.push(`${key}:${data[key].length}`);
+      }
+    }
+  }
+
+  // These are durable MaintForge structural markers.  Older workspaces and migration
+  // states did not always retain setupComplete/companyName, so they must not be rejected
+  // when the real organization data is clearly present.
+  const objectMarkers = ["settings", "profile", "organization", "dashboardPrefs", "uiPrefs"];
+  let objectMarkerCount = 0;
+  for(const key of objectMarkers) {
+    if(data[key] && typeof data[key] === "object" && !Array.isArray(data[key])) {
+      objectMarkerCount++;
+      score += 3;
+    }
+  }
+
+  const hasOwnerIdentity = Boolean(
+    String(data.ownerUserId || data.organizationOwnerId || "").trim() ||
+    normalizeEmail(data.ownerEmail || data.organizationOwnerEmail || "")
+  );
+  if(hasOwnerIdentity) { score += 8; reasons.push("owner-identity"); }
+
+  const explicitlyInvitedPointer = data.invitedMember === true && Boolean(data.orgOwnerUserId || data.ownerUserId || data.organizationOwnerId);
+  if(explicitlyInvitedPointer && nonEmptyCollections === 0) {
+    return { valid:false, strong:false, score, reasons:[...reasons, "invited-pointer-only"] };
+  }
+
+  const strong = Boolean(
+    data.setupComplete === true ||
+    nonEmptyCollections >= 2 ||
+    (nonEmptyCollections >= 1 && (companyName || hasOwnerIdentity || objectMarkerCount >= 2)) ||
+    (knownCollections >= 5 && objectMarkerCount >= 2 && (companyName || hasOwnerIdentity))
+  );
+
+  // A valid historical workspace can be structurally complete while currently empty
+  // (for example after creating a new facility before adding equipment).  Require several
+  // independent MaintForge markers so an arbitrary JSON object is never mistaken for one.
+  const valid = Boolean(strong || (companyName && knownCollections >= 3 && objectMarkerCount >= 1));
+  return { valid, strong, score, reasons };
+}
+
+function isCompletedMaintForgeWorkspace(data={}) {
+  return inspectMaintForgeWorkspace(data).valid;
 }
 
 function readValidLocalWorkspaceForUser(userId="", currentUser=null) {
@@ -11009,10 +11071,43 @@ export default function App() {
         }
 
         if (ownData && Object.keys(ownData).length > 0 && !ownData.invitedMember) {
-          // If the cloud row exists but somehow lost its completed-workspace marker,
-          // prefer a verified same-account browser backup instead of throwing the owner
-          // into the "incomplete workspace" screen. Then repair the cloud row safely.
-          if(!isCompletedMaintForgeWorkspace(ownData)) {
+          // First inspect the CURRENT account row itself.  A historical MaintForge workspace
+          // may have lost setupComplete or the company-name field during a migration while all
+          // of its real operational data remained intact.  Treat that as recoverable owner data,
+          // never as a brand-new account.
+          const ownWorkspaceInspection = inspectMaintForgeWorkspace(ownData);
+          if(ownWorkspaceInspection.valid && ownData.setupComplete !== true) {
+            const recoveredState = ensureCurrentOrganizationAdmin(normalizeLoadedUserState({
+              ...ownData,
+              setupComplete:true,
+              ownerUserId:ownData.ownerUserId || ownData.organizationOwnerId || activeUser.id,
+              organizationOwnerId:ownData.organizationOwnerId || ownData.ownerUserId || activeUser.id,
+            }, activeUser.id), activeUser);
+            const repairedCloudState = prepareSharedOrganizationStateForCloudSave(recoveredState, activeUser);
+            const repairResult = await supabase.from("user_state").upsert({
+              user_id:activeUser.id,
+              data:repairedCloudState,
+              updated_at:new Date().toISOString(),
+            }, { onConflict:"user_id" });
+            dispatch({ type:"REPLACE_STATE", payload:{ ...recoveredState, setupComplete:true } });
+            if(repairResult.error) {
+              console.error("MaintForge current workspace marker repair failed:", repairResult.error, ownWorkspaceInspection);
+              setAuthInfoMsg("⚠ MaintForge recovered your existing workspace data from the current account, but could not repair its completion marker yet. Cloud saving is blocked to protect it.");
+              setSyncStatus("error");
+              return;
+            }
+            setCloudLoadSafe(true);
+            try {
+              localStorage.setItem("ncaState", JSON.stringify(recoveredState));
+              localStorage.setItem("ncaState:lastUserId", activeUser.id);
+            } catch(e) {}
+            setAuthInfoMsg("✓ MaintForge recovered your existing workspace data and repaired its workspace marker.");
+            return;
+          }
+
+          // If the cloud row truly lacks enough MaintForge structure, prefer a verified
+          // same-account browser backup instead of throwing the owner into setup.
+          if(!ownWorkspaceInspection.valid) {
             const localRecovery = readValidLocalWorkspaceForUser(activeUser.id, activeUser);
             if(localRecovery) {
               const recoveredState = ensureCurrentOrganizationAdmin(normalizeLoadedUserState(localRecovery, activeUser.id), activeUser);
@@ -11065,6 +11160,19 @@ export default function App() {
             console.error("Final local owner recovery save failed:", repairResult.error);
             dispatch({ type:"REPLACE_STATE", payload:{ ...recoveredState, setupComplete:true } });
             setAuthInfoMsg("⚠ MaintForge recovered your existing browser workspace, but cloud saving is blocked until the account link can be repaired.");
+            setSyncStatus("error");
+            return;
+          }
+
+          // Only a truly absent cloud row can be classified as a genuinely new owner account.
+          // If ANY non-empty row exists but we could not recognize it, fail closed instead of
+          // offering workspace creation; this prevents an existing organization from being
+          // silently replaced because of a future schema/migration mismatch.
+          if(ownData && typeof ownData === "object" && Object.keys(ownData).length > 0) {
+            console.error("MaintForge found a non-empty owner row that could not be classified safely:", inspectMaintForgeWorkspace(ownData));
+            dispatch({ type:"REPLACE_STATE", payload:{ ...blankUserState(activeUser.id), setupComplete:false } });
+            setCloudLoadSafe(false);
+            setAuthInfoMsg("⚠ MaintForge found existing cloud data for this account but could not safely classify the workspace. No data was overwritten and cloud saving remains locked. Use Restore MaintForge Backup if needed.");
             setSyncStatus("error");
             return;
           }
