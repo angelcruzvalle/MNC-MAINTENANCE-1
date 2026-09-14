@@ -10350,6 +10350,67 @@ function readValidLocalWorkspaceForUser(userId="", currentUser=null) {
   }
 }
 
+
+function workspaceRecoveryCounts(data={}) {
+  const arr = (key) => Array.isArray(data?.[key]) ? data[key].length : 0;
+  const locations = Array.isArray(data?.locations) ? data.locations.length : (Array.isArray(data?.settings?.locations) ? data.settings.locations.length : 0);
+  return {
+    equipment:arr("equipment"),
+    workOrders:arr("workOrders"),
+    parts:arr("parts"),
+    facilities:locations,
+    pmTasks:arr("pmTasks") + arr("preventiveMaintenance"),
+    inspections:arr("inspectionTasks") + arr("inspectionSchedules"),
+    fuel:arr("fuelContainers") + arr("fuelReadings"),
+    users:arr("organizationUsers"),
+  };
+}
+
+function workspaceRecoveryValue(data={}) {
+  const c = workspaceRecoveryCounts(data);
+  // Weight the records that best identify the user's real working workspace.
+  return (c.equipment * 12) + (c.workOrders * 14) + (c.parts * 5) + (c.facilities * 10) +
+         (c.pmTasks * 4) + (c.inspections * 4) + (c.fuel * 3) + (c.users * 2);
+}
+
+async function findHistoricalOwnerWorkspaceCandidates(currentUser=null) {
+  const signedInEmail = normalizeEmail(currentUser?.email || "");
+  if(!currentUser?.id) return { candidates:[], error:new Error("No signed-in owner id.") };
+  try {
+    const { data, error } = await supabase.from("user_state").select("user_id,data,updated_at").limit(1000);
+    if(error) return { candidates:[], error };
+    const candidates = [];
+    for(const row of (data || [])) {
+      const raw = row?.data;
+      if(!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const counts = workspaceRecoveryCounts(raw);
+      const value = workspaceRecoveryValue(raw);
+      if(value <= 0) continue;
+      const ownerEmail = normalizeEmail(raw.ownerEmail || raw.organizationOwnerEmail || raw.currentUser?.email || "");
+      const users = Array.isArray(raw.organizationUsers) ? raw.organizationUsers : [];
+      const adminMatch = Boolean(signedInEmail && users.some(u => normalizeEmail(u?.email || "") === signedInEmail && isOrganizationAdminRole(u?.role)));
+      const ownerEmailMatch = Boolean(signedInEmail && ownerEmail && ownerEmail === signedInEmail);
+      const sameUserId = String(row.user_id || "") === String(currentUser.id);
+      // Only consider rows that positively match this owner identity.
+      if(!sameUserId && !ownerEmailMatch && !adminMatch) continue;
+      candidates.push({
+        userId:row.user_id,
+        data:raw,
+        updatedAt:row.updated_at || "",
+        counts,
+        value,
+        sameUserId,
+        ownerEmailMatch,
+        adminMatch,
+      });
+    }
+    candidates.sort((a,b)=>b.value-a.value || String(b.updatedAt).localeCompare(String(a.updatedAt)));
+    return { candidates, error:null };
+  } catch(error) {
+    return { candidates:[], error };
+  }
+}
+
 async function findExistingOwnerWorkspaceByIdentity(currentUser=null) {
   const signedInEmail = normalizeEmail(currentUser?.email || "");
   if(!signedInEmail) return null;
@@ -10838,6 +10899,8 @@ export default function App() {
   const [inviteCodeBusy, setInviteCodeBusy] = useState(false);
   const [inviteCodeError, setInviteCodeError] = useState("");
   const emergencyWorkspaceBackupRef = useRef(null);
+  const [recoveryCandidate, setRecoveryCandidate] = useState(null);
+  const [recoveryConfirmBusy, setRecoveryConfirmBusy] = useState(false);
   const publicWORequestMode = isPublicWORequestPage();
   const [publicPortal, setPublicPortal] = useState(null);
   const [publicPortalLoading, setPublicPortalLoading] = useState(false);
@@ -10905,6 +10968,34 @@ export default function App() {
         }
 
         let ownData = ownRow?.data || null;
+
+        // EMERGENCY DATA RECOVERY: before trusting a newly-relinked or nearly-empty current row,
+        // compare it with historical rows that positively match this owner's identity.  If an
+        // older row contains materially more MaintForge data, load that richer row READ-ONLY and
+        // require an explicit confirmation before writing anything to the current cloud row.
+        const historyScan = await findHistoricalOwnerWorkspaceCandidates(activeUser);
+        if(cancelled) return;
+        if(historyScan?.error) {
+          console.warn("MaintForge historical workspace scan failed:", historyScan.error);
+        } else {
+          const ownValue = workspaceRecoveryValue(ownData || {});
+          const richerHistorical = (historyScan.candidates || []).find(c =>
+            String(c.userId) !== String(activeUser.id) && c.value > Math.max(ownValue + 10, ownValue * 1.25)
+          );
+          if(richerHistorical) {
+            const recoveredState = ensureCurrentOrganizationAdmin(
+              normalizeLoadedUserState({ ...richerHistorical.data, setupComplete:true }, richerHistorical.userId),
+              activeUser
+            );
+            dispatch({ type:"REPLACE_STATE", payload:{ ...recoveredState, setupComplete:true } });
+            setRecoveryCandidate(richerHistorical);
+            setCloudLoadSafe(false);
+            const c = richerHistorical.counts;
+            setAuthInfoMsg(`⚠ Recovery mode: MaintForge found an older workspace with ${c.equipment} equipment, ${c.workOrders} work orders, ${c.parts} parts, and ${c.facilities} facilities. It is loaded read-only. Confirm it before restoring it to this login.`);
+            setSyncStatus("error");
+            return;
+          }
+        }
 
         // If the current auth user id has no completed owner workspace, do not immediately
         // classify this as a brand-new account.  Search for the existing completed organization
@@ -11192,6 +11283,49 @@ export default function App() {
     loadData();
     return () => { cancelled = true; };
   }, [activeSession?.user?.id, manualInviteInfo?.token, manualInviteInfo?.ownerUserId]);
+
+  const confirmHistoricalWorkspaceRecovery = async () => {
+    if(!recoveryCandidate || !activeUser?.id || recoveryConfirmBusy) return;
+    setRecoveryConfirmBusy(true);
+    try {
+      // Keep both the historical row and a browser snapshot.  We only copy the confirmed
+      // recovered state onto the current owner id; the source row is intentionally untouched.
+      try {
+        localStorage.setItem(`MaintForge_before_historical_recovery_${Date.now()}`, JSON.stringify(state));
+      } catch(e) {}
+      const restoredState = ensureCurrentOrganizationAdmin({
+        ...state,
+        setupComplete:true,
+        ownerUserId:activeUser.id,
+        organizationOwnerId:activeUser.id,
+        ownerEmail:activeUser.email || state.ownerEmail || state.organizationOwnerEmail || "",
+        organizationOwnerEmail:activeUser.email || state.organizationOwnerEmail || state.ownerEmail || "",
+      }, activeUser);
+      const cloudState = prepareSharedOrganizationStateForCloudSave(restoredState, activeUser);
+      const result = await supabase.from("user_state").upsert({
+        user_id:activeUser.id,
+        data:cloudState,
+        updated_at:new Date().toISOString(),
+      }, { onConflict:"user_id" });
+      if(result.error) throw result.error;
+      try {
+        localStorage.setItem("ncaState", JSON.stringify(restoredState));
+        localStorage.setItem("ncaState:lastUserId", activeUser.id);
+      } catch(e) {}
+      dispatch({ type:"REPLACE_STATE", payload:restoredState });
+      setRecoveryCandidate(null);
+      setCloudLoadSafe(true);
+      setSyncStatus("saved");
+      setAuthInfoMsg("✓ Historical MaintForge workspace restored to this owner login. The old source row was left untouched as a safety copy.");
+    } catch(error) {
+      console.error("Historical workspace recovery save failed:", error);
+      setCloudLoadSafe(false);
+      setSyncStatus("error");
+      setAuthInfoMsg(`⚠ The recovered workspace is still loaded read-only, but the cloud restore failed: ${error?.message || "Supabase rejected the restore."}`);
+    } finally {
+      setRecoveryConfirmBusy(false);
+    }
+  };
 
   /* Save state to Supabase, debounced */
   useEffect(() => {
@@ -12383,6 +12517,21 @@ export default function App() {
         </div>
       </header>
 
+      {recoveryCandidate && (
+        <div style={{ position:"sticky", top:0, zIndex:9999, padding:"12px 16px", background:"#7c2d12", color:"#fff7ed", borderBottom:"2px solid #fb923c", boxShadow:"0 6px 18px rgba(0,0,0,.22)" }}>
+          <div style={{ maxWidth:1400, margin:"0 auto", display:"flex", gap:12, alignItems:"center", justifyContent:"space-between", flexWrap:"wrap" }}>
+            <div style={{ minWidth:240, flex:"1 1 560px", lineHeight:1.4 }}>
+              <b>EMERGENCY RECOVERY MODE — CLOUD SAVING IS OFF.</b><br/>
+              Loaded historical workspace: {recoveryCandidate.counts.equipment} equipment · {recoveryCandidate.counts.workOrders} work orders · {recoveryCandidate.counts.parts} parts · {recoveryCandidate.counts.facilities} facilities.
+              Verify that this is your real data before restoring it.
+            </div>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+              <Btn onClick={confirmHistoricalWorkspaceRecovery} disabled={recoveryConfirmBusy}>{recoveryConfirmBusy ? "Restoring..." : "Yes — Restore This Workspace"}</Btn>
+              <Btn variant="secondary" onClick={()=>window.location.reload()} disabled={recoveryConfirmBusy}>Do Not Restore / Reload</Btn>
+            </div>
+          </div>
+        </div>
+      )}
       <main className="mf-main" style={{ width:"100%", maxWidth:"none", padding:"18px clamp(12px, 2vw, 28px)", minHeight:"calc(100vh - 56px)", overflowX:"auto" }}>
         <div style={{ marginBottom:20 }}>
           <h1 style={{ margin:0, fontFamily:T.sans, fontSize:24, fontWeight:700, color:T.text, letterSpacing:-.4 }}>{PAGE_TITLES[tab]}</h1>
