@@ -10221,18 +10221,57 @@ async function loadSession(setSession, setAuthLoading) {
   setAuthLoading(false);
 }
 
-async function fetchUserStateRow(userId="") {
+async function fetchUserStateRow(userId="", options={}) {
   if(!userId) return null;
-  const { data, error } = await supabase
-    .from("user_state")
-    .select("user_id,data")
-    .eq("user_id", userId)
-    .maybeSingle();
-  if(error) {
-    console.error("User state lookup error:", error);
+  const attempts = Math.max(1, Number(options.attempts || 3));
+  const delayMs = Math.max(0, Number(options.delayMs || 350));
+  let lastError = null;
+
+  for(let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const { data, error } = await supabase
+        .from("user_state")
+        .select("user_id,data")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if(!error) return data || null;
+      lastError = error;
+      console.error(`User state lookup error (attempt ${attempt}/${attempts}):`, error);
+    } catch(error) {
+      lastError = error;
+      console.error(`User state lookup exception (attempt ${attempt}/${attempts}):`, error);
+    }
+    if(attempt < attempts && delayMs) await new Promise(resolve => setTimeout(resolve, delayMs * attempt));
+  }
+
+  // IMPORTANT: return an explicit error marker. A failed cloud read must never be
+  // treated the same as "there is no workspace", because that could create/save
+  // a blank workspace over an existing MaintForge organization.
+  return { user_id:userId, data:null, error:lastError || new Error("MaintForge workspace could not be read from the cloud.") };
+}
+
+function isCompletedMaintForgeWorkspace(data={}) {
+  if(!data || typeof data !== "object" || Array.isArray(data)) return false;
+  if(data.setupComplete === true) return true;
+  const companyName = String(data.settings?.companyName || data.organization?.name || "").trim();
+  const hasOperationalData = [
+    data.equipment, data.workOrders, data.parts, data.locations, data.pmTasks,
+    data.inspectionTasks, data.organizationUsers, data.fuelContainers
+  ].some(list => Array.isArray(list) && list.length > 0);
+  return Boolean(companyName && (data.settings || data.profile || hasOperationalData));
+}
+
+function readValidLocalWorkspaceForUser(userId="") {
+  try {
+    const cachedUserId = String(localStorage.getItem("ncaState:lastUserId") || "");
+    const raw = localStorage.getItem("ncaState");
+    if(!raw || !userId || cachedUserId !== String(userId)) return null;
+    const parsed = JSON.parse(raw);
+    return isCompletedMaintForgeWorkspace(parsed) ? parsed : null;
+  } catch(error) {
+    console.error("Local MaintForge recovery read failed:", error);
     return null;
   }
-  return data || null;
 }
 
 
@@ -10660,6 +10699,9 @@ export default function App() {
   const [state, dispatch] = useReducer(reducer, emptyState);
 
   const [dataLoaded, setDataLoaded] = useState(false);
+  // Cloud writes stay locked until the current workspace has been positively read
+  // from Supabase (or a verified local recovery has safely repaired it).
+  const [cloudLoadSafe, setCloudLoadSafe] = useState(false);
   const [syncStatus, setSyncStatus] = useState("idle"); /* idle | saving | saved | error */
   const [systemThemeTick, setSystemThemeTick] = useState(0);
 
@@ -10680,6 +10722,7 @@ export default function App() {
   const [inviteCodeInput, setInviteCodeInput] = useState("");
   const [inviteCodeBusy, setInviteCodeBusy] = useState(false);
   const [inviteCodeError, setInviteCodeError] = useState("");
+  const emergencyWorkspaceBackupRef = useRef(null);
   const publicWORequestMode = isPublicWORequestPage();
   const [publicPortal, setPublicPortal] = useState(null);
   const [publicPortalLoading, setPublicPortalLoading] = useState(false);
@@ -10719,15 +10762,34 @@ export default function App() {
   useEffect(() => {
     if (!activeSession) {
       setDataLoaded(false);
+      setCloudLoadSafe(false);
       return;
     }
     if(appSession?.maintForgeAppLogin) return;
     let cancelled = false;
     async function loadData() {
+      setCloudLoadSafe(false);
       try {
-        const ownRow = await fetchUserStateRow(activeUser.id);
-        const ownData = ownRow?.data || null;
+        const ownRow = await fetchUserStateRow(activeUser.id, { attempts:3, delayMs:400 });
         if (cancelled) return;
+
+        // A Supabase/network/RLS read failure is NOT a new account. Recover the last
+        // known-good browser copy for use, but keep cloud saving locked so a transient
+        // failure can never overwrite the real organization with an empty workspace.
+        if(ownRow?.error) {
+          const localRecovery = readValidLocalWorkspaceForUser(activeUser.id);
+          if(localRecovery) {
+            const recoveredState = ensureCurrentOrganizationAdmin(normalizeLoadedUserState(localRecovery, activeUser.id), activeUser);
+            dispatch({ type:"REPLACE_STATE", payload:recoveredState });
+            setAuthInfoMsg("⚠ Cloud connection failed. MaintForge recovered your last valid browser copy and blocked cloud saving to protect your data. Refresh when the connection is stable.");
+          } else {
+            setAuthInfoMsg("⚠ MaintForge could not verify your cloud workspace. No blank workspace was created and cloud saving is blocked. Refresh to retry the cloud connection.");
+          }
+          setSyncStatus("error");
+          return;
+        }
+
+        const ownData = ownRow?.data || null;
 
         const currentUrlInviteInfo = readInviteInfoFromCurrentUrl();
         const pendingInviteInfo = currentUrlInviteInfo?.token ? currentUrlInviteInfo : (manualInviteInfo?.token ? manualInviteInfo : null);
@@ -10758,6 +10820,7 @@ export default function App() {
             clearPendingInviteInfo();
             try { localStorage.removeItem("ncaState"); localStorage.removeItem("ncaState:lastUserId"); } catch(e) {}
             dispatch({ type:"REPLACE_STATE", payload:invitedUiState });
+            setCloudLoadSafe(true);
             setAuthInfoMsg(`✓ Invite accepted. Your old standalone workspace was cleared and you are connected to ${acceptedState.settings?.companyName || acceptedState.organization?.name || inviteMatch.invite.organizationName || "the organization"} as ${roleLabel(acceptedState.userRole)}.`);
             try {
               const url = new URL(window.location.href);
@@ -10798,6 +10861,7 @@ export default function App() {
           await saveInvitePointerForUser(session.user.id, membershipMatch.ownerUserId, session.user.email, membershipMatch.invite || membershipMatch.member || {});
           if (cancelled) return;
           dispatch({ type:"REPLACE_STATE", payload:invitedUiState });
+          setCloudLoadSafe(true);
           return;
         }
 
@@ -10816,6 +10880,7 @@ export default function App() {
               acceptedOrganizationOwnerId:linkedOwnerId,
             } : scopedOrgState;
             dispatch({ type:"REPLACE_STATE", payload:invitedUiState });
+            setCloudLoadSafe(true);
             return;
           }
           if(ownData?.invitedMember) {
@@ -10838,13 +10903,42 @@ export default function App() {
         }
 
         if (ownData && Object.keys(ownData).length > 0 && !ownData.invitedMember) {
+          // If the cloud row exists but somehow lost its completed-workspace marker,
+          // prefer a verified same-account browser backup instead of throwing the owner
+          // into the "incomplete workspace" screen. Then repair the cloud row safely.
+          if(!isCompletedMaintForgeWorkspace(ownData)) {
+            const localRecovery = readValidLocalWorkspaceForUser(activeUser.id);
+            if(localRecovery) {
+              const recoveredState = ensureCurrentOrganizationAdmin(normalizeLoadedUserState(localRecovery, activeUser.id), activeUser);
+              const repairedCloudState = prepareSharedOrganizationStateForCloudSave({ ...recoveredState, setupComplete:true }, activeUser);
+              const repairResult = await supabase.from("user_state").upsert({
+                user_id:activeUser.id,
+                data:repairedCloudState,
+                updated_at:new Date().toISOString(),
+              }, { onConflict:"user_id" });
+              if(repairResult.error) {
+                console.error("MaintForge cloud workspace repair failed:", repairResult.error);
+                dispatch({ type:"REPLACE_STATE", payload:{ ...recoveredState, setupComplete:true } });
+                setAuthInfoMsg("⚠ Your browser copy was recovered, but the cloud workspace could not be repaired yet. Cloud saving remains blocked to protect your data.");
+                setSyncStatus("error");
+                return;
+              }
+              dispatch({ type:"REPLACE_STATE", payload:{ ...recoveredState, setupComplete:true } });
+              setCloudLoadSafe(true);
+              setAuthInfoMsg("✓ MaintForge recovered your last valid workspace and repaired the incomplete cloud workspace record.");
+              return;
+            }
+          }
+
           const loadedState = normalizeLoadedUserState(ownData, activeUser.id);
           dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(loadedState, activeUser) });
+          setCloudLoadSafe(true);
         } else {
-          // New users start with a clean platform, and the first signed-in account
-          // becomes the Organization Administrator automatically.
+          // This is only considered a genuinely new owner account after Supabase
+          // successfully answered that no user_state row exists.
           dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(blankUserState(activeUser.id), activeUser) });
-          try { localStorage.removeItem("ncaState"); } catch(e) {}
+          setCloudLoadSafe(true);
+          try { localStorage.removeItem("ncaState"); localStorage.removeItem("ncaState:lastUserId"); } catch(e) {}
         }
       } catch (e) {
         console.error("Load exception:", e);
@@ -10860,6 +10954,13 @@ export default function App() {
   useEffect(() => {
     if (!activeSession || !dataLoaded) return;
     if (state.inviteConnectionError) { setSyncStatus("idle"); return; }
+    // Never autosave an unverified or incomplete workspace. This is the hard stop that
+    // prevents a transient failed load from replacing a real organization with blank data.
+    if (!cloudLoadSafe || !state.setupComplete) {
+      if(!cloudLoadSafe && state.setupComplete) setSyncStatus("error");
+      else setSyncStatus("idle");
+      return;
+    }
     setSyncStatus("saving");
     const timer = setTimeout(async () => {
       try {
@@ -10908,7 +11009,7 @@ export default function App() {
       }
     }, 1000);
     return () => clearTimeout(timer);
-  }, [state, activeSession?.user?.id, dataLoaded]);
+  }, [state, activeSession?.user?.id, dataLoaded, cloudLoadSafe]);
 
 
   /* Auto-create Preventive Maintenance Service Work Orders when PM schedules are due */
@@ -11075,6 +11176,61 @@ export default function App() {
   }, [state.inspectionSchedules, state.inspectionTasks, state.equipment, state.workOrders]);
 
 
+  async function restoreEmergencyWorkspaceBackup(event) {
+    const file = event?.target?.files?.[0];
+    if(event?.target) event.target.value = "";
+    if(!file || !activeUser?.id) return;
+    try {
+      const raw = await file.text();
+      const parsed = JSON.parse(raw || "{}");
+      const counts = {
+        equipment:(parsed.equipment||[]).length,
+        workOrders:(parsed.workOrders||[]).length,
+        parts:(parsed.parts||[]).length,
+        facilities:(parsed.locations||[]).length,
+      };
+      const hasRealData = isCompletedMaintForgeWorkspace(parsed) || counts.equipment || counts.workOrders || counts.parts || counts.facilities;
+      if(!hasRealData) {
+        alert("This backup looks empty. Recovery was cancelled.");
+        return;
+      }
+      if(!confirm(`Restore this MaintForge backup and repair the cloud workspace?\n\nEquipment: ${counts.equipment}\nWork Orders: ${counts.workOrders}\nParts: ${counts.parts}\nFacilities: ${counts.facilities}\n\nThis will restore the backup to the currently signed-in owner account.`)) return;
+
+      const recovered = ensureCurrentOrganizationAdmin({
+        ...normalizeLoadedUserState(parsed, activeUser.id),
+        ownerUserId:activeUser.id,
+        organizationOwnerId:activeUser.id,
+        setupComplete:true,
+        inviteConnectionError:"",
+      }, activeUser);
+      const cloudState = prepareSharedOrganizationStateForCloudSave(recovered, activeUser);
+      const { error } = await supabase.from("user_state").upsert({
+        user_id:activeUser.id,
+        data:cloudState,
+        updated_at:new Date().toISOString(),
+      }, { onConflict:"user_id" });
+      if(error) {
+        console.error("Emergency workspace restore cloud save failed:", error);
+        alert(`The backup was read, but Supabase rejected the restore: ${error.message || "Unknown cloud error"}. Nothing was overwritten by MaintForge.`);
+        return;
+      }
+
+      try {
+        localStorage.setItem("ncaState", JSON.stringify(cloudState));
+        localStorage.setItem("ncaState:lastUserId", activeUser.id);
+      } catch(e) {}
+      dispatch({ type:"REPLACE_STATE", payload:recovered });
+      setCloudLoadSafe(true);
+      setDataLoaded(true);
+      setSyncStatus("saved");
+      setAuthInfoMsg("✓ Backup restored and the MaintForge cloud workspace was repaired.");
+      alert("MaintForge backup restored successfully. Your cloud workspace has been repaired.");
+    } catch(error) {
+      console.error("Emergency MaintForge backup restore failed:", error);
+      alert("Could not restore this file. Choose a valid MaintForge JSON backup.");
+    }
+  }
+
   function validateEmail(email) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   }
@@ -11112,6 +11268,7 @@ export default function App() {
           } else {
             setAppSession({ user, maintForgeAppLogin:true, ownerUserId:result.ownerUserId, source:result.source, username:user.username, password:authPassword });
             dispatch({ type:"REPLACE_STATE", payload:{ ...scoped, appLoginActive:true } });
+            setCloudLoadSafe(true);
             setDataLoaded(true);
             setAuthPassword("");
             setAuthInfoMsg(`✓ Signed in as ${user.username}.`);
@@ -11615,16 +11772,23 @@ export default function App() {
       <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, color:T.text, fontFamily:T.sans, padding:20 }}>
         <div style={{ width:"100%", maxWidth:560, background:T.card, border:`1px solid ${T.border}`, borderRadius:18, boxShadow:T.shadow, padding:24 }}>
           <div style={{ fontSize:38, marginBottom:10 }}>🔐</div>
-          <h1 style={{ margin:"0 0 8px", fontSize:24 }}>Sign in required</h1>
+          <h1 style={{ margin:"0 0 8px", fontSize:24 }}>{cloudLoadSafe ? "Workspace setup required" : "Workspace connection interrupted"}</h1>
           <p style={{ margin:"0 0 14px", color:T.subtext, lineHeight:1.5 }}>
-            This browser is signed into an account that does not have a completed MaintForge workspace. Assigned users should not create a new organization. Sign out, then use the username/password created in Settings → Users & Roles.
+            {cloudLoadSafe
+              ? "This account does not currently have a completed MaintForge owner workspace. Assigned users should sign in with the username/password created in Settings → Users & Roles."
+              : "MaintForge could not safely verify your existing cloud workspace. Your data has NOT been replaced with a blank workspace, and cloud autosave is locked until a valid workspace is loaded."}
           </p>
           <div style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:12, background:T.surface, color:T.subtext, fontSize:13, lineHeight:1.45, marginBottom:16 }}>
-            Create Owner Workspace is only for the first company administrator. It is not for mechanics, viewers, or facility-assigned users.
+            {cloudLoadSafe
+              ? "Create Owner Workspace is only for a genuinely new first company administrator. It is not for mechanics, viewers, or facility-assigned users."
+              : "Use Retry Cloud Load first. Do not create a new owner workspace when this screen appears after you were already using MaintForge normally."}
           </div>
           <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-            <Btn onClick={async()=>{ try { await supabase.auth.signOut(); } catch(e) {} setAppSession(null); setDataLoaded(false); setAuthMode("login"); setAuthPassword(""); setAuthConfirmPassword(""); dispatch({ type:"REPLACE_STATE", payload:blankUserState() }); }}>Sign Out / Go to Login</Btn>
-            <Btn variant="secondary" onClick={()=>setShowOwnerSetup(true)}>Create Owner Workspace</Btn>
+            {!cloudLoadSafe && <Btn onClick={()=>window.location.reload()}>Retry Cloud Load</Btn>}
+            {!appSession?.maintForgeAppLogin && <Btn variant="secondary" onClick={()=>emergencyWorkspaceBackupRef.current?.click()}>Restore MaintForge Backup</Btn>}
+            <input ref={emergencyWorkspaceBackupRef} type="file" accept="application/json,.json" onChange={restoreEmergencyWorkspaceBackup} style={{ display:"none" }} />
+            <Btn variant={cloudLoadSafe ? "primary" : "secondary"} onClick={async()=>{ try { await supabase.auth.signOut(); } catch(e) {} setAppSession(null); setDataLoaded(false); setCloudLoadSafe(false); setAuthMode("login"); setAuthPassword(""); setAuthConfirmPassword(""); dispatch({ type:"REPLACE_STATE", payload:blankUserState() }); }}>Sign Out / Go to Login</Btn>
+            {cloudLoadSafe && <Btn variant="secondary" onClick={()=>setShowOwnerSetup(true)}>Create Owner Workspace</Btn>}
           </div>
         </div>
       </div>
