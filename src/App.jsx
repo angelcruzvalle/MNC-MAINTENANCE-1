@@ -1288,7 +1288,7 @@ function reducer(state, { type, payload }) {
       }
       /* If Inspection WO is completed, advance the linked inspection schedule. */
       if(payload.status==="Completed" && payload.inspectionScheduleId) {
-        const sch = (state.inspectionSchedules||[]).find(s=>String(s.id)===String(payload.inspectionScheduleId));
+        const sch = (state.inspectionSchedules||[]).find(s=>s.id===payload.inspectionScheduleId);
         if(sch) {
           const doneDate = payload.completed || new Date().toISOString().split("T")[0];
           const d = new Date(doneDate);
@@ -1298,9 +1298,10 @@ function reducer(state, { type, payload }) {
           if(unit==="weeks") d.setDate(d.getDate()+n*7);
           if(unit==="months") d.setMonth(d.getMonth()+n);
           if(unit==="years") d.setFullYear(d.getFullYear()+n);
-          const completedOccurrence = payload.inspectionDueOccurrence || payload.due || sch.nextDueDate || doneDate;
-          const advancedSch = { ...sch, lastTriggered:doneDate, lastDoneDate:doneDate, lastInspectionDate:doneDate, nextDueDate:d.toISOString().split("T")[0], lastGeneratedDueDate:completedOccurrence, lastGeneratedWorkOrderId:payload.id || "", completedDueOccurrences:Array.from(new Set([...(Array.isArray(sch.completedDueOccurrences)?sch.completedDueOccurrences:[]), completedOccurrence])) };
-          return { ...state, parts, equipment, workOrders:updated, inspectionSchedules:(state.inspectionSchedules||[]).map(s=>String(s.id)===String(sch.id)?advancedSch:s) };
+          const completedOccurrence = String(payload.inspectionDueOccurrence || payload.due || sch.nextDueDate || doneDate);
+          const completedDueOccurrences = Array.from(new Set([...(sch.completedDueOccurrences||[]).map(String), completedOccurrence].filter(Boolean)));
+          const advancedSch = { ...sch, lastTriggered:doneDate, lastDoneDate:doneDate, lastInspectionDate:doneDate, nextDueDate:d.toISOString().split("T")[0], lastGeneratedDueDate:completedOccurrence, lastGeneratedWorkOrderId:payload.id || "", completedDueOccurrences };
+          return { ...state, parts, equipment, workOrders:updated, inspectionSchedules:(state.inspectionSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
         }
       }
       return { ...state, parts, equipment, workOrders: updated };
@@ -3058,28 +3059,20 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   };
 
   const del = id => {
-    const woToDelete = (state.workOrders||[]).find(w => String(w.id) === String(id));
-    if(!woToDelete) return;
-    if(!confirm("Delete this work order?")) return;
-
-    // Inspection WOs are generated from schedules. Preserve the occurrence lock BEFORE deleting
-    // so legacy L1/L2 inspection schedules cannot immediately recreate the same work order.
-    if(woToDelete.woType === "Inspection" && woToDelete.inspectionScheduleId) {
-      const sch = (state.inspectionSchedules||[]).find(s => String(s.id) === String(woToDelete.inspectionScheduleId));
+    const target = (state.workOrders||[]).find(w => String(w.id) === String(id));
+    if(!confirm(`Delete work order ${id || ""}?\n\nThis cannot be undone.`)) return;
+    // For inspection WOs, mark this exact due occurrence handled before deleting it.
+    // That prevents the scheduler from immediately recreating the same L1/L2 inspection.
+    if(target?.woType === "Inspection" && target?.inspectionScheduleId) {
+      const sch = (state.inspectionSchedules||[]).find(x => String(x.id) === String(target.inspectionScheduleId));
       if(sch) {
-        const occurrence = woToDelete.inspectionDueOccurrence || woToDelete.due || sch.nextDueDate || today();
-        dispatch({ type:"UPDATE_INSPECTION_SCHEDULE", payload:{
-          ...sch,
-          lastTriggered: sch.lastTriggered || today(),
-          lastGeneratedDueDate: occurrence,
-          lastGeneratedWorkOrderId: "",
-          skippedDueOccurrences: Array.from(new Set([...(Array.isArray(sch.skippedDueOccurrences)?sch.skippedDueOccurrences:[]), occurrence]))
-        }});
+        const occurrence = String(target.inspectionDueOccurrence || target.due || sch.nextDueDate || "");
+        const skipped = Array.from(new Set([...(sch.skippedDueOccurrences||[]).map(String), occurrence].filter(Boolean)));
+        dispatch({ type:"UPDATE_INSPECTION_SCHEDULE", payload:{ ...sch, skippedDueOccurrences:skipped, lastGeneratedDueDate:occurrence || sch.lastGeneratedDueDate, lastGeneratedWorkOrderId:"" } });
       }
     }
     dispatch({type:"DELETE_WO",payload:id});
-    setModal(null);
-    setDetailWO(null);
+    setModal(null); setDetailWO(null);
   };
 
   const confirmWOStatusChange = (wo, nextStatus) => {
@@ -3640,9 +3633,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     };
 
     return (
-      <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div className="mf-wo-detail" style={{ display:"flex", flexDirection:"column", gap:14 }}>
         {/* Header */}
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:10 }}>
+        <div className="mf-wo-detail-header" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:10 }}>
           <div>
             <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:4 }}>
               <span style={{ fontFamily:T.mono, fontSize:11, color:T.muted }}>{wo.id}</span>
@@ -3654,19 +3647,18 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             <h3 style={{ margin:0, fontFamily:T.sans, fontSize:18, fontWeight:700, color:T.text }}>{wo.title}</h3>
             {wo.serviceInterval && wo.woType!=="Repair" && <div style={{ fontFamily:T.mono, fontSize:11, color:T.accent, marginTop:2 }}>{wo.serviceInterval}</div>}
           </div>
-          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          <div className="mf-wo-actions" style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
             <Btn small variant="secondary" onClick={()=>printWO(wo)}>Print</Btn>
             <Btn small variant="danger" onClick={()=>del(wo.id)}>Delete</Btn>
             {!isCompleted && !editMode && <Btn small onClick={()=>setEditMode(true)} style={{ background:"#1e40af", borderColor:"#1e40af" }}>Update Work Order</Btn>}
             {!isCompleted && editMode && <Btn small onClick={()=>{ let payload={ ...wo, ...form }; const isClosingNow = payload.status!==wo.status && payload.status==="Completed"; if(payload.status!==wo.status && !confirmWOStatusChange(wo, payload.status)) return; if(isClosingNow){ const completedDate = askCompletedDate(payload.completed || payload.completedDate || today()); if(!completedDate) return; payload={ ...payload, completed:completedDate, completedDate:completedDate, equipmentStatus:"Fully Operational" }; } dispatch({ type:"UPDATE_WO", payload }); setEditMode(false); setDetailWO(payload); }} style={{ background:T.green, borderColor:T.green }}>Save Changes</Btn>}
             {!isCompleted && editMode && <Btn small variant="secondary" onClick={()=>{ setEditMode(false); setForm({...wo, partsUsed:wo.partsUsed||[], outsideServices:wo.outsideServices||[]}); }}>Cancel Edit</Btn>}
             {!isCompleted && !editMode && <Btn small onClick={completeWO} style={{ background:T.green, borderColor:T.green }}>Complete Work Order</Btn>}
-            <Btn small variant="danger" onClick={()=>del(wo.id)}>Delete</Btn>
           </div>
         </div>
 
         {/* Info grid */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12 }}>
+        <div className="mf-wo-info-grid" style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12 }}>
           {[["Equipment", eq?.name||wo.equipmentLabel||wo.equipment],["Mechanic",wo.tech],["Created",wo.created],["Due",wo.due],["Completed",wo.completed||"—"],["Labor Hours",`${wo.laborHours||0} hrs`]].map(([k,v])=>(
             <div key={k} style={{ background:T.grayLt, borderRadius:6, padding:"8px 12px", border:`1px solid ${T.border}` }}>
               <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div>
@@ -11084,6 +11076,7 @@ export default function App() {
 
   const [dataLoaded, setDataLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState("idle"); /* idle | saving | saved | error */
+  const [syncErrorDetail, setSyncErrorDetail] = useState("");
   const [ownerRecovery, setOwnerRecovery] = useState(null);
   const [cloudWriteBlocked, setCloudWriteBlocked] = useState(false);
   const [systemThemeTick, setSystemThemeTick] = useState(0);
@@ -11251,10 +11244,16 @@ export default function App() {
     if (cloudWriteBlocked) { setSyncStatus("error"); return; }
     if (state.inviteConnectionError) { setSyncStatus("idle"); return; }
     setSyncStatus("saving");
+    setSyncErrorDetail("");
     const timer = setTimeout(async () => {
       try {
         const cloudOwnerId = state.ownerUserId || state.organizationOwnerId || activeUser.id;
         const cloudState = prepareSharedOrganizationStateForCloudSave(state, activeUser);
+        // Always keep the newest working browser copy even if the cloud rejects a save.
+        try {
+          localStorage.setItem("ncaState", JSON.stringify(cloudState));
+          localStorage.setItem("ncaState:lastUserId", activeUser.id);
+        } catch(e) { console.warn("Local safety save failed:", e); }
         let error = null;
         if(appSession?.maintForgeAppLogin) {
           const rpcSave = await supabase.rpc("maintforge_username_save", {
@@ -11280,6 +11279,7 @@ export default function App() {
           console.error("Save error:", error);
           setSyncStatus("error");
           const saveMessage = String(error?.message || error || "");
+          setSyncErrorDetail([error?.message, error?.details, error?.hint, error?.code ? `Code: ${error.code}` : ""].filter(Boolean).join("\n") || "Unknown Supabase save error");
           if(saveMessage.includes("MAINTFORGE_DATA_GUARD")) {
             setCloudWriteBlocked(true);
             setAuthInfoMsg("🛡️ MaintForge blocked a destructive cloud save. Your existing Supabase workspace was NOT overwritten. Review Data Safety before continuing.");
@@ -11295,6 +11295,7 @@ export default function App() {
             );
           }
           setSyncStatus("saved");
+          setSyncErrorDetail("");
           try { localStorage.setItem("ncaState", JSON.stringify(ensureCurrentOrganizationAdmin(cloudState, activeUser))); localStorage.setItem("ncaState:lastUserId", activeUser.id); } catch(e) {}
           setTimeout(() => setSyncStatus("idle"), 2000);
         }
@@ -11424,7 +11425,8 @@ export default function App() {
       if(!schedule?.nextDueDate || schedule.nextDueDate > todayStr) return;
       // One inspection occurrence may generate only one WO. Deleting/closing that WO must not recreate the same due occurrence.
       if(schedule.lastGeneratedDueDate && String(schedule.lastGeneratedDueDate) === String(schedule.nextDueDate)) return;
-      if(Array.isArray(schedule.skippedDueOccurrences) && schedule.skippedDueOccurrences.some(d => String(d) === String(schedule.nextDueDate))) return;
+      if((schedule.skippedDueOccurrences||[]).map(String).includes(String(schedule.nextDueDate))) return;
+      if((schedule.completedDueOccurrences||[]).map(String).includes(String(schedule.nextDueDate))) return;
       const alreadyGeneratedForOccurrence = (state.workOrders||[]).some(w => w.inspectionScheduleId === schedule.id && w.woType === "Inspection" && String(w.inspectionDueOccurrence || w.due || "") === String(schedule.nextDueDate));
       if(alreadyGeneratedForOccurrence) return;
       const alreadyOpen = (state.workOrders||[]).some(w =>
@@ -12452,6 +12454,35 @@ export default function App() {
           .mf-admin-nav button { min-width:148px !important; }
           .mf-header > div:last-child { grid-template-columns:repeat(4,minmax(44px,1fr)) !important; }
         }
+
+        /* PHONE REBUILD v2026-09-15: phone is a vertical app, not a squeezed desktop page. */
+        @media (max-width: 768px) {
+          html, body, #root { width:100% !important; max-width:100% !important; min-height:100% !important; overflow-x:hidden !important; overflow-y:auto !important; }
+          body { position:static !important; touch-action:pan-y !important; -webkit-overflow-scrolling:touch !important; }
+          .mf-main { width:100% !important; max-width:100% !important; overflow:visible !important; padding-left:10px !important; padding-right:10px !important; }
+          .mf-modal-backdrop { padding:0 !important; align-items:stretch !important; overflow:hidden !important; }
+          .mf-modal-panel { width:100vw !important; max-width:100vw !important; height:100dvh !important; max-height:100dvh !important; border:0 !important; border-radius:0 !important; overflow:hidden !important; display:flex !important; flex-direction:column !important; }
+          .mf-modal-header { flex:0 0 auto !important; padding:calc(10px + env(safe-area-inset-top)) 12px 10px !important; }
+          .mf-modal-body { flex:1 1 auto !important; min-height:0 !important; padding:12px 12px calc(96px + env(safe-area-inset-bottom)) !important; overflow-y:auto !important; overflow-x:hidden !important; -webkit-overflow-scrolling:touch !important; touch-action:pan-y !important; }
+          .mf-modal-body > * { max-width:100% !important; min-width:0 !important; }
+          .mf-wo-detail { width:100% !important; max-width:100% !important; padding-bottom:8px !important; }
+          .mf-wo-detail-header { display:block !important; }
+          .mf-wo-detail-header > div:first-child { width:100% !important; margin-bottom:12px !important; }
+          .mf-wo-detail h3 { font-size:20px !important; line-height:1.25 !important; overflow-wrap:anywhere !important; }
+          .mf-wo-info-grid { grid-template-columns:1fr 1fr !important; gap:8px !important; }
+          .mf-wo-info-grid > div { padding:10px !important; min-width:0 !important; }
+          .mf-wo-actions { position:fixed !important; left:0 !important; right:0 !important; bottom:0 !important; z-index:2300 !important; display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)) !important; gap:8px !important; padding:10px 10px calc(10px + env(safe-area-inset-bottom)) !important; background:${T.card} !important; border-top:1px solid ${T.border} !important; box-shadow:0 -8px 24px rgba(15,23,42,.14) !important; }
+          .mf-wo-actions .mf-btn { width:100% !important; min-width:0 !important; min-height:48px !important; padding:9px 8px !important; white-space:normal !important; line-height:1.15 !important; }
+          .mf-wo-detail table { min-width:620px !important; }
+          .mf-wo-detail [style*="gridTemplateColumns"] { max-width:100% !important; }
+          .mf-sync-status { cursor:pointer !important; max-width:150px !important; white-space:normal !important; line-height:1.1 !important; }
+          /* Bottom app navigation stays below pages, but WO modal actions intentionally sit above everything. */
+          .mf-mobile-bottom-nav { z-index:1200 !important; }
+        }
+        @media (max-width: 390px) {
+          .mf-wo-info-grid { grid-template-columns:1fr !important; }
+          .mf-wo-actions { grid-template-columns:1fr 1fr !important; }
+        }
       `}</style>
 
       <SlideMenu tab={tab} setTab={setTab} open={menuOpen} onClose={()=>setMenuOpen(false)} onSettings={()=>setShowSettings(true)} companyName={companyName} profile={profile} />
@@ -12487,15 +12518,15 @@ export default function App() {
           <button className="mf-help-button" onClick={()=>setShowHelp(true)} title="Help & Glossary" style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:`linear-gradient(135deg, ${T.card}, ${T.grayLt})`, color:T.text, cursor:"pointer", fontSize:13, fontWeight:700 }}>? Help</button>
           {/* Sync status indicator */}
           {syncStatus !== "idle" && (
-            <span className="mf-sync-status" style={{
+            <button type="button" className="mf-sync-status" onClick={()=>{ if(syncStatus==="error") alert(`Cloud save failed.\n\n${syncErrorDetail || "No additional error details were returned."}\n\nYour latest state was kept in this browser as a local safety copy.`); }} style={{
               fontFamily:T.sans, fontSize:11, fontWeight:600,
               padding:"3px 9px", borderRadius:10,
               background: syncStatus==="saving"?"#fef3c7":syncStatus==="saved"?"#d1fae5":"#fee2e2",
               color:     syncStatus==="saving"?"#92400e":syncStatus==="saved"?"#065f46":"#991b1b",
               border: `1px solid ${syncStatus==="saving"?"#fbbf24":syncStatus==="saved"?"#10b981":"#ef4444"}`,
             }}>
-              {syncStatus==="saving"?"⟳ Saving...":syncStatus==="saved"?"✓ Saved":"⚠ Save failed"}
-            </span>
+              {syncStatus==="saving"?"⟳ Saving...":syncStatus==="saved"?"✓ Saved":"⚠ Save failed — tap"}
+            </button>
           )}
           {/* Notification bell */}
           <NotifBell notifications={state.notifications} dispatch={dispatch} />
