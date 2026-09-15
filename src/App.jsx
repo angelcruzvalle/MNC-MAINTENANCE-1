@@ -4157,6 +4157,8 @@ function Equipment({ state, dispatch }) {
   const [historicalImportOpen, setHistoricalImportOpen] = useState(false);
   const blankHistoricalImport = () => ({ title:"", woType:"Service", completed:today(), tech:"", laborHours:"", laborCost:"", notes:"", partsUsed:[], originalDocument:null });
   const [historicalImport, setHistoricalImport] = useState(blankHistoricalImport());
+  const historicalCameraRef = useRef(null);
+  const historicalFileRef = useRef(null);
   const [expandedAt, setExpandedAt]     = useState({});
   const [form, setForm]         = useState({});
   const [search, setSearch]     = useState("");
@@ -4563,16 +4565,22 @@ function Equipment({ state, dispatch }) {
   const addHistoricalPart = () => setHistoricalImport(f=>({...f,partsUsed:[...(f.partsUsed||[]),{name:"",partNumber:"",qty:1,unitCost:0}]}));
   const updateHistoricalPart = (idx, patch) => setHistoricalImport(f=>{ const rows=[...(f.partsUsed||[])]; rows[idx]={...(rows[idx]||{}),...patch}; return {...f,partsUsed:rows}; });
   const removeHistoricalPart = (idx) => setHistoricalImport(f=>({...f,partsUsed:(f.partsUsed||[]).filter((_,i)=>i!==idx)}));
-  const loadHistoricalDocument = async (file) => {
-    if(!file) return;
-    if(file.size > 12 * 1024 * 1024) { alert("Choose a photo or PDF smaller than 12 MB."); return; }
-    const dataUrl = await new Promise((resolve,reject)=>{ const r=new FileReader(); r.onload=()=>resolve(r.result); r.onerror=reject; r.readAsDataURL(file); });
-    setHistoricalImport(f=>({...f,originalDocument:{ id:genId("HISTDOC"), name:file.name || `Historical-WO-${Date.now()}`, type:file.type || "application/octet-stream", size:file.size, dataUrl, capturedAt:new Date().toISOString() }}));
+  const loadHistoricalDocuments = async (files) => {
+    const list=Array.from(files||[]); if(!list.length) return;
+    const tooLarge=list.find(file=>file.size > 12 * 1024 * 1024);
+    if(tooLarge) { alert(`“${tooLarge.name}” is larger than 12 MB. Choose a smaller scan/photo.`); return; }
+    const docs=[];
+    for(const file of list){
+      const dataUrl = await new Promise((resolve,reject)=>{ const r=new FileReader(); r.onload=()=>resolve(r.result); r.onerror=reject; r.readAsDataURL(file); });
+      docs.push({ id:genId("HISTDOC"), name:file.name || `Historical-WO-${Date.now()}`, type:file.type || "application/octet-stream", size:file.size, dataUrl, capturedAt:new Date().toISOString() });
+    }
+    setHistoricalImport(f=>{ const existing=f.originalDocuments || (f.originalDocument?[f.originalDocument]:[]); const all=[...existing,...docs]; return {...f,originalDocuments:all,originalDocument:all[0]||null}; });
   };
+  const removeHistoricalDocument = (id) => setHistoricalImport(f=>{ const docs=(f.originalDocuments || (f.originalDocument?[f.originalDocument]:[])).filter(d=>d.id!==id); return {...f,originalDocuments:docs,originalDocument:docs[0]||null}; });
   const saveHistoricalWorkOrder = (equipmentId) => {
     const f=historicalImport;
     if(!String(f.title||"").trim()) return alert("Enter a title or service description for the historical work order.");
-    if(!f.originalDocument?.dataUrl) return alert("Add a photo or scan of the original work order so the source document stays with the record.");
+    if(!(f.originalDocuments?.length || f.originalDocument?.dataUrl)) return alert("Scan or upload the original work order so the source document stays with the record.");
     const completed = f.completed || today();
     const id = genNextWOId(state.workOrders || [], equipmentId, "HIST");
     const partsUsed=(f.partsUsed||[]).filter(p=>String(p.name||p.partNumber||"").trim()).map(p=>({...p,qty:+(p.qty||1),unitCost:+(p.unitCost||0)}));
@@ -4580,11 +4588,11 @@ function Equipment({ state, dispatch }) {
       id, equipment:equipmentId, woType:f.woType||"Service", title:String(f.title||"").trim(), status:"Completed",
       created:completed, completed, completedDate:completed, closedDate:completed, tech:f.tech||"", laborHours:+(f.laborHours||0), laborCost:+(f.laborCost||0),
       partsUsed, outsideServices:[], mechanicNotes:f.notes||"", description:f.notes||f.title||"", workPerformed:f.notes||"",
-      historicalImport:true, importedAt:new Date().toISOString(), originalDocument:f.originalDocument, source:"Historical Work Order Import",
+      historicalImport:true, importedAt:new Date().toISOString(), originalDocument:(f.originalDocuments?.[0]||f.originalDocument), originalDocuments:(f.originalDocuments?.length?f.originalDocuments:(f.originalDocument?[f.originalDocument]:[])), source:"Historical Work Order Import",
       usageNA:true, equipmentStatus:"Fully Operational", priority:"Historical"
     }});
     setHistoricalImport(blankHistoricalImport()); setHistoricalImportOpen(false);
-    alert(`Historical Work Order ${id} added. The original scan/photo is attached to the record.`);
+    alert(`Historical Work Order ${id} added. ${f.originalDocuments?.length || 1} original scan page(s) saved with the record.`);
   };
   const openOriginalHistoricalDocument = (wo) => {
     const doc=wo?.originalDocument; if(!doc?.dataUrl) return alert("No original document is attached to this historical work order.");
@@ -4705,10 +4713,19 @@ function Equipment({ state, dispatch }) {
                 <Btn small variant="secondary" onClick={addHistoricalPart}>+ Add Part</Btn>
               </div>
               <div style={{gridColumn:"1 / -1",border:`2px dashed ${T.borderHi}`,borderRadius:14,padding:14}}>
-                <div style={{fontWeight:900,marginBottom:5}}>Original Work Order — required</div>
-                <div style={{fontSize:12,color:T.muted,marginBottom:10}}>On iPhone, choose Take Photo to photograph the old work order. The source image/PDF is kept with this historical record for reference and printing.</div>
-                <input type="file" accept="image/*,application/pdf" capture="environment" onChange={e=>loadHistoricalDocument(e.target.files?.[0])}/>
-                {historicalImport.originalDocument && <div style={{marginTop:8,fontSize:12,fontWeight:700}}>Attached: {historicalImport.originalDocument.name}</div>}
+                <div style={{fontWeight:900,marginBottom:5}}>Original Work Order Scan — required</div>
+                <div style={{fontSize:12,color:T.muted,marginBottom:12}}>Use the camera to scan each page of the paper work order. Every captured page stays attached to this historical record for future viewing and printing.</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10}}>
+                  <Btn onClick={()=>historicalCameraRef.current?.click()}>📷 Scan Work Order</Btn>
+                  <Btn variant="secondary" onClick={()=>historicalFileRef.current?.click()}>📎 Upload Existing Scan</Btn>
+                </div>
+                <input ref={historicalCameraRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{loadHistoricalDocuments(e.target.files);e.target.value="";}}/>
+                <input ref={historicalFileRef} type="file" accept="image/*,application/pdf" multiple style={{display:"none"}} onChange={e=>{loadHistoricalDocuments(e.target.files);e.target.value="";}}/>
+                {(historicalImport.originalDocuments || (historicalImport.originalDocument?[historicalImport.originalDocument]:[])).length>0 && <div style={{marginTop:12,display:"grid",gap:8}}>
+                  <div style={{fontWeight:800}}>Saved scan pages ({(historicalImport.originalDocuments || [historicalImport.originalDocument]).length})</div>
+                  {(historicalImport.originalDocuments || [historicalImport.originalDocument]).filter(Boolean).map((doc,i)=><div key={doc.id||i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:9,border:`1px solid ${T.border}`,borderRadius:9}}><span style={{fontSize:12,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis"}}>Page {i+1}: {doc.name}</span><Btn small variant="danger" onClick={()=>removeHistoricalDocument(doc.id)}>Remove</Btn></div>)}
+                  <Btn small variant="secondary" onClick={()=>historicalCameraRef.current?.click()}>+ Scan Another Page</Btn>
+                </div>}
               </div>
               <div style={{gridColumn:"1 / -1",padding:10,borderRadius:10,background:T.amberLt,color:T.text,fontSize:12}}>Scan-to-prefill is prepared as the next OCR layer; this version keeps the original document and uses reviewed manual fields so an OCR mistake cannot silently alter maintenance history.</div>
               <div style={{gridColumn:"1 / -1",display:"flex",justifyContent:"flex-end",gap:8,flexWrap:"wrap"}}><Btn variant="secondary" onClick={()=>setHistoricalImportOpen(false)}>Cancel</Btn><Btn onClick={()=>saveHistoricalWorkOrder(eq.id)}>Save Historical Work Order</Btn></div>
@@ -4726,7 +4743,7 @@ function Equipment({ state, dispatch }) {
                   </div>
                   <div style={{ display:"flex", gap:8 }}>
                     <Btn small variant="secondary" onClick={()=>printHistoryWO(historyWO)}>Print</Btn>
-                    {historyWO.originalDocument?.dataUrl && <Btn small variant="secondary" onClick={()=>openOriginalHistoricalDocument(historyWO)}>Original Scan</Btn>}
+                    {(historyWO.originalDocuments?.length || historyWO.originalDocument?.dataUrl) && <Btn small variant="secondary" onClick={()=>openOriginalHistoricalDocument(historyWO)}>Original Scan</Btn>}
                     <Btn small onClick={()=>setHistoryEdit(true)}>✏ Edit</Btn>
                   </div>
                 </div>
@@ -12332,9 +12349,39 @@ export default function App() {
           [style*="maxHeight:260"], [style*="max-height:260"] { max-height:none !important; }
           p, li { line-height:1.5 !important; }
         }
+        /* MaintForge phone-first refinement: prioritize actions and readable records over desktop table behavior */
+        @media (max-width: 768px) {
+          body { overscroll-behavior-x:none; }
+          .mf-main { padding:10px 8px calc(92px + env(safe-area-inset-bottom)) !important; }
+          .mf-header { padding-top:calc(6px + env(safe-area-inset-top)) !important; }
+          .mf-header > div:last-child { display:flex !important; overflow-x:auto !important; flex-wrap:nowrap !important; justify-content:flex-start !important; padding-bottom:3px !important; scrollbar-width:none; }
+          .mf-header > div:last-child::-webkit-scrollbar { display:none; }
+          .mf-header > div:last-child button { flex:0 0 48px !important; width:48px !important; min-width:48px !important; min-height:46px !important; padding:6px !important; }
+          .mf-header > div:last-child > button:last-child { grid-column:auto !important; }
+          .mf-card { padding:12px !important; border-radius:14px !important; }
+          .mf-section-heading { gap:10px !important; flex-wrap:wrap !important; }
+          .mf-section-heading button { min-height:48px !important; }
+          input, select, textarea { font-size:16px !important; min-height:48px !important; }
+          input[type="checkbox"], input[type="radio"] { width:22px !important; min-height:22px !important; }
+          textarea { min-height:110px !important; }
+          button { min-height:44px !important; }
+          /* Do not make the whole page horizontally scrollable. Only explicit table wrappers may scroll. */
+          main, main > div, section, article { overflow-x:hidden !important; }
+          .mobile-x-scroll, main div[style*="overflowX"], main div[style*="overflow-x"] { overflow-x:auto !important; -webkit-overflow-scrolling:touch !important; width:100% !important; max-width:100% !important; }
+          /* Tables become compact swipe regions instead of forcing a 900px page width. */
+          main table { display:table !important; width:100% !important; min-width:680px !important; max-width:none !important; overflow:visible !important; font-size:13px !important; }
+          main th, main td { min-width:110px !important; padding:9px 10px !important; }
+          main th:first-child, main td:first-child { min-width:145px !important; max-width:180px !important; }
+          /* Keep action groups reachable and thumb friendly. */
+          main [style*="display:flex"] { flex-wrap:wrap; }
+          main [style*="justify-content:flex-end"], main [style*="justifyContent:"flex-end""] { justify-content:flex-start !important; }
+          .mf-modal-panel { display:flex !important; flex-direction:column !important; }
+          .mf-modal-body { flex:1 1 auto !important; overflow-y:auto !important; -webkit-overflow-scrolling:touch !important; }
+          .mf-admin-footer-actions { position:sticky !important; bottom:0 !important; background:${T.card} !important; padding-bottom:env(safe-area-inset-bottom) !important; }
+        }
         @media (max-width: 480px) {
           div[style*="grid-template-columns:repeat(auto-fit"], div[style*="grid-template-columns:repeat(2"] { grid-template-columns:1fr !important; }
-          main table { min-width:900px !important; }
+          main table { min-width:640px !important; }
           h1 { font-size:21px !important; }
           h2 { font-size:20px !important; }
           .mf-admin-nav button { min-width:148px !important; }
