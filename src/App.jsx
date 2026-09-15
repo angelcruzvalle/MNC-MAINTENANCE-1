@@ -2128,7 +2128,7 @@ function Header({ notifications, dispatch, currentPage, onMenuToggle }) {
             <span style={{ display:"block", width:18, height:2, background:T.subtext, borderRadius:1 }}/>
             <span style={{ display:"block", width:18, height:2, background:T.subtext, borderRadius:1 }}/>
           </button>
-          <div style={{ width:1, height:28, background:T.border }} />
+          <div className="mf-header-divider" style={{ width:1, height:28, background:T.border }} />
           <div>
             <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, letterSpacing:-.3, lineHeight:1.2 }}>NCA Maintenance</div>
             <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, letterSpacing:.3 }}>{state.activeLocationId === "__all" ? "Organization Dashboard" : activeLocationLabel}</div>
@@ -4166,6 +4166,7 @@ function Equipment({ state, dispatch }) {
   const [typeF, setTypeF]       = useState("All");
   const [locationF, setLocationF] = useState("All");
   const [equipSort, setEquipSort] = useState("equipAsc");
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [showNewCat, setShowNewCat] = useState(false);
   const [newCat, setNewCat]     = useState("");
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
@@ -5086,8 +5087,8 @@ function Equipment({ state, dispatch }) {
   /* -- List view -- */
   return (
     <div>
-      <Card style={{ marginBottom:16 }}>
-        <div style={{ display:"flex", gap:10, marginBottom:14, flexWrap:"wrap" }}>
+      <Card className="mf-equipment-toolbar" style={{ marginBottom:16 }}>
+        <div className="mf-equipment-primary-actions" style={{ display:"flex", gap:10, marginBottom:14, flexWrap:"wrap" }}>
           <input style={{ ...inp, flex:1, minWidth:200 }} placeholder="Search by equipment #, nomenclature, make, model, serial, EIL #, facility, area…" value={search} onChange={e=>setSearch(e.target.value)} />
           <Btn variant="secondary" onClick={()=>{
             const allEquipment = state.equipment || [];
@@ -5121,8 +5122,9 @@ function Equipment({ state, dispatch }) {
             win.document.close();
           }}>🖨 Equipment Status Report</Btn>
           <Btn onClick={openAdd}>+ Add New Equipment</Btn>
+          <button className="mf-mobile-filter-button" onClick={()=>setMobileFiltersOpen(v=>!v)} style={{ display:"none" }}>☰ Filters{(typeF!=="All"||locationF!=="All") ? " •" : ""}</button>
         </div>
-        <div style={{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"flex-end" }}>
+        <div className={`mf-equipment-filters ${mobileFiltersOpen ? "is-open" : ""}`} style={{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"flex-end" }}>
           <span style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.muted, paddingBottom:6 }}>Filter by:</span>
           {[
             ["Category", categories,   typeF,     setTypeF,     180],
@@ -12379,6 +12381,44 @@ export default function App() {
           .mf-modal-body { flex:1 1 auto !important; overflow-y:auto !important; -webkit-overflow-scrolling:touch !important; }
           .mf-admin-footer-actions { position:sticky !important; bottom:0 !important; background:${T.card} !important; padding-bottom:env(safe-area-inset-bottom) !important; }
         }
+        .mf-mobile-bottom-nav { display:none; }
+        .mf-mobile-filter-button { border:1px solid ${T.border}; background:${T.surface}; color:${T.text}; border-radius:12px; padding:0 14px; font:700 14px ${T.sans}; }
+        @media (max-width: 768px) {
+          .mf-header { height:60px !important; min-height:60px !important; padding:calc(6px + env(safe-area-inset-top)) 10px 6px !important; align-items:center !important; }
+          .mf-header-brand { flex:1 1 auto !important; flex-wrap:nowrap !important; min-width:0 !important; gap:9px !important; }
+          .mf-menu-button { flex:0 0 44px !important; width:44px !important; height:44px !important; padding:10px !important; }
+          .mf-header-divider, .mf-header-crumb, .mf-header-page-title, .mf-facility-label, .mf-theme-button, .mf-help-button, .mf-logout-button { display:none !important; }
+          .mf-header img { display:none !important; }
+          .mf-brand-title { min-width:0 !important; flex:1 1 auto !important; }
+          .mf-brand-title > div:first-child { font-size:14px !important; white-space:nowrap !important; overflow:hidden !important; text-overflow:ellipsis !important; max-width:42vw !important; }
+          .mf-brand-title > div:last-child { font-size:10px !important; white-space:nowrap !important; overflow:hidden !important; text-overflow:ellipsis !important; max-width:42vw !important; }
+          .mf-facility-switch { position:absolute !important; top:calc(62px + env(safe-area-inset-top)) !important; left:10px !important; right:10px !important; width:calc(100% - 20px) !important; height:42px !important; z-index:999 !important; border-radius:12px !important; }
+          .mf-header-actions { flex:0 0 auto !important; overflow:visible !important; gap:6px !important; padding:0 !important; }
+          .mf-header-actions > button { display:none !important; }
+          .mf-header-actions .mf-profile-button { display:flex !important; width:42px !important; min-width:42px !important; height:42px !important; padding:7px !important; border-radius:50% !important; }
+          .mf-profile-button > span { display:none !important; }
+          .mf-sync-status { position:fixed !important; top:calc(110px + env(safe-area-inset-top)) !important; right:12px !important; z-index:900 !important; font-size:10px !important; padding:4px 8px !important; box-shadow:0 2px 8px rgba(0,0,0,.08); }
+          .mf-main { padding-top:62px !important; padding-bottom:calc(82px + env(safe-area-inset-bottom)) !important; }
+          .mf-main > div:first-child { margin-bottom:12px !important; }
+          .mf-main > div:first-child h1 { font-size:22px !important; }
+          .mf-mobile-bottom-nav { position:fixed; display:grid; grid-template-columns:repeat(5,1fr); left:0; right:0; bottom:0; z-index:1200; background:${T.surface}; border-top:1px solid ${T.border}; padding:6px 6px calc(6px + env(safe-area-inset-bottom)); box-shadow:0 -4px 18px rgba(15,23,42,.08); }
+          .mf-mobile-bottom-nav button { min-width:0 !important; min-height:52px !important; border:0; background:transparent; color:${T.muted}; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; border-radius:10px; padding:4px 2px !important; font-family:${T.sans}; }
+          .mf-mobile-bottom-nav button span { font-size:20px; line-height:1; }
+          .mf-mobile-bottom-nav button small { font-size:9px; font-weight:700; white-space:nowrap; }
+          .mf-mobile-bottom-nav button.active { color:${T.accent}; background:${T.accentLt}; }
+          .mf-equipment-toolbar { padding:10px !important; }
+          .mf-equipment-primary-actions { display:grid !important; grid-template-columns:1fr 48px !important; gap:8px !important; margin-bottom:0 !important; }
+          .mf-equipment-primary-actions > input { grid-column:1 / -1; min-width:0 !important; }
+          .mf-equipment-primary-actions > button:nth-of-type(1) { display:none !important; }
+          .mf-equipment-primary-actions > button:nth-of-type(2) { grid-column:1; width:100% !important; }
+          .mf-mobile-filter-button { display:block !important; grid-column:2; width:48px !important; padding:0 !important; font-size:0 !important; }
+          .mf-mobile-filter-button::before { content:"☰"; font-size:20px; }
+          .mf-equipment-filters { display:none !important; margin-top:10px; padding-top:10px; border-top:1px solid ${T.border}; gap:10px !important; }
+          .mf-equipment-filters.is-open { display:grid !important; grid-template-columns:1fr !important; }
+          .mf-equipment-filters > span { display:none !important; }
+          .mf-equipment-filters > div { width:100% !important; }
+          .mf-equipment-filters select { width:100% !important; }
+        }
         @media (max-width: 480px) {
           div[style*="grid-template-columns:repeat(auto-fit"], div[style*="grid-template-columns:repeat(2"] { grid-template-columns:1fr !important; }
           main table { min-width:640px !important; }
@@ -12393,8 +12433,8 @@ export default function App() {
 
       {/* Custom header with profile button */}
       <header className="no-print mf-header" style={{ position:"sticky", top:0, zIndex:1000, background:T.surface, borderBottom:`1px solid ${T.border}`, padding:"0 20px", height:56, display:"flex", alignItems:"center", justifyContent:"space-between", boxShadow:`0 1px 0 ${T.border}` }}>
-        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-          <button onClick={()=>setMenuOpen(v=>!v)} style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:7, padding:"7px 9px", cursor:"pointer", display:"flex", flexDirection:"column", gap:4, alignItems:"center" }}>
+        <div className="mf-header-brand" style={{ display:"flex", alignItems:"center", gap:14 }}>
+          <button className="mf-menu-button" onClick={()=>setMenuOpen(v=>!v)} style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:7, padding:"7px 9px", cursor:"pointer", display:"flex", flexDirection:"column", gap:4, alignItems:"center" }}>
             <span style={{ display:"block", width:18, height:2, background:T.subtext, borderRadius:1 }}/>
             <span style={{ display:"block", width:18, height:2, background:T.subtext, borderRadius:1 }}/>
             <span style={{ display:"block", width:18, height:2, background:T.subtext, borderRadius:1 }}/>
@@ -12403,26 +12443,26 @@ export default function App() {
           {resolveMaintForgeLogo(state, state.activeLocationId || "__all") && (
             <img src={resolveMaintForgeLogo(state, state.activeLocationId || "__all")} alt="logo" style={{ height:36, maxWidth:80, objectFit:"contain", borderRadius:4 }} />
           )}
-          <button onClick={()=>setTab("dashboard")} title="Go to dashboard" style={{ background:"none", border:"none", padding:0, textAlign:"left", cursor:"pointer" }}>
+          <button className="mf-brand-title" onClick={()=>setTab("dashboard")} title="Go to dashboard" style={{ background:"none", border:"none", padding:0, textAlign:"left", cursor:"pointer" }}>
             <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, letterSpacing:-.3, lineHeight:1.2 }}>{companyName}</div>
             <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, letterSpacing:.3 }}>{state.activeLocationId === "__all" ? "Organization Dashboard" : activeLocationLabel}</div>
           </button>
-          <span style={{ color:T.border, fontSize:18 }}>›</span>
-          <span style={{ fontFamily:T.sans, fontSize:13, color:T.subtext, fontWeight:500 }}>{PAGE_TITLES[tab] || "Dashboard"}</span>
-          <select title="Switch facility" value={state.activeLocationId || "__all"} onChange={e=>dispatch({type:"SET_ACTIVE_LOCATION", payload:e.target.value})} style={{ ...sel, width:190, padding:"5px 9px", fontSize:12 }}>
+          <span className="mf-header-crumb" style={{ color:T.border, fontSize:18 }}>›</span>
+          <span className="mf-header-page-title" style={{ fontFamily:T.sans, fontSize:13, color:T.subtext, fontWeight:500 }}>{PAGE_TITLES[tab] || "Dashboard"}</span>
+          <select className="mf-facility-switch" title="Switch facility" value={state.activeLocationId || "__all"} onChange={e=>dispatch({type:"SET_ACTIVE_LOCATION", payload:e.target.value})} style={{ ...sel, width:190, padding:"5px 9px", fontSize:12 }}>
             {isOrganizationAdminRole(state.userRole) && <option value="__all">Organization Dashboard / All Facilities</option>}
             {maintLocations.filter(l => isOrganizationAdminRole(state.userRole) || invitedUserFacilityIdsFrom({ facilityIds:state.userFacilityIds }).includes(String(l.id))).map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
           </select>
-          <span style={{ fontFamily:T.sans, fontSize:11, color:T.muted }}>Facility: {activeLocationLabel}</span>
+          <span className="mf-facility-label" style={{ fontFamily:T.sans, fontSize:11, color:T.muted }}>Facility: {activeLocationLabel}</span>
         </div>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          <button onClick={cycleThemePreference} title={`Theme: ${selectedTheme === "system" ? "System Default" : selectedTheme === "dark" ? "Dark Mode" : "Light Mode"}`} style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:T.surface, color:T.text, cursor:"pointer", fontSize:13, fontFamily:T.sans }}>
+        <div className="mf-header-actions" style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <button className="mf-theme-button" onClick={cycleThemePreference} title={`Theme: ${selectedTheme === "system" ? "System Default" : selectedTheme === "dark" ? "Dark Mode" : "Light Mode"}`} style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:T.surface, color:T.text, cursor:"pointer", fontSize:13, fontFamily:T.sans }}>
             {effectiveTheme === "dark" ? "🌙" : "☀️"}
           </button>
-          <button onClick={()=>setShowHelp(true)} title="Help & Glossary" style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:`linear-gradient(135deg, ${T.card}, ${T.grayLt})`, color:T.text, cursor:"pointer", fontSize:13, fontWeight:700 }}>? Help</button>
+          <button className="mf-help-button" onClick={()=>setShowHelp(true)} title="Help & Glossary" style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:`linear-gradient(135deg, ${T.card}, ${T.grayLt})`, color:T.text, cursor:"pointer", fontSize:13, fontWeight:700 }}>? Help</button>
           {/* Sync status indicator */}
           {syncStatus !== "idle" && (
-            <span style={{
+            <span className="mf-sync-status" style={{
               fontFamily:T.sans, fontSize:11, fontWeight:600,
               padding:"3px 9px", borderRadius:10,
               background: syncStatus==="saving"?"#fef3c7":syncStatus==="saved"?"#d1fae5":"#fee2e2",
@@ -12434,11 +12474,11 @@ export default function App() {
           )}
           {/* Notification bell */}
           <NotifBell notifications={state.notifications} dispatch={dispatch} />
-          <button onClick={handleLogout} style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:T.surface, color:T.text, cursor:"pointer", fontSize:13 }}>
+          <button className="mf-logout-button" onClick={handleLogout} style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:T.surface, color:T.text, cursor:"pointer", fontSize:13 }}>
             Logout
           </button>
           {/* User profile button */}
-          <button onClick={()=>setShowProfile(true)} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:T.surface, cursor:"pointer" }}>
+          <button className="mf-profile-button" onClick={()=>setShowProfile(true)} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:T.surface, cursor:"pointer" }}>
             <div style={{ width:24, height:24, borderRadius:"50%", background:T.accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, color:"#fff", fontWeight:700, fontFamily:T.mono, overflow:"hidden" }}>
               {profile.photo ? <img src={profile.photo} alt="me" style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : initials}
             </div>
@@ -12457,6 +12497,11 @@ export default function App() {
           {pages[tab] || pages.dashboard}
         </PageErrorBoundary>
       </main>
+
+      <nav className="mf-mobile-bottom-nav no-print" aria-label="Mobile navigation">
+        {[["dashboard","⌂","Home"],["equipment","▣","Equipment"],["workorders","▤","Work Orders"],["pm","↻","PM"]].map(([key,icon,label])=><button key={key} className={tab===key?"active":""} onClick={()=>setTab(key)}><span>{icon}</span><small>{label}</small></button>)}
+        <button onClick={()=>setMenuOpen(true)}><span>☰</span><small>More</small></button>
+      </nav>
 
       {showProfile    && <UserProfile    state={state} dispatch={dispatch} onClose={()=>setShowProfile(false)} />}
       {showWOSettings && <WOSettings     state={state} dispatch={dispatch} onClose={()=>setShowWOSettings(false)} />}
