@@ -1298,15 +1298,27 @@ function reducer(state, { type, payload }) {
           if(unit==="weeks") d.setDate(d.getDate()+n*7);
           if(unit==="months") d.setMonth(d.getMonth()+n);
           if(unit==="years") d.setFullYear(d.getFullYear()+n);
-          const completedOccurrence = String(payload.inspectionDueOccurrence || payload.due || sch.nextDueDate || doneDate);
-          const completedDueOccurrences = Array.from(new Set([...(sch.completedDueOccurrences||[]).map(String), completedOccurrence].filter(Boolean)));
-          const advancedSch = { ...sch, lastTriggered:doneDate, lastDoneDate:doneDate, lastInspectionDate:doneDate, nextDueDate:d.toISOString().split("T")[0], lastGeneratedDueDate:completedOccurrence, lastGeneratedWorkOrderId:payload.id || "", completedDueOccurrences };
+          const occurrence = String(payload.inspectionDueOccurrence || payload.due || sch.nextDueDate || doneDate);
+          const completedDueOccurrences = Array.from(new Set([...(sch.completedDueOccurrences||[]).map(String), occurrence]));
+          const advancedSch = { ...sch, lastTriggered:doneDate, lastDoneDate:doneDate, lastInspectionDate:doneDate, nextDueDate:d.toISOString().split("T")[0], lastGeneratedDueDate:occurrence, lastGeneratedWorkOrderId:payload.id || sch.lastGeneratedWorkOrderId || "", completedDueOccurrences };
           return { ...state, parts, equipment, workOrders:updated, inspectionSchedules:(state.inspectionSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
         }
       }
       return { ...state, parts, equipment, workOrders: updated };
     }
-    case "DELETE_WO":     return { ...state, workOrders: state.workOrders.filter(w => w.id!==payload) };
+    case "DELETE_WO": {
+      const doomed = (state.workOrders||[]).find(w => String(w.id)===String(payload));
+      let inspectionSchedules = state.inspectionSchedules || [];
+      if(doomed?.woType === "Inspection" && doomed?.inspectionScheduleId) {
+        const occurrence = String(doomed.inspectionDueOccurrence || doomed.due || "");
+        inspectionSchedules = inspectionSchedules.map(s => {
+          if(String(s.id)!==String(doomed.inspectionScheduleId)) return s;
+          const skippedDueOccurrences = occurrence ? Array.from(new Set([...(s.skippedDueOccurrences||[]).map(String), occurrence])) : (s.skippedDueOccurrences||[]);
+          return { ...s, skippedDueOccurrences, lastGeneratedDueDate:occurrence || s.lastGeneratedDueDate || "", lastGeneratedWorkOrderId:doomed.id || s.lastGeneratedWorkOrderId || "" };
+        });
+      }
+      return { ...state, workOrders:(state.workOrders||[]).filter(w => String(w.id)!==String(payload)), inspectionSchedules };
+    }
     case "ADD_WO_REQUEST": return { ...state, workOrderRequests:[payload, ...(state.workOrderRequests||[])], notifications:[makeNotification({id:`N${Date.now()}`,type:"wo",msg:`New work order request submitted for ${payload.equipment || "equipment"}`,read:false}), ...(state.notifications||[])] };
     case "UPDATE_WO_REQUEST": return { ...state, workOrderRequests:(state.workOrderRequests||[]).map(r=>r.id===payload.id?{...r,...payload}:r) };
     case "DELETE_WO_REQUEST": return { ...state, workOrderRequests:(state.workOrderRequests||[]).filter(r=>r.id!==payload) };
@@ -3058,22 +3070,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     setDetailWO(null);
   };
 
-  const del = id => {
-    const target = (state.workOrders||[]).find(w => String(w.id) === String(id));
-    if(!confirm(`Delete work order ${id || ""}?\n\nThis cannot be undone.`)) return;
-    // For inspection WOs, mark this exact due occurrence handled before deleting it.
-    // That prevents the scheduler from immediately recreating the same L1/L2 inspection.
-    if(target?.woType === "Inspection" && target?.inspectionScheduleId) {
-      const sch = (state.inspectionSchedules||[]).find(x => String(x.id) === String(target.inspectionScheduleId));
-      if(sch) {
-        const occurrence = String(target.inspectionDueOccurrence || target.due || sch.nextDueDate || "");
-        const skipped = Array.from(new Set([...(sch.skippedDueOccurrences||[]).map(String), occurrence].filter(Boolean)));
-        dispatch({ type:"UPDATE_INSPECTION_SCHEDULE", payload:{ ...sch, skippedDueOccurrences:skipped, lastGeneratedDueDate:occurrence || sch.lastGeneratedDueDate, lastGeneratedWorkOrderId:"" } });
-      }
-    }
-    dispatch({type:"DELETE_WO",payload:id});
-    setModal(null); setDetailWO(null);
-  };
+  const del = id => { if(confirm("Delete this work order?")){ dispatch({type:"DELETE_WO",payload:id}); setModal(null); setDetailWO(null); }};
 
   const confirmWOStatusChange = (wo, nextStatus) => {
     const currentStatus = wo?.status || "Open";
@@ -3633,9 +3630,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     };
 
     return (
-      <div className="mf-wo-detail" style={{ display:"flex", flexDirection:"column", gap:14 }}>
+      <div className="mf-wo-phone-detail" style={{ display:"flex", flexDirection:"column", gap:14 }}>
         {/* Header */}
-        <div className="mf-wo-detail-header" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:10 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:10 }}>
           <div>
             <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", marginBottom:4 }}>
               <span style={{ fontFamily:T.mono, fontSize:11, color:T.muted }}>{wo.id}</span>
@@ -3647,18 +3644,19 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
             <h3 style={{ margin:0, fontFamily:T.sans, fontSize:18, fontWeight:700, color:T.text }}>{wo.title}</h3>
             {wo.serviceInterval && wo.woType!=="Repair" && <div style={{ fontFamily:T.mono, fontSize:11, color:T.accent, marginTop:2 }}>{wo.serviceInterval}</div>}
           </div>
-          <div className="mf-wo-actions" style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
             <Btn small variant="secondary" onClick={()=>printWO(wo)}>Print</Btn>
             <Btn small variant="danger" onClick={()=>del(wo.id)}>Delete</Btn>
             {!isCompleted && !editMode && <Btn small onClick={()=>setEditMode(true)} style={{ background:"#1e40af", borderColor:"#1e40af" }}>Update Work Order</Btn>}
             {!isCompleted && editMode && <Btn small onClick={()=>{ let payload={ ...wo, ...form }; const isClosingNow = payload.status!==wo.status && payload.status==="Completed"; if(payload.status!==wo.status && !confirmWOStatusChange(wo, payload.status)) return; if(isClosingNow){ const completedDate = askCompletedDate(payload.completed || payload.completedDate || today()); if(!completedDate) return; payload={ ...payload, completed:completedDate, completedDate:completedDate, equipmentStatus:"Fully Operational" }; } dispatch({ type:"UPDATE_WO", payload }); setEditMode(false); setDetailWO(payload); }} style={{ background:T.green, borderColor:T.green }}>Save Changes</Btn>}
             {!isCompleted && editMode && <Btn small variant="secondary" onClick={()=>{ setEditMode(false); setForm({...wo, partsUsed:wo.partsUsed||[], outsideServices:wo.outsideServices||[]}); }}>Cancel Edit</Btn>}
             {!isCompleted && !editMode && <Btn small onClick={completeWO} style={{ background:T.green, borderColor:T.green }}>Complete Work Order</Btn>}
+            <Btn small variant="danger" onClick={()=>del(wo.id)}>Delete</Btn>
           </div>
         </div>
 
         {/* Info grid */}
-        <div className="mf-wo-info-grid" style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12 }}>
           {[["Equipment", eq?.name||wo.equipmentLabel||wo.equipment],["Mechanic",wo.tech],["Created",wo.created],["Due",wo.due],["Completed",wo.completed||"—"],["Labor Hours",`${wo.laborHours||0} hrs`]].map(([k,v])=>(
             <div key={k} style={{ background:T.grayLt, borderRadius:6, padding:"8px 12px", border:`1px solid ${T.border}` }}>
               <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div>
@@ -7938,7 +7936,7 @@ function EquipmentInventory({ state, dispatch }) {
                 </td>
                 <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12 }}>{moneyFmt(item.acquisitionCost)}</td>
                 <td style={{ padding:"10px 12px" }} onClick={e=>e.stopPropagation()}>
-                  <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                  <div className="mf-wo-phone-actions" style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
                     {tab==="active" && item._source==="equipment" && <Btn small variant="secondary" onClick={()=>openTransfer(item)}>Transfer</Btn>}
                     <Btn small variant="danger" onClick={()=>del(item.id)}>Del</Btn>
                   </div>
@@ -11076,9 +11074,9 @@ export default function App() {
 
   const [dataLoaded, setDataLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState("idle"); /* idle | saving | saved | error */
-  const [syncErrorDetail, setSyncErrorDetail] = useState("");
   const [ownerRecovery, setOwnerRecovery] = useState(null);
   const [cloudWriteBlocked, setCloudWriteBlocked] = useState(false);
+  const [lastSaveError, setLastSaveError] = useState(null);
   const [systemThemeTick, setSystemThemeTick] = useState(0);
 
   const [session, setSession] = useState(null);
@@ -11241,19 +11239,12 @@ export default function App() {
   useEffect(() => {
     if (!activeSession || !dataLoaded) return;
     if (ownerRecovery?.locked) { setSyncStatus("idle"); return; }
-    if (cloudWriteBlocked) { setSyncStatus("error"); return; }
     if (state.inviteConnectionError) { setSyncStatus("idle"); return; }
     setSyncStatus("saving");
-    setSyncErrorDetail("");
     const timer = setTimeout(async () => {
       try {
         const cloudOwnerId = state.ownerUserId || state.organizationOwnerId || activeUser.id;
         const cloudState = prepareSharedOrganizationStateForCloudSave(state, activeUser);
-        // Always keep the newest working browser copy even if the cloud rejects a save.
-        try {
-          localStorage.setItem("ncaState", JSON.stringify(cloudState));
-          localStorage.setItem("ncaState:lastUserId", activeUser.id);
-        } catch(e) { console.warn("Local safety save failed:", e); }
         let error = null;
         if(appSession?.maintForgeAppLogin) {
           const rpcSave = await supabase.rpc("maintforge_username_save", {
@@ -11277,13 +11268,12 @@ export default function App() {
 
         if (error) {
           console.error("Save error:", error);
+          setLastSaveError({ message:error?.message || String(error), details:error?.details || "", hint:error?.hint || "", code:error?.code || "" });
           setSyncStatus("error");
           const saveMessage = String(error?.message || error || "");
-          setSyncErrorDetail([error?.message, error?.details, error?.hint, error?.code ? `Code: ${error.code}` : ""].filter(Boolean).join("\n") || "Unknown Supabase save error");
           if(saveMessage.includes("MAINTFORGE_DATA_GUARD")) {
-            setCloudWriteBlocked(true);
-            setAuthInfoMsg("🛡️ MaintForge blocked a destructive cloud save. Your existing Supabase workspace was NOT overwritten. Review Data Safety before continuing.");
-            alert("MaintForge Data Guard blocked a destructive cloud overwrite. The existing cloud workspace was preserved. Automatic cloud saving is now paused for this session.");
+            setAuthInfoMsg("🛡️ MaintForge blocked this destructive cloud save. Your existing Supabase workspace was NOT overwritten. Future legitimate saves remain enabled.");
+            alert("MaintForge Data Guard blocked this destructive cloud overwrite. The existing cloud workspace was preserved. Legitimate future saves are still allowed.");
           }
         } else {
           if(cloudOwnerId !== activeUser.id) {
@@ -11294,18 +11284,19 @@ export default function App() {
               buildMemberPointerFromOrganizationState(state, activeUser)
             );
           }
+          setLastSaveError(null);
           setSyncStatus("saved");
-          setSyncErrorDetail("");
           try { localStorage.setItem("ncaState", JSON.stringify(ensureCurrentOrganizationAdmin(cloudState, activeUser))); localStorage.setItem("ncaState:lastUserId", activeUser.id); } catch(e) {}
           setTimeout(() => setSyncStatus("idle"), 2000);
         }
       } catch (e) {
         console.error("Save exception:", e);
+        setLastSaveError({ message:e?.message || String(e), details:e?.details || "", hint:e?.hint || "", code:e?.code || "" });
         setSyncStatus("error");
       }
     }, 1000);
     return () => clearTimeout(timer);
-  }, [state, activeSession?.user?.id, dataLoaded, ownerRecovery?.locked, cloudWriteBlocked]);
+  }, [state, activeSession?.user?.id, dataLoaded, ownerRecovery?.locked]);
 
 
   /* Auto-create Preventive Maintenance Service Work Orders when PM schedules are due */
@@ -11423,14 +11414,16 @@ export default function App() {
     };
     inspections.forEach(schedule => {
       if(!schedule?.nextDueDate || schedule.nextDueDate > todayStr) return;
-      // One inspection occurrence may generate only one WO. Deleting/closing that WO must not recreate the same due occurrence.
-      if(schedule.lastGeneratedDueDate && String(schedule.lastGeneratedDueDate) === String(schedule.nextDueDate)) return;
-      if((schedule.skippedDueOccurrences||[]).map(String).includes(String(schedule.nextDueDate))) return;
-      if((schedule.completedDueOccurrences||[]).map(String).includes(String(schedule.nextDueDate))) return;
-      const alreadyGeneratedForOccurrence = (state.workOrders||[]).some(w => w.inspectionScheduleId === schedule.id && w.woType === "Inspection" && String(w.inspectionDueOccurrence || w.due || "") === String(schedule.nextDueDate));
+      // An inspection occurrence is immutable: once generated, completed, or skipped it can never auto-generate again.
+      const occurrence = String(schedule.nextDueDate || todayStr);
+      const completedOccurrences = (schedule.completedDueOccurrences||[]).map(String);
+      const skippedOccurrences = (schedule.skippedDueOccurrences||[]).map(String);
+      if(completedOccurrences.includes(occurrence) || skippedOccurrences.includes(occurrence)) return;
+      if(schedule.lastGeneratedDueDate && String(schedule.lastGeneratedDueDate) === occurrence) return;
+      const alreadyGeneratedForOccurrence = (state.workOrders||[]).some(w => String(w.inspectionScheduleId) === String(schedule.id) && w.woType === "Inspection" && String(w.inspectionDueOccurrence || w.due || "") === occurrence);
       if(alreadyGeneratedForOccurrence) return;
       const alreadyOpen = (state.workOrders||[]).some(w =>
-        w.inspectionScheduleId === schedule.id &&
+        String(w.inspectionScheduleId) === String(schedule.id) &&
         w.woType === "Inspection" &&
         ["Open","In Progress","Pending Diagnostic","On Hold"].includes(w.status)
       );
@@ -12454,34 +12447,31 @@ export default function App() {
           .mf-admin-nav button { min-width:148px !important; }
           .mf-header > div:last-child { grid-template-columns:repeat(4,minmax(44px,1fr)) !important; }
         }
+      `}</style>
 
-        /* PHONE REBUILD v2026-09-15: phone is a vertical app, not a squeezed desktop page. */
+
+      <style>{`
+        /* MaintForge 2026-09-15 phone rebuild: authoritative mobile layer. */
         @media (max-width: 768px) {
-          html, body, #root { width:100% !important; max-width:100% !important; min-height:100% !important; overflow-x:hidden !important; overflow-y:auto !important; }
+          html, body, #root { width:100% !important; max-width:100% !important; min-height:100% !important; height:auto !important; overflow-x:hidden !important; overflow-y:auto !important; }
           body { position:static !important; touch-action:pan-y !important; -webkit-overflow-scrolling:touch !important; }
-          .mf-main { width:100% !important; max-width:100% !important; overflow:visible !important; padding-left:10px !important; padding-right:10px !important; }
-          .mf-modal-backdrop { padding:0 !important; align-items:stretch !important; overflow:hidden !important; }
-          .mf-modal-panel { width:100vw !important; max-width:100vw !important; height:100dvh !important; max-height:100dvh !important; border:0 !important; border-radius:0 !important; overflow:hidden !important; display:flex !important; flex-direction:column !important; }
-          .mf-modal-header { flex:0 0 auto !important; padding:calc(10px + env(safe-area-inset-top)) 12px 10px !important; }
-          .mf-modal-body { flex:1 1 auto !important; min-height:0 !important; padding:12px 12px calc(96px + env(safe-area-inset-bottom)) !important; overflow-y:auto !important; overflow-x:hidden !important; -webkit-overflow-scrolling:touch !important; touch-action:pan-y !important; }
-          .mf-modal-body > * { max-width:100% !important; min-width:0 !important; }
-          .mf-wo-detail { width:100% !important; max-width:100% !important; padding-bottom:8px !important; }
-          .mf-wo-detail-header { display:block !important; }
-          .mf-wo-detail-header > div:first-child { width:100% !important; margin-bottom:12px !important; }
-          .mf-wo-detail h3 { font-size:20px !important; line-height:1.25 !important; overflow-wrap:anywhere !important; }
-          .mf-wo-info-grid { grid-template-columns:1fr 1fr !important; gap:8px !important; }
-          .mf-wo-info-grid > div { padding:10px !important; min-width:0 !important; }
-          .mf-wo-actions { position:fixed !important; left:0 !important; right:0 !important; bottom:0 !important; z-index:2300 !important; display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)) !important; gap:8px !important; padding:10px 10px calc(10px + env(safe-area-inset-bottom)) !important; background:${T.card} !important; border-top:1px solid ${T.border} !important; box-shadow:0 -8px 24px rgba(15,23,42,.14) !important; }
-          .mf-wo-actions .mf-btn { width:100% !important; min-width:0 !important; min-height:48px !important; padding:9px 8px !important; white-space:normal !important; line-height:1.15 !important; }
-          .mf-wo-detail table { min-width:620px !important; }
-          .mf-wo-detail [style*="gridTemplateColumns"] { max-width:100% !important; }
-          .mf-sync-status { cursor:pointer !important; max-width:150px !important; white-space:normal !important; line-height:1.1 !important; }
-          /* Bottom app navigation stays below pages, but WO modal actions intentionally sit above everything. */
-          .mf-mobile-bottom-nav { z-index:1200 !important; }
-        }
-        @media (max-width: 390px) {
-          .mf-wo-info-grid { grid-template-columns:1fr !important; }
-          .mf-wo-actions { grid-template-columns:1fr 1fr !important; }
+          .mf-main, main { width:100% !important; max-width:100% !important; height:auto !important; min-height:calc(100dvh - 60px) !important; overflow-x:hidden !important; overflow-y:visible !important; padding:10px 10px calc(86px + env(safe-area-inset-bottom)) !important; }
+          .mf-main section, .mf-main article, .mf-main > div { max-width:100% !important; overflow-x:visible !important; overflow-y:visible !important; }
+          .mobile-x-scroll { width:100% !important; max-width:100% !important; overflow-x:auto !important; overflow-y:hidden !important; -webkit-overflow-scrolling:touch !important; }
+          .mf-modal-backdrop { position:fixed !important; inset:0 !important; padding:0 !important; overflow:hidden !important; align-items:stretch !important; }
+          .mf-modal-panel { width:100vw !important; max-width:100vw !important; height:100dvh !important; max-height:100dvh !important; min-height:0 !important; border:0 !important; border-radius:0 !important; overflow:hidden !important; display:flex !important; flex-direction:column !important; }
+          .mf-modal-header { flex:0 0 auto !important; position:relative !important; z-index:3 !important; padding:calc(10px + env(safe-area-inset-top)) 12px 10px !important; }
+          .mf-modal-body { flex:1 1 auto !important; min-height:0 !important; overflow-y:auto !important; overflow-x:hidden !important; -webkit-overflow-scrolling:touch !important; touch-action:pan-y !important; padding:12px 12px calc(100px + env(safe-area-inset-bottom)) !important; }
+          .mf-wo-phone-detail { width:100% !important; max-width:100% !important; min-width:0 !important; padding-bottom:86px !important; }
+          .mf-wo-phone-detail > div { max-width:100% !important; min-width:0 !important; }
+          .mf-wo-phone-detail [style*="grid-template-columns"] { grid-template-columns:1fr !important; }
+          .mf-wo-phone-detail table { display:block !important; width:100% !important; min-width:0 !important; overflow-x:auto !important; -webkit-overflow-scrolling:touch !important; }
+          .mf-wo-phone-detail th, .mf-wo-phone-detail td { min-width:110px !important; white-space:normal !important; }
+          .mf-wo-phone-actions { position:fixed !important; left:0 !important; right:0 !important; bottom:0 !important; z-index:1600 !important; display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)) !important; gap:8px !important; padding:8px 10px calc(8px + env(safe-area-inset-bottom)) !important; background:${T.surface} !important; border-top:1px solid ${T.border} !important; box-shadow:0 -8px 24px rgba(15,23,42,.12) !important; }
+          .mf-wo-phone-actions button { width:100% !important; min-width:0 !important; min-height:48px !important; margin:0 !important; }
+          .mf-header { position:sticky !important; top:0 !important; z-index:1000 !important; }
+          .mf-mobile-bottom-nav { z-index:1100 !important; }
+          .mf-wo-phone-detail ~ * { min-width:0 !important; }
         }
       `}</style>
 
@@ -12518,7 +12508,7 @@ export default function App() {
           <button className="mf-help-button" onClick={()=>setShowHelp(true)} title="Help & Glossary" style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:`linear-gradient(135deg, ${T.card}, ${T.grayLt})`, color:T.text, cursor:"pointer", fontSize:13, fontWeight:700 }}>? Help</button>
           {/* Sync status indicator */}
           {syncStatus !== "idle" && (
-            <button type="button" className="mf-sync-status" onClick={()=>{ if(syncStatus==="error") alert(`Cloud save failed.\n\n${syncErrorDetail || "No additional error details were returned."}\n\nYour latest state was kept in this browser as a local safety copy.`); }} style={{
+            <span className="mf-sync-status" role={syncStatus==="error"?"button":undefined} tabIndex={syncStatus==="error"?0:undefined} onClick={()=>{ if(syncStatus==="error" && lastSaveError) alert(`Cloud save failed\n\n${lastSaveError.message}${lastSaveError.details?`\n\nDetails: ${lastSaveError.details}`:""}${lastSaveError.hint?`\n\nHint: ${lastSaveError.hint}`:""}${lastSaveError.code?`\n\nCode: ${lastSaveError.code}`:""}`); }} style={{
               fontFamily:T.sans, fontSize:11, fontWeight:600,
               padding:"3px 9px", borderRadius:10,
               background: syncStatus==="saving"?"#fef3c7":syncStatus==="saved"?"#d1fae5":"#fee2e2",
@@ -12526,7 +12516,7 @@ export default function App() {
               border: `1px solid ${syncStatus==="saving"?"#fbbf24":syncStatus==="saved"?"#10b981":"#ef4444"}`,
             }}>
               {syncStatus==="saving"?"⟳ Saving...":syncStatus==="saved"?"✓ Saved":"⚠ Save failed — tap"}
-            </button>
+            </span>
           )}
           {/* Notification bell */}
           <NotifBell notifications={state.notifications} dispatch={dispatch} />
