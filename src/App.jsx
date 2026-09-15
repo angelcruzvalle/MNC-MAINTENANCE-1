@@ -6037,6 +6037,8 @@ function PM({ state, dispatch }) {
   const blankPMScheduleForm = () => ({ equipmentId:"", equipmentIds:[], taskId:"", taskIds:[], task:"", triggerType:"time", timeInterval:"", timeUnit:"months", usageInterval:"", usageType:"hours", lastDoneDate:today(), lastDoneUsage:"" });
   const [schForm, setSchForm]     = useState(blankPMScheduleForm());
   const [manualForm, setManualForm] = useState({ equipmentId:"", taskId:"" });
+  const blankServiceWOForm = () => ({ equipmentId:"", description:"", priority:"Medium", due:"", tech:"", usage:"" });
+  const [serviceWOForm, setServiceWOForm] = useState(blankServiceWOForm());
   const [taskModal, setTaskModal] = useState(false);
   const [editTaskId, setEditTaskId] = useState(null);
   const blankTaskForm = () => ({ name:"", description:"", steps:[""], parts:[{name:"",qty:"",unit:"ea"}], triggers:[{type:"time",timeInterval:"",timeUnit:"months",usageInterval:"",usageType:"hours",usageMode:"every"}] });
@@ -6369,6 +6371,48 @@ function PM({ state, dispatch }) {
     setManualForm({equipmentId:"", taskId:""});
   };
 
+  const createStandaloneServiceWO = () => {
+    const equipmentId = serviceWOForm.equipmentId;
+    const description = String(serviceWOForm.description||"").trim();
+    if(!equipmentId) return alert("Select the equipment for this service work order.");
+    if(!description) return alert("Enter the service description or work requested.");
+    const eq = (state.equipment||[]).find(e=>String(e.id)===String(equipmentId));
+    const usageMode = String(eq?.usageType || "hours").toLowerCase();
+    const usageValue = serviceWOForm.usage === "" ? "" : Number(serviceWOForm.usage);
+    if(eq?.trackUsage && serviceWOForm.usage === "") return alert(`Enter the current ${usageMode==="mileage"?"mileage":"hours"} for this equipment.`);
+    const woId = genNextWOId(state.workOrders, equipmentId, "SVC");
+    dispatch({type:"ADD_WO", payload:{
+      id:woId,
+      title:description,
+      equipment:equipmentId,
+      status:"Open",
+      priority:serviceWOForm.priority||"Medium",
+      woType:"Service",
+      equipmentStatus:eq?.status||"Fully Operational",
+      created:today(),
+      due:serviceWOForm.due||"",
+      tech:serviceWOForm.tech||"",
+      laborHours:0, laborCost:0, partsCost:0,
+      description,
+      faultDescription:description,
+      faultEnabled:true,
+      workPerformed:"",
+      mechanicNotes:"",
+      partsUsed:[],
+      outsideServices:[],
+      usageType:usageMode,
+      usageHours:usageMode==="mileage" ? "" : usageValue,
+      usageMileage:usageMode==="mileage" ? usageValue : "",
+      usageNA:!eq?.trackUsage,
+      scheduleId:null,
+      pmTaskId:null,
+      standaloneService:true,
+    }});
+    setServiceWOForm(blankServiceWOForm());
+    setModal(null);
+    alert(`Service work order ${woId} created.`);
+  };
+
   const delSchedule = id => { if(confirm("Delete this maintenance schedule?")) dispatch({type:"DELETE_PM_SCHEDULE",payload:id}); };
 
 
@@ -6564,6 +6608,7 @@ function PM({ state, dispatch }) {
         <div style={{ display:"flex", gap:8 }}><Btn variant="secondary" onClick={openNewTask}>+ Create New Task</Btn>{selectedLibraryTask&&<Btn variant="secondary" onClick={()=>copyPMTask(selectedLibraryTask)}>Copy Selected Task</Btn>}</div>
         <Btn onClick={()=>{ setSchForm(blankPMScheduleForm()); setModal("schedule"); }}>Task-to-Equipment</Btn>
         <Btn variant="secondary" onClick={()=>setModal("manualTrigger")}>Manual Trigger</Btn>
+        <Btn onClick={()=>{ setServiceWOForm(blankServiceWOForm()); setModal("standaloneService"); }}>+ New Service Work Order</Btn>
       </div>
 
 
@@ -6645,6 +6690,42 @@ function PM({ state, dispatch }) {
           </div>
         )}
       </div>
+
+      {modal==="standaloneService" && (
+        <Modal title="New Service Work Order" maxWidth={760} onClose={()=>{ setModal(null); setServiceWOForm(blankServiceWOForm()); }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+            <Field label="Equipment *" style={{ gridColumn:"1 / -1" }}>
+              <select value={serviceWOForm.equipmentId} onChange={e=>setServiceWOForm(f=>({...f,equipmentId:e.target.value,usage:""}))} style={sel}>
+                <option value="">Select equipment...</option>
+                {(state.equipment||[]).map(eq=><option key={eq.id} value={eq.id}>{eq.id} — {eq.name||eq.nomenclature||"Equipment"}</option>)}
+              </select>
+            </Field>
+            <Field label="Service Description / Work Requested *" style={{ gridColumn:"1 / -1" }}>
+              <textarea value={serviceWOForm.description} onChange={e=>setServiceWOForm(f=>({...f,description:e.target.value}))} rows={5} placeholder="Describe the service that needs to be performed..." style={{...inp,resize:"vertical"}} />
+            </Field>
+            <Field label="Priority">
+              <select value={serviceWOForm.priority} onChange={e=>setServiceWOForm(f=>({...f,priority:e.target.value}))} style={sel}>
+                <option>Low</option><option>Medium</option><option>High</option>
+              </select>
+            </Field>
+            <Field label="Due Date">
+              <input type="date" value={serviceWOForm.due} onChange={e=>setServiceWOForm(f=>({...f,due:e.target.value}))} style={inp} />
+            </Field>
+            <Field label="Mechanic">
+              <select value={serviceWOForm.tech} onChange={e=>setServiceWOForm(f=>({...f,tech:e.target.value}))} style={sel}>
+                <option value="">Unassigned</option>
+                {(state.technicians||[]).map(t=>{ const name=typeof t==="string"?t:(t.name||t.fullName||t.email||""); return name?<option key={t.id||name} value={name}>{name}</option>:null; })}
+              </select>
+            </Field>
+            {serviceWOForm.equipmentId && (()=>{ const eq=(state.equipment||[]).find(e=>String(e.id)===String(serviceWOForm.equipmentId)); if(!eq?.trackUsage) return <div style={{ alignSelf:"end", padding:"10px 12px", border:`1px solid ${T.border}`, borderRadius:8, color:T.muted, fontFamily:T.sans, fontSize:12 }}>Usage tracking: N/A</div>; const mode=String(eq.usageType||"hours").toLowerCase(); return <Field label={`Current ${mode==="mileage"?"Mileage":"Hours"} *`}><input type="number" step="any" min="0" value={serviceWOForm.usage} onChange={e=>setServiceWOForm(f=>({...f,usage:e.target.value}))} style={inp}/></Field>; })()}
+          </div>
+          <div style={{ marginTop:14, padding:"10px 12px", borderRadius:8, background:T.accentLt, color:T.subtext, fontFamily:T.sans, fontSize:12 }}>This creates a normal <b>Service Work Order</b> without creating or assigning a preventive-maintenance task or schedule.</div>
+          <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:18 }}>
+            <Btn variant="secondary" onClick={()=>{ setModal(null); setServiceWOForm(blankServiceWOForm()); }}>Cancel</Btn>
+            <Btn onClick={createStandaloneServiceWO}>Create Service Work Order</Btn>
+          </div>
+        </Modal>
+      )}
 
       {/* Tasks Library Modal */}
       {showTaskLib && (
