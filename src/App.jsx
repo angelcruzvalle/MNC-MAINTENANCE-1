@@ -9011,6 +9011,97 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
     parts:(state.parts||[]).length,
     facilities:orgLocations.length,
   };
+  const [cloudBackups, setCloudBackups] = useState([]);
+  const [cloudBackupBusy, setCloudBackupBusy] = useState(false);
+  const [cloudBackupMsg, setCloudBackupMsg] = useState("");
+  const ownerWorkspaceId = state.ownerUserId || state.organizationOwnerId || currentUser?.id || "";
+  const canManageCloudBackups = !!currentUser?.id && currentUser.id === ownerWorkspaceId && isOrganizationAdminRole(state.userRole || currentUser?.role || "organization_admin");
+
+  const refreshCloudBackups = async () => {
+    if(!canManageCloudBackups) return;
+    setCloudBackupBusy(true);
+    setCloudBackupMsg("");
+    try {
+      const { data, error } = await supabase
+        .from("maintforge_backups")
+        .select("id,backup_date,backup_kind,record_counts,created_at")
+        .eq("owner_user_id", ownerWorkspaceId)
+        .order("created_at", { ascending:false })
+        .limit(50);
+      if(error) throw error;
+      setCloudBackups(Array.isArray(data) ? data : []);
+      setCloudBackupMsg(data?.length ? "Cloud backup protection is active." : "Cloud backup table is active. No snapshots are listed yet.");
+    } catch(e) {
+      console.error("Cloud backup list error:", e);
+      setCloudBackups([]);
+      setCloudBackupMsg("Cloud backup protection is not installed or cannot be read. Run MaintForge_Supabase_Data_Safety_v1.sql in Supabase, then refresh this section.");
+    } finally {
+      setCloudBackupBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if(canManageCloudBackups) refreshCloudBackups();
+  }, [canManageCloudBackups, ownerWorkspaceId]);
+
+  const createCloudBackupNow = async () => {
+    if(!canManageCloudBackups || cloudBackupBusy) return;
+    setCloudBackupBusy(true);
+    try {
+      const { error } = await supabase.rpc("maintforge_create_backup_now");
+      if(error) throw error;
+      setCloudBackupMsg("Safety snapshot created in Supabase. It is separate from the live workspace.");
+      await refreshCloudBackups();
+    } catch(e) {
+      console.error("Create cloud backup error:", e);
+      setCloudBackupMsg(`Could not create cloud snapshot: ${e?.message || e}`);
+    } finally {
+      setCloudBackupBusy(false);
+    }
+  };
+
+  const downloadCloudBackup = async (backup) => {
+    if(!backup?.id) return;
+    try {
+      const { data, error } = await supabase.from("maintforge_backups").select("data,backup_date,backup_kind,created_at").eq("id", backup.id).single();
+      if(error) throw error;
+      const stamp = String(data.backup_date || data.created_at || "backup").replace(/[:.]/g,"-");
+      const blob = new Blob([JSON.stringify(data.data, null, 2)], { type:"application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `MaintForge_CLOUD_${data.backup_kind || "backup"}_${stamp}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch(e) {
+      console.error(e);
+      alert(`Could not download cloud backup: ${e?.message || e}`);
+    }
+  };
+
+  const restoreCloudBackup = async (backup) => {
+    if(!backup?.id || !canManageCloudBackups) return;
+    const c = backup.record_counts || {};
+    const ok = confirm(`Restore this protected cloud backup?\n\nDate: ${backup.backup_date || backup.created_at}\nEquipment: ${c.equipment || 0}\nWork Orders: ${c.workOrders || 0}\nParts: ${c.parts || 0}\nFacilities: ${c.facilities || 0}\n\nMaintForge will create a PRE-RESTORE cloud snapshot of the current workspace first. The selected backup itself will not be changed.`);
+    if(!ok) return;
+    setCloudBackupBusy(true);
+    try {
+      const { error } = await supabase.rpc("maintforge_restore_cloud_backup", { p_backup_id:backup.id });
+      if(error) throw error;
+      const row = await fetchUserStateRow(ownerWorkspaceId);
+      if(row?.error) throw row.error;
+      if(!row?.data) throw new Error("Restore finished but the owner workspace could not be reloaded.");
+      const restored = ensureCurrentOrganizationAdmin(normalizeLoadedUserState(row.data, ownerWorkspaceId), currentUser);
+      dispatch({ type:"REPLACE_STATE", payload:restored });
+      try { localStorage.setItem("ncaState", JSON.stringify(restored)); localStorage.setItem("ncaState:lastUserId", ownerWorkspaceId); } catch(e) {}
+      setCloudBackupMsg("Cloud backup restored. A separate pre-restore snapshot was created automatically.");
+      await refreshCloudBackups();
+    } catch(e) {
+      console.error("Cloud restore error:", e);
+      alert(`Cloud restore failed: ${e?.message || e}`);
+    } finally {
+      setCloudBackupBusy(false);
+    }
+  };
   const adminSections = [
     { id:"admin-safety", label:"Data Safety", icon:"🛡️", sub:"Backups and restore" },
     { id:"admin-organization", label:"Organization", icon:"🏢", sub:"Company info and logos" },
@@ -9045,7 +9136,7 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
     event.target.value = "";
     if(!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const parsed = JSON.parse(String(reader.result || "{}"));
         const counts = {
@@ -9058,16 +9149,34 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
           alert("This backup looks empty. Restore cancelled.");
           return;
         }
-        const msg = `Restore this backup?\n\nBACKUP FILE\nEquipment: ${counts.equipment}\nWork Orders: ${counts.workOrders}\nParts: ${counts.parts}\nFacilities: ${counts.facilities}\n\nCURRENT APP\nEquipment: ${backupCounts.equipment}\nWork Orders: ${backupCounts.workOrders}\nParts: ${backupCounts.parts}\nFacilities: ${backupCounts.facilities}\n\nA safety copy of the current data will be saved in this browser first.`;
+        if(!canManageCloudBackups) {
+          alert("Only the signed-in Organization Administrator can restore a full workspace backup.");
+          return;
+        }
+        const restored = ensureCurrentOrganizationAdmin(normalizeLoadedUserState(parsed, ownerWorkspaceId), currentUser);
+        const msg = `Restore this backup?\n\nBACKUP FILE\nEquipment: ${counts.equipment}\nWork Orders: ${counts.workOrders}\nParts: ${counts.parts}\nFacilities: ${counts.facilities}\n\nCURRENT APP\nEquipment: ${backupCounts.equipment}\nWork Orders: ${backupCounts.workOrders}\nParts: ${backupCounts.parts}\nFacilities: ${backupCounts.facilities}\n\nMaintForge will create a protected PRE-RESTORE cloud snapshot before replacing the live workspace.`;
         if(!confirm(msg)) return;
-        try {
-          localStorage.setItem(`MaintForge_emergency_before_restore_${Date.now()}`, JSON.stringify(state));
-        } catch(e) {}
-        dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(normalizeLoadedUserState(parsed, currentUser?.id || state.ownerUserId || ""), currentUser) });
-        alert("Backup loaded. Click Save Settings or make one small change so the cloud sync saves it, then refresh to confirm.");
+        try { localStorage.setItem(`MaintForge_emergency_before_restore_${Date.now()}`, JSON.stringify(state)); } catch(e) {}
+
+        const { error } = await supabase.rpc("maintforge_restore_uploaded_backup", { p_state:restored });
+        if(error) throw error;
+
+        const row = await fetchUserStateRow(ownerWorkspaceId);
+        if(row?.error) throw row.error;
+        const finalState = ensureCurrentOrganizationAdmin(normalizeLoadedUserState(row?.data || restored, ownerWorkspaceId), currentUser);
+        dispatch({ type:"REPLACE_STATE", payload:finalState });
+        try { localStorage.setItem("ncaState", JSON.stringify(finalState)); localStorage.setItem("ncaState:lastUserId", ownerWorkspaceId); } catch(e) {}
+        setCloudBackupMsg("Backup restored safely. A protected pre-restore snapshot was saved in Supabase first.");
+        await refreshCloudBackups();
+        alert("Backup restored safely to Supabase. A protected pre-restore cloud snapshot was created first.");
       } catch(e) {
         console.error(e);
-        alert("Could not read this backup file. Make sure it is a MaintForge JSON backup.");
+        const message = String(e?.message || e);
+        if(message.includes("maintforge_restore_uploaded_backup") || message.includes("function") || message.includes("schema cache")) {
+          alert("Safe cloud restore is not installed yet. Run MaintForge_Supabase_Data_Safety_v1.sql in Supabase first. Nothing was restored.");
+        } else {
+          alert(`Could not restore this backup: ${message}`);
+        }
       }
     };
     reader.readAsText(file);
@@ -9326,14 +9435,40 @@ ${payload.inviteUrl}`));
             <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"flex-start", flexWrap:"wrap" }}>
               <div>
                 <div style={{ fontFamily:T.sans, fontSize:15, fontWeight:900, color:T.text }}>🛡️ Data Safety</div>
-                <div style={{ fontSize:12, color:T.subtext, marginTop:4 }}>Download a full local JSON backup before major changes. Upload/restore only from a backup file you trust.</div>
+                <div style={{ fontSize:12, color:T.subtext, marginTop:4 }}>The live workspace and protected cloud backups are separate. Daily snapshots are append-only and today's save cannot overwrite yesterday's snapshot.</div>
                 <div style={{ fontSize:11, color:T.muted, marginTop:6 }}>Current loaded data: Equipment {backupCounts.equipment}, Work Orders {backupCounts.workOrders}, Parts {backupCounts.parts}, Facilities {backupCounts.facilities}</div>
               </div>
               <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                <Btn onClick={downloadDataBackup}>Download Backup</Btn>
+                <Btn onClick={downloadDataBackup}>Download Local Backup</Btn>
                 <Btn variant="secondary" onClick={()=>backupFileInputRef.current?.click()}>Upload Last Known Backup</Btn>
                 <input ref={backupFileInputRef} type="file" accept="application/json,.json" onChange={loadDataBackup} style={{ display:"none" }} />
               </div>
+            </div>
+
+            <div style={{ marginTop:12, padding:12, border:`1px solid ${T.border}`, borderRadius:10, background:T.surface }}>
+              <div style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+                <div>
+                  <div style={{ fontWeight:900, color:T.text, fontSize:13 }}>Protected Supabase Cloud Backups</div>
+                  <div style={{ color:T.muted, fontSize:11, marginTop:3 }}>Automatic daily snapshot at 3:15 AM Puerto Rico time. 14 daily snapshots are retained; manual/pre-restore snapshots are retained for 30 days.</div>
+                </div>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  <Btn small variant="secondary" onClick={refreshCloudBackups} disabled={cloudBackupBusy || !canManageCloudBackups}>Refresh</Btn>
+                  <Btn small onClick={createCloudBackupNow} disabled={cloudBackupBusy || !canManageCloudBackups}>{cloudBackupBusy ? "Working…" : "Create Safety Snapshot Now"}</Btn>
+                </div>
+              </div>
+              {!!cloudBackupMsg && <div style={{ marginTop:8, fontSize:11, color:cloudBackupMsg.includes("not installed") || cloudBackupMsg.includes("Could not") ? T.red : T.muted }}>{cloudBackupMsg}</div>}
+              {!canManageCloudBackups && <div style={{ marginTop:8, fontSize:11, color:T.muted }}>Cloud backup history is available only to the signed-in Organization Administrator account.</div>}
+              {canManageCloudBackups && cloudBackups.length > 0 && (
+                <div style={{ marginTop:10, display:"grid", gap:7 }}>
+                  {cloudBackups.map(b => { const c=b.record_counts||{}; return (
+                    <div key={b.id} style={{ display:"grid", gridTemplateColumns:"minmax(150px,1fr) minmax(260px,2fr) auto", gap:10, alignItems:"center", padding:9, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
+                      <div><div style={{ fontWeight:900, color:T.text, fontSize:12 }}>{b.backup_date}</div><div style={{ fontSize:10, color:T.muted, textTransform:"uppercase" }}>{String(b.backup_kind||"backup").replace("_"," ")}</div></div>
+                      <div style={{ fontSize:11, color:T.subtext }}>Equipment {c.equipment||0} · Work Orders {c.workOrders||0} · Parts {c.parts||0} · Facilities {c.facilities||0}</div>
+                      <div style={{ display:"flex", gap:6, justifyContent:"flex-end", flexWrap:"wrap" }}><Btn small variant="secondary" onClick={()=>downloadCloudBackup(b)}>Download</Btn><Btn small onClick={()=>restoreCloudBackup(b)}>Restore</Btn></div>
+                    </div>
+                  ); })}
+                </div>
+              )}
             </div>
           </div>
 
@@ -10762,7 +10897,7 @@ export default function App() {
   const [dataLoaded, setDataLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState("idle"); /* idle | saving | saved | error */
   const [ownerRecovery, setOwnerRecovery] = useState(null);
-  const ownerBackupUploadRef = useRef(null);
+  const [cloudWriteBlocked, setCloudWriteBlocked] = useState(false);
   const [systemThemeTick, setSystemThemeTick] = useState(0);
 
   const [session, setSession] = useState(null);
@@ -10824,6 +10959,7 @@ export default function App() {
     if (!activeSession) {
       setDataLoaded(false);
       setOwnerRecovery(null);
+      setCloudWriteBlocked(false);
       return;
     }
     if(appSession?.maintForgeAppLogin) return;
@@ -10924,6 +11060,7 @@ export default function App() {
   useEffect(() => {
     if (!activeSession || !dataLoaded) return;
     if (ownerRecovery?.locked) { setSyncStatus("idle"); return; }
+    if (cloudWriteBlocked) { setSyncStatus("error"); return; }
     if (state.inviteConnectionError) { setSyncStatus("idle"); return; }
     setSyncStatus("saving");
     const timer = setTimeout(async () => {
@@ -10954,6 +11091,12 @@ export default function App() {
         if (error) {
           console.error("Save error:", error);
           setSyncStatus("error");
+          const saveMessage = String(error?.message || error || "");
+          if(saveMessage.includes("MAINTFORGE_DATA_GUARD")) {
+            setCloudWriteBlocked(true);
+            setAuthInfoMsg("🛡️ MaintForge blocked a destructive cloud save. Your existing Supabase workspace was NOT overwritten. Review Data Safety before continuing.");
+            alert("MaintForge Data Guard blocked a destructive cloud overwrite. The existing cloud workspace was preserved. Automatic cloud saving is now paused for this session.");
+          }
         } else {
           if(cloudOwnerId !== activeUser.id) {
             await saveInvitePointerForUser(
@@ -10973,7 +11116,7 @@ export default function App() {
       }
     }, 1000);
     return () => clearTimeout(timer);
-  }, [state, activeSession?.user?.id, dataLoaded, ownerRecovery?.locked]);
+  }, [state, activeSession?.user?.id, dataLoaded, ownerRecovery?.locked, cloudWriteBlocked]);
 
 
   /* Auto-create Preventive Maintenance Service Work Orders when PM schedules are due */
@@ -11177,93 +11320,6 @@ export default function App() {
       console.error("Owner recovery restore failed:", e);
       setSyncStatus("error");
       alert(`Recovery restore failed: ${e?.message || e}. No recovery source was deleted.`);
-    }
-  }
-
-  async function uploadLastKnownBackup(event) {
-    const file = event?.target?.files?.[0];
-    if(event?.target) event.target.value = "";
-    if(!file || !activeUser?.id) return;
-
-    try {
-      const raw = await file.text();
-      const parsedRaw = JSON.parse(raw || "{}");
-      // MaintForge backups are normally the state object itself. Accept a simple
-      // { data: state } wrapper too, but never guess beyond those two shapes.
-      const parsed = parsedRaw?.data && typeof parsedRaw.data === "object" && !Array.isArray(parsedRaw.data)
-        ? parsedRaw.data
-        : parsedRaw;
-
-      if(!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("The selected file is not a MaintForge state backup.");
-      }
-      if(!isSubstantiveMaintForgeWorkspace(parsed)) {
-        alert("This backup does not contain substantive MaintForge workspace data. Nothing was changed.");
-        return;
-      }
-
-      const counts = maintForgeWorkspaceCounts(parsed);
-      const orgName = parsed?.settings?.companyName || parsed?.organization?.name || "(organization name not set)";
-      const ok = window.confirm(
-        `Upload this Last Known Backup to your Organization Administrator account?\n\n` +
-        `File: ${file.name}\n` +
-        `Organization: ${orgName}\n` +
-        `Equipment: ${counts.equipment || 0}\n` +
-        `Work Orders: ${counts.workOrders || 0}\n` +
-        `Parts: ${counts.parts || 0}\n` +
-        `Facilities: ${counts.facilities || 0}\n\n` +
-        `A browser safety copy of the CURRENT state will be created first. The selected backup file will not be changed.`
-      );
-      if(!ok) return;
-
-      setSyncStatus("saving");
-      try {
-        localStorage.setItem(`MaintForge_before_backup_upload_${Date.now()}`, JSON.stringify(state));
-      } catch(e) {
-        console.warn("Could not create browser safety copy before backup upload:", e);
-      }
-
-      const normalized = normalizeLoadedUserState(parsed, activeUser.id);
-      const restored = prepareSharedOrganizationStateForCloudSave({
-        ...normalized,
-        setupComplete:true,
-        ownerUserId:activeUser.id,
-        organizationOwnerId:activeUser.id,
-        ownerEmail:activeUser.email || normalized.ownerEmail || "",
-        organizationOwnerEmail:activeUser.email || normalized.organizationOwnerEmail || "",
-        currentUser:{ id:activeUser.id, email:activeUser.email || "" },
-        userRole:"organization_admin",
-        invitedMember:false,
-        inviteAccepted:false,
-        inviteConnectionError:null,
-      }, activeUser);
-
-      const { error } = await supabase.from("user_state").upsert({
-        user_id:activeUser.id,
-        data:restored,
-        updated_at:new Date().toISOString(),
-      }, { onConflict:"user_id" });
-      if(error) throw error;
-
-      try {
-        localStorage.setItem("ncaState", JSON.stringify(restored));
-        localStorage.setItem("ncaState:lastUserId", activeUser.id);
-      } catch(e) {
-        console.warn("Backup restored to cloud, but browser cache could not be refreshed:", e);
-      }
-
-      dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(restored, activeUser) });
-      setOwnerRecovery(null);
-      setDataLoaded(true);
-      setShowOwnerSetup(false);
-      setSyncStatus("saved");
-      setAuthInfoMsg(`✓ Last Known Backup restored: ${counts.equipment || 0} equipment, ${counts.workOrders || 0} work orders, ${counts.facilities || 0} facilities.`);
-      alert("Last Known Backup restored successfully to this owner account and saved to Supabase.");
-      setTimeout(()=>setSyncStatus("idle"), 2500);
-    } catch(e) {
-      console.error("Last Known Backup upload failed:", e);
-      setSyncStatus("error");
-      alert(`Backup restore failed: ${e?.message || e}. Nothing from the selected backup was intentionally deleted.`);
     }
   }
 
@@ -11787,9 +11843,7 @@ export default function App() {
             Invites are no longer used. Sign out, then sign in with the username/password assigned in Settings → Users & Roles.
           </div>
           <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-            <Btn onClick={()=>ownerBackupUploadRef.current?.click()}>Upload Last Known Backup</Btn>
-            <input ref={ownerBackupUploadRef} type="file" accept="application/json,.json" onChange={uploadLastKnownBackup} style={{ display:"none" }} />
-            <Btn variant="secondary" onClick={async()=>{ clearPendingInviteInfo(); try { await supabase.auth.signOut(); } catch(e) {} setAppSession(null); setDataLoaded(false); setAuthMode("login"); setAuthPassword(""); setAuthConfirmPassword(""); dispatch({ type:"REPLACE_STATE", payload:blankUserState() }); }}>Sign Out / Go to Login</Btn>
+            <Btn onClick={async()=>{ clearPendingInviteInfo(); try { await supabase.auth.signOut(); } catch(e) {} setAppSession(null); setDataLoaded(false); setAuthMode("login"); setAuthPassword(""); setAuthConfirmPassword(""); dispatch({ type:"REPLACE_STATE", payload:blankUserState() }); }}>Sign Out / Go to Login</Btn>
             <Btn variant="secondary" onClick={()=>{ clearPendingInviteInfo(); window.location.href = window.location.origin + window.location.pathname; }}>Refresh</Btn>
           </div>
         </div>
@@ -11817,9 +11871,7 @@ export default function App() {
             Create Owner Workspace is only for the first company administrator. It is not for mechanics, viewers, or facility-assigned users.
           </div>
           <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
-            <Btn onClick={()=>ownerBackupUploadRef.current?.click()}>Upload Last Known Backup</Btn>
-            <input ref={ownerBackupUploadRef} type="file" accept="application/json,.json" onChange={uploadLastKnownBackup} style={{ display:"none" }} />
-            <Btn variant="secondary" onClick={async()=>{ try { await supabase.auth.signOut(); } catch(e) {} setAppSession(null); setDataLoaded(false); setAuthMode("login"); setAuthPassword(""); setAuthConfirmPassword(""); dispatch({ type:"REPLACE_STATE", payload:blankUserState() }); }}>Sign Out / Go to Login</Btn>
+            <Btn onClick={async()=>{ try { await supabase.auth.signOut(); } catch(e) {} setAppSession(null); setDataLoaded(false); setAuthMode("login"); setAuthPassword(""); setAuthConfirmPassword(""); dispatch({ type:"REPLACE_STATE", payload:blankUserState() }); }}>Sign Out / Go to Login</Btn>
             <Btn variant="secondary" onClick={()=>setShowOwnerSetup(true)}>Create Owner Workspace</Btn>
           </div>
         </div>
@@ -11829,6 +11881,12 @@ export default function App() {
 
   return (
     <div className="mf-app" data-theme={effectiveTheme} style={{ minHeight:"100vh", background:T.bg, color:T.text, fontFamily:T.sans }}>
+      {cloudWriteBlocked && (
+        <div style={{ margin:"10px 16px 0", padding:"10px 12px", border:"1px solid #b45309", borderRadius:10, background:"#fff7ed", color:"#7c2d12", fontSize:12, lineHeight:1.4 }}>
+          <b>🛡️ Data Guard blocked a destructive cloud save.</b> The existing Supabase workspace was preserved and automatic cloud saving is paused for this session. Open Admin Center → Data Safety and verify the loaded data before doing anything destructive.
+        </div>
+      )}
+
       {ownerRecovery?.status === "preview" && (
         <div style={{ position:"sticky", top:0, zIndex:9999, padding:"12px 16px", background:"#fff7ed", color:"#9a3412", borderBottom:"2px solid #fb923c", fontFamily:T.sans }}>
           <div style={{ maxWidth:1200, margin:"0 auto", display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap" }}>
