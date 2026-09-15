@@ -1298,7 +1298,7 @@ function reducer(state, { type, payload }) {
           if(unit==="weeks") d.setDate(d.getDate()+n*7);
           if(unit==="months") d.setMonth(d.getMonth()+n);
           if(unit==="years") d.setFullYear(d.getFullYear()+n);
-          const advancedSch = { ...sch, lastTriggered:doneDate, lastDoneDate:doneDate, lastInspectionDate:doneDate, nextDueDate:d.toISOString().split("T")[0] };
+          const advancedSch = { ...sch, lastTriggered:doneDate, lastDoneDate:doneDate, lastInspectionDate:doneDate, nextDueDate:d.toISOString().split("T")[0], lastGeneratedDueDate:"", lastGeneratedWorkOrderId:"" };
           return { ...state, parts, equipment, workOrders:updated, inspectionSchedules:(state.inspectionSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
         }
       }
@@ -4154,6 +4154,9 @@ function Equipment({ state, dispatch }) {
   const [attachDetail, setAttachDetail] = useState(null);
   const [historyWO, setHistoryWO] = useState(null);
   const [historyEdit, setHistoryEdit] = useState(false);
+  const [historicalImportOpen, setHistoricalImportOpen] = useState(false);
+  const blankHistoricalImport = () => ({ title:"", woType:"Service", completed:today(), tech:"", laborHours:"", laborCost:"", notes:"", partsUsed:[], originalDocument:null });
+  const [historicalImport, setHistoricalImport] = useState(blankHistoricalImport());
   const [expandedAt, setExpandedAt]     = useState({});
   const [form, setForm]         = useState({});
   const [search, setSearch]     = useState("");
@@ -4556,6 +4559,40 @@ function Equipment({ state, dispatch }) {
     );
   };
 
+
+  const addHistoricalPart = () => setHistoricalImport(f=>({...f,partsUsed:[...(f.partsUsed||[]),{name:"",partNumber:"",qty:1,unitCost:0}]}));
+  const updateHistoricalPart = (idx, patch) => setHistoricalImport(f=>{ const rows=[...(f.partsUsed||[])]; rows[idx]={...(rows[idx]||{}),...patch}; return {...f,partsUsed:rows}; });
+  const removeHistoricalPart = (idx) => setHistoricalImport(f=>({...f,partsUsed:(f.partsUsed||[]).filter((_,i)=>i!==idx)}));
+  const loadHistoricalDocument = async (file) => {
+    if(!file) return;
+    if(file.size > 12 * 1024 * 1024) { alert("Choose a photo or PDF smaller than 12 MB."); return; }
+    const dataUrl = await new Promise((resolve,reject)=>{ const r=new FileReader(); r.onload=()=>resolve(r.result); r.onerror=reject; r.readAsDataURL(file); });
+    setHistoricalImport(f=>({...f,originalDocument:{ id:genId("HISTDOC"), name:file.name || `Historical-WO-${Date.now()}`, type:file.type || "application/octet-stream", size:file.size, dataUrl, capturedAt:new Date().toISOString() }}));
+  };
+  const saveHistoricalWorkOrder = (equipmentId) => {
+    const f=historicalImport;
+    if(!String(f.title||"").trim()) return alert("Enter a title or service description for the historical work order.");
+    if(!f.originalDocument?.dataUrl) return alert("Add a photo or scan of the original work order so the source document stays with the record.");
+    const completed = f.completed || today();
+    const id = genNextWOId(state.workOrders || [], equipmentId, "HIST");
+    const partsUsed=(f.partsUsed||[]).filter(p=>String(p.name||p.partNumber||"").trim()).map(p=>({...p,qty:+(p.qty||1),unitCost:+(p.unitCost||0)}));
+    dispatch({type:"ADD_WO",payload:{
+      id, equipment:equipmentId, woType:f.woType||"Service", title:String(f.title||"").trim(), status:"Completed",
+      created:completed, completed, completedDate:completed, closedDate:completed, tech:f.tech||"", laborHours:+(f.laborHours||0), laborCost:+(f.laborCost||0),
+      partsUsed, outsideServices:[], mechanicNotes:f.notes||"", description:f.notes||f.title||"", workPerformed:f.notes||"",
+      historicalImport:true, importedAt:new Date().toISOString(), originalDocument:f.originalDocument, source:"Historical Work Order Import",
+      usageNA:true, equipmentStatus:"Fully Operational", priority:"Historical"
+    }});
+    setHistoricalImport(blankHistoricalImport()); setHistoricalImportOpen(false);
+    alert(`Historical Work Order ${id} added. The original scan/photo is attached to the record.`);
+  };
+  const openOriginalHistoricalDocument = (wo) => {
+    const doc=wo?.originalDocument; if(!doc?.dataUrl) return alert("No original document is attached to this historical work order.");
+    const w=window.open(); if(!w) return alert("Allow pop-ups to open the original document.");
+    if(String(doc.type||"").includes("pdf")) w.location.href=doc.dataUrl;
+    else w.document.write(`<title>${htmlEscape(doc.name||"Original Work Order")}</title><style>body{margin:0;background:#111;display:grid;place-items:center;min-height:100vh}img{max-width:100%;height:auto}</style><img src="${doc.dataUrl}" alt="Original historical work order"/>`);
+  };
+
   /* -- Detail view -- */
   if(detail) {
     const eq  = state.equipment.find(e=>e.id===detail);
@@ -4652,6 +4689,32 @@ function Equipment({ state, dispatch }) {
 
     return (
       <div>
+        {historicalImportOpen && (
+          <Modal title="Add Historical Work Order" onClose={()=>setHistoricalImportOpen(false)}>
+            <div className="mf-mobile-form" style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:12}}>
+              <Field label="Title / Service"><input style={inp} value={historicalImport.title} onChange={e=>setHistoricalImport(f=>({...f,title:e.target.value}))} placeholder="Example: Hydraulic hose replacement" /></Field>
+              <Field label="Work Order Type"><select style={inp} value={historicalImport.woType} onChange={e=>setHistoricalImport(f=>({...f,woType:e.target.value}))}><option>Repair</option><option>Service</option><option>Inspection</option></select></Field>
+              <Field label="Completed Date"><input style={inp} type="date" value={historicalImport.completed} onChange={e=>setHistoricalImport(f=>({...f,completed:e.target.value}))}/></Field>
+              <Field label="Mechanic / Vendor"><input style={inp} value={historicalImport.tech} onChange={e=>setHistoricalImport(f=>({...f,tech:e.target.value}))}/></Field>
+              <Field label="Labor Hours"><input style={inp} type="number" step="0.01" value={historicalImport.laborHours} onChange={e=>setHistoricalImport(f=>({...f,laborHours:e.target.value}))}/></Field>
+              <Field label="Labor Cost"><input style={inp} type="number" step="0.01" value={historicalImport.laborCost} onChange={e=>setHistoricalImport(f=>({...f,laborCost:e.target.value}))}/></Field>
+              <div style={{gridColumn:"1 / -1"}}><Field label="Notes / Work Performed"><textarea style={{...inp,minHeight:100}} value={historicalImport.notes} onChange={e=>setHistoricalImport(f=>({...f,notes:e.target.value}))}/></Field></div>
+              <div style={{gridColumn:"1 / -1",border:`1px solid ${T.border}`,borderRadius:12,padding:12}}>
+                <div style={{fontWeight:800,marginBottom:8}}>Parts</div>
+                {(historicalImport.partsUsed||[]).map((p,i)=><div key={i} className="mf-mobile-form" style={{display:"grid",gridTemplateColumns:"2fr 1.2fr .7fr 1fr auto",gap:7,marginBottom:7}}><input style={inp} placeholder="Part name" value={p.name||""} onChange={e=>updateHistoricalPart(i,{name:e.target.value})}/><input style={inp} placeholder="Part #" value={p.partNumber||""} onChange={e=>updateHistoricalPart(i,{partNumber:e.target.value})}/><input style={inp} type="number" step="0.01" placeholder="Qty" value={p.qty||""} onChange={e=>updateHistoricalPart(i,{qty:e.target.value})}/><input style={inp} type="number" step="0.01" placeholder="$ each" value={p.unitCost||""} onChange={e=>updateHistoricalPart(i,{unitCost:e.target.value})}/><Btn small variant="danger" onClick={()=>removeHistoricalPart(i)}>×</Btn></div>)}
+                <Btn small variant="secondary" onClick={addHistoricalPart}>+ Add Part</Btn>
+              </div>
+              <div style={{gridColumn:"1 / -1",border:`2px dashed ${T.borderHi}`,borderRadius:14,padding:14}}>
+                <div style={{fontWeight:900,marginBottom:5}}>Original Work Order — required</div>
+                <div style={{fontSize:12,color:T.muted,marginBottom:10}}>On iPhone, choose Take Photo to photograph the old work order. The source image/PDF is kept with this historical record for reference and printing.</div>
+                <input type="file" accept="image/*,application/pdf" capture="environment" onChange={e=>loadHistoricalDocument(e.target.files?.[0])}/>
+                {historicalImport.originalDocument && <div style={{marginTop:8,fontSize:12,fontWeight:700}}>Attached: {historicalImport.originalDocument.name}</div>}
+              </div>
+              <div style={{gridColumn:"1 / -1",padding:10,borderRadius:10,background:T.amberLt,color:T.text,fontSize:12}}>Scan-to-prefill is prepared as the next OCR layer; this version keeps the original document and uses reviewed manual fields so an OCR mistake cannot silently alter maintenance history.</div>
+              <div style={{gridColumn:"1 / -1",display:"flex",justifyContent:"flex-end",gap:8,flexWrap:"wrap"}}><Btn variant="secondary" onClick={()=>setHistoricalImportOpen(false)}>Cancel</Btn><Btn onClick={()=>saveHistoricalWorkOrder(eq.id)}>Save Historical Work Order</Btn></div>
+            </div>
+          </Modal>
+        )}
         {historyWO && (
           <Modal title={`${historyEdit ? "Edit" : "View"} Work Order ${historyWO.id || ""}`} onClose={closeHistoryWO}>
             {!historyEdit ? (
@@ -4663,6 +4726,7 @@ function Equipment({ state, dispatch }) {
                   </div>
                   <div style={{ display:"flex", gap:8 }}>
                     <Btn small variant="secondary" onClick={()=>printHistoryWO(historyWO)}>Print</Btn>
+                    {historyWO.originalDocument?.dataUrl && <Btn small variant="secondary" onClick={()=>openOriginalHistoricalDocument(historyWO)}>Original Scan</Btn>}
                     <Btn small onClick={()=>setHistoryEdit(true)}>✏ Edit</Btn>
                   </div>
                 </div>
@@ -4961,10 +5025,10 @@ function Equipment({ state, dispatch }) {
 
           {/* Work Order History */}
           <Card style={{ gridColumn:"span 2" }}>
-            <h4 style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Work Order History</h4>
-            <p style={{ margin:"-6px 0 16px", fontFamily:T.sans, fontSize:13, color:T.subtext }}>
-              Closed work orders are archived below by type for this equipment.
-            </p>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:14}}>
+              <div><h4 style={{ margin:0, fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Work Order History</h4><p style={{ margin:"5px 0 0", fontFamily:T.sans, fontSize:13, color:T.subtext }}>Closed work orders are archived below by type for this equipment.</p></div>
+              <Btn small onClick={()=>{setHistoricalImport(blankHistoricalImport());setHistoricalImportOpen(true);}}>📷 Add Historical Work Order</Btn>
+            </div>
 
             <div style={{ marginBottom:18 }}>
               <h5 style={{ margin:"0 0 10px", fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, textTransform:"uppercase", letterSpacing:.4 }}>Service History / Preventive Maintenance</h5>
@@ -11315,6 +11379,10 @@ export default function App() {
     };
     inspections.forEach(schedule => {
       if(!schedule?.nextDueDate || schedule.nextDueDate > todayStr) return;
+      // One inspection occurrence may generate only one WO. Deleting/closing that WO must not recreate the same due occurrence.
+      if(schedule.lastGeneratedDueDate && String(schedule.lastGeneratedDueDate) === String(schedule.nextDueDate)) return;
+      const alreadyGeneratedForOccurrence = (state.workOrders||[]).some(w => w.inspectionScheduleId === schedule.id && w.woType === "Inspection" && String(w.inspectionDueOccurrence || w.due || "") === String(schedule.nextDueDate));
+      if(alreadyGeneratedForOccurrence) return;
       const alreadyOpen = (state.workOrders||[]).some(w =>
         w.inspectionScheduleId === schedule.id &&
         w.woType === "Inspection" &&
@@ -11352,6 +11420,7 @@ export default function App() {
         mechanicNotes: task.notes || "",
         inspectionTaskId:task.id,
         inspectionScheduleId:schedule.id,
+        inspectionDueOccurrence:schedule.nextDueDate || todayStr,
         inspectionSteps:steps.join("\n"),
         steps,
         inspectionStepResults:steps.map((step,i)=>({ id:`${genId("STEP")}-${i}`, step, result:"", comment:"" })),
@@ -11359,7 +11428,7 @@ export default function App() {
         partsUsed:[], labor:[],
       }});
       dispatch({ type:"ADD_NOTIFICATION", payload:{ id:`N${Date.now()}-${schedule.id}`, type:"inspection", msg:`Inspection due for ${eq.id} — ${eq.name || eq.nomenclature || "equipment"}. Inspection Work Order ${woId} created with ${steps.length} step${steps.length===1?"":"s"}.`, time:"Just now", read:false } });
-      dispatch({ type:"UPDATE_INSPECTION_SCHEDULE", payload:{ ...schedule, lastTriggered:todayStr } });
+      dispatch({ type:"UPDATE_INSPECTION_SCHEDULE", payload:{ ...schedule, lastTriggered:todayStr, lastGeneratedDueDate:schedule.nextDueDate || todayStr, lastGeneratedWorkOrderId:woId } });
     });
   }, [state.inspectionSchedules, state.inspectionTasks, state.equipment, state.workOrders]);
 
@@ -12124,13 +12193,13 @@ export default function App() {
         .wo-request-full { grid-column:1 / -1; }
         @media print { .no-print { display:none !important; } }
         @media (max-width: 768px) {
-          html, body { width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
-          #root { width:100%; min-width:0; overflow-x:visible; }
+          html, body { width:100%; max-width:100%; overflow-x:hidden; -webkit-text-size-adjust:100%; }
+          #root { width:100%; max-width:100%; min-width:0; overflow-x:hidden; }
           header.no-print { height:auto !important; min-height:56px !important; padding:8px 10px !important; gap:8px !important; align-items:flex-start !important; }
           header.no-print > div:first-child { min-width:0 !important; flex:1 1 auto !important; gap:8px !important; flex-wrap:wrap !important; }
           header.no-print > div:last-child { gap:6px !important; flex-wrap:wrap !important; justify-content:flex-end !important; }
           header.no-print span, header.no-print button div + div { max-width:160px !important; overflow:hidden !important; text-overflow:ellipsis !important; white-space:nowrap !important; }
-          main { padding:12px 10px 90px !important; overflow-x:auto !important; -webkit-overflow-scrolling:touch; }
+          main { padding:12px 10px calc(90px + env(safe-area-inset-bottom)) !important; overflow-x:hidden !important; }
           main > div { max-width:100%; min-width:0; }
           h1 { font-size:20px !important; }
           h2 { font-size:22px !important; }
@@ -12140,7 +12209,7 @@ export default function App() {
           main table {
             display:block !important;
             width:max-content !important;
-            min-width:980px !important;
+            min-width:720px !important;
             max-width:none !important;
             overflow-x:auto !important;
             overflow-y:visible !important;
@@ -12205,6 +12274,13 @@ export default function App() {
           .wo-request-mobile-card { width:100% !important; }
           .wo-request-mobile-card * { white-space:normal !important; }
           .wo-request-mobile-meta { grid-template-columns:1fr !important; font-size:13px !important; }
+          .mf-mobile-form { grid-template-columns:1fr !important; }
+          .mf-mobile-form > * { grid-column:1 !important; min-width:0 !important; width:100% !important; }
+          .mf-main > div { width:100% !important; max-width:100% !important; }
+          input, select, textarea { max-width:100% !important; width:100%; box-sizing:border-box; }
+          button { max-width:100%; }
+          [style*="minWidth:260"], [style*="min-width:260"] { min-width:0 !important; }
+          .mobile-x-scroll, main div[style*="overflowX"] { max-width:calc(100vw - 20px) !important; }
         }
         @media (max-width: 900px) {
           .mf-modal-backdrop { padding:0 !important; align-items:stretch !important; justify-content:stretch !important; }
