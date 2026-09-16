@@ -1,0 +1,45 @@
+{
+  "user_id": "426dfd39-5a8d-4dae-b62f-5985a044143b",
+  "data": {
+    "areas": [],
+    "parts": [],
+    "pmTasks": [],
+    "profile": null,
+    "orgUsers": [],
+    "settings": null,
+    "userRole": "owner",
+    "equipment": [],
+    "locations": [],
+    "usageLogs": [],
+    "categories": [
+      "Mowers",
+      "Vehicles",
+      "Tractors",
+      "Irrigation",
+      "Tools",
+      "Trailers"
+    ],
+    "woSettings": null,
+    "workOrders": [],
+    "ownerUserId": "426dfd39-5a8d-4dae-b62f-5985a044143b",
+    "pmSchedules": [],
+    "technicians": [],
+    "userInvites": [],
+    "fuelReadings": [],
+    "organization": {
+      "id": "ORG-426dfd39-5a8d-4dae-b62f-5985a044143b",
+      "name": ""
+    },
+    "currentUserId": "426dfd39-5a8d-4dae-b62f-5985a044143b",
+    "notifications": [],
+    "setupComplete": false,
+    "fuelContainers": [],
+    "inventoryItems": [],
+    "inspectionTasks": [],
+    "activeLocationId": "__all",
+    "workOrderRequests": [],
+    "inspectionSchedules": [],
+    "preventiveMaintenance": []
+  },
+  "updated_at": "2026-06-29T15:40:21.496+00:00"
+}
