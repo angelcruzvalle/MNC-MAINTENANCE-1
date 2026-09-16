@@ -1220,24 +1220,25 @@ function reducer(state, { type, payload }) {
     case "READ_ALL":      return { ...state, notifications: state.notifications.map(n => ({...n,read:true})) };
     case "ADD_NOTIFICATION": return { ...state, notifications:[makeNotification(payload), ...(state.notifications||[])] };
     case "GENERATE_INSPECTION_WO": {
-      const { workOrder, scheduleId, occurrence, triggeredDate } = payload || {};
-      if(!workOrder || !scheduleId || !occurrence) return state;
-      const occurrenceKey = String(occurrence);
-      const schedule = (state.inspectionSchedules||[]).find(x => String(x.id)===String(scheduleId));
+      // Atomic inspection generation: add the WO and lock the exact due occurrence in the same state transition.
+      // This prevents the auto-generation effect from seeing a new WO before the schedule is marked generated.
+      const rawWO = payload?.wo || {};
+      const scheduleId = payload?.scheduleId || rawWO.inspectionScheduleId;
+      const occurrence = String(payload?.occurrence || rawWO.inspectionDueOccurrence || rawWO.due || "");
+      if(!scheduleId || !occurrence) return state;
+      const schedule = (state.inspectionSchedules||[]).find(x=>String(x.id)===String(scheduleId));
       if(!schedule) return state;
       const completed = (schedule.completedDueOccurrences||[]).map(String);
       const skipped = (schedule.skippedDueOccurrences||[]).map(String);
-      const exists = (state.workOrders||[]).some(w =>
-        w.woType === "Inspection" &&
-        String(w.inspectionScheduleId)===String(scheduleId) &&
-        String(w.inspectionDueOccurrence || w.due || "")===occurrenceKey
-      );
-      if(completed.includes(occurrenceKey) || skipped.includes(occurrenceKey) || exists || String(schedule.lastGeneratedDueDate||"")===occurrenceKey) return state;
-      const updatedSchedule = { ...schedule, lastTriggered:triggeredDate || today(), lastGeneratedDueDate:occurrenceKey, lastGeneratedWorkOrderId:workOrder.id };
+      const exists = (state.workOrders||[]).some(w=>String(w.inspectionScheduleId)===String(scheduleId) && String(w.inspectionDueOccurrence||w.due||"")===occurrence);
+      if(completed.includes(occurrence) || skipped.includes(occurrence) || exists || String(schedule.lastGeneratedDueDate||"")===occurrence) return state;
+      const wo = stampLocation(rawWO, state);
+      const lockedSchedule = stampLocation({ ...schedule, lastTriggered:payload?.triggeredOn || today(), lastGeneratedDueDate:occurrence, lastGeneratedWorkOrderId:wo.id }, state);
       return {
         ...state,
-        workOrders:[workOrder, ...(state.workOrders||[])],
-        inspectionSchedules:(state.inspectionSchedules||[]).map(x => String(x.id)===String(scheduleId) ? updatedSchedule : x)
+        workOrders:[wo, ...(state.workOrders||[])],
+        inspectionSchedules:(state.inspectionSchedules||[]).map(x=>String(x.id)===String(scheduleId)?lockedSchedule:x),
+        notifications:[makeNotification(payload?.notification || { id:`N${Date.now()}-${scheduleId}`, type:"inspection", msg:`Inspection Work Order ${wo.id} created`, read:false }), ...(state.notifications||[])]
       };
     }
     case "ADD_WO": {
@@ -1307,22 +1308,33 @@ function reducer(state, { type, payload }) {
           return { ...state, parts, equipment, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
         }
       }
-      /* If Inspection WO is completed, advance the linked inspection schedule. */
-      if(payload.status==="Completed" && payload.inspectionScheduleId) {
-        const sch = (state.inspectionSchedules||[]).find(s=>s.id===payload.inspectionScheduleId);
+      /* If Inspection WO is completed, advance the linked inspection schedule.
+         Always use the ORIGINAL WO linkage so editing/phone forms cannot accidentally drop schedule IDs. */
+      const inspectionWO = payloadWithStatus.woType==="Inspection" ? { ...(prevWO||{}), ...payloadWithStatus } : null;
+      const linkedInspectionScheduleId = inspectionWO?.inspectionScheduleId || prevWO?.inspectionScheduleId;
+      if(payloadWithStatus.status==="Completed" && linkedInspectionScheduleId) {
+        const sch = (state.inspectionSchedules||[]).find(s=>String(s.id)===String(linkedInspectionScheduleId));
         if(sch) {
-          const doneDate = payload.completed || new Date().toISOString().split("T")[0];
-          const d = new Date(doneDate);
-          const n = +(sch.timeInterval || 1);
+          const doneDate = payloadWithStatus.completed || payloadWithStatus.completedDate || new Date().toISOString().split("T")[0];
+          const n = Math.max(1, +(sch.timeInterval || 1));
           const unit = sch.timeUnit || "months";
-          if(unit==="days") d.setDate(d.getDate()+n);
-          if(unit==="weeks") d.setDate(d.getDate()+n*7);
-          if(unit==="months") d.setMonth(d.getMonth()+n);
-          if(unit==="years") d.setFullYear(d.getFullYear()+n);
-          const occurrence = String(payload.inspectionDueOccurrence || payload.due || sch.nextDueDate || doneDate);
+          const addInterval = (date) => {
+            const d = new Date(`${date}T12:00:00`);
+            if(unit==="days") d.setDate(d.getDate()+n);
+            else if(unit==="weeks") d.setDate(d.getDate()+n*7);
+            else if(unit==="years") d.setFullYear(d.getFullYear()+n);
+            else d.setMonth(d.getMonth()+n);
+            return d.toISOString().split("T")[0];
+          };
+          // Advance from completion and never leave the just-completed schedule due today/in the past.
+          let nextDueDate = addInterval(doneDate);
+          const todayStr = new Date().toISOString().split("T")[0];
+          let guard=0;
+          while(nextDueDate <= todayStr && guard++ < 500) nextDueDate = addInterval(nextDueDate);
+          const occurrence = String(inspectionWO.inspectionDueOccurrence || inspectionWO.due || sch.nextDueDate || doneDate);
           const completedDueOccurrences = Array.from(new Set([...(sch.completedDueOccurrences||[]).map(String), occurrence]));
-          const advancedSch = { ...sch, lastTriggered:doneDate, lastDoneDate:doneDate, lastInspectionDate:doneDate, nextDueDate:d.toISOString().split("T")[0], lastGeneratedDueDate:occurrence, lastGeneratedWorkOrderId:payload.id || sch.lastGeneratedWorkOrderId || "", completedDueOccurrences };
-          return { ...state, parts, equipment, workOrders:updated, inspectionSchedules:(state.inspectionSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
+          const advancedSch = { ...sch, lastTriggered:doneDate, lastDoneDate:doneDate, lastInspectionDate:doneDate, nextDueDate, lastGeneratedDueDate:occurrence, lastGeneratedWorkOrderId:inspectionWO.id || sch.lastGeneratedWorkOrderId || "", completedDueOccurrences };
+          return { ...state, parts, equipment, workOrders:updated, inspectionSchedules:(state.inspectionSchedules||[]).map(s=>String(s.id)===String(sch.id)?advancedSch:s) };
         }
       }
       return { ...state, parts, equipment, workOrders: updated };
@@ -1335,21 +1347,12 @@ function reducer(state, { type, payload }) {
         inspectionSchedules = inspectionSchedules.map(s => {
           if(String(s.id)!==String(doomed.inspectionScheduleId)) return s;
           const skippedDueOccurrences = occurrence ? Array.from(new Set([...(s.skippedDueOccurrences||[]).map(String), occurrence])) : (s.skippedDueOccurrences||[]);
-          // Deleting an auto-generated inspection WO means skip THIS occurrence, not recreate it.
-          // Move the assignment to its next legitimate interval as a second layer of protection.
-          let nextDueDate = s.nextDueDate || "";
-          if(occurrence) {
-            const d = new Date(occurrence);
-            if(!Number.isNaN(d.getTime())) {
-              const n = +(s.timeInterval || 1);
-              const unit = s.timeUnit || "months";
-              if(unit==="days") d.setDate(d.getDate()+n);
-              if(unit==="weeks") d.setDate(d.getDate()+n*7);
-              if(unit==="months") d.setMonth(d.getMonth()+n);
-              if(unit==="years") d.setFullYear(d.getFullYear()+n);
-              nextDueDate = d.toISOString().split("T")[0];
-            }
-          }
+          const n=Math.max(1, +(s.timeInterval||1));
+          const unit=s.timeUnit||"months";
+          const addInterval=(date)=>{ const d=new Date(`${date}T12:00:00`); if(unit==="days")d.setDate(d.getDate()+n); else if(unit==="weeks")d.setDate(d.getDate()+n*7); else if(unit==="years")d.setFullYear(d.getFullYear()+n); else d.setMonth(d.getMonth()+n); return d.toISOString().split("T")[0]; };
+          let nextDueDate=addInterval(occurrence || s.nextDueDate || today());
+          const todayStr=today(); let guard=0;
+          while(nextDueDate<=todayStr && guard++<500) nextDueDate=addInterval(nextDueDate);
           return { ...s, skippedDueOccurrences, nextDueDate, lastGeneratedDueDate:occurrence || s.lastGeneratedDueDate || "", lastGeneratedWorkOrderId:doomed.id || s.lastGeneratedWorkOrderId || "" };
         });
       }
@@ -11281,14 +11284,12 @@ export default function App() {
       try {
         const cloudOwnerId = state.ownerUserId || state.organizationOwnerId || activeUser.id;
         const cloudState = prepareSharedOrganizationStateForCloudSave(state, activeUser);
-        // Keep a durable local copy BEFORE the network write. A temporary Supabase failure must
-        // never undo a closed/deleted inspection in the current browser.
+        // Local-first durability: the user's action is safe even if Supabase is temporarily unavailable.
         try {
           localStorage.setItem("ncaState", JSON.stringify(ensureCurrentOrganizationAdmin(cloudState, activeUser)));
           localStorage.setItem("ncaState:lastUserId", activeUser.id);
-        } catch(localSaveError) {
-          console.warn("Local safety save failed:", localSaveError);
-        }
+          localStorage.setItem("ncaState:cloudPending", JSON.stringify({ ownerId:cloudOwnerId, savedAt:new Date().toISOString() }));
+        } catch(e) { console.error("Local safety save failed:", e); }
         let error = null;
         if(appSession?.maintForgeAppLogin) {
           const rpcSave = await supabase.rpc("maintforge_username_save", {
@@ -11330,7 +11331,7 @@ export default function App() {
           }
           setLastSaveError(null);
           setSyncStatus("saved");
-          try { localStorage.setItem("ncaState", JSON.stringify(ensureCurrentOrganizationAdmin(cloudState, activeUser))); localStorage.setItem("ncaState:lastUserId", activeUser.id); } catch(e) {}
+          try { localStorage.removeItem("ncaState:cloudPending"); localStorage.setItem("ncaState", JSON.stringify(ensureCurrentOrganizationAdmin(cloudState, activeUser))); localStorage.setItem("ncaState:lastUserId", activeUser.id); } catch(e) {}
           setTimeout(() => setSyncStatus("idle"), 2000);
         }
       } catch (e) {
@@ -11340,7 +11341,7 @@ export default function App() {
       }
     }, 1000);
     return () => clearTimeout(timer);
-  }, [state, activeSession?.user?.id, activeUser?.id, appSession?.maintForgeAppLogin, appSession?.username, appSession?.password, dataLoaded, ownerRecovery?.locked]);
+  }, [state, activeSession?.user?.id, dataLoaded, ownerRecovery?.locked]);
 
 
   /* Auto-create Preventive Maintenance Service Work Orders when PM schedules are due */
@@ -11478,43 +11479,19 @@ export default function App() {
       const steps = normalizeStepLines(task.steps);
       const iwo = genInspectionWOInfo(eq.id);
       const woId = iwo.id;
-      const inspectionOccurrence = schedule.nextDueDate || todayStr;
-      const generatedInspectionWO = {
-        id:woId,
-        inspectionSequence:iwo.sequence,
-        woType:"Inspection",
-        title:`Inspection - ${task.name}`,
-        inspectionTaskName:task.name,
-        equipment:eq.id,
-        equipmentStatus:"Fully Operational",
-        status:"Open",
-        priority:"Normal",
-        created:todayStr,
-        due:inspectionOccurrence,
-        completed:"",
-        tech:"",
-        usageReading:"N/A",
-        usageType:"N/A",
-        usageNA:true,
-        faultEnabled:true,
-        faultDescription:task.name,
-        problem:task.name,
-        description:task.name,
-        workPerformed: buildNumberedStepsText(task.steps),
-        mechanicNotes: task.notes || "",
-        inspectionTaskId:task.id,
-        inspectionScheduleId:schedule.id,
-        inspectionDueOccurrence:inspectionOccurrence,
-        inspectionSteps:steps.join("\n"),
-        steps,
-        inspectionStepResults:steps.map((step,i)=>({ id:`${genId("STEP")}-${i}`, step, result:"", comment:"" })),
-        inspectionAttachments:Array.isArray(task.attachments)?task.attachments:[],
-        partsUsed:[], labor:[],
-      };
-      // Create the WO and mark its schedule occurrence generated in ONE reducer transaction.
-      // This prevents the auto-generator from seeing a half-updated state and creating L1/L2 again.
-      dispatch({ type:"GENERATE_INSPECTION_WO", payload:{ workOrder:generatedInspectionWO, scheduleId:schedule.id, occurrence:inspectionOccurrence, triggeredDate:todayStr } });
-      dispatch({ type:"ADD_NOTIFICATION", payload:{ id:`N${Date.now()}-${schedule.id}`, type:"inspection", msg:`Inspection due for ${eq.id} — ${eq.name || eq.nomenclature || "equipment"}. Inspection Work Order ${woId} created with ${steps.length} step${steps.length===1?"":"s"}.`, time:"Just now", read:false } });
+      dispatch({ type:"GENERATE_INSPECTION_WO", payload:{
+        scheduleId:schedule.id, occurrence:schedule.nextDueDate || todayStr, triggeredOn:todayStr,
+        notification:{ id:`N${Date.now()}-${schedule.id}`, type:"inspection", msg:`Inspection due for ${eq.id} — ${eq.name || eq.nomenclature || "equipment"}. Inspection Work Order ${woId} created with ${steps.length} step${steps.length===1?"":"s"}.`, time:"Just now", read:false },
+        wo:{
+          id:woId, inspectionSequence:iwo.sequence, woType:"Inspection", title:`Inspection - ${task.name}`, inspectionTaskName:task.name,
+          equipment:eq.id, equipmentStatus:"Fully Operational", status:"Open", priority:"Normal", created:todayStr, due:schedule.nextDueDate || todayStr, completed:"", tech:"",
+          usageReading:"N/A", usageType:"N/A", usageNA:true, faultEnabled:true, faultDescription:task.name, problem:task.name, description:task.name,
+          workPerformed:buildNumberedStepsText(task.steps), mechanicNotes:task.notes || "", inspectionTaskId:task.id, inspectionScheduleId:schedule.id,
+          inspectionDueOccurrence:schedule.nextDueDate || todayStr, inspectionSteps:steps.join("\n"), steps,
+          inspectionStepResults:steps.map((step,i)=>({ id:`${genId("STEP")}-${i}`, step, result:"", comment:"" })),
+          inspectionAttachments:Array.isArray(task.attachments)?task.attachments:[], partsUsed:[], labor:[]
+        }
+      }});
     });
   }, [state.inspectionSchedules, state.inspectionTasks, state.equipment, state.workOrders]);
 
