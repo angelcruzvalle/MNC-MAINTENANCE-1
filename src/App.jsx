@@ -1321,9 +1321,26 @@ function reducer(state, { type, payload }) {
       }
       /* If Inspection WO is completed, advance the linked inspection schedule.
          Always use the ORIGINAL WO linkage so editing/phone forms cannot accidentally drop schedule IDs. */
-      const inspectionWO = payloadWithStatus.woType==="Inspection" ? { ...(prevWO||{}), ...payloadWithStatus } : null;
-      const linkedInspectionScheduleId = inspectionWO?.inspectionScheduleId || prevWO?.inspectionScheduleId;
-      if(payloadWithStatus.status==="Completed" && linkedInspectionScheduleId) {
+      // Resolve inspection linkage from the ORIGINAL work order first. Older L1/L2 work orders may
+      // predate inspectionScheduleId, so fall back to equipment + inspection task/name. A close must
+      // advance the schedule even when an old/edit/mobile form omitted the linkage fields.
+      const mergedWO = { ...(prevWO||{}), ...payloadWithStatus };
+      const isInspectionWO = String(mergedWO.woType || prevWO?.woType || "").toLowerCase() === "inspection";
+      const inspectionWO = isInspectionWO ? mergedWO : null;
+      let linkedInspectionScheduleId = inspectionWO?.inspectionScheduleId || prevWO?.inspectionScheduleId || "";
+      if(payloadWithStatus.status==="Completed" && inspectionWO && !linkedInspectionScheduleId) {
+        const eqId = String(inspectionWO.equipment || inspectionWO.equipmentId || "");
+        const taskId = String(inspectionWO.inspectionTaskId || "");
+        const taskName = String(inspectionWO.inspectionTaskName || inspectionWO.title || inspectionWO.faultDescription || "").replace(/^Inspection\s*-\s*/i, "").trim().toLowerCase();
+        const fallbackSchedule = (state.inspectionSchedules||[]).find(candidate => {
+          if(String(candidate.equipmentId || candidate.equipment || "") !== eqId) return false;
+          if(taskId && String(candidate.taskId || candidate.inspectionTaskId || "") === taskId) return true;
+          const candidateTask = (state.inspectionTasks||[]).find(t => String(t.id) === String(candidate.taskId || candidate.inspectionTaskId || ""));
+          return !!taskName && String(candidateTask?.name || candidate.taskName || candidate.task || "").trim().toLowerCase() === taskName;
+        });
+        linkedInspectionScheduleId = fallbackSchedule?.id || "";
+      }
+      if(payloadWithStatus.status==="Completed" && inspectionWO && linkedInspectionScheduleId) {
         const sch = (state.inspectionSchedules||[]).find(s=>String(s.id)===String(linkedInspectionScheduleId));
         if(sch) {
           const doneDate = payloadWithStatus.completed || payloadWithStatus.completedDate || new Date().toISOString().split("T")[0];
@@ -11494,13 +11511,20 @@ export default function App() {
       const skippedOccurrences = (schedule.skippedDueOccurrences||[]).map(String);
       if(completedOccurrences.includes(occurrence) || skippedOccurrences.includes(occurrence)) return;
       if(schedule.lastGeneratedDueDate && String(schedule.lastGeneratedDueDate) === occurrence) return;
+      const task = (state.inspectionTasks||[]).find(t => String(t.id) === String(schedule.taskId || schedule.inspectionTaskId || ""));
+      const scheduleTaskName = String(task?.name || schedule.taskName || schedule.task || "").trim().toLowerCase();
+      const scheduleEquipment = String(schedule.equipmentId || schedule.equipment || "");
       const alreadyGeneratedForOccurrence = (state.workOrders||[]).some(w => {
-        if(w.woType !== "Inspection" || String(w.inspectionDueOccurrence || w.due || "") !== occurrence) return false;
-        const sameSchedule = String(w.inspectionScheduleId || "") === String(schedule.id);
-        const sameLogicalInspection = String(w.equipment || w.equipmentId || "") === String(schedule.equipmentId || schedule.equipment || "") &&
-          String(w.inspectionTaskId || "") === String(schedule.taskId || schedule.inspectionTaskId || "");
-        return sameSchedule || sameLogicalInspection;
+        if(String(w.woType || "").toLowerCase() !== "inspection" || String(w.inspectionDueOccurrence || w.due || "") !== occurrence) return false;
+        const sameSchedule = !!w.inspectionScheduleId && String(w.inspectionScheduleId) === String(schedule.id);
+        const sameTaskId = !!w.inspectionTaskId && String(w.inspectionTaskId) === String(schedule.taskId || schedule.inspectionTaskId || "");
+        const woTaskName = String(w.inspectionTaskName || w.title || w.faultDescription || "").replace(/^Inspection\s*-\s*/i, "").trim().toLowerCase();
+        const sameLegacyTask = !!scheduleTaskName && woTaskName === scheduleTaskName;
+        const sameEquipment = String(w.equipment || w.equipmentId || "") === scheduleEquipment;
+        return sameSchedule || (sameEquipment && (sameTaskId || sameLegacyTask));
       });
+      // The WO itself is the durable occurrence lock. Open OR completed, current OR legacy: if it exists,
+      // this exact due occurrence must never be auto-created a second time.
       if(alreadyGeneratedForOccurrence) return;
       const alreadyOpen = (state.workOrders||[]).some(w =>
         String(w.inspectionScheduleId) === String(schedule.id) &&
@@ -11508,7 +11532,6 @@ export default function App() {
         ["Open","In Progress","Pending Diagnostic","On Hold"].includes(w.status)
       );
       if(alreadyOpen) return;
-      const task = (state.inspectionTasks||[]).find(t => t.id === schedule.taskId);
       const eq = (state.equipment||[]).find(e => e.id === schedule.equipmentId);
       if(!task || !eq) return;
       const steps = normalizeStepLines(task.steps);
