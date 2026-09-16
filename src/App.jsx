@@ -1230,7 +1230,18 @@ function reducer(state, { type, payload }) {
       if(!schedule) return state;
       const completed = (schedule.completedDueOccurrences||[]).map(String);
       const skipped = (schedule.skippedDueOccurrences||[]).map(String);
-      const exists = (state.workOrders||[]).some(w=>String(w.inspectionScheduleId)===String(scheduleId) && String(w.inspectionDueOccurrence||w.due||"")===occurrence);
+      // Duplicate schedules can exist in older/restored data. Treat equipment + inspection task + due occurrence
+      // as the true identity of an inspection occurrence, not only scheduleId.
+      const scheduleEq = String(schedule.equipmentId || schedule.equipment || "");
+      const scheduleTask = String(schedule.taskId || schedule.inspectionTaskId || "");
+      const exists = (state.workOrders||[]).some(w => {
+        if(w.woType !== "Inspection") return false;
+        const sameOccurrence = String(w.inspectionDueOccurrence || w.due || "") === occurrence;
+        const sameSchedule = String(w.inspectionScheduleId || "") === String(scheduleId);
+        const sameLogicalInspection = String(w.equipment || w.equipmentId || "") === scheduleEq &&
+          String(w.inspectionTaskId || "") === scheduleTask;
+        return sameOccurrence && (sameSchedule || sameLogicalInspection);
+      });
       if(completed.includes(occurrence) || skipped.includes(occurrence) || exists || String(schedule.lastGeneratedDueDate||"")===occurrence) return state;
       const wo = stampLocation(rawWO, state);
       const lockedSchedule = stampLocation({ ...schedule, lastTriggered:payload?.triggeredOn || today(), lastGeneratedDueDate:occurrence, lastGeneratedWorkOrderId:wo.id }, state);
@@ -1334,7 +1345,25 @@ function reducer(state, { type, payload }) {
           const occurrence = String(inspectionWO.inspectionDueOccurrence || inspectionWO.due || sch.nextDueDate || doneDate);
           const completedDueOccurrences = Array.from(new Set([...(sch.completedDueOccurrences||[]).map(String), occurrence]));
           const advancedSch = { ...sch, lastTriggered:doneDate, lastDoneDate:doneDate, lastInspectionDate:doneDate, nextDueDate, lastGeneratedDueDate:occurrence, lastGeneratedWorkOrderId:inspectionWO.id || sch.lastGeneratedWorkOrderId || "", completedDueOccurrences };
-          return { ...state, parts, equipment, workOrders:updated, inspectionSchedules:(state.inspectionSchedules||[]).map(s=>String(s.id)===String(sch.id)?advancedSch:s) };
+
+          // IMPORTANT: old restores can contain duplicate L1/L2 schedule rows. If only the linked row is
+          // advanced, the duplicate row remains due and immediately creates an identical WO. Advance every
+          // duplicate representing the same equipment + inspection task + due occurrence in one transaction.
+          const logicalEq = String(inspectionWO.equipment || inspectionWO.equipmentId || sch.equipmentId || "");
+          const logicalTask = String(inspectionWO.inspectionTaskId || sch.taskId || "");
+          const inspectionSchedules = (state.inspectionSchedules||[]).map(candidate => {
+            const candidateOccurrence = String(candidate.nextDueDate || "");
+            const sameId = String(candidate.id) === String(sch.id);
+            const sameLogicalInspection = String(candidate.equipmentId || candidate.equipment || "") === logicalEq &&
+              String(candidate.taskId || candidate.inspectionTaskId || "") === logicalTask &&
+              candidateOccurrence === occurrence;
+            if(!sameId && !sameLogicalInspection) return candidate;
+            const candidateCompleted = Array.from(new Set([...(candidate.completedDueOccurrences||[]).map(String), occurrence]));
+            return { ...candidate, lastTriggered:doneDate, lastDoneDate:doneDate, lastInspectionDate:doneDate,
+              nextDueDate, lastGeneratedDueDate:occurrence, lastGeneratedWorkOrderId:inspectionWO.id || candidate.lastGeneratedWorkOrderId || "",
+              completedDueOccurrences:candidateCompleted };
+          });
+          return { ...state, parts, equipment, workOrders:updated, inspectionSchedules };
         }
       }
       return { ...state, parts, equipment, workOrders: updated };
@@ -11465,7 +11494,13 @@ export default function App() {
       const skippedOccurrences = (schedule.skippedDueOccurrences||[]).map(String);
       if(completedOccurrences.includes(occurrence) || skippedOccurrences.includes(occurrence)) return;
       if(schedule.lastGeneratedDueDate && String(schedule.lastGeneratedDueDate) === occurrence) return;
-      const alreadyGeneratedForOccurrence = (state.workOrders||[]).some(w => String(w.inspectionScheduleId) === String(schedule.id) && w.woType === "Inspection" && String(w.inspectionDueOccurrence || w.due || "") === occurrence);
+      const alreadyGeneratedForOccurrence = (state.workOrders||[]).some(w => {
+        if(w.woType !== "Inspection" || String(w.inspectionDueOccurrence || w.due || "") !== occurrence) return false;
+        const sameSchedule = String(w.inspectionScheduleId || "") === String(schedule.id);
+        const sameLogicalInspection = String(w.equipment || w.equipmentId || "") === String(schedule.equipmentId || schedule.equipment || "") &&
+          String(w.inspectionTaskId || "") === String(schedule.taskId || schedule.inspectionTaskId || "");
+        return sameSchedule || sameLogicalInspection;
+      });
       if(alreadyGeneratedForOccurrence) return;
       const alreadyOpen = (state.workOrders||[]).some(w =>
         String(w.inspectionScheduleId) === String(schedule.id) &&
