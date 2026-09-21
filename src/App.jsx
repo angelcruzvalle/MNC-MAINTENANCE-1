@@ -1338,19 +1338,41 @@ function reducer(state, { type, payload }) {
         );
         if(schedule) {
           const doneDate = payload.completed || new Date().toISOString().split("T")[0];
-          const occurrence = String(payload.inspectionDueOccurrence || payload.due || schedule.nextDueDate || doneDate);
-          const d = new Date(`${doneDate}T12:00:00`);
+          const occurrence = String(payload.inspectionDueOccurrence || payload.due || schedule.nextDueDate || doneDate).slice(0,10);
+
+          // Advance from the scheduled occurrence, not from the day the overdue WO happened to be closed.
+          // Example: a monthly 2026-09-01 inspection completed on 2026-09-21 advances to 2026-10-01.
+          const baseDate = /^\d{4}-\d{2}-\d{2}$/.test(occurrence) ? occurrence : doneDate;
+          const d = new Date(`${baseDate}T12:00:00`);
           const n = Math.max(1, +(schedule.timeInterval || 1));
           const unit = schedule.timeUnit || "months";
           if(unit==="days") d.setDate(d.getDate()+n);
           if(unit==="weeks") d.setDate(d.getDate()+n*7);
           if(unit==="months") d.setMonth(d.getMonth()+n);
           if(unit==="years") d.setFullYear(d.getFullYear()+n);
-          const nextDueDate = d.toISOString().split("T")[0];
+          let nextDueDate = d.toISOString().split("T")[0];
+          // Never leave the assignment parked on the occurrence that was just completed.
+          if(nextDueDate <= occurrence) nextDueDate = doneDate;
+
           const completedDueOccurrences = Array.from(new Set([...(schedule.completedDueOccurrences||[]).map(String), occurrence]));
           const advanced = { ...schedule, lastTriggered:doneDate, lastDoneDate:doneDate, lastInspectionDate:doneDate, nextDueDate, lastGeneratedDueDate:occurrence, lastGeneratedWorkOrderId:payload.id, completedDueOccurrences };
-          const finalWO = { ...payloadWithStatus, inspectionScheduleId:schedule.id, inspectionTaskId:payload.inspectionTaskId || schedule.taskId, inspectionDueOccurrence:occurrence, completed:doneDate };
-          const finalWOs = state.workOrders.map(w=>w.id===payload.id?finalWO:w);
+          const finalWO = { ...payloadWithStatus, inspectionScheduleId:schedule.id, inspectionTaskId:payload.inspectionTaskId || schedule.taskId, inspectionDueOccurrence:occurrence, completed:doneDate, completedDate:doneDate };
+
+          // Legacy builds could create more than one WO for the same inspection occurrence.
+          // Completing one occurrence closes its exact duplicates so they cannot remain as zombie open WOs.
+          const taskName = String(payload.inspectionTaskName || payload.title || "").replace(/^inspection\s*-\s*/i,"").trim().toLowerCase();
+          const finalWOs = state.workOrders.map(w=>{
+            if(String(w.id)===String(payload.id)) return finalWO;
+            if(w.woType!=="Inspection" || w.status==="Completed") return w;
+            const sameEquipment = String(w.equipment||w.equipmentId||"")===String(schedule.equipmentId||"");
+            const sameSchedule = w.inspectionScheduleId && String(w.inspectionScheduleId)===String(schedule.id);
+            const sameTask = (w.inspectionTaskId && String(w.inspectionTaskId)===String(schedule.taskId||"")) ||
+              String(w.inspectionTaskName || w.title || "").replace(/^inspection\s*-\s*/i,"").trim().toLowerCase()===taskName;
+            const sameOccurrence = String(w.inspectionDueOccurrence || w.due || "").slice(0,10)===occurrence;
+            return sameEquipment && sameOccurrence && (sameSchedule || sameTask)
+              ? { ...w, status:"Completed", completed:doneDate, completedDate:doneDate, equipmentStatus:"Fully Operational", duplicateInspectionOccurrence:true, duplicateOfInspectionWO:payload.id }
+              : w;
+          });
           return { ...state, parts, equipment, workOrders:finalWOs, inspectionSchedules:(state.inspectionSchedules||[]).map(s=>String(s.id)===String(schedule.id)?advanced:s) };
         }
       }
@@ -1364,7 +1386,20 @@ function reducer(state, { type, payload }) {
         inspectionSchedules = inspectionSchedules.map(s => {
           if(String(s.id)!==String(doomed.inspectionScheduleId)) return s;
           const skippedDueOccurrences = occurrence ? Array.from(new Set([...(s.skippedDueOccurrences||[]).map(String), occurrence])) : (s.skippedDueOccurrences||[]);
-          return { ...s, skippedDueOccurrences, lastGeneratedDueDate:occurrence || s.lastGeneratedDueDate || "", lastGeneratedWorkOrderId:doomed.id || s.lastGeneratedWorkOrderId || "" };
+          // Deleting a generated inspection means skip this occurrence; advance the assignment instead of
+          // leaving nextDueDate on the deleted occurrence and immediately making it due again.
+          let nextDueDate = s.nextDueDate || "";
+          if(occurrence && (!nextDueDate || String(nextDueDate).slice(0,10) <= occurrence.slice(0,10))) {
+            const d = new Date(`${occurrence.slice(0,10)}T12:00:00`);
+            const n = Math.max(1, +(s.timeInterval || 1));
+            const unit = s.timeUnit || "months";
+            if(unit==="days") d.setDate(d.getDate()+n);
+            if(unit==="weeks") d.setDate(d.getDate()+n*7);
+            if(unit==="months") d.setMonth(d.getMonth()+n);
+            if(unit==="years") d.setFullYear(d.getFullYear()+n);
+            nextDueDate = d.toISOString().split("T")[0];
+          }
+          return { ...s, skippedDueOccurrences, nextDueDate, lastGeneratedDueDate:occurrence || s.lastGeneratedDueDate || "", lastGeneratedWorkOrderId:doomed.id || s.lastGeneratedWorkOrderId || "" };
         });
       }
       return { ...state, workOrders:(state.workOrders||[]).filter(w => String(w.id)!==String(payload)), inspectionSchedules };
@@ -5928,7 +5963,13 @@ function Inspections({ state, dispatch }) {
     const task = taskById(schedule.taskId);
     const eq = eqById(schedule.equipmentId);
     if(!task || !eq) { alert("Missing task or equipment for this inspection."); return; }
-    const occurrence = String(schedule.nextDueDate || today());
+    const occurrence = String(schedule.nextDueDate || today()).slice(0,10);
+    const completedOccurrences = new Set((schedule.completedDueOccurrences||[]).map(x=>String(x).slice(0,10)));
+    const skippedOccurrences = new Set((schedule.skippedDueOccurrences||[]).map(x=>String(x).slice(0,10)));
+    if(completedOccurrences.has(occurrence) || skippedOccurrences.has(occurrence)) {
+      alert(`The ${occurrence} inspection occurrence is already ${completedOccurrences.has(occurrence) ? "completed" : "skipped"}. Advance or edit the assignment before generating another work order.`);
+      return;
+    }
     const existing = (state.workOrders||[]).find(w =>
       w.woType === "Inspection" &&
       String(w.equipment||w.equipmentId||"") === String(eq.id) &&
