@@ -11147,6 +11147,13 @@ export default function App() {
   const [lastSaveError, setLastSaveError] = useState(null);
   const [systemThemeTick, setSystemThemeTick] = useState(0);
 
+  // Cloud saves can be large (the current workspace is several MB). Keep exactly
+  // one request in flight and collapse rapid state changes into one newest snapshot.
+  const cloudSaveInFlightRef = useRef(false);
+  const queuedCloudSaveRef = useRef(null);
+  const cloudSaveTimerRef = useRef(null);
+  const syncIdleTimerRef = useRef(null);
+
   const [session, setSession] = useState(null);
   const [appSession, setAppSession] = useState(null);
   const activeSession = session || appSession;
@@ -11303,86 +11310,132 @@ export default function App() {
     return () => { cancelled = true; };
   }, [activeSession?.user?.id]);
 
-  /* Save state to Supabase, debounced */
+  /* Save state to Supabase: debounced + single-flight queue.
+     Never send overlapping multi-MB workspace writes. If state changes while a save
+     is running, keep only the newest snapshot and save it after the current request. */
   useEffect(() => {
     if (!activeSession || !dataLoaded) return;
     if (ownerRecovery?.locked) { setSyncStatus("idle"); return; }
     if (state.inviteConnectionError) { setSyncStatus("idle"); return; }
+
     try {
       const localState = normalizeMaintForgeSingleSite(state);
       localStorage.setItem("ncaState", JSON.stringify(localState));
       localStorage.setItem("ncaState:lastUserId", activeUser.id);
     } catch(e) { console.error("Local safety save failed:", e); }
-    setSyncStatus("saving");
-    const timer = setTimeout(async () => {
-      try {
-        const cloudOwnerId = state.ownerUserId || state.organizationOwnerId || activeUser.id;
-        const cloudState = prepareSharedOrganizationStateForCloudSave(state, activeUser);
-        let error = null;
-        if(appSession?.maintForgeAppLogin) {
-          const rpcSave = await supabase.rpc("maintforge_username_save", {
-            login_username:appSession.username || activeUser.username,
-            login_password:appSession.password || "",
-            organization_state:cloudState,
-          });
-          error = rpcSave.error || null;
-          if(error) console.error("Username save RPC error:", error);
-        }
-        if(!appSession?.maintForgeAppLogin) {
-          const saveResult = await supabase
-            .from("user_state")
-            .upsert({ user_id:cloudOwnerId, data:cloudState, updated_at:new Date().toISOString() }, { onConflict:"user_id" });
-          error = saveResult.error;
-        }
 
-        if (error) {
-          console.error("Save error:", error);
-          // Preserve the raw Supabase/PostgREST error. Do not translate 42501 into a
-          // guessed schema problem; 42501 can represent several permission failures.
-          const rawMessage = String(error?.message || error || "Unknown cloud save error");
-          const rawDetails = String(error?.details || "");
-          const rawHint = String(error?.hint || "");
-          const rawCode = String(error?.code || "");
-          console.error("MaintForge raw cloud save failure", {
-            code: rawCode,
-            message: rawMessage,
-            details: rawDetails,
-            hint: rawHint,
-            fullError: error,
-          });
-          setLastSaveError({
-            message: rawMessage,
-            details: rawDetails,
-            hint: rawHint,
-            code: rawCode
-          });
-          setSyncStatus("error");
-          const saveMessage = String(error?.message || error || "");
-          if(saveMessage.includes("MAINTFORGE_DATA_GUARD")) {
-            setAuthInfoMsg("🛡️ MaintForge blocked this destructive cloud save. Your existing Supabase workspace was NOT overwritten. Future legitimate saves remain enabled.");
-            alert("MaintForge Data Guard blocked this destructive cloud overwrite. The existing cloud workspace was preserved. Legitimate future saves are still allowed.");
+    // Always replace the queued snapshot with the newest state. This prevents a burst
+    // of inspection/work-order reducer updates from producing several 8+ MB writes.
+    queuedCloudSaveRef.current = {
+      stateSnapshot: state,
+      activeUserSnapshot: activeUser,
+      appSessionSnapshot: appSession,
+    };
+
+    setSyncStatus("saving");
+    if(cloudSaveTimerRef.current) clearTimeout(cloudSaveTimerRef.current);
+
+    const flushCloudSaveQueue = async () => {
+      if(cloudSaveInFlightRef.current) return;
+      cloudSaveInFlightRef.current = true;
+
+      try {
+        while(queuedCloudSaveRef.current) {
+          const pending = queuedCloudSaveRef.current;
+          queuedCloudSaveRef.current = null;
+          const pendingState = pending.stateSnapshot;
+          const pendingUser = pending.activeUserSnapshot;
+          const pendingAppSession = pending.appSessionSnapshot;
+
+          const cloudOwnerId = pendingState.ownerUserId || pendingState.organizationOwnerId || pendingUser.id;
+          const cloudState = prepareSharedOrganizationStateForCloudSave(pendingState, pendingUser);
+          let error = null;
+
+          if(pendingAppSession?.maintForgeAppLogin) {
+            const rpcSave = await supabase.rpc("maintforge_username_save", {
+              login_username:pendingAppSession.username || pendingUser.username,
+              login_password:pendingAppSession.password || "",
+              organization_state:cloudState,
+            });
+            error = rpcSave.error || null;
+            if(error) console.error("Username save RPC error:", error);
+          } else {
+            const saveResult = await supabase
+              .from("user_state")
+              .upsert({ user_id:cloudOwnerId, data:cloudState, updated_at:new Date().toISOString() }, { onConflict:"user_id" });
+            error = saveResult.error;
           }
-        } else {
-          if(cloudOwnerId !== activeUser.id) {
+
+          if(error) {
+            console.error("Save error:", error);
+            const rawMessage = String(error?.message || error || "Unknown cloud save error");
+            const rawDetails = String(error?.details || "");
+            const rawHint = String(error?.hint || "");
+            const rawCode = String(error?.code || "");
+            console.error("MaintForge raw cloud save failure", {
+              code:rawCode, message:rawMessage, details:rawDetails, hint:rawHint, fullError:error,
+            });
+            setLastSaveError({ message:rawMessage, details:rawDetails, hint:rawHint, code:rawCode });
+            setSyncStatus("error");
+            if(rawMessage.includes("MAINTFORGE_DATA_GUARD")) {
+              setAuthInfoMsg("🛡️ MaintForge blocked this destructive cloud save. Your existing Supabase workspace was NOT overwritten. Future legitimate saves remain enabled.");
+              alert("MaintForge Data Guard blocked this destructive cloud overwrite. The existing cloud workspace was preserved. Legitimate future saves are still allowed.");
+            }
+            // Do not hammer Supabase after a timeout/error. The newest state remains
+            // protected in localStorage and the next user change will schedule a retry.
+            queuedCloudSaveRef.current = null;
+            break;
+          }
+
+          if(cloudOwnerId !== pendingUser.id) {
             await saveInvitePointerForUser(
-              activeUser.id,
+              pendingUser.id,
               cloudOwnerId,
-              activeUser.email,
-              buildMemberPointerFromOrganizationState(state, activeUser)
+              pendingUser.email,
+              buildMemberPointerFromOrganizationState(pendingState, pendingUser)
             );
           }
+
           setLastSaveError(null);
-          setSyncStatus("saved");
-          try { localStorage.setItem("ncaState", JSON.stringify(ensureCurrentOrganizationAdmin(cloudState, activeUser))); localStorage.setItem("ncaState:lastUserId", activeUser.id); } catch(e) {}
-          setTimeout(() => setSyncStatus("idle"), 2000);
+          try {
+            localStorage.setItem("ncaState", JSON.stringify(ensureCurrentOrganizationAdmin(cloudState, pendingUser)));
+            localStorage.setItem("ncaState:lastUserId", pendingUser.id);
+          } catch(e) {}
         }
-      } catch (e) {
+
+        if(!queuedCloudSaveRef.current) {
+          setSyncStatus(current => current === "error" ? current : "saved");
+          if(syncIdleTimerRef.current) clearTimeout(syncIdleTimerRef.current);
+          syncIdleTimerRef.current = setTimeout(() => {
+            setSyncStatus(current => current === "saved" ? "idle" : current);
+          }, 2000);
+        }
+      } catch(e) {
         console.error("Save exception:", e);
         setLastSaveError({ message:e?.message || String(e), details:e?.details || "", hint:e?.hint || "", code:e?.code || "" });
         setSyncStatus("error");
+        queuedCloudSaveRef.current = null;
+      } finally {
+        cloudSaveInFlightRef.current = false;
+        // A state change can land in the tiny window after the while-loop exits but
+        // before the in-flight flag clears. Schedule that newest snapshot once.
+        if(queuedCloudSaveRef.current) {
+          if(cloudSaveTimerRef.current) clearTimeout(cloudSaveTimerRef.current);
+          cloudSaveTimerRef.current = setTimeout(flushCloudSaveQueue, 250);
+        }
       }
-    }, 1000);
-    return () => clearTimeout(timer);
+    };
+
+    // A slightly longer debounce is intentional for the 8+ MB workspace. UI/local
+    // persistence is immediate; cloud persistence waits for the burst to settle.
+    cloudSaveTimerRef.current = setTimeout(flushCloudSaveQueue, 2000);
+
+    return () => {
+      if(cloudSaveTimerRef.current) {
+        clearTimeout(cloudSaveTimerRef.current);
+        cloudSaveTimerRef.current = null;
+      }
+    };
   }, [state, activeSession?.user?.id, dataLoaded, ownerRecovery?.locked]);
 
 
