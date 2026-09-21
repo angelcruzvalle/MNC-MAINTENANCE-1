@@ -11296,16 +11296,24 @@ export default function App() {
 
         if (error) {
           console.error("Save error:", error);
-          const isPrivateSchemaPermission = String(error?.code || "") === "42501" && /schema\s+private/i.test(String(error?.message || ""));
+          // Preserve the raw Supabase/PostgREST error. Do not translate 42501 into a
+          // guessed schema problem; 42501 can represent several permission failures.
+          const rawMessage = String(error?.message || error || "Unknown cloud save error");
+          const rawDetails = String(error?.details || "");
+          const rawHint = String(error?.hint || "");
+          const rawCode = String(error?.code || "");
+          console.error("MaintForge raw cloud save failure", {
+            code: rawCode,
+            message: rawMessage,
+            details: rawDetails,
+            hint: rawHint,
+            fullError: error,
+          });
           setLastSaveError({
-            message:isPrivateSchemaPermission
-              ? "Supabase blocked the MaintForge username-save RPC from using its private schema. Apply the MaintForge 42501 SQL repair in Supabase, then make any change to retry the save."
-              : (error?.message || String(error)),
-            details:error?.details || "",
-            hint:isPrivateSchemaPermission
-              ? "Database repair required: maintforge_username_save must run as SECURITY DEFINER and remain executable by the app login role."
-              : (error?.hint || ""),
-            code:error?.code || ""
+            message: rawMessage,
+            details: rawDetails,
+            hint: rawHint,
+            code: rawCode
           });
           setSyncStatus("error");
           const saveMessage = String(error?.message || error || "");
