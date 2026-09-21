@@ -11285,7 +11285,7 @@ export default function App() {
             organization_state:cloudState,
           });
           error = rpcSave.error || null;
-          if(error) console.error("Username save RPC error; falling back to user_state upsert:", error);
+          if(error) console.error("Username save RPC error:", error);
         }
         if(!appSession?.maintForgeAppLogin) {
           const saveResult = await supabase
@@ -11296,7 +11296,17 @@ export default function App() {
 
         if (error) {
           console.error("Save error:", error);
-          setLastSaveError({ message:error?.message || String(error), details:error?.details || "", hint:error?.hint || "", code:error?.code || "" });
+          const isPrivateSchemaPermission = String(error?.code || "") === "42501" && /schema\s+private/i.test(String(error?.message || ""));
+          setLastSaveError({
+            message:isPrivateSchemaPermission
+              ? "Supabase blocked the MaintForge username-save RPC from using its private schema. Apply the MaintForge 42501 SQL repair in Supabase, then make any change to retry the save."
+              : (error?.message || String(error)),
+            details:error?.details || "",
+            hint:isPrivateSchemaPermission
+              ? "Database repair required: maintforge_username_save must run as SECURITY DEFINER and remain executable by the app login role."
+              : (error?.hint || ""),
+            code:error?.code || ""
+          });
           setSyncStatus("error");
           const saveMessage = String(error?.message || error || "");
           if(saveMessage.includes("MAINTFORGE_DATA_GUARD")) {
