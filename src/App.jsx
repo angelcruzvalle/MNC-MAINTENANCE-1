@@ -2980,13 +2980,40 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   ];
   const filteredPickable = allPickable.filter(i=>`${i.label} ${i.sub}`.toLowerCase().includes(eqSearch.toLowerCase()));
 
-  const openAdd = () => {
+  const openAddForType = (woType="Repair") => {
     setEqSearch("");
-    setForm(applyDefaultMechanic({ woType:"Repair", status:"Open", equipmentStatus:"Fully Operational", priority:"Medium", created:today(), due:"", tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], outsideServices:[], mechanicNotes:"", faultEnabled:true, faultDescription:"", usageHours:"", usageMileage:"", usageNA:false, repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"" }));
+    setForm(applyDefaultMechanic({
+      woType,
+      title:buildTitle(woType, ""),
+      status:"Open",
+      equipmentStatus:"Fully Operational",
+      priority:"Medium",
+      created:today(),
+      due:"",
+      tech:"",
+      techId:"",
+      laborHours:0,
+      laborCost:0,
+      partsCost:0,
+      partsUsed:[],
+      outsideServices:[],
+      mechanicNotes:"",
+      faultEnabled:true,
+      faultDescription:"",
+      usageHours:"",
+      usageMileage:"",
+      usageNA:false,
+      repairCause:"",
+      correctiveAction:"",
+      serviceChecklist:"",
+      inspectionFindings:"",
+      inspectionStepResults:[]
+    }));
     setModal("pick");
   };
 
-  const pickType = (typeId) => { setForm(f=>({...f, woType:typeId, title:buildTitle(typeId,"")})); setModal("pick"); };
+  const openAdd = () => openAddForType("Repair");
+  const pickType = (typeId) => openAddForType(typeId);
   const latestUsageForEquipment = (equipmentId) => {
     const logs = (state.usageLogs||[])
       .filter(l=>String(l.equipmentId)===String(equipmentId))
@@ -3868,7 +3895,11 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               <button key={s} onClick={()=>setFilter(s)} style={{ padding:"7px 12px", border:"none", borderLeft:i>0?`1px solid ${T.border}`:"none", background:filter===s?T.accent:T.card, color:filter===s?"#fff":T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:filter===s?600:400 }}>{s}</button>
             ))}
           </div>
-          <Btn onClick={openAdd}>+ New Work Order</Btn>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+            <Btn onClick={openAdd}>+ New Work Order</Btn>
+            <Btn onClick={()=>openAddForType("Service")} style={{ background:"#ca8a04", borderColor:"#ca8a04" }}>+ New Service Work Order</Btn>
+            <Btn onClick={()=>openAddForType("Inspection")} style={{ background:"#16a34a", borderColor:"#16a34a" }}>+ New Inspection Work Order</Btn>
+          </div>
           <Btn variant="secondary" onClick={onWOSettings}>⚙ WO Settings</Btn>
         </div>
 
