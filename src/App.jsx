@@ -2529,7 +2529,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     return w.status==="Completed" ? "Fully Operational" : (w.equipmentStatus || eq?.status || "Fully Operational");
   };
 
-  const filtered = state.workOrders.filter(w=>{
+  const filtered = (state.workOrders||[]).filter(w=>{
     const matchStatus   = filter==="Active"?(w.status!=="Completed"):filter==="All"?true:w.status===filter;
     const matchType     = typeFilter==="All"     || w.woType===typeFilter;
     const matchPriority = priorityFilter==="All" || w.priority===priorityFilter;
@@ -2558,7 +2558,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     }
     return compareBySelectedSort();
   });
-  const allMechanics = [...new Set(state.workOrders.map(w=>w.tech).filter(Boolean))];
+  const allMechanics = [...new Set((state.workOrders||[]).map(w=>w.tech).filter(Boolean))];
   const technicians = state.technicians || [];
   const defaultMechanic = technicians.length === 1 ? technicians[0] : null;
 
@@ -2577,12 +2577,12 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const id = eqId || "GEN";
     if (woType === "Service") {
       const prefix = `${id} SVC `;
-      const existing = state.workOrders.filter(w => String(w.id || w.woNumber || "").startsWith(prefix));
+      const existing = (state.workOrders||[]).filter(w => String(w.id || w.woNumber || "").startsWith(prefix));
       const nums = existing.map(w => parseInt(String(w.id || w.woNumber || "").slice(prefix.length), 10)).filter(n => !Number.isNaN(n));
       return `${prefix}${String(nums.length ? Math.max(...nums) + 1 : 1).padStart(2, "0")}`;
     }
     const prefix = `${id}-`;
-    const existing = state.workOrders.filter(w=>String(w.id || w.woNumber || "").startsWith(prefix));
+    const existing = (state.workOrders||[]).filter(w=>String(w.id || w.woNumber || "").startsWith(prefix));
     const nums = existing.map(w=>parseInt(String(w.id || w.woNumber || "").slice(prefix.length),10)).filter(n => !Number.isNaN(n));
     return `${prefix}${String(nums.length>0?Math.max(...nums)+1:1).padStart(2,"0")}`;
   };
@@ -7185,8 +7185,10 @@ function UsageTracking({ state, dispatch }) {
   const [detailEq, setDetailEq]    = useState(null); /* equipment id for detail modal */
   const [editLog, setEditLog]      = useState(null); /* usage log being corrected */
   const [entry, setEntry]          = useState({});   /* {[eqId]: {hours, mileage, fuel, notes, date}} */
+  const [usageSearch, setUsageSearch] = useState("");
+  const [usageSort, setUsageSort] = useState("asc");
 
-  const trackableEq = state.equipment.filter(e=>e.trackUsage);
+  const trackableEq = (state.equipment||[]).filter(e=>e.trackUsage);
   const allLogs     = state.usageLogs || [];
 
   const logsFor  = (eqId) => allLogs
@@ -7329,6 +7331,20 @@ function UsageTracking({ state, dispatch }) {
     );
   };
 
+  const visibleTrackableEq = [...trackableEq]
+    .filter(eq => {
+      const q = usageSearch.trim().toLowerCase();
+      if(!q) return true;
+      return [eq.name, eq.id, eq.category, eq.type, eq.make, eq.model]
+        .some(v => String(v||"").toLowerCase().includes(q));
+    })
+    .sort((a,b) => {
+      const av = String(a.name || a.id || "").toLowerCase();
+      const bv = String(b.name || b.id || "").toLowerCase();
+      const cmp = av.localeCompare(bv, undefined, {numeric:true, sensitivity:"base"});
+      return usageSort === "desc" ? -cmp : cmp;
+    });
+
   if(trackableEq.length===0) return (
     <Card>
       <div style={{ textAlign:"center", padding:"48px 0", color:T.muted, fontFamily:T.sans }}>
@@ -7344,125 +7360,74 @@ function UsageTracking({ state, dispatch }) {
       {detailEq && renderDetailModal(detailEq)}
       {editLog && renderEditUsageModal()}
 
-      <Card style={{ padding:0, overflow:"hidden" }}>
-        {/* Table header */}
-        <div style={{ display:"grid", gridTemplateColumns:"220px 80px 120px 120px 80px 1fr 110px 110px 76px", background:T.grayLt, borderBottom:`2px solid ${T.borderHi}`, padding:"9px 16px", gap:8, alignItems:"center" }}>
-          {["Equipment","Equip #","Current Hours","Current Miles","Fuel (gal)","Notes","Date","Track by","Actions"].map(h=>(
-            <div key={h} style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>{h}</div>
-          ))}
+      <div style={{display:"flex",gap:10,alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",marginBottom:14}}>
+        <div style={{flex:"1 1 280px",position:"relative"}}>
+          <input
+            style={{...inp,width:"100%",paddingLeft:34}}
+            value={usageSearch}
+            onChange={e=>setUsageSearch(e.target.value)}
+            placeholder="Search equipment, equipment #, make or model..."
+          />
+          <span style={{position:"absolute",left:11,top:"50%",transform:"translateY(-50%)",color:T.muted,fontSize:14}}>⌕</span>
         </div>
+        <select style={{...inp,width:"auto",minWidth:190}} value={usageSort} onChange={e=>setUsageSort(e.target.value)}>
+          <option value="asc">Alphabetical: A → Z</option>
+          <option value="desc">Alphabetical: Z → A</option>
+        </select>
+      </div>
 
-        {trackableEq.map((eq,idx)=>{
-          const mode  = eq.usageType||"hours";
-          const showH = mode==="hours"||mode==="both";
-          const showM = mode==="mileage"||mode==="both";
-          const totH  = currentOf(eq.id,"hours");
-          const totM  = currentOf(eq.id,"mileage");
-          const totF  = totalFuelOf(eq.id);
-          const e     = eqEntry(eq.id);
-          const rs    = { bg:idx%2===0 ? T.card : T.grayLt, left:"3px solid transparent" };
-
-          return (
-            <div key={eq.id} style={{ borderBottom:`1px solid ${T.border}`, background:rs.bg, borderLeft:rs.left }}>
-
-              {/* Data row */}
-              <div style={{ display:"grid", gridTemplateColumns:"220px 80px 120px 120px 80px 1fr 110px 110px 76px", padding:"10px 16px", gap:8, alignItems:"center" }}>
-
-                {/* Equipment name — click to open detail */}
-                <button onClick={()=>setDetailEq(eq.id)} style={{ background:"none", border:"none", cursor:"pointer", textAlign:"left", padding:0 }}>
-                  <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.accent, textDecoration:"underline", textDecorationStyle:"dotted" }}>{eq.name}</div>
-                  <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:1 }}>{eq.category||eq.type||""}</div>
-                </button>
-
-                {/* Equip # */}
-                <EquipmentStatusNumberCell status={eq.status} label={eq.status || "Fully Operational"}>
-                  <span style={{ fontFamily:T.mono, fontSize:11, color:T.subtext }}>{eq.id}</span>
-                </EquipmentStatusNumberCell>
-
-                {/* Current Hours */}
-                <div>
-                  {showH
-                    ? <div style={{ fontFamily:T.sans, fontSize:18, fontWeight:700, color:T.accent }}>{totH.toFixed(1)} <span style={{ fontSize:11, fontWeight:400, color:T.accent }}>hrs</span></div>
-                    : <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>—</div>
-                  }
+      {visibleTrackableEq.length===0 ? (
+        <Card><div style={{padding:28,textAlign:"center",fontFamily:T.sans,color:T.muted}}>No equipment matches “{usageSearch}”.</div></Card>
+      ) : (
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(330px,1fr))",gap:14}}>
+          {visibleTrackableEq.map(eq=>{
+            const mode  = eq.usageType||"hours";
+            const showH = mode==="hours"||mode==="both";
+            const showM = mode==="mileage"||mode==="both";
+            const totH  = currentOf(eq.id,"hours");
+            const totM  = currentOf(eq.id,"mileage");
+            const totF  = totalFuelOf(eq.id);
+            const e     = eqEntry(eq.id);
+            return (
+              <Card key={eq.id} style={{padding:16,border:`1px solid ${T.borderHi}`,borderRadius:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"flex-start",marginBottom:13}}>
+                  <button onClick={()=>setDetailEq(eq.id)} style={{background:"none",border:0,padding:0,textAlign:"left",cursor:"pointer",minWidth:0}}>
+                    <div style={{fontFamily:T.sans,fontSize:15,fontWeight:900,color:T.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{eq.name||"Equipment"}</div>
+                    <div style={{fontFamily:T.sans,fontSize:11,color:T.muted,marginTop:3}}>{eq.id}{(eq.make||eq.model)?` · ${[eq.make,eq.model].filter(Boolean).join(" ")}`:""}</div>
+                  </button>
+                  <div style={{display:"flex",gap:5}}>
+                    <button title="Edit latest usage entry" onClick={()=>{const last=latestLogFor(eq.id); if(last)setEditLog({...last}); else alert("No usage history to edit yet.");}} style={{border:`1px solid ${T.border}`,background:T.card,borderRadius:7,cursor:"pointer",padding:"5px 7px"}}>✏️</button>
+                    <button title="Usage history" onClick={()=>setDetailEq(eq.id)} style={{border:`1px solid ${T.border}`,background:T.card,borderRadius:7,cursor:"pointer",padding:"5px 7px"}}>🕘</button>
+                  </div>
                 </div>
 
-                {/* Current Mileage */}
-                <div>
-                  {showM
-                    ? <div style={{ fontFamily:T.sans, fontSize:18, fontWeight:700, color:T.green }}>{totM.toLocaleString()} <span style={{ fontSize:11, fontWeight:400, color:T.green }}>mi</span></div>
-                    : <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>—</div>
-                  }
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginBottom:13}}>
+                  {showH && <div style={{background:T.accentLt,borderRadius:9,padding:9}}><div style={{fontSize:9,fontWeight:800,color:T.accent,textTransform:"uppercase"}}>Hours</div><div style={{fontSize:17,fontWeight:900,color:T.accent,marginTop:3}}>{totH.toFixed(1)}</div></div>}
+                  {showM && <div style={{background:T.greenLt,borderRadius:9,padding:9}}><div style={{fontSize:9,fontWeight:800,color:T.green,textTransform:"uppercase"}}> mileage</div><div style={{fontSize:17,fontWeight:900,color:T.green,marginTop:3}}>{totM.toLocaleString()}</div></div>}
+                  <div style={{background:T.grayLt,borderRadius:9,padding:9}}><div style={{fontSize:9,fontWeight:800,color:T.subtext,textTransform:"uppercase"}}>Fuel</div><div style={{fontSize:17,fontWeight:900,color:T.text,marginTop:3}}>{totF.toFixed(1)} <span style={{fontSize:9}}>gal</span></div></div>
                 </div>
 
-                {/* Fuel */}
-                <div style={{ fontFamily:T.sans, fontSize:18, fontWeight:700, color:"#7c3aed" }}>{totF.toFixed(1)} <span style={{ fontSize:11, fontWeight:400 }}>gal</span></div>
-
-                {/* Notes input */}
-                <input style={{ ...inp, fontSize:12 }} placeholder="Notes..." value={e.notes} onChange={ev=>setEqEntry(eq.id,"notes",ev.target.value)} onKeyDown={ev=>saveOnEnter(ev, eq)} />
-
-                {/* Date input */}
-                <input style={{ ...inp, fontSize:12 }} type="date" value={e.date} onChange={ev=>setEqEntry(eq.id,"date",ev.target.value)} />
-
-                {/* Track mode pills */}
-                <div style={{ display:"flex", gap:3, flexWrap:"wrap" }}>
-                  {[["H","hours"],["Mi","mileage"],["Both","both"]].map(([lbl,v])=>(
-                    <button key={v} onClick={()=>dispatch({type:"UPDATE_EQ",payload:{...eq,usageType:v}})} style={{ padding:"2px 6px", borderRadius:4, border:`1px solid ${mode===v?T.accent:T.border}`, background:mode===v?T.accentLt:"#fff", color:mode===v?T.accent:T.muted, cursor:"pointer", fontFamily:T.mono, fontSize:10, fontWeight:mode===v?700:400 }}>{lbl}</button>
-                  ))}
+                <div style={{fontSize:10,fontWeight:900,color:T.subtext,textTransform:"uppercase",letterSpacing:.5,marginBottom:7}}>Add Usage</div>
+                <div style={{display:"grid",gridTemplateColumns:showH&&showM?"1fr 1fr":"1fr",gap:8}}>
+                  {showH && <Field label="Hours"><input style={inp} type="number" step="0.1" min="0" placeholder="Current hours" value={e.hours} onChange={ev=>setEqEntry(eq.id,"hours",ev.target.value)} onKeyDown={ev=>saveOnEnter(ev,eq)}/></Field>}
+                  {showM && <Field label="Mileage"><input style={inp} type="number" min="0" placeholder="Current mileage" value={e.mileage} onChange={ev=>setEqEntry(eq.id,"mileage",ev.target.value)} onKeyDown={ev=>saveOnEnter(ev,eq)}/></Field>}
                 </div>
-
-                {/* Usage actions */}
-                <div style={{ display:"flex", justifyContent:"center", gap:4 }}>
-                  <button title="Edit latest usage entry" onClick={()=>{ const last=latestLogFor(eq.id); if(last) setEditLog({...last}); else alert("No usage history to edit yet."); }} style={{ border:`1px solid ${T.border}`, background:T.card, borderRadius:6, cursor:"pointer", padding:"4px 6px", fontSize:13 }}>✏️</button>
-                  <button title="Usage history" onClick={()=>setDetailEq(eq.id)} style={{ border:`1px solid ${T.border}`, background:T.card, borderRadius:6, cursor:"pointer", padding:"4px 6px", fontSize:13 }}>🕘</button>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <Field label="Fuel Added (gal)"><input style={inp} type="number" step="0.1" min="0" placeholder="Optional" value={e.fuel} onChange={ev=>setEqEntry(eq.id,"fuel",ev.target.value)} onKeyDown={ev=>saveOnEnter(ev,eq)}/></Field>
+                  <Field label="Date"><input style={inp} type="date" value={e.date} onChange={ev=>setEqEntry(eq.id,"date",ev.target.value)}/></Field>
                 </div>
-              </div>
-
-              {/* New entry input row */}
-              <div style={{ display:"grid", gridTemplateColumns:"220px 80px 120px 120px 80px 1fr 110px 110px 76px", padding:"6px 16px 10px", gap:8, alignItems:"center", background:"#f0f8ff", borderTop:`1px dashed ${T.border}` }}>
-                <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.accent, textTransform:"uppercase", letterSpacing:.5 }}>New Entry</div>
-                <div/>
-                {/* Hours input */}
-                <input
-                  style={{ ...inp, fontSize:12, border:`1px solid ${showH?"#bfdbfe":T.border}`, background:showH?"#fff":"#f3f4f6", color:showH?T.text:T.muted }}
-                  type="number" step="0.1" min="0"
-                  placeholder={showH?"e.g. 523.5":"N/A"}
-                  disabled={!showH}
-                  value={e.hours}
-                  onChange={ev=>setEqEntry(eq.id,"hours",ev.target.value)}
-                  onKeyDown={ev=>saveOnEnter(ev, eq)}
-                />
-                {/* Mileage input */}
-                <input
-                  style={{ ...inp, fontSize:12, border:`1px solid ${showM?"#86efac":T.border}`, background:showM?"#fff":"#f3f4f6", color:showM?T.text:T.muted }}
-                  type="number" min="0"
-                  placeholder={showM?"e.g. 24580":"N/A"}
-                  disabled={!showM}
-                  value={e.mileage}
-                  onChange={ev=>setEqEntry(eq.id,"mileage",ev.target.value)}
-                  onKeyDown={ev=>saveOnEnter(ev, eq)}
-                />
-                {/* Fuel input */}
-                <input
-                  style={{ ...inp, fontSize:12, border:"1px solid #e9d5ff" }}
-                  type="number" step="0.1" min="0"
-                  placeholder="e.g. 18.5"
-                  value={e.fuel}
-                  onChange={ev=>setEqEntry(eq.id,"fuel",ev.target.value)}
-                  onKeyDown={ev=>saveOnEnter(ev, eq)}
-                />
-                <div/><div/>
-                {/* Save button */}
-                <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-                  <Btn small type="button" onClick={()=>save(eq)} style={{ whiteSpace:"nowrap" }}>+ Log</Btn>
-                  <span style={{ fontFamily:T.sans, fontSize:9, color:T.muted }}>or Enter</span>
+                <Field label="Notes"><input style={inp} placeholder="Optional notes" value={e.notes} onChange={ev=>setEqEntry(eq.id,"notes",ev.target.value)} onKeyDown={ev=>saveOnEnter(ev,eq)}/></Field>
+                <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"center",marginTop:4}}>
+                  <div style={{display:"flex",gap:4}}>
+                    {[["H","hours"],["Mi","mileage"],["Both","both"]].map(([lbl,v])=><button key={v} onClick={()=>dispatch({type:"UPDATE_EQ",payload:{...eq,usageType:v}})} style={{padding:"4px 7px",borderRadius:6,border:`1px solid ${mode===v?T.accent:T.border}`,background:mode===v?T.accentLt:T.card,color:mode===v?T.accent:T.muted,cursor:"pointer",fontSize:10,fontWeight:800}}>{lbl}</button>)}
+                  </div>
+                  <Btn small type="button" onClick={()=>save(eq)}>+ Log Usage</Btn>
                 </div>
-                <div/>
-              </div>
-            </div>
-          );
-        })}
-      </Card>
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
