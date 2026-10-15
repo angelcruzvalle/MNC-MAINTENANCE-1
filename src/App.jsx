@@ -2850,7 +2850,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const [eqSearch, setEqSearch] = useState("");
   const [showNewTech, setShowNewTech] = useState(false);
   const [newTech, setNewTech] = useState({ name:"", position:"", laborRate:"" });
-  const [showNewPart, setShowNewPart] = useState(null); // index of part row adding new part
+  const [showNewPart, setShowNewPart] = useState(null); // index of part row browsing inventory
+  const [showPartAddChoice, setShowPartAddChoice] = useState(false);
   const [newPartForm, setNewPartForm] = useState({});
   const [detailWO, setDetailWO] = useState(null);
   const [editMode, setEditMode] = useState(false);
@@ -3558,9 +3559,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
                 <input style={inp} {...decimalInputAttrs({ placeholder:"Cost / each" })} title="Enter cost per each OR total purchase cost" value={p.unitCost||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; const unitCost=sanitizeDecimalInput(e.target.value); const rq=+(arr[idx]?.receivedQty||0); arr[idx]={...arr[idx],unitCost,totalPurchaseCost:rq&&unitCost!==""?String(rq*(+unitCost)):arr[idx]?.totalPurchaseCost||""}; return {...f,partsUsed:arr}; })} />
                 <input style={inp} {...decimalInputAttrs({ placeholder:"Total purchase $" })} title="Enter total purchase cost OR cost per each" value={p.totalPurchaseCost||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; const totalPurchaseCost=sanitizeDecimalInput(e.target.value); const rq=+(arr[idx]?.receivedQty||0); arr[idx]={...arr[idx],totalPurchaseCost,unitCost:rq&&totalPurchaseCost!==""?String((+totalPurchaseCost)/rq):arr[idx]?.unitCost||""}; return {...f,partsUsed:arr}; })} />
                 <button onClick={()=>setShowNewPart(showNewPart===idx?null:idx)} style={{ padding:"6px 8px", border:`1px solid ${T.border}`, borderRadius:6, background:T.grayLt, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.accent, whiteSpace:"nowrap" }}>
-                  {showNewPart===idx?"Close":"Find"}
+                  {showNewPart===idx?"Close Inventory":"Inventory"}
                 </button>
-                <button onClick={()=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr.splice(idx,1); return {...f,partsUsed:arr}; })} style={{ padding:"6px 10px", border:`1px solid ${T.red}`, borderRadius:6, background:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>
+                <button onClick={()=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr.splice(idx,1); return {...f,partsUsed:arr}; })} title="Remove part" aria-label="Remove part" style={{ width:28, minWidth:28, maxWidth:28, height:28, padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", justifySelf:"end", border:`1px solid ${T.red}`, borderRadius:999, background:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:15, lineHeight:1, fontWeight:700 }}>×</button>
               </div>
               {p.partId && (
                 <div style={{ fontFamily:T.sans, fontSize:11, color:(+p.qty||0)>(+p.availableQty||0)?T.red:T.green, margin:"0 0 6px 2px", fontWeight:600 }}>
@@ -3622,9 +3623,20 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               )}
             </div>
           ))}
-          <button onClick={()=>setForm(f=>({...f,partsUsed:[...(f.partsUsed||[]),{name:"",qty:1,receivedQty:"",unit:"ea",unitCost:"",totalPurchaseCost:"",receiptApplied:false}]}))} style={{ background:"none", border:`1px dashed ${T.borderHi}`, borderRadius:6, padding:"7px 16px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600, width:"100%" }}>
-            + Add Part
-          </button>
+          {!showPartAddChoice ? (
+            <button onClick={()=>setShowPartAddChoice(true)} style={{ background:"none", border:`1px dashed ${T.borderHi}`, borderRadius:6, padding:"9px 16px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:700, width:"100%" }}>
+              + Add Part
+            </button>
+          ) : (
+            <div style={{ position:"relative", border:`1px solid ${T.border}`, borderRadius:9, padding:"12px 42px 12px 12px", background:T.card }}>
+              <button type="button" onClick={()=>setShowPartAddChoice(false)} title="Close" aria-label="Close add part choices" style={{ position:"absolute", top:8, right:8, width:26, minWidth:26, maxWidth:26, height:26, padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", border:`1px solid ${T.border}`, borderRadius:999, background:T.grayLt, color:T.text, cursor:"pointer", fontSize:15, lineHeight:1, fontWeight:700 }}>×</button>
+              <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:9 }}>Add a part</div>
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:8 }}>
+                <button type="button" onClick={()=>{ const idx=(form.partsUsed||[]).length; setForm(f=>({...f,partsUsed:[...(f.partsUsed||[]),{name:"",qty:1,receivedQty:"",unit:"ea",unitCost:"",totalPurchaseCost:"",receiptApplied:false}]})); setShowNewPart(idx); setShowPartAddChoice(false); }} style={{ ...inp, padding:"12px", cursor:"pointer", textAlign:"left", fontWeight:700, color:T.accent, background:T.grayLt }}>🔎 Use Part From Inventory<div style={{ marginTop:4, fontSize:10, fontWeight:400, color:T.muted }}>Search existing stock and enter quantity used.</div></button>
+                <button type="button" onClick={()=>{ setForm(f=>({...f,partsUsed:[...(f.partsUsed||[]),{name:"",qty:1,receivedQty:"",unit:"ea",unitCost:"",totalPurchaseCost:"",receiptApplied:false}]})); setShowNewPart(null); setShowPartAddChoice(false); }} style={{ ...inp, padding:"12px", cursor:"pointer", textAlign:"left", fontWeight:700, color:T.accent, background:T.grayLt }}>＋ Add New Part<div style={{ marginTop:4, fontSize:10, fontWeight:400, color:T.muted }}>Enter the part, quantity received/used, and purchase cost.</div></button>
+              </div>
+            </div>
+          )}
         </div>
 
 
@@ -10079,7 +10091,7 @@ function SetupWizard({ onComplete }) {
       <div style={{ maxWidth:640, margin:"36px auto", background:T.card, borderRadius:16, boxShadow:"0 10px 40px rgba(0,0,0,.12)", padding:"30px 34px" }}>
         <div style={{ display:"flex", gap:5, marginBottom:24 }}>{[1,2,3].map(n=><div key={n} style={{ flex:1, height:5, borderRadius:3, background:n<=step?T.accent:T.border }}/>)}</div>
         {step===1 && <>
-          <div style={{ textAlign:"center", marginBottom:22 }}><div style={{ fontSize:44 }}>👋</div><h2 style={{ margin:"6px 0", fontFamily:T.sans, fontSize:25, color:T.text }}>Set up WIN Maintenance</h2><p style={{ margin:0, color:T.muted, fontSize:14 }}>Just the basics. You can be working in about a minute.</p></div>
+          <div style={{ textAlign:"center", marginBottom:22 }}><div style={{ fontSize:44 }}>👋</div><h2 style={{ margin:"6px 0", fontFamily:T.sans, fontSize:25, color:T.text }}>Set up MaintForge</h2><p style={{ margin:0, color:T.muted, fontSize:14 }}>Just the basics. You can be working in about a minute.</p></div>
           <Field label="Company Name *"><input style={inp} value={data.companyName} onChange={F("companyName")} placeholder="e.g. ABC Equipment Services" autoFocus /></Field>
           <Field label="Facility / Shop Name"><input style={inp} value={data.siteName} onChange={F("siteName")} placeholder="Main Facility" /></Field>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 14px" }}><Field label="Phone"><input style={inp} value={data.phone} onChange={F("phone")} /></Field><Field label="Email"><input style={inp} type="email" value={data.email} onChange={F("email")} /></Field></div>
@@ -10093,7 +10105,7 @@ function SetupWizard({ onComplete }) {
           <div style={{padding:12,border:`1px solid ${T.border}`,borderRadius:10,background:T.grayLt,fontSize:12,color:T.subtext}}>That’s it. No organizations, facility assignments, invite codes, or permission setup required.</div>
         </>}
         {step===3 && <>
-          <div style={{textAlign:"center",padding:"8px 0 16px"}}><div style={{fontSize:50}}>✓</div><h2 style={{margin:"4px 0 8px",fontSize:24}}>Ready to go</h2><p style={{margin:"0 auto",maxWidth:460,color:T.muted,lineHeight:1.5}}>WIN Maintenance will start with common equipment categories. Add your first piece of equipment, then create work orders, PM schedules, inspections, inventory, and fuel records as you need them.</p></div>
+          <div style={{textAlign:"center",padding:"8px 0 16px"}}><div style={{fontSize:50}}>✓</div><h2 style={{margin:"4px 0 8px",fontSize:24}}>Ready to go</h2><p style={{margin:"0 auto",maxWidth:460,color:T.muted,lineHeight:1.5}}>MaintForge will start with common equipment categories. Add your first piece of equipment, then create work orders, PM schedules, inspections, inventory, and fuel records as you need them.</p></div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,padding:14,border:`1px solid ${T.border}`,borderRadius:12,background:T.grayLt,fontSize:12}}><div><span style={{color:T.muted}}>Company</span><br/><b>{data.companyName}</b></div><div><span style={{color:T.muted}}>Facility</span><br/><b>{data.siteName||"Main Facility"}</b></div><div><span style={{color:T.muted}}>User</span><br/><b>{data.firstName} {data.lastName}</b></div><div><span style={{color:T.muted}}>Role</span><br/><b>{data.position||"Mechanic"}</b></div></div>
         </>}
         <div style={{display:"flex",justifyContent:"space-between",marginTop:24,paddingTop:16,borderTop:`1px solid ${T.border}`}}>{step>1?<Btn variant="secondary" onClick={()=>setStep(v=>v-1)}>← Back</Btn>:<div/>}<Btn onClick={next}>{step===3?"Start Using MaintForge →":"Continue →"}</Btn></div>
@@ -11656,7 +11668,7 @@ export default function App() {
           {/* Header */}
           <div style={{ textAlign:"center", marginBottom:22 }}>
             <div style={{ fontSize:36, marginBottom:6 }}>🔧</div>
-            <h1 style={{ margin:0, fontSize:24, fontWeight:700 }}>WIN Maintenance</h1>
+            <h1 style={{ margin:0, fontSize:24, fontWeight:700 }}>MaintForge</h1>
             <p style={{ opacity:.65, margin:"6px 0 0", fontSize:13 }}>
               {isSignup ? "Maintenance management made simple" : "Sign in to your company account"}
             </p>
@@ -11781,7 +11793,7 @@ export default function App() {
                 </button>
               </>
             ) : (
-              <>New to WIN Maintenance?{" "}
+              <>New to MaintForge?{" "}
                 <button onClick={()=>switchAuthMode("signup")} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontWeight:600, padding:0, fontSize:13 }}>
                   Create account
                 </button>
