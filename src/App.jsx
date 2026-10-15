@@ -734,7 +734,7 @@ function activeMaintForgeBranding(state={}) {
   const loc = activeMaintForgeLocation(state);
   return {
     companyName: state.settings?.companyName || state.organization?.name || "Maintenance Department",
-    facilityName: loc?.name || "",
+    facilityName: state.settings?.department || "",
     logo: resolveMaintForgeLogo(state, loc?.id || "__all"),
     logoMode: organizationLogoMode(state),
   };
@@ -2138,7 +2138,7 @@ function Header({ notifications, dispatch, currentPage, onMenuToggle }) {
           <div className="mf-header-divider" style={{ width:1, height:28, background:T.border }} />
           <div>
             <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, letterSpacing:-.3, lineHeight:1.2 }}>MaintForge</div>
-            <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, letterSpacing:.3 }}>{settings.location || settings.cityState || "Location"}</div>
+            <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, letterSpacing:.3 }}>{settings.department || ""}</div>
           </div>
           {currentPage && (
             <>
@@ -2342,418 +2342,81 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
 }
 
 function Dashboard({ state, dispatch, setTab, onSettings }) {
-  const allWos = state.workOrders || [];
-  const allEqs = state.equipment || [];
-  const allParts = state.parts || [];
-  const allPmSchedules = state.pmSchedules || [];
-  const allInspectionSchedules = state.inspectionSchedules || [];
-  const allRequests = state.workOrderRequests || [];
-  const allFuelContainers = state.fuelContainers || [];
-  const allUsageLogs = state.usageLogs || [];
-  const notifications = state.notifications || [];
-  const role = normalizeRole(state.userRole || "organization_admin");
-  const allLocations = normalizeMaintForgeLocations(state).filter(f => f.active !== false);
-  const currentUserEmail = normalizeEmail(state.currentUser?.email || state.user?.email || state.profile?.email || "");
-  const currentOrgUser = currentUserEmail ? (state.organizationUsers || []).find(u => normalizeEmail(u.email) === currentUserEmail) : null;
-  const profileLocationIds = [
-    ...(Array.isArray(state.profile?.facilityIds) ? state.profile.facilityIds : []),
-    ...(Array.isArray(state.userLocationIds) ? state.userLocationIds : []),
-    ...(Array.isArray(state.assignedLocationIds) ? state.assignedLocationIds : []),
-    ...(Array.isArray(currentOrgUser?.facilityIds) ? currentOrgUser.facilityIds : []),
-    state.profile?.facilityId,
-    state.profile?.locationId,
-    currentOrgUser?.facilityId,
-    currentOrgUser?.locationId,
-  ].filter(Boolean).map(String);
-  const activeLocation = activeMaintForgeLocation(state);
-  const restrictedRole = role !== "organization_admin";
-  const roleLocationIds = (() => {
-    if(!restrictedRole) return activeLocation?.id ? [String(activeLocation.id)] : [];
-    if(activeLocation?.id && (profileLocationIds.length === 0 || profileLocationIds.includes(String(activeLocation.id)))) return [String(activeLocation.id)];
-    const ids = Array.from(new Set(profileLocationIds));
-    if(ids.length) return ids;
-    return allLocations[0]?.id ? [String(allLocations[0].id)] : [];
-  })();
-  const dashboardRecordMatchesScope = (record={}) => {
-    if(!restrictedRole) return recordMatchesActiveLocation(record, state);
-    if(!roleLocationIds.length) return false;
-    return roleLocationIds.some(fid => recordMatchesActiveLocation(record, { ...state, activeLocationId: fid }));
-  };
-  const dashboardLocationLabel = (() => {
-    if(!restrictedRole) return activeLocation?.name || "Location";
-    const names = roleLocationIds.map(id => locationNameForId(state, id)).filter(Boolean);
-    return names.length === 1 ? names[0] : `${names.length || 0} Assigned Locations`;
-  })();
-  const facilityScopeLabel = dashboardLocationLabel;
-  const eqs = allEqs.filter(e => dashboardRecordMatchesScope(e));
-  const scopedEqIds = new Set(eqs.map(e => String(e.id || e.equipmentId || "")).filter(Boolean));
-  const belongsToScopedEquipment = (record={}) => {
-    const id = workOrderEquipmentId(record) || record.equipmentId || record.equipment || record.parentEquipmentId || record.parentId || "";
-    return id && scopedEqIds.has(String(id));
-  };
-  const wos = allWos.filter(w => dashboardRecordMatchesScope(w) || belongsToScopedEquipment(w));
-  const parts = allParts.filter(p => dashboardRecordMatchesScope(p) || belongsToScopedEquipment(p));
-  const pmSchedules = allPmSchedules.filter(s => dashboardRecordMatchesScope(s) || belongsToScopedEquipment(s));
-  const inspectionSchedules = allInspectionSchedules.filter(s => dashboardRecordMatchesScope(s) || belongsToScopedEquipment(s));
-  const requests = allRequests.filter(r => dashboardRecordMatchesScope(r) || belongsToScopedEquipment(r));
-  const fuelContainers = allFuelContainers.filter(c => dashboardRecordMatchesScope(c));
-  const usageLogs = allUsageLogs.filter(u => dashboardRecordMatchesScope(u) || belongsToScopedEquipment(u));
+  const wos = state.workOrders || [];
+  const eqs = state.equipment || [];
+  const parts = state.parts || [];
+  const pmSchedules = state.pmSchedules || [];
+  const inspectionSchedules = state.inspectionSchedules || [];
   const todayStr = today();
   const soon = new Date(); soon.setDate(soon.getDate() + 14);
   const soonStr = soon.toISOString().split("T")[0];
-  const activeWOs = wos.filter(w=>w.status !== "Completed");
-  const highPriority = activeWOs.filter(w=>w.priority === "High");
-  const awaitingParts = activeWOs.filter(w=>w.status === "Awaiting Parts");
-  const deadlineEqs = eqs.filter(e=>e.status === "Out of Service / Deadline");
-  const deficientEqs = eqs.filter(e=>e.status === "Operational with Deficiencies");
-  const readyEqs = eqs.filter(e=>(e.status || "Fully Operational") === "Fully Operational");
-  const readiness = eqs.length ? Math.round((readyEqs.length / eqs.length) * 100) : 100;
-  const duePM = pmSchedules.filter(s => (s.nextDueDate && s.nextDueDate <= soonStr) || s.status === "Overdue" || s.status === "Due Soon");
-  const dueInspections = inspectionSchedules.filter(s => (s.nextDueDate && s.nextDueDate <= soonStr) || s.status === "Overdue" || s.status === "Due Soon");
-  const lowStock = parts.filter(p=>p.lowStockAlert !== false && (+p.qty || 0) <= (+p.minQty || 0));
-  const openRequests = requests.filter(r=>!["Converted","Dismissed","Completed"].includes(r.status));
-  const completedThisMonth = wos.filter(w=>w.status === "Completed" && String(w.completed || w.completedDate || "").slice(0,7) === todayStr.slice(0,7));
-  const monthSpend = completedThisMonth.reduce((sum,w)=>sum + woSpendingTotal(w, state.settings), 0);
-  const overdueWOs = activeWOs.filter(w => w.due && w.due < todayStr);
-  const dueTodayWOs = activeWOs.filter(w => w.due === todayStr);
-  const dueSoonWOs = activeWOs.filter(w => w.due && w.due >= todayStr && w.due <= soonStr);
-  const inProgressWOs = activeWOs.filter(w => w.status === "In Progress");
-  const openWOs = activeWOs.filter(w => !w.status || w.status === "Open");
-  const onHoldWOs = activeWOs.filter(w => w.status === "On Hold");
-  const pendingDiagnostic = activeWOs.filter(w => w.status === "Pending Diagnostic");
-  const repairsOpen = activeWOs.filter(w => w.woType === "Repair");
-  const serviceOpen = activeWOs.filter(w => w.woType === "Service");
-  const inspectionOpen = activeWOs.filter(w => w.woType === "Inspection");
-  const profileName = state.profile?.firstName ? `${state.profile.firstName} ${state.profile.lastName || ""}`.trim() : "";
-  const assignedToMe = activeWOs.filter(w => profileName && String(w.tech || "").toLowerCase() === profileName.toLowerCase());
-  const dashboardFuelSnapshot = (c={}) => {
-    const reading = latestFuelReading(state, c.id || c.containerId || c.name);
-    const gallons = Number(reading?.gallons ?? c.currentGallons ?? c.gallons ?? c.currentLevel ?? c.levelGallons ?? 0);
-    const capacity = Number(c.capacity ?? c.maxGallons ?? c.sizeGallons ?? 0);
-    const rawPercent = reading ? fuelPercent(c, gallons) : Number(c.percentFull ?? c.percent ?? c.levelPercent ?? c.currentPercent ?? NaN);
-    const percent = Number.isFinite(rawPercent) ? Math.max(0, Math.min(100, rawPercent)) : (capacity > 0 ? Math.max(0, Math.min(100, (gallons / capacity) * 100)) : 0);
-    return {
-      ...c,
-      _percent: percent,
-      _gallons: gallons,
-      _latestInches: reading?.inchesText ?? reading?.inches ?? c.latestInches ?? c.inches ?? "",
-      _latestDate: reading?.date || c.latestDate || c.date || "",
-    };
+  const activeWOs = wos.filter(w => w.status !== "Completed");
+  const overdueMaintenance = [
+    ...pmSchedules.filter(x => x.status === "Overdue" || (x.nextDueDate && x.nextDueDate < todayStr)),
+    ...inspectionSchedules.filter(x => x.status === "Overdue" || (x.nextDueDate && x.nextDueDate < todayStr)),
+  ];
+  const dueSoon = [
+    ...pmSchedules.filter(x => x.status === "Due Soon" || (x.nextDueDate && x.nextDueDate >= todayStr && x.nextDueDate <= soonStr)),
+    ...inspectionSchedules.filter(x => x.status === "Due Soon" || (x.nextDueDate && x.nextDueDate >= todayStr && x.nextDueDate <= soonStr)),
+  ];
+  const lowStock = parts.filter(p => p.lowStockAlert !== false && (+p.qty || 0) <= (+p.minQty || 0));
+  const recentActivity = [...(state.notifications || [])].sort((a,b)=>String(b.createdAt||b.time||"").localeCompare(String(a.createdAt||a.time||""))).slice(0,5);
+  const upcoming = [
+    ...pmSchedules.map(x=>({...x,_kind:"PM"})),
+    ...inspectionSchedules.map(x=>({...x,_kind:"Inspection"})),
+  ].filter(x=>x.nextDueDate && x.nextDueDate >= todayStr).sort((a,b)=>String(a.nextDueDate).localeCompare(String(b.nextDueDate))).slice(0,6);
+  const equipmentName = id => {
+    const e=eqs.find(x=>String(x.id)===String(id));
+    return e ? `${e.id} — ${e.name || e.nomenclature || "Equipment"}` : (id || "Equipment");
   };
-  const fuelLevels = fuelContainers.map(dashboardFuelSnapshot).sort((a,b)=>a._percent-b._percent);
-  const fuelGallonsText = (value) => Number.isFinite(Number(value)) ? `${Math.round(Number(value)).toLocaleString()} gal` : "0 gal";
-  const fuelQuickLinkSub = fuelLevels.length
-    ? `${fuelLevels.slice(0, 2).map(c => `${c.name || c.containerName || "Container"}: ${fuelGallonsText(c._gallons)} • ${Math.round(c._percent || 0)}%`).join(" | ")}${fuelLevels.length > 2 ? ` | +${fuelLevels.length - 2} more` : ""}`
-    : "No fuel containers";
-  const lowFuel = fuelLevels.filter(c => c._percent > 0 && c._percent <= 25);
-  const recentActivity = [...notifications].sort((a,b)=>String(b.createdAt||b.time||"").localeCompare(String(a.createdAt||a.time||""))).slice(0,6);
-  const facilities = normalizeMaintForgeLocations(state).filter(f => f.active !== false);
-  const facilityDashboardRows = facilities.map((facility) => {
-    const facilityState = { ...state, activeLocationId: facility.id };
-    const facilityEqs = allEqs.filter(e => recordMatchesActiveLocation(e, facilityState));
-    const facilityEqIds = new Set(facilityEqs.map(e => String(e.id || e.equipmentId || "")).filter(Boolean));
-    const facilityWos = allWos.filter(w => {
-      const woEqId = workOrderEquipmentId(w) || w.equipmentId || w.equipment || w.parentEquipmentId || w.parentId || "";
-      return recordMatchesActiveLocation(w, facilityState) || (woEqId && facilityEqIds.has(String(woEqId)));
-    });
-    const facilityActiveWos = facilityWos.filter(w => w.status !== "Completed");
-    const facilityReady = facilityEqs.filter(e => (e.status || "Fully Operational") === "Fully Operational");
-    const facilityDeficient = facilityEqs.filter(e => e.status === "Operational with Deficiencies");
-    const facilityDeadline = facilityEqs.filter(e => e.status === "Out of Service / Deadline");
-    const facilityReadiness = facilityEqs.length ? Math.round((facilityReady.length / facilityEqs.length) * 100) : 100;
-    const facilitySpend = facilityWos
-      .filter(w => w.status === "Completed" && String(w.completed || w.completedDate || "").slice(0,7) === todayStr.slice(0,7))
-      .reduce((sum,w)=>sum + woSpendingTotal(w, state.settings), 0);
-    return {
-      id: facility.id,
-      name: facility.name,
-      assets: facilityEqs.length,
-      ready: facilityReady.length,
-      deficient: facilityDeficient.length,
-      deadline: facilityDeadline.length,
-      readiness: facilityReadiness,
-      activeWork: facilityActiveWos.length,
-      monthSpend: facilitySpend
-    };
-  }).sort((a,b)=>a.name.localeCompare(b.name));
-
-  const organizationReadinessSummary = (() => {
-    const assets = facilityDashboardRows.reduce((sum,row)=>sum + (Number(row.assets) || 0), 0);
-    const ready = facilityDashboardRows.reduce((sum,row)=>sum + (Number(row.ready) || 0), 0);
-    const deficient = facilityDashboardRows.reduce((sum,row)=>sum + (Number(row.deficient) || 0), 0);
-    const deadline = facilityDashboardRows.reduce((sum,row)=>sum + (Number(row.deadline) || 0), 0);
-    const activeWork = facilityDashboardRows.reduce((sum,row)=>sum + (Number(row.activeWork) || 0), 0);
-    const monthSpend = facilityDashboardRows.reduce((sum,row)=>sum + (Number(row.monthSpend) || 0), 0);
-    return {
-      assets,
-      ready,
-      deficient,
-      deadline,
-      activeWork,
-      monthSpend,
-      readiness: assets ? Math.round((ready / assets) * 100) : 100
-    };
-  })();
-
-  const eqName = id => {
-    const eq = eqs.find(e=>String(e.id)===String(id));
-    return eq ? `${eq.id} — ${eq.name || eq.nomenclature || "Equipment"}` : (id || "No equipment");
+  const go = tab => setTab && setTab(tab);
+  const attention = [
+    {label:"Overdue Maintenance",value:overdueMaintenance.length,tab:"pm",hint:"Needs action"},
+    {label:"Due Soon",value:dueSoon.length,tab:"pm",hint:"Next 14 days"},
+    {label:"Open Work Orders",value:activeWOs.length,tab:"workorders",hint:"Active work"},
+    {label:"Low Stock",value:lowStock.length,tab:"parts",hint:"Parts to review"},
+  ];
+  const actions = [
+    {label:"+ Repair WO",tab:"workorders",intent:"repair"},
+    {label:"+ Service WO",tab:"workorders",intent:"service"},
+    {label:"+ Inspection WO",tab:"workorders",intent:"inspection"},
+    {label:"+ Equipment",tab:"equipment"},
+    {label:"+ Part",tab:"parts"},
+    {label:"Update Usage",tab:"usage"},
+    {label:"Fuel Entry",tab:"fuel"},
+  ];
+  const actionClick = a => {
+    if(a.intent) try { sessionStorage.setItem("mf-new-wo-intent",a.intent); } catch {}
+    go(a.tab);
   };
-  const dashboardTabIds = new Set(["dashboard","workorders","inspections","equipment","parts","pm","usage","fuel","spending","inventory","reports_deadline","reports_parts_inv","reports_pm","reports_usage","reports_fuel","reports_spending","reports_combined"]);
-  const click = (tab) => {
-    if(!setTab) return;
-    setTab(dashboardTabIds.has(tab) ? tab : "dashboard");
-  };
-  const roleRank = { organization_admin:5, facility_admin:4, supervisor:3, mechanic:2, viewer:1 };
-  const roleAtLeast = (minimum) => (roleRank[role] || 1) >= (roleRank[minimum] || 1);
-  const roleCanSee = (roles) => !roles || roles.includes(role) || (role === "organization_admin" && !roles.includes("__none"));
-  const canUseSettings = roleAtLeast("facility_admin");
-  const quickLinksForRole = () => {
-    const adminLinks = [
-      { tab:"workorders", label:"Work Orders", sub:`${activeWOs.length} active`, icon:"📋" },
-      { tab:"equipment", label:"Equipment", sub:`${deadlineEqs.length} deadline`, icon:"🚜" },
-      { tab:"inventory", label:"Equipment Inventory", sub:`${eqs.length} assets`, icon:"📋" },
-      { tab:"parts", label:"Parts", sub:`${lowStock.length} low stock`, icon:"📦" },
-      { tab:"pm", label:"PM", sub:`${duePM.length} due soon`, icon:"🔧" },
-      { tab:"inspections", label:"Inspections", sub:`${dueInspections.length} due soon`, icon:"🔍" },
-      { tab:"usage", label:"Usage", sub:`${usageLogs.length} logs`, icon:"📊" },
-      { tab:"fuel", label:"Fuel", sub:fuelQuickLinkSub, icon:"⛽" },
-      { tab:"spending", label:"Spending", sub:moneyFmt(monthSpend), icon:"💰" },
-      { tab:"reports_combined", label:"Combined Report", sub:"Print / review", icon:"📑" },
-    ];
-    if(role === "mechanic") return [
-      { tab:"workorders", label:"My Work", sub:`${assignedToMe.length || activeWOs.length} active`, icon:"📋" },
-      { tab:"equipment", label:"Equipment", sub:`${deadlineEqs.length} deadline`, icon:"🚜" },
-      { tab:"parts", label:"Parts", sub:"Look up stock", icon:"📦" },
-      { tab:"pm", label:"PM Tasks", sub:`${duePM.length} due soon`, icon:"🔧" },
-      { tab:"inspections", label:"Inspections", sub:`${dueInspections.length} due soon`, icon:"🔍" },
-      { tab:"usage", label:"Usage", sub:"Log readings", icon:"📊" },
-    ];
-    if(role === "viewer") return [
-      { tab:"equipment", label:"Equipment", sub:`${eqs.length} assets`, icon:"🚜" },
-      { tab:"workorders", label:"Work Orders", sub:`${activeWOs.length} active`, icon:"📋" },
-      { tab:"inventory", label:"Inventory", sub:"Asset list", icon:"📋" },
-      { tab:"reports_combined", label:"Combined Report", sub:"Read only", icon:"📑" },
-      { tab:"reports_spending", label:"Spending Report", sub:"Costs", icon:"💰" },
-      { tab:"reports_fuel", label:"Fuel Report", sub:"Fuel data", icon:"⛽" },
-    ];
-    if(role === "supervisor") return adminLinks.filter(l => !["spending","reports_combined"].includes(l.tab)).slice(0,10);
-    return adminLinks;
-  };
-  const allQuickLinks = quickLinksForRole();
-  const defaultQuickLinkTabs = () => allQuickLinks.map(link => link.tab);
-  const quickLinksKey = `maintforge_dashboard_quick_links_v1_${role}_${restrictedRole ? roleLocationIds.join("_") || "assigned" : "all"}`;
-  const loadQuickLinks = () => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(quickLinksKey) || "null");
-      if(Array.isArray(saved) && saved.length) return saved;
-    } catch(e) {}
-    return defaultQuickLinkTabs();
-  };
-  const [quickLinkLayout, setQuickLinkLayout] = useState(loadQuickLinks);
-  const [dragQuickLink, setDragQuickLink] = useState(null);
-  useEffect(()=>{ setQuickLinkLayout(loadQuickLinks()); }, [quickLinksKey]);
-  useEffect(()=>{ try { localStorage.setItem(quickLinksKey, JSON.stringify(quickLinkLayout)); } catch(e) {} }, [quickLinkLayout, quickLinksKey]);
-  const quickLinkRegistry = Object.fromEntries(allQuickLinks.map(link => [link.tab, link]));
-  const quickLinks = quickLinkLayout.map(tab => quickLinkRegistry[tab]).filter(Boolean);
-  const addableQuickLinks = allQuickLinks.filter(link => !quickLinkLayout.includes(link.tab));
-  const moveQuickLink = (tab, direction) => setQuickLinkLayout(list => {
-    const next = list.filter(id => quickLinkRegistry[id]);
-    const idx = next.indexOf(tab);
-    const target = idx + direction;
-    if(idx < 0 || target < 0 || target >= next.length) return next;
-    [next[idx], next[target]] = [next[target], next[idx]];
-    return next;
-  });
-  const removeQuickLink = (tab) => setQuickLinkLayout(list => list.filter(id => id !== tab));
-  const addQuickLink = (tab) => setQuickLinkLayout(list => list.includes(tab) ? list : [...list, tab]);
-  const resetQuickLinks = () => setQuickLinkLayout(defaultQuickLinkTabs());
-  const onDropQuickLink = (targetTab) => {
-    if(!dragQuickLink || dragQuickLink === targetTab) return;
-    setQuickLinkLayout(list => {
-      const current = list.filter(id => id !== dragQuickLink && quickLinkRegistry[id]);
-      const idx = current.indexOf(targetTab);
-      if(idx < 0) return list;
-      current.splice(idx, 0, dragQuickLink);
-      return current;
-    });
-    setDragQuickLink(null);
-  };
-
-  const priorityList = activeWOs.slice().sort((a,b)=>({High:0,Medium:1,Low:2}[a.priority]??3)-({High:0,Medium:1,Low:2}[b.priority]??3) || String(a.due||"").localeCompare(String(b.due||""))).slice(0,6);
-  const equipmentWatch = [...deadlineEqs, ...deficientEqs].slice(0,6);
-  const scheduleList = [
-    ...duePM.map(s=>({ type:"PM", name:s.task || s.taskName || "PM Service", equipmentId:s.equipmentId, due:s.nextDueDate || "", color:T.accent })),
-    ...dueInspections.map(s=>({ type:"Inspection", name:s.task || s.taskName || "Inspection", equipmentId:s.equipmentId, due:s.nextDueDate || "", color:T.green })),
-  ].sort((a,b)=>String(a.due||"").localeCompare(String(b.due||""))).slice(0,6);
-
-  const defaultLayoutForRole = (r) => {
-    if(r === "mechanic") return ["quick_links","active_work","due_today","awaiting_parts","schedule_due_count","my_work","priority_queue","equipment_watch","schedule_due","recent_activity"];
-    if(r === "viewer") return ["quick_links","readiness","active_work","deadline","completed_month","readiness_breakdown","equipment_watch","fuel_levels","recent_activity"];
-    if(r === "supervisor") return ["quick_links","readiness","active_work","overdue_work","deadline","due_today","schedule_due_count","requests","today_focus","priority_queue","equipment_watch","schedule_due","inventory_requests"];
-    if(r === "organization_admin") return ["quick_links","readiness","active_work","overdue_work","deadline","schedule_due_count","requests","low_stock","month_spend","readiness_breakdown","fuel_levels","today_focus","priority_queue","schedule_due","equipment_watch","inventory_requests"];
-    return ["quick_links","readiness","active_work","overdue_work","deadline","schedule_due_count","requests","low_stock","month_spend","readiness_breakdown","fuel_levels","today_focus","priority_queue","schedule_due","equipment_watch","inventory_requests"];
-  };
-  const layoutKey = `maintforge_dashboard_layout_v5_adaptive_${role}`;
-  const loadLayout = () => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(layoutKey) || "null");
-      if(Array.isArray(saved) && saved.length) return saved;
-    } catch(e) {}
-    return defaultLayoutForRole(role);
-  };
-  const [editDashboard, setEditDashboard] = useState(false);
-  const [dashboardLayout, setDashboardLayout] = useState(loadLayout);
-  const [dragWidgetId, setDragWidgetId] = useState(null);
-
-  useEffect(()=>{ setDashboardLayout(loadLayout()); }, [role]);
-  useEffect(()=>{ try { localStorage.setItem(layoutKey, JSON.stringify(dashboardLayout)); } catch(e) {} }, [dashboardLayout, layoutKey]);
-
-  const StatusPill = ({ color=T.accent, children }) => <span style={{ border:`1px solid ${color}`, color, background:T.card, borderRadius:999, padding:"4px 8px", fontSize:11, fontWeight:900, whiteSpace:"nowrap" }}>{children}</span>;
-  const SmallCard = ({ title, value, sub, color=T.accent, tab }) => (
-    <button type="button" onClick={()=>tab && click(tab)} style={{ width:"100%", textAlign:"left", border:`1px solid ${T.border}`, background:T.card, borderRadius:22, padding:16, cursor:tab?"pointer":"default", boxShadow:"0 10px 24px rgba(15,23,42,.07)", minHeight:124, display:"flex", flexDirection:"column", justifyContent:"space-between", overflow:"hidden" }}>
-      <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"flex-start" }}>
-        <div style={{ minWidth:0 }}>
-          <div style={{ color:T.muted, fontSize:12, fontWeight:900, textTransform:"uppercase", letterSpacing:.45, overflowWrap:"anywhere" }}>{title}</div>
-          <div style={{ fontSize:34, fontWeight:950, color:T.text, lineHeight:1, marginTop:8, overflowWrap:"anywhere" }}>{value}</div>
-          {sub && <div style={{ color:T.muted, fontSize:12, marginTop:6, lineHeight:1.35, overflowWrap:"anywhere" }}>{sub}</div>}
-        </div>
-        <span style={{ width:12, minWidth:12, height:54, borderRadius:99, background:color }} />
-      </div>
-    </button>
-  );
-  const ActionRow = ({ title, sub, badge, color=T.accent, tab }) => (
-    <button type="button" onClick={()=>tab && click(tab)} style={{ width:"100%", display:"grid", gridTemplateColumns:"1fr auto", gap:10, alignItems:"center", border:"none", borderBottom:`1px solid ${T.border}`, background:"transparent", padding:"12px 2px", cursor:tab?"pointer":"default", textAlign:"left" }}>
-      <div style={{ minWidth:0 }}><div style={{ fontWeight:900, color:T.text, overflowWrap:"anywhere" }}>{title}</div><div style={{ fontSize:12, color:T.muted, marginTop:3, overflowWrap:"anywhere" }}>{sub}</div></div>
-      {badge && <StatusPill color={color}>{badge}</StatusPill>}
-    </button>
-  );
-  const Panel = ({ title, action, children }) => <Card style={{ height:"100%", padding:18, borderRadius:22, boxShadow:"0 10px 24px rgba(15,23,42,.06)", overflow:"hidden", minHeight:180, display:"flex", flexDirection:"column" }}><div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginBottom:8 }}><h3 style={{ margin:0, fontSize:16, color:T.text, overflowWrap:"anywhere" }}>{title}</h3>{action}</div><div style={{ flex:1, minHeight:0 }}>{children}</div></Card>;
-  const QuickLinkButton = ({ link }) => (
-    <button type="button" onClick={()=>click(link.tab)} style={{ width:"100%", height:"100%", border:`1px solid ${T.border}`, background:T.grayLt, color:T.text, borderRadius:18, padding:"13px 14px", textAlign:"left", cursor:"pointer", minHeight:112, display:"grid", gridTemplateColumns:"auto 1fr", gap:10, alignItems:"center", overflow:"hidden" }}>
-      <span style={{ width:38, height:38, borderRadius:12, display:"grid", placeItems:"center", background:T.card, boxShadow:"inset 0 0 0 1px rgba(15,23,42,.06)", fontSize:19, flexShrink:0 }}>{link.icon}</span>
-      <span style={{ minWidth:0, display:"flex", flexDirection:"column", justifyContent:"center" }}>
-        <span style={{ display:"block", fontWeight:950, color:T.text, lineHeight:1.1, overflowWrap:"anywhere" }}>{link.label}</span>
-        <span style={{ display:"-webkit-box", WebkitLineClamp:3, WebkitBoxOrient:"vertical", overflow:"hidden", marginTop:5, fontSize:12, lineHeight:1.25, color:T.muted, overflowWrap:"anywhere" }}>{link.sub}</span>
-      </span>
-    </button>
-  );
-
-  const widgetRegistry = {
-    quick_links: { title:"Quick Links", size:"full", tab:"dashboard", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title="Quick Links"><div className="mf-quick-links-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:12, marginTop:8, alignItems:"stretch", gridAutoRows:"1fr" }}>{quickLinks.map((link, index) => <div key={link.tab} draggable={editDashboard} onDragStart={()=>setDragQuickLink(link.tab)} onDragOver={e=>{ if(editDashboard) e.preventDefault(); }} onDrop={()=>onDropQuickLink(link.tab)} style={{ minWidth:0, height:"100%", display:"flex", flexDirection:"column" }}>{editDashboard && <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:6, marginBottom:5, padding:"5px 6px", border:`1px dashed ${T.border}`, borderRadius:10, background:T.grayLt }}><span style={{ fontSize:11, fontWeight:900, color:T.muted, cursor:"grab" }}>☰ {link.label}</span><span style={{ display:"flex", gap:3 }}><button type="button" onClick={()=>moveQuickLink(link.tab,-1)} disabled={index===0} style={{ border:`1px solid ${T.border}`, background:T.card, borderRadius:7, padding:"2px 6px", cursor:index===0?"not-allowed":"pointer" }}>↑</button><button type="button" onClick={()=>moveQuickLink(link.tab,1)} disabled={index===quickLinks.length-1} style={{ border:`1px solid ${T.border}`, background:T.card, borderRadius:7, padding:"2px 6px", cursor:index===quickLinks.length-1?"not-allowed":"pointer" }}>↓</button><button type="button" onClick={()=>removeQuickLink(link.tab)} style={{ border:`1px solid ${T.red}`, color:T.red, background:T.card, borderRadius:7, padding:"2px 6px", cursor:"pointer" }}>×</button></span></div>}<div style={{ flex:1, minHeight:0 }}><QuickLinkButton link={link} /></div></div>)}{!quickLinks.length && <div style={{ color:T.muted, padding:12 }}>No quick links selected. Use Customize Dashboard to add them back.</div>}</div></Panel> },
-    readiness: { title:"Operational Ready", size:"small", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <SmallCard title="Operational Ready" value={`${readiness}%`} sub={`${readyEqs.length} of ${eqs.length} assets fully operational`} color={readiness>=85?T.green:readiness>=65?T.amber:T.red} tab="equipment" /> },
-    active_work: { title:"Active Work", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <SmallCard title="Active Work" value={activeWOs.length} sub={`${highPriority.length} high priority • ${awaitingParts.length} awaiting parts`} color={highPriority.length?T.red:T.accent} tab="workorders" /> },
-    high_priority: { title:"High Priority", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="High Priority" value={highPriority.length} sub="Work orders needing fast attention" color={highPriority.length?T.red:T.green} tab="workorders" /> },
-    awaiting_parts: { title:"Awaiting Parts", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="Awaiting Parts" value={awaitingParts.length} sub="Jobs waiting on parts" color={awaitingParts.length?T.amber:T.green} tab="workorders" /> },
-    deadline: { title:"Deadline Equipment", size:"small", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <SmallCard title="Deadline" value={deadlineEqs.length} sub="Out of service equipment" color={deadlineEqs.length?T.red:T.green} tab="equipment" /> },
-    deficiencies: { title:"Deficiencies", size:"small", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <SmallCard title="Deficiencies" value={deficientEqs.length} sub="Operational with deficiencies" color={deficientEqs.length?T.amber:T.green} tab="equipment" /> },
-    schedule_due_count: { title:"PM / Inspections", size:"small", tab:"pm", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <SmallCard title="PM / Inspections" value={duePM.length + dueInspections.length} sub="Due now or within 14 days" color={(duePM.length + dueInspections.length)?T.amber:T.green} tab="pm" /> },
-    low_stock: { title:"Low Stock", size:"small", tab:"parts", roles:["organization_admin","facility_admin","supervisor"], render:()=> <SmallCard title="Low Stock" value={lowStock.length} sub="Parts at or below minimum" color={lowStock.length?T.red:T.green} tab="parts" /> },
-    completed_month: { title:"Completed This Month", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <SmallCard title="Completed This Month" value={completedThisMonth.length} sub="Closed work orders" color={T.green} tab="workorders" /> },
-    month_spend: { title:"Month Spend", size:"small", tab:"spending", roles:["organization_admin","facility_admin"], render:()=> <SmallCard title="Month Spend" value={moneyFmt(monthSpend)} sub={`${spendingTotalLabel(state.settings)} completed WO costs`} color={T.accent} tab="spending" /> },
-    usage_updates: { title:"Usage Updates", size:"small", tab:"usage", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="Usage Logs" value={usageLogs.length} sub="Equipment usage entries on record" color={T.accent} tab="usage" /> },
-    overdue_work: { title:"Overdue Work", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="Overdue Work" value={overdueWOs.length} sub={`${dueTodayWOs.length} due today • ${dueSoonWOs.length} due within 14 days`} color={overdueWOs.length?T.red:dueTodayWOs.length?T.amber:T.green} tab="workorders" /> },
-    due_today: { title:"Due Today", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="Due Today" value={dueTodayWOs.length} sub={`${inProgressWOs.length} in progress • ${openWOs.length} open`} color={dueTodayWOs.length?T.amber:T.green} tab="workorders" /> },
-    work_mix: { title:"Work Mix", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <SmallCard title="Work Mix" value={`${repairsOpen}/${serviceOpen}/${inspectionOpen}`} sub="Repair / Service / Inspection active WOs" color={repairsOpen?T.red:serviceOpen?T.amber:T.green} tab="workorders" /> },
-    readiness_breakdown: { title:"Readiness Breakdown", size:"wide", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <Panel title={`Readiness Breakdown — ${facilityScopeLabel}`} action={<Btn small variant="secondary" onClick={()=>click("equipment")}>Equipment</Btn>}><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(150px,100%),1fr))", gap:10, marginTop:8 }}><SmallCard title="Ready" value={readyEqs.length} sub="Fully operational" color={T.green} tab="equipment" /><SmallCard title="Deficient" value={deficientEqs.length} sub="Can work, needs attention" color={T.amber} tab="equipment" /><SmallCard title="Deadline" value={deadlineEqs.length} sub="Out of service" color={T.red} tab="equipment" /></div></Panel> },
-    fuel_levels: { title:"Fuel Levels", size:"wide", tab:"fuel", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <Panel title={`Fuel Levels — ${facilityScopeLabel}`} action={<Btn small variant="secondary" onClick={()=>click("fuel")}>Fuel</Btn>}>{fuelLevels.length ? fuelLevels.slice(0,6).map(c=><ActionRow key={c.id || c.name} title={c.name || c.containerName || "Fuel Container"} sub={`${Math.round(c._percent || 0)}% full${Number.isFinite(Number(c._gallons)) ? ` • ${Math.round(c._gallons).toLocaleString()} gallons` : ""}${c._latestInches ? ` • ${c._latestInches} in` : ""}${c._latestDate ? ` • ${c._latestDate}` : ""}`} badge={c._percent <= 25 && c._percent > 0 ? "Low" : c._percent >= 75 ? "Full" : "OK"} color={c._percent <= 25 && c._percent > 0 ? T.red : c._percent >= 75 ? T.green : T.amber} tab="fuel" />) : <div style={{ padding:14, color:T.muted }}>No fuel containers found yet.</div>}</Panel> },
-    today_focus: { title:"Location Manager Focus", size:"wide", tab:"workorders", roles:["organization_admin","facility_admin","supervisor"], render:()=> <Panel title={`Location Manager Focus — ${facilityScopeLabel}`} action={<Btn small onClick={()=>click("workorders")}>Work Orders</Btn>}>{overdueWOs.slice(0,3).map(w=><ActionRow key={`od-${w.id}`} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "Overdue Work Order"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • Due ${w.due || "No due date"} • ${w.status || "Open"}`} badge="Overdue" color={T.red} tab="workorders" />)}{highPriority.slice(0,3).map(w=><ActionRow key={`hp-${w.id}`} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "High Priority"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • ${w.status || "Open"}${w.due ? ` • Due ${w.due}` : ""}`} badge="High" color={T.red} tab="workorders" />)}{deadlineEqs.slice(0,3).map(e=><ActionRow key={`dl-${e.id}`} title={`${e.id} — ${e.name || e.nomenclature || "Deadline Equipment"}`} sub={`${e.locationName || e.location || facilityScopeLabel} • ${e.category || e.type || "Equipment"}`} badge="Deadline" color={T.red} tab="equipment" />)}{!overdueWOs.length && !highPriority.length && !deadlineEqs.length && <div style={{ padding:14, color:T.muted }}>No urgent overdue work, high-priority WOs, or deadline equipment right now.</div>}</Panel> },
-    my_work: { title:"My Work", size:"wide", tab:"workorders", roles:["mechanic","supervisor","facility_admin","organization_admin"], render:()=> <Panel title="My Work / Assigned Work" action={<Btn small onClick={()=>click("workorders")}>Open</Btn>}>{(assignedToMe.length ? assignedToMe : activeWOs.slice(0,4)).slice(0,6).map(w=><ActionRow key={w.id} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "Work Order"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • ${w.status || "Open"}`} badge={w.priority || "Normal"} color={w.priority==="High"?T.red:w.priority==="Medium"?T.amber:T.accent} tab="workorders" />)}{!activeWOs.length && <div style={{ padding:14, color:T.muted }}>No active assigned work.</div>}</Panel> },
-    priority_queue: { title:"Priority Work Queue", size:"wide", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <Panel title="Priority Work Queue" action={<Btn small onClick={()=>click("workorders")}>View All</Btn>}>{priorityList.length ? priorityList.map(w=><ActionRow key={w.id} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "Work Order"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • Due ${w.due || "No due date"} • ${w.status || "Open"}`} badge={w.priority || "Normal"} color={w.priority==="High"?T.red:w.priority==="Medium"?T.amber:T.accent} tab="workorders" />) : <div style={{ padding:14, color:T.muted }}>No active work orders. Great time to review PM and inventory.</div>}</Panel> },
-    equipment_watch: { title:"Equipment Watch", size:"wide", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title="Equipment Watch" action={<Btn small variant="secondary" onClick={()=>click("equipment")}>Equipment</Btn>}>{equipmentWatch.length ? equipmentWatch.map(e=><ActionRow key={e.id} title={`${e.id} — ${e.name || e.nomenclature || "Equipment"}`} sub={`${e.locationName || e.location || "No facility"} • ${e.category || e.type || "No category"}`} badge={e.status || "Status"} color={equipmentStatusTipColor(e.status)} tab="equipment" />) : <div style={{ padding:14, color:T.muted }}>No deadline or deficient equipment in this view.</div>}</Panel> },
-    schedule_due: { title:"Scheduled Maintenance", size:"wide", tab:"pm", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title="Scheduled Maintenance Coming Due" action={<Btn small variant="secondary" onClick={()=>click("pm")}>PM</Btn>}>{scheduleList.length ? scheduleList.map((s,i)=><ActionRow key={`${s.type}-${s.equipmentId}-${i}`} title={`${s.type}: ${s.name}`} sub={`${eqName(s.equipmentId)} • Due ${s.due || "No date"}`} badge={s.type} color={s.color} tab={s.type==="Inspection"?"inspections":"pm"} />) : <div style={{ padding:14, color:T.muted }}>No PM or inspection schedules due in the next 14 days.</div>}</Panel> },
-    inventory_requests: { title:"Low Stock", size:"wide", tab:"parts", roles:["organization_admin","facility_admin","supervisor"], render:()=> <Panel title="Low Stock Parts" action={<Btn small variant="secondary" onClick={()=>click("parts")}>Parts</Btn>}>{lowStock.slice(0,6).map(p=><ActionRow key={p.id} title={p.name || p.partNumber || "Part"} sub={`${p.partNumber || "No part #"} • Qty ${p.qty || 0} / Min ${p.minQty || 0}`} badge="Low" color={T.red} tab="parts" />)}{!lowStock.length && <div style={{ padding:14, color:T.muted }}>No low-stock parts right now.</div>}</Panel> },
-    recent_activity: { title:"Recent Activity", size:"wide", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title="Recent Activity" action={<Btn small variant="secondary" onClick={()=>click("workorders")}>Open</Btn>}>{recentActivity.length ? recentActivity.map(n=><ActionRow key={n.id} title={n.msg || "Activity"} sub={n.time || n.createdAt || "Recent"} badge={n.type || "Log"} color={n.type==="wo"?T.accent:n.type==="pm"?T.amber:T.green} tab={n.type==="pm"?"pm":n.type==="inspection"?"inspections":"workorders"} />) : <div style={{ padding:14, color:T.muted }}>No recent activity yet.</div>}</Panel> },
-  };
-
-  const availableWidgets = Object.entries(widgetRegistry).filter(([id,w]) => roleCanSee(w.roles));
-  const safeLayout = dashboardLayout.filter(id => widgetRegistry[id] && roleCanSee(widgetRegistry[id].roles));
-  const addableWidgets = availableWidgets.filter(([id]) => !safeLayout.includes(id));
-  const moveWidget = (id, direction) => setDashboardLayout(list => {
-    const next = list.filter(x => widgetRegistry[x] && roleCanSee(widgetRegistry[x].roles));
-    const idx = next.indexOf(id);
-    const target = idx + direction;
-    if(idx < 0 || target < 0 || target >= next.length) return next;
-    [next[idx], next[target]] = [next[target], next[idx]];
-    return next;
-  });
-  const addWidget = (id) => setDashboardLayout(list => list.includes(id) ? list : [...list, id]);
-  const removeWidget = (id) => setDashboardLayout(list => list.filter(x => x !== id));
-  const resetDashboard = () => setDashboardLayout(defaultLayoutForRole(role));
-  const onDropWidget = (targetId) => {
-    if(!dragWidgetId || dragWidgetId === targetId) return;
-    setDashboardLayout(list => {
-      const current = list.filter(x => x !== dragWidgetId);
-      const idx = current.indexOf(targetId);
-      if(idx < 0) return list;
-      current.splice(idx, 0, dragWidgetId);
-      return current;
-    });
-    setDragWidgetId(null);
-  };
-
-  return <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-    <style>{`
-      .mf-dashboard-grid > div{ min-width:0; height:100%; }
-      .mf-dashboard-widget-small{ grid-column:span 1; }
-      .mf-dashboard-widget-wide{ grid-column:span 2; }
-      .mf-dashboard-widget-full{ grid-column:1 / -1; }
-      .mf-dashboard-widget-small > div, .mf-dashboard-widget-wide > div, .mf-dashboard-widget-full > div{ height:100%; }
-      .mf-quick-links-grid > div{ min-width:0; height:100%; }
-      @media (max-width: 980px){
-        .mf-dashboard-widget-wide,.mf-dashboard-widget-full{ grid-column:1 / -1 !important; }
-      }
-      @media (max-width: 620px){
-        .mf-dashboard-grid{ grid-template-columns:1fr !important; }
-        .mf-dashboard-widget-small,.mf-dashboard-widget-wide,.mf-dashboard-widget-full{ grid-column:1 / -1 !important; }
-      }
-    `}</style>
-    <div style={{ display:"flex", justifyContent:"flex-end", gap:8, flexWrap:"wrap" }}>
-      <Btn onClick={()=>setEditDashboard(v=>!v)}>{editDashboard ? "Done Customizing" : "Customize Dashboard"}</Btn>
-      {editDashboard && <Btn variant="secondary" onClick={resetDashboard}>Reset Default</Btn>}
+  return <div style={{maxWidth:1180,margin:"0 auto",paddingBottom:30}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",gap:12,marginBottom:18,flexWrap:"wrap"}}>
+      <div><h1 style={{margin:0,fontSize:25,letterSpacing:-.5,color:T.text}}>Dashboard</h1><div style={{fontSize:12,color:T.muted,marginTop:4}}>What needs attention and what you use most.</div></div>
+      {onSettings && <Btn variant="secondary" small onClick={onSettings}>Settings</Btn>}
     </div>
 
-    {editDashboard && <Card style={{ borderRadius:22, padding:16, border:`1px solid ${T.border}`, background:T.card, boxShadow:"0 10px 24px rgba(15,23,42,.06)" }}>
-      <div style={{ display:"flex", justifyContent:"space-between", gap:12, flexWrap:"wrap", alignItems:"center", marginBottom:12 }}>
-        <div><h3 style={{ margin:"0 0 4px", fontSize:18 }}>Customize dashboard</h3><div style={{ color:T.muted, fontSize:13 }}>Drag widgets, use the arrows on iPhone, remove cards, or add more useful widgets. Layout saves on this device for your role.</div></div>
-        <div style={{ color:T.muted, fontSize:12, fontWeight:800 }}>Same-size cards stay grouped in the default layout, and you can still move, remove, or add widgets.</div>
-      </div>
-      <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-        {addableWidgets.length ? addableWidgets.map(([id,w]) => <button key={id} type="button" onClick={()=>addWidget(id)} style={{ border:`1px solid ${T.border}`, background:T.grayLt, color:T.text, borderRadius:999, padding:"9px 12px", fontWeight:800, cursor:"pointer" }}>+ {w.title}</button>) : <div style={{ color:T.muted, fontSize:13 }}>All available widgets for your role are already on the dashboard.</div>}
-      </div>
-      <div style={{ marginTop:16, paddingTop:14, borderTop:`1px solid ${T.border}` }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:10, flexWrap:"wrap", marginBottom:8 }}>
-          <div><h4 style={{ margin:"0 0 3px", fontSize:15 }}>Quick Links</h4><div style={{ color:T.muted, fontSize:12 }}>Add, remove, or move the shortcut buttons inside Quick Links.</div></div>
-          <Btn small variant="secondary" onClick={resetQuickLinks}>Reset Quick Links</Btn>
-        </div>
-        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-          {addableQuickLinks.length ? addableQuickLinks.map(link => <button key={link.tab} type="button" onClick={()=>addQuickLink(link.tab)} style={{ border:`1px solid ${T.border}`, background:T.grayLt, color:T.text, borderRadius:999, padding:"8px 11px", fontWeight:800, cursor:"pointer" }}>+ {link.label}</button>) : <div style={{ color:T.muted, fontSize:13 }}>All available quick links are already showing.</div>}
-        </div>
-      </div>
-    </Card>}
+    <div style={{fontSize:12,fontWeight:900,color:T.subtext,textTransform:"uppercase",letterSpacing:.8,margin:"0 0 8px"}}>Needs Attention</div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(175px,1fr))",gap:10,marginBottom:22}}>
+      {attention.map(c=><button key={c.label} onClick={()=>go(c.tab)} style={{textAlign:"left",padding:"15px 16px",border:`1px solid ${T.border}`,borderRadius:12,background:T.card,cursor:"pointer",boxShadow:"0 1px 2px rgba(0,0,0,.03)"}}><div style={{fontSize:26,fontWeight:900,color:T.text,lineHeight:1}}>{c.value}</div><div style={{fontSize:13,fontWeight:800,color:T.text,marginTop:7}}>{c.label}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{c.hint}</div></button>)}
+    </div>
 
-    <div className="mf-dashboard-grid" style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(240px,100%),1fr))", gap:12, alignItems:"stretch", gridAutoFlow:"row dense" }}>
-      {safeLayout.map((id, index) => {
-        const w = widgetRegistry[id];
-        const widgetClass = w.size === "full" ? "mf-dashboard-widget-full" : w.size === "wide" ? "mf-dashboard-widget-wide" : "mf-dashboard-widget-small";
-        const widgetSpan = w.size === "full" ? "1 / -1" : w.size === "wide" ? "span 2" : "span 1";
-        return <div key={id} className={widgetClass} draggable={editDashboard} onDragStart={()=>setDragWidgetId(id)} onDragOver={e=>{ if(editDashboard) e.preventDefault(); }} onDrop={()=>onDropWidget(id)} style={{ gridColumn:widgetSpan, position:"relative", minWidth:0 }}>
-          {editDashboard && <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, marginBottom:6, background:T.card, border:`1px dashed ${T.border}`, borderRadius:14, padding:"7px 8px" }}>
-            <span style={{ fontSize:12, color:T.muted, fontWeight:900, cursor:"grab" }}>☰ Drag • {w.title}</span>
-            <div style={{ display:"flex", gap:4 }}>
-              <button type="button" onClick={()=>moveWidget(id, -1)} disabled={index===0} style={{ border:`1px solid ${T.border}`, background:T.grayLt, borderRadius:8, padding:"4px 7px", cursor:index===0?"not-allowed":"pointer" }}>↑</button>
-              <button type="button" onClick={()=>moveWidget(id, 1)} disabled={index===safeLayout.length-1} style={{ border:`1px solid ${T.border}`, background:T.grayLt, borderRadius:8, padding:"4px 7px", cursor:index===safeLayout.length-1?"not-allowed":"pointer" }}>↓</button>
-              <button type="button" onClick={()=>removeWidget(id)} style={{ border:`1px solid ${T.red}`, color:T.red, background:T.card, borderRadius:8, padding:"4px 7px", cursor:"pointer" }}>Remove</button>
-            </div>
-          </div>}
-          {w.render()}
-        </div>;
-      })}
+    <div style={{fontSize:12,fontWeight:900,color:T.subtext,textTransform:"uppercase",letterSpacing:.8,margin:"0 0 8px"}}>Quick Actions</div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:9,marginBottom:24}}>
+      {actions.map(a=><button key={a.label} onClick={()=>actionClick(a)} style={{minHeight:48,padding:"10px 12px",border:`1px solid ${T.border}`,borderRadius:10,background:T.card,color:T.text,fontWeight:800,fontSize:12,cursor:"pointer"}}>{a.label}</button>)}
+    </div>
+
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:14}}>
+      <div style={{border:`1px solid ${T.border}`,borderRadius:14,background:T.card,padding:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}><div style={{fontSize:15,fontWeight:900}}>Upcoming Maintenance</div><button onClick={()=>go("pm")} style={{border:0,background:"none",color:T.accent,fontSize:11,fontWeight:800,cursor:"pointer"}}>View all</button></div>
+        {!upcoming.length ? <div style={{padding:"20px 0",fontSize:12,color:T.muted}}>Nothing scheduled soon.</div> : upcoming.map((x,i)=><div key={`${x._kind}-${x.id||i}`} style={{padding:"10px 0",borderTop:i?`1px solid ${T.border}`:"none",display:"flex",justifyContent:"space-between",gap:12}}><div><div style={{fontSize:12,fontWeight:800,color:T.text}}>{equipmentName(x.equipmentId || x.equipment)}</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>{x._kind} • {x.taskName || x.name || x.title || "Scheduled maintenance"}</div></div><div style={{fontSize:11,fontWeight:800,color:T.subtext,whiteSpace:"nowrap"}}>{x.nextDueDate}</div></div>)}
+      </div>
+      <div style={{border:`1px solid ${T.border}`,borderRadius:14,background:T.card,padding:16}}>
+        <div style={{fontSize:15,fontWeight:900,marginBottom:10}}>Recent Activity</div>
+        {!recentActivity.length ? <div style={{padding:"20px 0",fontSize:12,color:T.muted}}>Activity will appear here as you use MaintForge.</div> : recentActivity.map((n,i)=><div key={n.id||i} style={{padding:"10px 0",borderTop:i?`1px solid ${T.border}`:"none"}}><div style={{fontSize:12,color:T.text,lineHeight:1.4}}>{n.msg || n.message || n.title || "MaintForge activity"}</div><div style={{fontSize:10,color:T.muted,marginTop:3}}>{n.createdAt || n.time || ""}</div></div>)}
+      </div>
     </div>
   </div>;
 }
-
-const WORK_ORDER_STATUS_OPTIONS = ["Open","In Progress","Pending Diagnostic","Awaiting Parts","On Hold","Completed"];
 
 function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const [modal, setModal]     = useState(null); // null|"type"|"pick"|"form"|"detail"|"edit"
@@ -9131,7 +8794,7 @@ function SystemSettings({ state, dispatch, onClose }) {
   const s = state.settings || {};
   const [form,setForm] = useState({
     companyName:s.companyName || "",
-    location:s.location || s.cityState || "",
+    department:s.department || "",
     address:s.address || "",
     cityState:s.cityState || "",
     phone:s.phone || "",
@@ -9149,7 +8812,7 @@ function SystemSettings({ state, dispatch, onClose }) {
   const F=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
   const handleLogo=e=>{ const file=e.target.files?.[0]; if(!file)return; const r=new FileReader(); r.onload=ev=>setForm(f=>({...f,logo:ev.target.result})); r.readAsDataURL(file); };
   const save=()=>{
-    const loc=(form.location || form.cityState || "Main Location").trim();
+    const loc="Main Location";
     dispatch({type:"UPDATE_SETTINGS",payload:{...s,...form,siteName:loc,location:loc,logoMode:"company",brandLogoMode:"company",locations:[{id:"MAIN-LOCATION",name:loc,address:form.address,cityState:form.cityState,phone:form.phone,email:form.email,logo:form.logo,active:true}]}});
     onClose();
   };
@@ -9157,9 +8820,9 @@ function SystemSettings({ state, dispatch, onClose }) {
     <div style={{maxWidth:760,margin:"0 auto"}}>
       <div style={{padding:16,border:`1px solid ${T.border}`,borderRadius:14,background:T.surface,marginBottom:16}}>
         <div style={{fontSize:15,fontWeight:900,marginBottom:4}}>Company</div>
-        <div style={{fontSize:12,color:T.muted,marginBottom:14}}>One company, one location. This information is used throughout MaintForge and on printable work orders and reports.</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:14}}>Company information used throughout MaintForge and on printable work orders and reports.</div>
         <Field label="Company Name"><input style={inp} value={form.companyName} onChange={F("companyName")} placeholder="ABC Equipment Services" /></Field>
-        <Field label="Location"><input style={inp} value={form.location} onChange={F("location")} placeholder="Miami, FL" /></Field>
+        <Field label="Department"><input style={inp} value={form.department} onChange={F("department")} placeholder="e.g. Fleet Maintenance" /></Field>
         <Field label="Address"><input style={inp} value={form.address} onChange={F("address")} placeholder="Street address" /></Field>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}><Field label="Phone"><input style={inp} value={form.phone} onChange={F("phone")} /></Field><Field label="Email"><input style={inp} type="email" value={form.email} onChange={F("email")} /></Field></div>
         <Field label="Company Logo"><div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>{form.logo&&<img src={form.logo} alt="Company logo" style={{height:56,maxWidth:140,objectFit:"contain"}}/>}<label style={{padding:"8px 12px",border:`1px solid ${T.accent}`,borderRadius:7,color:T.accent,fontSize:12,fontWeight:800,cursor:"pointer"}}>Upload Logo<input type="file" accept="image/*" onChange={handleLogo} style={{display:"none"}}/></label>{form.logo&&<button type="button" onClick={()=>setForm(f=>({...f,logo:""}))} style={{background:"none",border:0,color:T.red,fontWeight:800,cursor:"pointer"}}>Remove</button>}</div></Field>
@@ -9186,7 +8849,7 @@ function SystemSettings({ state, dispatch, onClose }) {
 function SetupWizard({ onComplete }) {
   const [step, setStep] = useState(1);
   const [data, setData] = useState({
-    companyName:"", location:"", phone:"", email:"", address:"", cityState:"", logo:"",
+    companyName:"", department:"", phone:"", email:"", address:"", cityState:"", logo:"",
     firstName:"", lastName:"", position:"Mechanic", profilePhone:"", profileEmail:"", laborRate:45,
     categories:["Mowers","Vehicles","Tractors","Irrigation","Tools","Trailers"],
     accentColor:"#0052cc", defaultPriority:"Medium", dateFormat:"MM/DD/YYYY", currency:"USD", showEilInventoryNumber:true
@@ -9197,9 +8860,9 @@ function SetupWizard({ onComplete }) {
     if(step===1 && !data.companyName.trim()) return alert("Enter your company name to continue.");
     if(step===2 && !data.firstName.trim()) return alert("Enter your first name to continue.");
     if(step<3) return setStep(v=>v+1);
-    const location=(data.location||data.cityState||"Main Location").trim();
+    const location="Main Location";
     onComplete({
-      settings:{ companyName:data.companyName.trim(), department:"Maintenance", siteName:location, location, phone:data.phone, email:data.email, address:data.address, cityState:data.cityState, logo:data.logo, logoMode:"company", locations:[{id:"MAIN-LOCATION",name:location,address:data.address,cityState:data.cityState,phone:data.phone,email:data.email,logo:data.logo,active:true}], accentColor:data.accentColor, defaultPriority:data.defaultPriority, laborRateDefault:+data.laborRate||45, dateFormat:data.dateFormat, currency:data.currency, includeLaborInSpending:true, requireTech:false, showEilInventoryNumber:data.showEilInventoryNumber },
+      settings:{ companyName:data.companyName.trim(), department:data.department.trim(), siteName:location, location, phone:data.phone, email:data.email, address:data.address, cityState:data.cityState, logo:data.logo, logoMode:"company", locations:[{id:"MAIN-LOCATION",name:location,address:data.address,cityState:data.cityState,phone:data.phone,email:data.email,logo:data.logo,active:true}], accentColor:data.accentColor, defaultPriority:data.defaultPriority, laborRateDefault:+data.laborRate||45, dateFormat:data.dateFormat, currency:data.currency, includeLaborInSpending:true, requireTech:false, showEilInventoryNumber:data.showEilInventoryNumber },
       profile:{ firstName:data.firstName.trim(), lastName:data.lastName.trim(), position:data.position||"Mechanic", phone:data.profilePhone, email:data.profileEmail },
       technicians:[{ id:"TECH-001", name:`${data.firstName} ${data.lastName}`.trim(), position:data.position||"Mechanic", laborRate:+data.laborRate||45 }],
       categories:data.categories
@@ -9212,7 +8875,7 @@ function SetupWizard({ onComplete }) {
         {step===1 && <>
           <div style={{ textAlign:"center", marginBottom:22 }}><div style={{ fontSize:44 }}>👋</div><h2 style={{ margin:"6px 0", fontFamily:T.sans, fontSize:25, color:T.text }}>Set up MaintForge</h2><p style={{ margin:0, color:T.muted, fontSize:14 }}>Just the basics. You can be working in about a minute.</p></div>
           <Field label="Company Name *"><input style={inp} value={data.companyName} onChange={F("companyName")} placeholder="e.g. ABC Equipment Services" autoFocus /></Field>
-          <Field label="Location"><input style={inp} value={data.location} onChange={F("location")} placeholder="Miami, FL" /></Field>
+          <Field label="Department"><input style={inp} value={data.department} onChange={F("department")} placeholder="e.g. Fleet Maintenance" /></Field>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 14px" }}><Field label="Phone"><input style={inp} value={data.phone} onChange={F("phone")} /></Field><Field label="Email"><input style={inp} type="email" value={data.email} onChange={F("email")} /></Field></div>
           <Field label="Address"><input style={inp} value={data.address} onChange={F("address")} placeholder="Street address" /></Field>
           <Field label="City, State"><input style={inp} value={data.cityState} onChange={F("cityState")} placeholder="City, State" /></Field>
@@ -9222,11 +8885,11 @@ function SetupWizard({ onComplete }) {
         {step===2 && <>
           <div style={{marginBottom:20}}><h2 style={{margin:"0 0 6px",fontSize:22}}>Your profile</h2><p style={{margin:0,color:T.muted,fontSize:13}}>This creates your mechanic profile for work orders and labor entries.</p></div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}><Field label="First Name *"><input style={inp} value={data.firstName} onChange={F("firstName")} autoFocus /></Field><Field label="Last Name"><input style={inp} value={data.lastName} onChange={F("lastName")} /></Field><Field label="Job Title"><input style={inp} value={data.position} onChange={F("position")} placeholder="Mechanic" /></Field><Field label="Labor Rate ($/hr)"><input style={inp} {...decimalInputAttrs({placeholder:"45"})} value={data.laborRate} onChange={e=>setData(d=>({...d,laborRate:sanitizeDecimalInput(e.target.value)}))}/></Field></div>
-          <div style={{padding:12,border:`1px solid ${T.border}`,borderRadius:10,background:T.grayLt,fontSize:12,color:T.subtext}}>That’s it. Your company and location are ready. No complicated account setup required.</div>
+          <div style={{padding:12,border:`1px solid ${T.border}`,borderRadius:10,background:T.grayLt,fontSize:12,color:T.subtext}}>That’s it. Your company is ready. No complicated account setup required.</div>
         </>}
         {step===3 && <>
           <div style={{textAlign:"center",padding:"8px 0 16px"}}><div style={{fontSize:50}}>✓</div><h2 style={{margin:"4px 0 8px",fontSize:24}}>Ready to go</h2><p style={{margin:"0 auto",maxWidth:460,color:T.muted,lineHeight:1.5}}>MaintForge will start with common equipment categories. Add your first piece of equipment, then create work orders, PM schedules, inspections, inventory, and fuel records as you need them.</p></div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,padding:14,border:`1px solid ${T.border}`,borderRadius:12,background:T.grayLt,fontSize:12}}><div><span style={{color:T.muted}}>Company</span><br/><b>{data.companyName}</b></div><div><span style={{color:T.muted}}>Location</span><br/><b>{data.location||data.cityState||"Main Location"}</b></div><div><span style={{color:T.muted}}>User</span><br/><b>{data.firstName} {data.lastName}</b></div><div><span style={{color:T.muted}}>Title</span><br/><b>{data.position||"Mechanic"}</b></div></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,padding:14,border:`1px solid ${T.border}`,borderRadius:12,background:T.grayLt,fontSize:12}}><div><span style={{color:T.muted}}>Company</span><br/><b>{data.companyName}</b></div><div><span style={{color:T.muted}}>Department</span><br/><b>{data.department||"—"}</b></div><div><span style={{color:T.muted}}>User</span><br/><b>{data.firstName} {data.lastName}</b></div><div><span style={{color:T.muted}}>Title</span><br/><b>{data.position||"Mechanic"}</b></div></div>
         </>}
         <div style={{display:"flex",justifyContent:"space-between",marginTop:24,paddingTop:16,borderTop:`1px solid ${T.border}`}}>{step>1?<Btn variant="secondary" onClick={()=>setStep(v=>v-1)}>← Back</Btn>:<div/>}<Btn onClick={next}>{step===3?"Start Using MaintForge →":"Continue →"}</Btn></div>
       </div>
@@ -9508,7 +9171,7 @@ function ReportFuel({ state }) {
 }
 
 const PAGE_TITLES = {
-  dashboard:        "Maintenance Dashboard",
+  dashboard:        "Dashboard",
   workorders:       "Work Orders",
   equipment:        "Equipment",
   parts:            "Parts Inventory",
@@ -11394,7 +11057,7 @@ export default function App() {
           )}
           <button className="mf-brand-title" onClick={()=>setTab("dashboard")} title="Go to dashboard" style={{ background:"none", border:"none", padding:0, textAlign:"left", cursor:"pointer" }}>
             <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, letterSpacing:-.3, lineHeight:1.2 }}>{companyName}</div>
-            <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, letterSpacing:.3 }}>{settings.location || settings.cityState || "Location"}</div>
+            <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, letterSpacing:.3 }}>{settings.department || ""}</div>
           </button>
           <span className="mf-header-crumb" style={{ color:T.border, fontSize:18 }}>›</span>
           <span className="mf-header-page-title" style={{ fontFamily:T.sans, fontSize:13, color:T.subtext, fontWeight:500 }}>{PAGE_TITLES[tab] || "Dashboard"}</span>
