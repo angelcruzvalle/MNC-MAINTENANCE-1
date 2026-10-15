@@ -59,6 +59,9 @@ const DARK_THEME = {
 
 const T = { ...LIGHT_THEME };
 
+// MaintForge is the default brand until a company uploads its own logo.
+const MAINTFORGE_DEFAULT_LOGO = "/favicon.png";
+
 
 class PageErrorBoundary extends React.Component {
   constructor(props) {
@@ -728,7 +731,7 @@ function activeLocationSettings(state={}) {
 function organizationLogoMode() { return "company"; }
 function resolveMaintForgeLogo(state={}) {
   const s = state.settings || {};
-  return s.logo || s.companyLogo || "";
+  return s.logo || s.companyLogo || MAINTFORGE_DEFAULT_LOGO;
 }
 function activeMaintForgeBranding(state={}) {
   const loc = activeMaintForgeLocation(state);
@@ -2371,10 +2374,10 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   };
   const go = tab => setTab && setTab(tab);
   const attention = [
-    {label:"Overdue Maintenance",value:overdueMaintenance.length,tab:"pm",hint:"Needs action"},
-    {label:"Due Soon",value:dueSoon.length,tab:"pm",hint:"Next 14 days"},
-    {label:"Open Work Orders",value:activeWOs.length,tab:"workorders",hint:"Active work"},
-    {label:"Low Stock",value:lowStock.length,tab:"parts",hint:"Parts to review"},
+    {label:"Overdue Maintenance",value:overdueMaintenance.length,tab:"pm",hint:"Needs action",color:T.red,bg:T.redLt},
+    {label:"Due Soon",value:dueSoon.length,tab:"pm",hint:"Next 14 days",color:T.amber,bg:T.amberLt},
+    {label:"Open Work Orders",value:activeWOs.length,tab:"workorders",hint:"Active work",color:T.accent,bg:T.accentLt},
+    {label:"Low Stock",value:lowStock.length,tab:"parts",hint:"Parts to review",color:T.green,bg:T.greenLt},
   ];
   const actions = [
     {label:"+ Repair WO",tab:"workorders",intent:"repair"},
@@ -2397,12 +2400,12 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
 
     <div style={{fontSize:12,fontWeight:900,color:T.subtext,textTransform:"uppercase",letterSpacing:.8,margin:"0 0 8px"}}>Needs Attention</div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(175px,1fr))",gap:10,marginBottom:22}}>
-      {attention.map(c=><button key={c.label} onClick={()=>go(c.tab)} style={{textAlign:"left",padding:"15px 16px",border:`1px solid ${T.border}`,borderRadius:12,background:T.card,cursor:"pointer",boxShadow:"0 1px 2px rgba(0,0,0,.03)"}}><div style={{fontSize:26,fontWeight:900,color:T.text,lineHeight:1}}>{c.value}</div><div style={{fontSize:13,fontWeight:800,color:T.text,marginTop:7}}>{c.label}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{c.hint}</div></button>)}
+      {attention.map(c=><button key={c.label} onClick={()=>go(c.tab)} style={{textAlign:"left",padding:"15px 16px",border:`1px solid ${c.color}33`,borderTop:`3px solid ${c.color}`,borderRadius:12,background:c.bg,cursor:"pointer",boxShadow:"0 1px 2px rgba(0,0,0,.03)"}}><div style={{fontSize:26,fontWeight:900,color:c.color,lineHeight:1}}>{c.value}</div><div style={{fontSize:13,fontWeight:800,color:T.text,marginTop:7}}>{c.label}</div><div style={{fontSize:11,color:T.subtext,marginTop:3}}>{c.hint}</div></button>)}
     </div>
 
     <div style={{fontSize:12,fontWeight:900,color:T.subtext,textTransform:"uppercase",letterSpacing:.8,margin:"0 0 8px"}}>Quick Actions</div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:9,marginBottom:24}}>
-      {actions.map(a=><button key={a.label} onClick={()=>actionClick(a)} style={{minHeight:48,padding:"10px 12px",border:`1px solid ${T.border}`,borderRadius:10,background:T.card,color:T.text,fontWeight:800,fontSize:12,cursor:"pointer"}}>{a.label}</button>)}
+      {actions.map((a,i)=><button key={a.label} onClick={()=>actionClick(a)} style={{minHeight:48,padding:"10px 12px",border:`1px solid ${i<3 ? T.accent : T.border}`,borderRadius:10,background:i<3 ? T.accentLt : T.card,color:i<3 ? T.accent : T.text,fontWeight:800,fontSize:12,cursor:"pointer",boxShadow:i<3?"0 1px 3px rgba(0,82,204,.08)":"none"}}>{a.label}</button>)}
     </div>
 
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:14}}>
@@ -8825,7 +8828,7 @@ function SystemSettings({ state, dispatch, onClose }) {
         <Field label="Department"><input style={inp} value={form.department} onChange={F("department")} placeholder="e.g. Fleet Maintenance" /></Field>
         <Field label="Address"><input style={inp} value={form.address} onChange={F("address")} placeholder="Street address" /></Field>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}><Field label="Phone"><input style={inp} value={form.phone} onChange={F("phone")} /></Field><Field label="Email"><input style={inp} type="email" value={form.email} onChange={F("email")} /></Field></div>
-        <Field label="Company Logo"><div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>{form.logo&&<img src={form.logo} alt="Company logo" style={{height:56,maxWidth:140,objectFit:"contain"}}/>}<label style={{padding:"8px 12px",border:`1px solid ${T.accent}`,borderRadius:7,color:T.accent,fontSize:12,fontWeight:800,cursor:"pointer"}}>Upload Logo<input type="file" accept="image/*" onChange={handleLogo} style={{display:"none"}}/></label>{form.logo&&<button type="button" onClick={()=>setForm(f=>({...f,logo:""}))} style={{background:"none",border:0,color:T.red,fontWeight:800,cursor:"pointer"}}>Remove</button>}</div></Field>
+        <Field label="Company Logo"><div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>{<img src={form.logo || MAINTFORGE_DEFAULT_LOGO} alt="Company logo" style={{height:56,maxWidth:140,objectFit:"contain"}}/>}<label style={{padding:"8px 12px",border:`1px solid ${T.accent}`,borderRadius:7,color:T.accent,fontSize:12,fontWeight:800,cursor:"pointer"}}>Upload Logo<input type="file" accept="image/*" onChange={handleLogo} style={{display:"none"}}/></label>{form.logo&&<button type="button" onClick={()=>setForm(f=>({...f,logo:""}))} style={{background:"none",border:0,color:T.red,fontWeight:800,cursor:"pointer"}}>Remove</button>}</div></Field>
       </div>
       <div style={{padding:16,border:`1px solid ${T.border}`,borderRadius:14,background:T.surface,marginBottom:16}}>
         <div style={{fontSize:15,fontWeight:900,marginBottom:8}}>Equipment Fields</div>
@@ -8873,13 +8876,13 @@ function SetupWizard({ onComplete }) {
       <div style={{ maxWidth:640, margin:"36px auto", background:T.card, borderRadius:16, boxShadow:"0 10px 40px rgba(0,0,0,.12)", padding:"30px 34px" }}>
         <div style={{ display:"flex", gap:5, marginBottom:24 }}>{[1,2,3].map(n=><div key={n} style={{ flex:1, height:5, borderRadius:3, background:n<=step?T.accent:T.border }}/>)}</div>
         {step===1 && <>
-          <div style={{ textAlign:"center", marginBottom:22 }}><div style={{ fontSize:44 }}>👋</div><h2 style={{ margin:"6px 0", fontFamily:T.sans, fontSize:25, color:T.text }}>Set up MaintForge</h2><p style={{ margin:0, color:T.muted, fontSize:14 }}>Just the basics. You can be working in about a minute.</p></div>
+          <div style={{ textAlign:"center", marginBottom:22 }}><img src={data.logo || MAINTFORGE_DEFAULT_LOGO} alt="MaintForge" style={{width:88,height:88,objectFit:"contain",marginBottom:8}}/><h2 style={{ margin:"6px 0", fontFamily:T.sans, fontSize:25, color:T.text }}>Set up MaintForge</h2><p style={{ margin:0, color:T.muted, fontSize:14 }}>Just the basics. You can be working in about a minute.</p></div>
           <Field label="Company Name *"><input style={inp} value={data.companyName} onChange={F("companyName")} placeholder="e.g. ABC Equipment Services" autoFocus /></Field>
           <Field label="Department"><input style={inp} value={data.department} onChange={F("department")} placeholder="e.g. Fleet Maintenance" /></Field>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 14px" }}><Field label="Phone"><input style={inp} value={data.phone} onChange={F("phone")} /></Field><Field label="Email"><input style={inp} type="email" value={data.email} onChange={F("email")} /></Field></div>
           <Field label="Address"><input style={inp} value={data.address} onChange={F("address")} placeholder="Street address" /></Field>
           <Field label="City, State"><input style={inp} value={data.cityState} onChange={F("cityState")} placeholder="City, State" /></Field>
-          <div style={{ marginTop:6 }}><label style={{ fontSize:12, fontWeight:700, color:T.subtext }}>Company Logo <span style={{fontWeight:400}}>(optional)</span></label><div style={{display:"flex",gap:10,alignItems:"center",marginTop:7}}>{data.logo&&<img src={data.logo} alt="logo" style={{height:48,maxWidth:100,objectFit:"contain"}}/>}<label style={{padding:"8px 12px",border:`1px solid ${T.accent}`,borderRadius:7,color:T.accent,fontSize:12,fontWeight:700,cursor:"pointer"}}>Upload Logo<input type="file" accept="image/*" onChange={handleLogo} style={{display:"none"}}/></label></div></div>
+          <div style={{ marginTop:6 }}><label style={{ fontSize:12, fontWeight:700, color:T.subtext }}>Company Logo <span style={{fontWeight:400}}>(optional)</span></label><div style={{display:"flex",gap:10,alignItems:"center",marginTop:7}}>{<img src={data.logo || MAINTFORGE_DEFAULT_LOGO} alt="logo" style={{height:48,maxWidth:100,objectFit:"contain"}}/>}<label style={{padding:"8px 12px",border:`1px solid ${T.accent}`,borderRadius:7,color:T.accent,fontSize:12,fontWeight:700,cursor:"pointer"}}>Upload Logo<input type="file" accept="image/*" onChange={handleLogo} style={{display:"none"}}/></label></div></div>
           <div style={{marginTop:18,padding:13,border:`1px solid ${T.border}`,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"space-between",gap:14}}><div><div style={{fontSize:13,fontWeight:800}}>EIL Number / Inventory Number</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>Turn this on if your company uses an EIL or inventory identification number for equipment.</div></div><button type="button" onClick={()=>setData(d=>({...d,showEilInventoryNumber:!d.showEilInventoryNumber}))} style={{width:46,height:26,borderRadius:13,border:"none",background:data.showEilInventoryNumber?T.accent:"#d1d5db",cursor:"pointer",position:"relative",flex:"0 0 auto"}}><span style={{position:"absolute",top:3,left:data.showEilInventoryNumber?23:3,width:20,height:20,borderRadius:"50%",background:T.card}}/></button></div>
         </>}
         {step===2 && <>
@@ -10416,7 +10419,7 @@ export default function App() {
         }}>
           {/* Header */}
           <div style={{ textAlign:"center", marginBottom:22 }}>
-            <div style={{ fontSize:36, marginBottom:6 }}>🔧</div>
+            <img src={MAINTFORGE_DEFAULT_LOGO} alt="MaintForge" style={{width:92,height:92,objectFit:"contain",marginBottom:10,filter:"drop-shadow(0 8px 18px rgba(249,115,22,.22))"}} />
             <h1 style={{ margin:0, fontSize:24, fontWeight:700 }}>MaintForge</h1>
             <p style={{ opacity:.65, margin:"6px 0 0", fontSize:13 }}>
               {isSignup ? "Maintenance management made simple" : "Sign in to your company account"}
