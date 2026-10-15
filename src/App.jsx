@@ -3055,7 +3055,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     });
     const hoursEntered = !!String(formWithLatestUsage.usageHours||"").trim();
     const mileageEntered = !!String(formWithLatestUsage.usageMileage||"").trim();
-    const hasUsageReading = formWithLatestUsage.usageNA || (usageModeReq==="mileage" ? mileageEntered : usageModeReq==="both" ? (hoursEntered || mileageEntered) : hoursEntered);
+    // A work order may record hours, mileage, or both. Either reading satisfies usage validation.
+    const hasUsageReading = formWithLatestUsage.usageNA || hoursEntered || mileageEntered;
     if(!hasUsageReading) return alert("Enter the current usage reading or select N/A.");
     if(formWithLatestUsage.woType === "Inspection" && selectedEquipment && !selectedEquipment.trackUsage && !formWithLatestUsage.usageNA && !hoursEntered && !mileageEntered) {
       return alert("This equipment has no usage tracking selected. Enter the current usage for this inspection work order, or select N/A.");
@@ -5429,7 +5430,12 @@ function Parts({ state, dispatch }) {
     const st = getPartStockStatus(p);
     const msf = stockF==="All"||st===stockF;
     const ms = `${p.name||""} ${p.partNumber||""} ${p.vendor||""} ${p.modelFit||""} ${p.category||""} ${p.location||""}`.toLowerCase().includes(search.toLowerCase());
-    return mc&&msf&&ms;
+    const selectedEq = equipmentF === "All" ? null : (state.equipment||[]).find(e=>String(e.id)===String(equipmentF));
+    const fitText = String(p.modelFit||"").toLowerCase();
+    const eqTerms = selectedEq ? [selectedEq.id,selectedEq.name,selectedEq.nomenclature,selectedEq.make,selectedEq.model,`${selectedEq.make||""} ${selectedEq.model||""}`].filter(Boolean).map(v=>String(v).toLowerCase()) : [];
+    const linkedIds = Array.isArray(p.equipmentIds) ? p.equipmentIds.map(String) : [];
+    const meq = !selectedEq || String(p.equipmentId||"")===String(selectedEq.id) || linkedIds.includes(String(selectedEq.id)) || eqTerms.some(t=>t.length>1 && fitText.includes(t));
+    return mc&&msf&&ms&&meq;
   });
 
   const totalVal = parts.reduce((s,p)=>s+((+p.qty||0)*(+p.unitCost||0)),0);
@@ -5513,6 +5519,7 @@ function Parts({ state, dispatch }) {
           <input style={{ ...inp, maxWidth:240 }} placeholder="Search parts..." value={search} onChange={e=>setSearch(e.target.value)} />
           <select style={{ ...sel, maxWidth:180 }} value={catF} onChange={e=>setCatF(e.target.value)}>{cats.map(c=><option key={c}>{c}</option>)}</select>
           <select style={{ ...sel, maxWidth:170 }} value={stockF} onChange={e=>setStockF(e.target.value)}>{stockFilters.map(c=><option key={c}>{c}</option>)}</select>
+          <select style={{ ...sel, maxWidth:240 }} value={equipmentF} onChange={e=>setEquipmentF(e.target.value)}><option value="All">All Equipment</option>{(state.equipment||[]).map(e=><option key={e.id} value={e.id}>{e.name||e.nomenclature||e.id}{e.model?` — ${e.model}`:""}</option>)}</select>
         </div>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
           <Btn variant="secondary" onClick={printInventory}>Inventory Report</Btn>
@@ -5624,7 +5631,7 @@ function Parts({ state, dispatch }) {
             <Field label="Part Number" half><input style={inp} value={form.partNumber||""} onChange={F("partNumber")} /></Field>
             <Field label="Part Name"><input style={inp} value={form.name||""} onChange={F("name")} /></Field>
             <Field label="Category" half><input style={inp} list="part-category-options" value={form.category||""} onChange={F("category")} placeholder="Pick or type category" /></Field>
-            <Field label="Fits Model" half><input style={inp} list="part-model-options" value={form.modelFit||""} onChange={F("modelFit")} placeholder="e.g. John Deere 5065E" /></Field>
+            <Field label="Fits Equipment / Model" half><input style={inp} list="part-model-options" value={form.modelFit||""} onChange={F("modelFit")} placeholder="e.g. Toro Workman / HDX" /></Field>
             <datalist id="part-model-options">{modelOptions.map(m=><option key={m} value={m} />)}</datalist>
             <Field label="Vendor" half><input style={inp} value={form.vendor||""} onChange={F("vendor")} /></Field>
             <Field label="PO Number" half><input style={inp} value={form.poNumber||""} onChange={F("poNumber")} /></Field>
@@ -9142,6 +9149,7 @@ function SystemSettings({ state, dispatch, onClose }) {
     laborRateDefault:s.laborRateDefault || 45,
     includeLaborInSpending:s.includeLaborInSpending !== false,
     requireTech:s.requireTech || false,
+    showEilInventoryNumber:s.showEilInventoryNumber !== false,
   });
   const F=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
   const handleLogo=e=>{ const file=e.target.files?.[0]; if(!file)return; const r=new FileReader(); r.onload=ev=>setForm(f=>({...f,logo:ev.target.result})); r.readAsDataURL(file); };
@@ -9162,6 +9170,13 @@ function SystemSettings({ state, dispatch, onClose }) {
         <Field label="Company Logo"><div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>{form.logo&&<img src={form.logo} alt="Company logo" style={{height:56,maxWidth:140,objectFit:"contain"}}/>}<label style={{padding:"8px 12px",border:`1px solid ${T.accent}`,borderRadius:7,color:T.accent,fontSize:12,fontWeight:800,cursor:"pointer"}}>Upload Logo<input type="file" accept="image/*" onChange={handleLogo} style={{display:"none"}}/></label>{form.logo&&<button type="button" onClick={()=>setForm(f=>({...f,logo:""}))} style={{background:"none",border:0,color:T.red,fontWeight:800,cursor:"pointer"}}>Remove</button>}</div></Field>
       </div>
       <div style={{padding:16,border:`1px solid ${T.border}`,borderRadius:14,background:T.surface,marginBottom:16}}>
+        <div style={{fontSize:15,fontWeight:900,marginBottom:8}}>Equipment Fields</div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:16}}>
+          <div><div style={{fontSize:13,fontWeight:800}}>EIL Number / Inventory Number</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>Show this optional identification field on equipment and related records.</div></div>
+          <button type="button" onClick={()=>setForm(f=>({...f,showEilInventoryNumber:!f.showEilInventoryNumber}))} style={{width:46,height:26,borderRadius:13,border:"none",background:form.showEilInventoryNumber?T.accent:"#d1d5db",cursor:"pointer",position:"relative",flex:"0 0 auto"}}><span style={{position:"absolute",top:3,left:form.showEilInventoryNumber?23:3,width:20,height:20,borderRadius:"50%",background:T.card,transition:"left .2s"}}/></button>
+        </div>
+      </div>
+      <div style={{padding:16,border:`1px solid ${T.border}`,borderRadius:14,background:T.surface,marginBottom:16}}>
         <div style={{fontSize:15,fontWeight:900,marginBottom:12}}>Defaults</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}><Field label="Default Labor Rate"><input style={inp} {...decimalInputAttrs({placeholder:"45"})} value={form.laborRateDefault} onChange={e=>setForm(f=>({...f,laborRateDefault:sanitizeDecimalInput(e.target.value)}))}/></Field><Field label="Default Priority"><select style={sel} value={form.defaultPriority} onChange={F("defaultPriority")}><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select></Field></div>
         <Field label="Accent Color"><div style={{display:"flex",gap:10,alignItems:"center"}}><input type="color" value={form.accentColor} onChange={F("accentColor")} style={{width:44,height:36}}/><span style={{fontFamily:T.mono,fontSize:12}}>{form.accentColor}</span></div></Field>
@@ -9179,7 +9194,7 @@ function SetupWizard({ onComplete }) {
     companyName:"", location:"", phone:"", email:"", address:"", cityState:"", logo:"",
     firstName:"", lastName:"", position:"Mechanic", profilePhone:"", profileEmail:"", laborRate:45,
     categories:["Mowers","Vehicles","Tractors","Irrigation","Tools","Trailers"],
-    accentColor:"#0052cc", defaultPriority:"Medium", dateFormat:"MM/DD/YYYY", currency:"USD"
+    accentColor:"#0052cc", defaultPriority:"Medium", dateFormat:"MM/DD/YYYY", currency:"USD", showEilInventoryNumber:true
   });
   const F = k => e => setData(d=>({...d,[k]:e.target.value}));
   const handleLogo = e => { const file=e.target.files?.[0]; if(!file) return; const r=new FileReader(); r.onload=ev=>setData(d=>({...d,logo:ev.target.result})); r.readAsDataURL(file); };
@@ -9189,7 +9204,7 @@ function SetupWizard({ onComplete }) {
     if(step<3) return setStep(v=>v+1);
     const location=(data.location||data.cityState||"Main Location").trim();
     onComplete({
-      settings:{ companyName:data.companyName.trim(), department:"Maintenance", siteName:location, location, phone:data.phone, email:data.email, address:data.address, cityState:data.cityState, logo:data.logo, logoMode:"company", locations:[{id:"MAIN-LOCATION",name:location,address:data.address,cityState:data.cityState,phone:data.phone,email:data.email,logo:data.logo,active:true}], accentColor:data.accentColor, defaultPriority:data.defaultPriority, laborRateDefault:+data.laborRate||45, dateFormat:data.dateFormat, currency:data.currency, includeLaborInSpending:true, requireTech:false },
+      settings:{ companyName:data.companyName.trim(), department:"Maintenance", siteName:location, location, phone:data.phone, email:data.email, address:data.address, cityState:data.cityState, logo:data.logo, logoMode:"company", locations:[{id:"MAIN-LOCATION",name:location,address:data.address,cityState:data.cityState,phone:data.phone,email:data.email,logo:data.logo,active:true}], accentColor:data.accentColor, defaultPriority:data.defaultPriority, laborRateDefault:+data.laborRate||45, dateFormat:data.dateFormat, currency:data.currency, includeLaborInSpending:true, requireTech:false, showEilInventoryNumber:data.showEilInventoryNumber },
       profile:{ firstName:data.firstName.trim(), lastName:data.lastName.trim(), position:data.position||"Mechanic", phone:data.profilePhone, email:data.profileEmail },
       technicians:[{ id:"TECH-001", name:`${data.firstName} ${data.lastName}`.trim(), position:data.position||"Mechanic", laborRate:+data.laborRate||45 }],
       categories:data.categories
@@ -9207,6 +9222,7 @@ function SetupWizard({ onComplete }) {
           <Field label="Address"><input style={inp} value={data.address} onChange={F("address")} placeholder="Street address" /></Field>
           <Field label="City, State"><input style={inp} value={data.cityState} onChange={F("cityState")} placeholder="City, State" /></Field>
           <div style={{ marginTop:6 }}><label style={{ fontSize:12, fontWeight:700, color:T.subtext }}>Company Logo <span style={{fontWeight:400}}>(optional)</span></label><div style={{display:"flex",gap:10,alignItems:"center",marginTop:7}}>{data.logo&&<img src={data.logo} alt="logo" style={{height:48,maxWidth:100,objectFit:"contain"}}/>}<label style={{padding:"8px 12px",border:`1px solid ${T.accent}`,borderRadius:7,color:T.accent,fontSize:12,fontWeight:700,cursor:"pointer"}}>Upload Logo<input type="file" accept="image/*" onChange={handleLogo} style={{display:"none"}}/></label></div></div>
+          <div style={{marginTop:18,padding:13,border:`1px solid ${T.border}`,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"space-between",gap:14}}><div><div style={{fontSize:13,fontWeight:800}}>EIL Number / Inventory Number</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>Turn this on if your company uses an EIL or inventory identification number for equipment.</div></div><button type="button" onClick={()=>setData(d=>({...d,showEilInventoryNumber:!d.showEilInventoryNumber}))} style={{width:46,height:26,borderRadius:13,border:"none",background:data.showEilInventoryNumber?T.accent:"#d1d5db",cursor:"pointer",position:"relative",flex:"0 0 auto"}}><span style={{position:"absolute",top:3,left:data.showEilInventoryNumber?23:3,width:20,height:20,borderRadius:"50%",background:T.card}}/></button></div>
         </>}
         {step===2 && <>
           <div style={{marginBottom:20}}><h2 style={{margin:"0 0 6px",fontSize:22}}>Your profile</h2><p style={{margin:0,color:T.muted,fontSize:13}}>This creates your mechanic profile for work orders and labor entries.</p></div>
