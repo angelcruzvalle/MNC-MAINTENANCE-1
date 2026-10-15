@@ -2331,16 +2331,7 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
             ✏️ {editMenu?"Done organizing menu":"Organize menu"}
           </button>
           {editMenu && <button onClick={resetMenuOrder} style={{ width:"100%", marginBottom:10, border:`1px solid ${T.border}`, background:T.card, color:T.muted, borderRadius:8, padding:"7px 10px", fontFamily:T.sans, fontSize:12, fontWeight:600, cursor:"pointer" }}>Reset default order</button>}
-          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <div style={{ width:32, height:32, borderRadius:"50%", background:T.accent, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:T.mono, fontSize:12, color:"#fff", fontWeight:700, overflow:"hidden" }}>
-              {profile?.photo ? <img src={profile.photo} alt="me" style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : (profile?.firstName?`${profile.firstName[0]}${profile.lastName?.[0]||""}`.toUpperCase():"JM")}
-            </div>
-            <div>
-              <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:600, color:T.text }}>{profile?.firstName?`${profile.firstName} ${profile.lastName||""}`.trim():"J. Martinez"}</div>
-              <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted }}>{profile?.position||"Mechanic"}</div>
-            </div>
           </div>
-        </div>
       </div>
     </>
   );
@@ -2364,7 +2355,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     ...pmSchedules.filter(x => x.status === "Due Soon" || (x.nextDueDate && x.nextDueDate >= todayStr && x.nextDueDate <= soonStr)),
     ...inspectionSchedules.filter(x => x.status === "Due Soon" || (x.nextDueDate && x.nextDueDate >= todayStr && x.nextDueDate <= soonStr)),
   ];
-  const lowStock = parts.filter(p => p.lowStockAlert !== false && (+p.qty || 0) <= (+p.minQty || 0));
+  const lowStock = parts.filter(p => getPartStockStatus(p) === "Low Stock");
   const recentActivity = [...(state.notifications || [])].sort((a,b)=>String(b.createdAt||b.time||"").localeCompare(String(a.createdAt||a.time||""))).slice(0,5);
   const fuelContainers = state.fuelContainers || [];
   const [spendPeriod, setSpendPeriod] = useState("month");
@@ -7082,50 +7073,6 @@ function Spending({ state }) {
 
 /* USER PROFILE */
 
-function UserProfile({ state, dispatch, onClose }) {
-  const p = state.profile || {};
-  const [form, setForm] = useState({ firstName:p.firstName||"", lastName:p.lastName||"", position:p.position||"", workLocation:p.workLocation||"", photo:p.photo||"" });
-  const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
-
-  const handlePhoto = e => {
-    const file = e.target.files[0];
-    if(!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => setForm(f=>({...f, photo:ev.target.result}));
-    reader.readAsDataURL(file);
-  };
-
-  const save = () => { dispatch({ type:"UPDATE_PROFILE", payload:form }); onClose(); };
-
-  return (
-    <Modal title="My Profile" onClose={onClose}>
-      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", marginBottom:20 }}>
-        <div style={{ width:80, height:80, borderRadius:"50%", background:T.accentLt, border:`2px solid ${T.accent}`, overflow:"hidden", display:"flex", alignItems:"center", justifyContent:"center", marginBottom:10 }}>
-          {form.photo ? <img src={form.photo} alt="profile" style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : <span style={{ fontFamily:T.mono, fontSize:28, color:T.accent, fontWeight:700 }}>{form.firstName?form.firstName[0]:"?"}</span>}
-        </div>
-        <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.accent, cursor:"pointer" }}>
-          📷 Upload Photo
-          <input type="file" accept="image/*" onChange={handlePhoto} style={{ display:"none" }} />
-        </label>
-      </div>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
-        <Field label="First Name" half><input style={inp} value={form.firstName} onChange={F("firstName")} placeholder="Juan" /></Field>
-        <Field label="Last Name"  half><input style={inp} value={form.lastName}  onChange={F("lastName")}  placeholder="Martinez" /></Field>
-        <Field label="Position"><input style={inp} value={form.position} onChange={F("position")} placeholder="Mechanic, Supervisor..." /></Field>
-        <Field label="Work Location"><input style={inp} value={form.workLocation} onChange={F("workLocation")} placeholder="Main Shop, Maintenance Bay, Warehouse..." /></Field>
-        <Field label="Labor Rate ($/hr)" half><input style={inp} {...decimalInputAttrs({ placeholder:"45.00" })} value={form.laborRate||""} onChange={e=>setForm(f=>({...f,laborRate:sanitizeDecimalInput(e.target.value)}))} /></Field>
-      </div>
-      <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:8 }}>
-        <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
-        <Btn onClick={save}>Save Profile</Btn>
-      </div>
-    </Modal>
-  );
-}
-
-
-/* WORK ORDER SETTINGS */
-
 function WOSettings({ state, dispatch, onClose }) {
   const s = state.woSettings || {};
   const [form, setForm] = useState({
@@ -8841,7 +8788,6 @@ function SystemSettings({ state, dispatch, onClose }) {
       <div style={{padding:16,border:`1px solid ${T.border}`,borderRadius:14,background:T.surface,marginBottom:16}}>
         <div style={{fontSize:15,fontWeight:900,marginBottom:12}}>Defaults</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}><Field label="Default Labor Rate"><input style={inp} {...decimalInputAttrs({placeholder:"45"})} value={form.laborRateDefault} onChange={e=>setForm(f=>({...f,laborRateDefault:sanitizeDecimalInput(e.target.value)}))}/></Field><Field label="Default Priority"><select style={sel} value={form.defaultPriority} onChange={F("defaultPriority")}><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select></Field></div>
-        <Field label="Accent Color"><div style={{display:"flex",gap:10,alignItems:"center"}}><input type="color" value={form.accentColor} onChange={F("accentColor")} style={{width:44,height:36}}/><span style={{fontFamily:T.mono,fontSize:12}}>{form.accentColor}</span></div></Field>
       </div>
       <div style={{display:"flex",justifyContent:"flex-end",gap:8}}><Btn variant="secondary" onClick={onClose}>Cancel</Btn><Btn onClick={save}>Save Settings</Btn></div>
     </div>
@@ -8854,28 +8800,26 @@ function SetupWizard({ onComplete }) {
   const [step, setStep] = useState(1);
   const [data, setData] = useState({
     companyName:"", department:"", phone:"", email:"", address:"", cityState:"", logo:"",
-    firstName:"", lastName:"", position:"Mechanic", profilePhone:"", profileEmail:"", laborRate:45,
     categories:["Mowers","Vehicles","Tractors","Irrigation","Tools","Trailers"],
-    accentColor:"#0052cc", defaultPriority:"Medium", dateFormat:"MM/DD/YYYY", currency:"USD", showEilInventoryNumber:true
+defaultPriority:"Medium", dateFormat:"MM/DD/YYYY", currency:"USD", showEilInventoryNumber:true
   });
   const F = k => e => setData(d=>({...d,[k]:e.target.value}));
   const handleLogo = e => { const file=e.target.files?.[0]; if(!file) return; const r=new FileReader(); r.onload=ev=>setData(d=>({...d,logo:ev.target.result})); r.readAsDataURL(file); };
   const next = () => {
     if(step===1 && !data.companyName.trim()) return alert("Enter your company name to continue.");
-    if(step===2 && !data.firstName.trim()) return alert("Enter your first name to continue.");
-    if(step<3) return setStep(v=>v+1);
+    if(step===1) return setStep(2);
     const location="Main Location";
     onComplete({
-      settings:{ companyName:data.companyName.trim(), department:data.department.trim(), siteName:location, location, phone:data.phone, email:data.email, address:data.address, cityState:data.cityState, logo:data.logo, logoMode:"company", locations:[{id:"MAIN-LOCATION",name:location,address:data.address,cityState:data.cityState,phone:data.phone,email:data.email,logo:data.logo,active:true}], accentColor:data.accentColor, defaultPriority:data.defaultPriority, laborRateDefault:+data.laborRate||45, dateFormat:data.dateFormat, currency:data.currency, includeLaborInSpending:true, requireTech:false, showEilInventoryNumber:data.showEilInventoryNumber },
-      profile:{ firstName:data.firstName.trim(), lastName:data.lastName.trim(), position:data.position||"Mechanic", phone:data.profilePhone, email:data.profileEmail },
-      technicians:[{ id:"TECH-001", name:`${data.firstName} ${data.lastName}`.trim(), position:data.position||"Mechanic", laborRate:+data.laborRate||45 }],
+      settings:{ companyName:data.companyName.trim(), department:data.department.trim(), siteName:location, location, phone:data.phone, email:data.email, address:data.address, cityState:data.cityState, logo:data.logo, logoMode:"company", locations:[{id:"MAIN-LOCATION",name:location,address:data.address,cityState:data.cityState,phone:data.phone,email:data.email,logo:data.logo,active:true}], defaultPriority:data.defaultPriority, laborRateDefault:45, dateFormat:data.dateFormat, currency:data.currency, includeLaborInSpending:true, requireTech:false, showEilInventoryNumber:data.showEilInventoryNumber },
+      profile:null,
+      technicians:[],
       categories:data.categories
     });
   };
   return (
     <div style={{ position:"fixed", inset:0, background:"linear-gradient(135deg,#f8fafc 0%,#e0f2fe 100%)", zIndex:9999, overflow:"auto", padding:"24px 16px" }}>
       <div style={{ maxWidth:640, margin:"36px auto", background:T.card, borderRadius:16, boxShadow:"0 10px 40px rgba(0,0,0,.12)", padding:"30px 34px" }}>
-        <div style={{ display:"flex", gap:5, marginBottom:24 }}>{[1,2,3].map(n=><div key={n} style={{ flex:1, height:5, borderRadius:3, background:n<=step?T.accent:T.border }}/>)}</div>
+        <div style={{ display:"flex", gap:5, marginBottom:24 }}>{[1,2].map(n=><div key={n} style={{ flex:1, height:5, borderRadius:3, background:n<=step?T.accent:T.border }}/>)}</div>
         {step===1 && <>
           <div style={{ textAlign:"center", marginBottom:22 }}><img src={data.logo || MAINTFORGE_DEFAULT_LOGO} alt="MaintForge" style={{width:88,height:88,objectFit:"contain",marginBottom:8}}/><h2 style={{ margin:"6px 0", fontFamily:T.sans, fontSize:25, color:T.text }}>Set up MaintForge</h2><p style={{ margin:0, color:T.muted, fontSize:14 }}>Just the basics. You can be working in about a minute.</p></div>
           <Field label="Company Name *"><input style={inp} value={data.companyName} onChange={F("companyName")} placeholder="e.g. ABC Equipment Services" autoFocus /></Field>
@@ -8887,15 +8831,10 @@ function SetupWizard({ onComplete }) {
           <div style={{marginTop:18,padding:13,border:`1px solid ${T.border}`,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"space-between",gap:14}}><div><div style={{fontSize:13,fontWeight:800}}>EIL Number / Inventory Number</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>Turn this on if your company uses an EIL or inventory identification number for equipment.</div></div><button type="button" onClick={()=>setData(d=>({...d,showEilInventoryNumber:!d.showEilInventoryNumber}))} style={{width:46,height:26,borderRadius:13,border:"none",background:data.showEilInventoryNumber?T.accent:"#d1d5db",cursor:"pointer",position:"relative",flex:"0 0 auto"}}><span style={{position:"absolute",top:3,left:data.showEilInventoryNumber?23:3,width:20,height:20,borderRadius:"50%",background:T.card}}/></button></div>
         </>}
         {step===2 && <>
-          <div style={{marginBottom:20}}><h2 style={{margin:"0 0 6px",fontSize:22}}>Your profile</h2><p style={{margin:0,color:T.muted,fontSize:13}}>This creates your mechanic profile for work orders and labor entries.</p></div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}><Field label="First Name *"><input style={inp} value={data.firstName} onChange={F("firstName")} autoFocus /></Field><Field label="Last Name"><input style={inp} value={data.lastName} onChange={F("lastName")} /></Field><Field label="Job Title"><input style={inp} value={data.position} onChange={F("position")} placeholder="Mechanic" /></Field><Field label="Labor Rate ($/hr)"><input style={inp} {...decimalInputAttrs({placeholder:"45"})} value={data.laborRate} onChange={e=>setData(d=>({...d,laborRate:sanitizeDecimalInput(e.target.value)}))}/></Field></div>
-          <div style={{padding:12,border:`1px solid ${T.border}`,borderRadius:10,background:T.grayLt,fontSize:12,color:T.subtext}}>That’s it. Your company is ready. No complicated account setup required.</div>
-        </>}
-        {step===3 && <>
           <div style={{textAlign:"center",padding:"8px 0 16px"}}><div style={{fontSize:50}}>✓</div><h2 style={{margin:"4px 0 8px",fontSize:24}}>Ready to go</h2><p style={{margin:"0 auto",maxWidth:460,color:T.muted,lineHeight:1.5}}>MaintForge will start with common equipment categories. Add your first piece of equipment, then create work orders, PM schedules, inspections, inventory, and fuel records as you need them.</p></div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,padding:14,border:`1px solid ${T.border}`,borderRadius:12,background:T.grayLt,fontSize:12}}><div><span style={{color:T.muted}}>Company</span><br/><b>{data.companyName}</b></div><div><span style={{color:T.muted}}>Department</span><br/><b>{data.department||"—"}</b></div><div><span style={{color:T.muted}}>User</span><br/><b>{data.firstName} {data.lastName}</b></div><div><span style={{color:T.muted}}>Title</span><br/><b>{data.position||"Mechanic"}</b></div></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,padding:14,border:`1px solid ${T.border}`,borderRadius:12,background:T.grayLt,fontSize:12}}><div><span style={{color:T.muted}}>Company</span><br/><b>{data.companyName}</b></div><div><span style={{color:T.muted}}>Department</span><br/><b>{data.department||"—"}</b></div></div>
         </>}
-        <div style={{display:"flex",justifyContent:"space-between",marginTop:24,paddingTop:16,borderTop:`1px solid ${T.border}`}}>{step>1?<Btn variant="secondary" onClick={()=>setStep(v=>v-1)}>← Back</Btn>:<div/>}<Btn onClick={next}>{step===3?"Start Using MaintForge →":"Continue →"}</Btn></div>
+        <div style={{display:"flex",justifyContent:"space-between",marginTop:24,paddingTop:16,borderTop:`1px solid ${T.border}`}}>{step>1?<Btn variant="secondary" onClick={()=>setStep(v=>v-1)}>← Back</Btn>:<div/>}<Btn onClick={next}>{step===2?"Start Using MaintForge →":"Continue →"}</Btn></div>
       </div>
     </div>
   );
@@ -10265,7 +10204,6 @@ export default function App() {
 
   const [tab, setTab]       = useState(() => readMFLocal(MF_LAST_TAB_KEY, "dashboard") || "dashboard");
   const [menuOpen, setMenuOpen]           = useState(false);
-  const [showProfile, setShowProfile]     = useState(false);
   const [showWOSettings, setShowWOSettings] = useState(false);
   const [showSettings, setShowSettings]   = useState(false);
   const [showHelp, setShowHelp]           = useState(false);
@@ -11089,13 +11027,6 @@ export default function App() {
           <button className="mf-logout-button" onClick={handleLogout} style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:T.surface, color:T.text, cursor:"pointer", fontSize:13 }}>
             Logout
           </button>
-          {/* User profile button */}
-          <button className="mf-profile-button" onClick={()=>setShowProfile(true)} style={{ display:"flex", alignItems:"center", gap:8, padding:"5px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:T.surface, cursor:"pointer" }}>
-            <div style={{ width:24, height:24, borderRadius:"50%", background:T.accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, color:"#fff", fontWeight:700, fontFamily:T.mono, overflow:"hidden" }}>
-              {profile.photo ? <img src={profile.photo} alt="me" style={{ width:"100%", height:"100%", objectFit:"cover" }} /> : initials}
-            </div>
-            <span style={{ fontFamily:T.sans, fontSize:13, fontWeight:500, color:T.text }}>{displayName}</span>
-          </button>
         </div>
       </header>
 
@@ -11115,7 +11046,6 @@ export default function App() {
         <button onClick={()=>setMenuOpen(true)}><span>☰</span><small>More</small></button>
       </nav>
 
-      {showProfile    && <UserProfile    state={state} dispatch={dispatch} onClose={()=>setShowProfile(false)} />}
       {showWOSettings && <WOSettings     state={state} dispatch={dispatch} onClose={()=>setShowWOSettings(false)} />}
       {showSettings   && <SystemSettings state={state} dispatch={dispatch} currentUser={activeUser} onClose={()=>setShowSettings(false)} />}
       {showHelp       && <HelpCenter state={state} onClose={()=>setShowHelp(false)} />}
