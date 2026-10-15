@@ -1347,9 +1347,6 @@ function reducer(state, { type, payload }) {
       }
       return { ...state, workOrders:(state.workOrders||[]).filter(w => String(w.id)!==String(payload)), inspectionSchedules };
     }
-    case "ADD_WO_REQUEST": return { ...state, workOrderRequests:[payload, ...(state.workOrderRequests||[])], notifications:[makeNotification({id:`N${Date.now()}`,type:"wo",msg:`New work order request submitted for ${payload.equipment || "equipment"}`,read:false}), ...(state.notifications||[])] };
-    case "UPDATE_WO_REQUEST": return { ...state, workOrderRequests:(state.workOrderRequests||[]).map(r=>r.id===payload.id?{...r,...payload}:r) };
-    case "DELETE_WO_REQUEST": return { ...state, workOrderRequests:(state.workOrderRequests||[]).filter(r=>r.id!==payload) };
     case "ADD_EQ":        return { ...state, equipment: [payload,...state.equipment] };
     case "UPDATE_EQ": {
       const originalId = payload._originalId || payload.id;
@@ -2170,7 +2167,6 @@ function Header({ notifications, dispatch, currentPage, onMenuToggle }) {
 const NAV = [
   { id:"dashboard",  icon:"▦",  label:"Dashboard" },
   { id:"workorders", icon:"📋", label:"Work Orders" },
-  { id:"wo_requests", icon:"📲", label:"Work Order Requests" },
   { id:"inspections", icon:"🔍", label:"Inspections" },
   { id:"equipment",  icon:"🚜", label:"Equipment" },
   { id:"inventory",  icon:"📋", label:"Equipment Inventory" },
@@ -2503,7 +2499,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     const eq = eqs.find(e=>String(e.id)===String(id));
     return eq ? `${eq.id} — ${eq.name || eq.nomenclature || "Equipment"}` : (id || "No equipment");
   };
-  const dashboardTabIds = new Set(["dashboard","workorders","wo_requests","inspections","equipment","parts","pm","usage","fuel","spending","inventory","reports_deadline","reports_parts_inv","reports_pm","reports_usage","reports_fuel","reports_spending","reports_combined"]);
+  const dashboardTabIds = new Set(["dashboard","workorders","inspections","equipment","parts","pm","usage","fuel","spending","inventory","reports_deadline","reports_parts_inv","reports_pm","reports_usage","reports_fuel","reports_spending","reports_combined"]);
   const click = (tab) => {
     if(!setTab) return;
     setTab(dashboardTabIds.has(tab) ? tab : "dashboard");
@@ -2515,7 +2511,6 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   const quickLinksForRole = () => {
     const adminLinks = [
       { tab:"workorders", label:"Work Orders", sub:`${activeWOs.length} active`, icon:"📋" },
-      { tab:"wo_requests", label:"Requests", sub:`${openRequests.length} waiting`, icon:"📲" },
       { tab:"equipment", label:"Equipment", sub:`${deadlineEqs.length} deadline`, icon:"🚜" },
       { tab:"inventory", label:"Equipment Inventory", sub:`${eqs.length} assets`, icon:"📋" },
       { tab:"parts", label:"Parts", sub:`${lowStock.length} low stock`, icon:"📦" },
@@ -2653,7 +2648,6 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     deadline: { title:"Deadline Equipment", size:"small", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <SmallCard title="Deadline" value={deadlineEqs.length} sub="Out of service equipment" color={deadlineEqs.length?T.red:T.green} tab="equipment" /> },
     deficiencies: { title:"Deficiencies", size:"small", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <SmallCard title="Deficiencies" value={deficientEqs.length} sub="Operational with deficiencies" color={deficientEqs.length?T.amber:T.green} tab="equipment" /> },
     schedule_due_count: { title:"PM / Inspections", size:"small", tab:"pm", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <SmallCard title="PM / Inspections" value={duePM.length + dueInspections.length} sub="Due now or within 14 days" color={(duePM.length + dueInspections.length)?T.amber:T.green} tab="pm" /> },
-    requests: { title:"Operator Requests", size:"small", tab:"wo_requests", roles:["organization_admin","facility_admin","supervisor"], render:()=> <SmallCard title="Requests" value={openRequests.length} sub="Operator QR requests waiting review" color={openRequests.length?T.amber:T.green} tab="wo_requests" /> },
     low_stock: { title:"Low Stock", size:"small", tab:"parts", roles:["organization_admin","facility_admin","supervisor"], render:()=> <SmallCard title="Low Stock" value={lowStock.length} sub="Parts at or below minimum" color={lowStock.length?T.red:T.green} tab="parts" /> },
     completed_month: { title:"Completed This Month", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <SmallCard title="Completed This Month" value={completedThisMonth.length} sub="Closed work orders" color={T.green} tab="workorders" /> },
     month_spend: { title:"Month Spend", size:"small", tab:"spending", roles:["organization_admin","facility_admin"], render:()=> <SmallCard title="Month Spend" value={moneyFmt(monthSpend)} sub={`${spendingTotalLabel(state.settings)} completed WO costs`} color={T.accent} tab="spending" /> },
@@ -2668,7 +2662,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     priority_queue: { title:"Priority Work Queue", size:"wide", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <Panel title="Priority Work Queue" action={<Btn small onClick={()=>click("workorders")}>View All</Btn>}>{priorityList.length ? priorityList.map(w=><ActionRow key={w.id} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "Work Order"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • Due ${w.due || "No due date"} • ${w.status || "Open"}`} badge={w.priority || "Normal"} color={w.priority==="High"?T.red:w.priority==="Medium"?T.amber:T.accent} tab="workorders" />) : <div style={{ padding:14, color:T.muted }}>No active work orders. Great time to review PM and inventory.</div>}</Panel> },
     equipment_watch: { title:"Equipment Watch", size:"wide", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title="Equipment Watch" action={<Btn small variant="secondary" onClick={()=>click("equipment")}>Equipment</Btn>}>{equipmentWatch.length ? equipmentWatch.map(e=><ActionRow key={e.id} title={`${e.id} — ${e.name || e.nomenclature || "Equipment"}`} sub={`${e.locationName || e.location || "No facility"} • ${e.category || e.type || "No category"}`} badge={e.status || "Status"} color={equipmentStatusTipColor(e.status)} tab="equipment" />) : <div style={{ padding:14, color:T.muted }}>No deadline or deficient equipment in this view.</div>}</Panel> },
     schedule_due: { title:"Scheduled Maintenance", size:"wide", tab:"pm", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title="Scheduled Maintenance Coming Due" action={<Btn small variant="secondary" onClick={()=>click("pm")}>PM</Btn>}>{scheduleList.length ? scheduleList.map((s,i)=><ActionRow key={`${s.type}-${s.equipmentId}-${i}`} title={`${s.type}: ${s.name}`} sub={`${eqName(s.equipmentId)} • Due ${s.due || "No date"}`} badge={s.type} color={s.color} tab={s.type==="Inspection"?"inspections":"pm"} />) : <div style={{ padding:14, color:T.muted }}>No PM or inspection schedules due in the next 14 days.</div>}</Panel> },
-    inventory_requests: { title:"Inventory & Requests", size:"wide", tab:"parts", roles:["organization_admin","facility_admin","supervisor"], render:()=> <Panel title="Inventory & Requests" action={<Btn small variant="secondary" onClick={()=>click("parts")}>Parts</Btn>}>{openRequests.slice(0,3).map(r=><ActionRow key={r.id} title={r.equipment || r.equipmentId || "Request"} sub={r.description || r.faultDescription || "Operator request waiting review"} badge="Request" color={T.amber} tab="wo_requests" />)}{lowStock.slice(0,4).map(p=><ActionRow key={p.id} title={p.name || p.partNumber || "Part"} sub={`${p.partNumber || "No part #"} • Qty ${p.qty || 0} / Min ${p.minQty || 0}`} badge="Low" color={T.red} tab="parts" />)}{!openRequests.length && !lowStock.length && <div style={{ padding:14, color:T.muted }}>No open requests or low-stock parts.</div>}</Panel> },
+    inventory_requests: { title:"Low Stock", size:"wide", tab:"parts", roles:["organization_admin","facility_admin","supervisor"], render:()=> <Panel title="Low Stock Parts" action={<Btn small variant="secondary" onClick={()=>click("parts")}>Parts</Btn>}>{lowStock.slice(0,6).map(p=><ActionRow key={p.id} title={p.name || p.partNumber || "Part"} sub={`${p.partNumber || "No part #"} • Qty ${p.qty || 0} / Min ${p.minQty || 0}`} badge="Low" color={T.red} tab="parts" />)}{!lowStock.length && <div style={{ padding:14, color:T.muted }}>No low-stock parts right now.</div>}</Panel> },
     recent_activity: { title:"Recent Activity", size:"wide", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title="Recent Activity" action={<Btn small variant="secondary" onClick={()=>click("workorders")}>Open</Btn>}>{recentActivity.length ? recentActivity.map(n=><ActionRow key={n.id} title={n.msg || "Activity"} sub={n.time || n.createdAt || "Recent"} badge={n.type || "Log"} color={n.type==="wo"?T.accent:n.type==="pm"?T.amber:T.green} tab={n.type==="pm"?"pm":n.type==="inspection"?"inspections":"workorders"} />) : <div style={{ padding:14, color:T.muted }}>No recent activity yet.</div>}</Panel> },
   };
 
@@ -5415,6 +5409,7 @@ function Parts({ state, dispatch }) {
   const [search, setSearch]     = useState("");
   const [catF, setCatF]         = useState("All");
   const [stockF, setStockF]     = useState("All");
+  const [equipmentF, setEquipmentF] = useState("All");
   const [expanded, setExpanded] = useState(null);
   const [invUpdate, setInvUpdate] = useState(null);
   const [poForm, setPoForm]     = useState({ poNumber:"", vendor:"", date:today(), parts:[{name:"",partNumber:"",category:"",qty:"",unit:"ea",unitCost:"",location:"",modelFit:""}] });
@@ -9515,7 +9510,6 @@ function ReportFuel({ state }) {
 const PAGE_TITLES = {
   dashboard:        "Maintenance Dashboard",
   workorders:       "Work Orders",
-  wo_requests:      "Work Order Requests",
   equipment:        "Equipment",
   parts:            "Parts Inventory",
   pm:               "Preventive Maintenance",
@@ -10112,7 +10106,7 @@ export default function App() {
   const [inviteCodeInput, setInviteCodeInput] = useState("");
   const [inviteCodeBusy, setInviteCodeBusy] = useState(false);
   const [inviteCodeError, setInviteCodeError] = useState("");
-  const publicWORequestMode = isPublicWORequestPage();
+  const publicWORequestMode = false; // Work Order Requests removed from MaintForge
   const [publicPortal, setPublicPortal] = useState(null);
   const [publicPortalLoading, setPublicPortalLoading] = useState(false);
 
@@ -10621,7 +10615,6 @@ export default function App() {
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
-      if(params.get("woRequest")) setTab("wo_requests");
     } catch(e) {}
   }, []);
 
@@ -10677,7 +10670,6 @@ export default function App() {
   const pages = {
     dashboard:        <Dashboard        state={visibleState} dispatch={dispatch} setTab={setTab} onSettings={()=>setShowSettings(true)} />,
     workorders:       <WorkOrders       state={visibleState} dispatch={dispatch} woSettings={state.woSettings} onWOSettings={()=>setShowWOSettings(true)} />,
-    wo_requests:      <WorkOrderRequests state={visibleState} dispatch={dispatch} session={activeSession} />,
     inspections:      <Inspections      state={visibleState} dispatch={dispatch} />,
     equipment:        <Equipment        state={visibleState} dispatch={dispatch} />,
     parts:            <Parts            state={visibleState} dispatch={dispatch} />,
