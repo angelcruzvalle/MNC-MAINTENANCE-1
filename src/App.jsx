@@ -343,8 +343,8 @@ const INIT = {
 };
 
 const ROLE_OPTIONS = [
-  { value:"organization_admin", label:"Organization Administrator", summary:"Full control of the organization, settings, users, facilities, work orders, reports, inventory, PM, and inspections." },
-  { value:"facility_admin", label:"Facility Administrator", summary:"Manage assigned facilities, equipment, work orders, PM, inspections, inventory, reports, and facility settings." },
+  { value:"organization_admin", label:"Account Owner", summary:"Full control of the organization, settings, users, facilities, work orders, reports, inventory, PM, and inspections." },
+  { value:"facility_admin", label:"Account Owner", summary:"Manage assigned facilities, equipment, work orders, PM, inspections, inventory, reports, and facility settings." },
   { value:"supervisor", label:"Supervisor / Lead Mechanic", summary:"Create, assign, edit, and close work orders. Manage PM/inspection execution for assigned facilities." },
   { value:"mechanic", label:"Mechanic / Technician", summary:"Work assigned jobs, add labor/parts/notes/photos, and complete service or inspection tasks." },
   { value:"viewer", label:"Viewer / Read Only", summary:"View records and reports only. No edits, deletes, settings, or user management." },
@@ -382,10 +382,10 @@ function isOrganizationAdminRole(role="") {
   return normalizeRole(role) === "organization_admin";
 }
 
-function invitedUserFacilityIdsFrom(value={}) {
+function invitedUserLocationIdsFrom(value={}) {
   return Array.from(new Set([
     ...(Array.isArray(value?.facilityIds) ? value.facilityIds : []),
-    ...(Array.isArray(value?.userFacilityIds) ? value.userFacilityIds : []),
+    ...(Array.isArray(value?.userLocationIds) ? value.userLocationIds : []),
     value?.facilityId,
     value?.locationId,
     value?.activeLocationId && value.activeLocationId !== "__all" ? value.activeLocationId : "",
@@ -541,17 +541,17 @@ function ensureCurrentOrganizationAdmin(state={}, currentUser=null) {
   const users = normalizeOrgUsers(base, currentUser);
   const me = users.find(u => normalizeEmail(u.email) === currentEmail);
   const role = normalizeRole(me?.role || (currentUserIsOrganizationOwner(base, currentUser) ? "organization_admin" : "viewer"));
-  const facilityIds = invitedUserFacilityIdsFrom(me);
-  const firstFacility = facilityIds[0] || "";
+  const facilityIds = invitedUserLocationIdsFrom(me);
+  const firstLocation = facilityIds[0] || "";
   const baseActive = String(base.activeLocationId || "__all");
   const activeLocationId = isOrganizationAdminRole(role)
     ? (baseActive || "__all")
-    : ((baseActive && baseActive !== "__all" && facilityIds.includes(baseActive)) ? baseActive : (firstFacility || "__all"));
+    : ((baseActive && baseActive !== "__all" && facilityIds.includes(baseActive)) ? baseActive : (firstLocation || "__all"));
   return {
     ...base,
     currentUser:{ id:currentUser?.id || "", email:currentEmail },
     userRole:role,
-    userFacilityIds:facilityIds,
+    userLocationIds:facilityIds,
     activeLocationId,
     organizationUsers:users,
   };
@@ -561,7 +561,7 @@ function applyInviteToOrganizationState(ownerState={}, invite={}, currentUser=nu
   const email = normalizeEmail(currentUser?.email || invite?.email);
   if(!email || !invite?.token) return ownerState;
   const role = normalizeRole(invite.role || "viewer");
-  const facilityIds = invitedUserFacilityIdsFrom(invite);
+  const facilityIds = invitedUserLocationIdsFrom(invite);
   const invitedUser = {
     id:currentUser?.id || `USER-${Date.now()}`,
     userId:currentUser?.id || "",
@@ -632,61 +632,34 @@ function normalizeLoadedUserState(data={}, ownerUserId="") {
   // Never discard real saved data just because the owner id changed or an invite/test account touched it.
   // Keep the records and attach them to the currently signed-in account during save.
   const merged = { ...blankUserState(ownerUserId), ...data, ownerUserId: ownerUserId || data.ownerUserId || "" };
-  return migrateLegacyDataToMorovis(autoAssignLegacyDataToDefaultFacility(merged));
+  return migrateLegacyDataToSingleLocation(autoAssignLegacyDataToDefaultLocation(merged));
 }
 
 
 function normalizeMaintForgeLocations(state={}) {
+  // MaintForge is single-company / single-location. Legacy location/facility fields are
+  // read only so older workspaces keep their records; the UI never creates multiple sites.
   const settings = state.settings || {};
-  const toFacilityObject = (item) => {
-    if(!item) return null;
-    if(typeof item === "string") return { name:item };
-    if(typeof item === "object" && !Array.isArray(item)) return item;
-    return null;
-  };
-  // Settings/form locations must be read first. During Settings edits, state.locations
-  // still contains the old saved facility object; reading state first can make address,
-  // phone, and logo changes look like they saved, then disappear after normalization.
-  const rawLocations = [
-    ...(Array.isArray(settings.locations) ? settings.locations.map(toFacilityObject) : []),
-    ...(Array.isArray(state.locations) ? state.locations.map(toFacilityObject) : []),
-    settings.location ? { name:settings.location, address:settings.address||"", cityState:settings.cityState||"", phone:settings.phone||"", email:settings.email||"" } : null,
-    settings.siteName ? { name:settings.siteName, address:settings.address||"", cityState:settings.cityState||"", phone:settings.phone||"", email:settings.email||"" } : null,
-  ].filter(Boolean);
-  const seenIds = new Set();
-  const seenNames = new Set();
-  const list = [];
-  rawLocations.forEach((loc, idx) => {
-    const rawName = loc.name || loc.facilityName || loc.location || loc.siteName || loc.title || "";
-    const name = String(rawName).trim();
-    if(!name || name === "[object Object]") return;
-    const id = loc.id || loc.locationId || loc.facilityId || `FAC-${idx+1}-${slugifyFacility(name)}`;
-    const idKey = String(id).toLowerCase();
-    const nameKey = name.toLowerCase();
-    if(seenIds.has(idKey) || seenNames.has(nameKey)) return;
-    seenIds.add(idKey);
-    seenNames.add(nameKey);
-    list.push({
-      ...loc,
-      id,
-      name,
-      address:loc.address||"",
-      cityState:loc.cityState||loc.city||"",
-      phone:loc.phone||loc.contactPhone||"",
-      email:loc.email||loc.contactEmail||"",
-      manager:loc.manager||loc.contactName||"",
-      region:loc.region||"",
-      logo:loc.logo || loc.facilityLogo || "",
-      facilityLogo:loc.facilityLogo || loc.logo || "",
-      active:loc.active !== false
-    });
-  });
-  return list;
+  const legacy = (Array.isArray(settings.locations) ? settings.locations : []).find(Boolean)
+    || (Array.isArray(state.locations) ? state.locations : []).find(Boolean) || {};
+  const locationName = String(settings.location || settings.cityState || legacy.name || legacy.location || "").trim();
+  const id = legacy.id || legacy.locationId || legacy.facilityId || "MAIN-LOCATION";
+  return [{
+    ...legacy,
+    id,
+    name: locationName || "Main Location",
+    address: settings.address || legacy.address || "",
+    cityState: settings.cityState || legacy.cityState || legacy.city || "",
+    phone: settings.phone || legacy.phone || legacy.contactPhone || "",
+    email: settings.email || legacy.email || legacy.contactEmail || "",
+    logo: settings.logo || settings.companyLogo || "",
+    active:true
+  }];
 }
 function normalizeMaintForgeAreas(state={}, facilityId="") {
   const settings = state.settings || {};
   const locations = normalizeMaintForgeLocations(state);
-  const defaultFacilityId = locations[0]?.id || "";
+  const defaultLocationId = locations[0]?.id || "";
   const facilityName = (id="") => locations.find(l => l.id === id || l.name === id)?.name || "";
   const rawAreas = [
     // Settings/form areas must be first so edits made in Settings win over older saved state.
@@ -700,14 +673,14 @@ function normalizeMaintForgeAreas(state={}, facilityId="") {
     const name = String(item.name || item.area || item.title || "").trim();
     if(!name) return;
     // Legacy areas used to be global. Give them to the first facility instead of showing them under every facility.
-    const facId = item.facilityId || item.locationId || item.facility || defaultFacilityId || "";
+    const facId = item.facilityId || item.locationId || item.facility || defaultLocationId || "";
     if(facilityId && facId !== facilityId) return;
     const key = `${facId||"unassigned"}::${name.toLowerCase()}`;
     if(seen.has(key)) return;
     seen.add(key);
     list.push({
       ...item,
-      id:item.id || `AREA-${idx+1}-${slugifyFacility(name)}`,
+      id:item.id || `AREA-${idx+1}-${slugifyLocation(name)}`,
       name,
       facilityId:facId,
       locationId:facId,
@@ -725,7 +698,7 @@ function activeMaintForgeLocation(state={}) {
   return locations.find(l => l.id === id || l.name === id) || null;
 }
 function locationNameForId(state={}, id="") {
-  if(!id || id === "__all") return "All Facilities";
+  if(!id || id === "__all") return "Location";
   const loc = normalizeMaintForgeLocations(state).find(l => l.id === id || l.name === id);
   return loc?.name || id;
 }
@@ -733,7 +706,7 @@ function facilityDisplayName(loc) {
   if(!loc) return "";
   return String(typeof loc === "string" ? loc : (loc.name || loc.location || loc.title || "")).trim();
 }
-function activeFacilitySettings(state={}) {
+function activeLocationSettings(state={}) {
   const loc = activeMaintForgeLocation(state);
   const s = state.settings || {};
   if(!loc) return { ...s, logo:resolveMaintForgeLogo(state, "__all") };
@@ -747,25 +720,16 @@ function activeFacilitySettings(state={}) {
     email: loc.email || s.email || "",
     region: loc.region || s.region || "",
     logo: resolveMaintForgeLogo(state, loc.id),
-    activeFacilityId: loc.id,
-    activeFacilityName: loc.name,
+    activeLocationId: loc.id,
+    activeLocationName: loc.name,
   };
 }
 
-function organizationLogoMode(state={}) {
-  const mode = String(state.settings?.logoMode || state.settings?.brandLogoMode || "company").toLowerCase();
-  return mode === "facility" ? "facility" : "company";
-}
-
-function resolveMaintForgeLogo(state={}, facilityId) {
+function organizationLogoMode() { return "company"; }
+function resolveMaintForgeLogo(state={}) {
   const s = state.settings || {};
-  const orgLogo = s.logo || s.companyLogo || "";
-  const activeId = facilityId || state.activeLocationId || "__all";
-  if(organizationLogoMode(state) !== "facility" || activeId === "__all") return orgLogo;
-  const loc = normalizeMaintForgeLocations(state).find(l => l.id === activeId || l.name === activeId) || null;
-  return loc?.logo || loc?.facilityLogo || orgLogo;
+  return s.logo || s.companyLogo || "";
 }
-
 function activeMaintForgeBranding(state={}) {
   const loc = activeMaintForgeLocation(state);
   return {
@@ -778,10 +742,10 @@ function activeMaintForgeBranding(state={}) {
 function recordLocationName(record={}, state={}) {
   return String(record.locationName || record.location || record.facilityName || record.facility || record.site || locationNameForId(state, record.locationId || record.facilityId) || "").trim();
 }
-function recordFacilityId(record={}) {
+function recordLocationId(record={}) {
   return record?.locationId || record?.facilityId || "";
 }
-function normalizeFacilityText(value="") {
+function normalizeLocationText(value="") {
   return String(value || "")
     .trim()
     .toLowerCase()
@@ -790,36 +754,36 @@ function normalizeFacilityText(value="") {
     .trim();
 }
 
-function isOrganizationOnlyFacilityName(name="") {
-  const n = normalizeFacilityText(name);
-  return !n || n === "organization" || n === "all facilities" || n === "organization dashboard" || n === "all" || n === "main" || n === "default";
+function isOrganizationOnlyLocationName(name="") {
+  const n = normalizeLocationText(name);
+  return !n || n === "organization" || n === "this location" || n === "organization dashboard" || n === "all" || n === "main" || n === "default";
 }
 
-function isMorovisFacilityName(name="") {
-  const n = normalizeFacilityText(name);
-  return n.includes("morovis") || n.includes("mnc");
+function isLegacyPrimaryLocationName(name="") {
+  const n = normalizeLocationText(name);
+  return n === "main location" || n === "main" || n === "default";
 }
 
 function recordMatchesActiveLocation(record={}, state={}) {
   const loc = activeMaintForgeLocation(state);
   if(!loc) return true;
-  const recId = recordFacilityId(record);
+  const recId = recordLocationId(record);
   if(recId && (recId === loc.id || recId === loc.name)) return true;
   const recName = recordLocationName(record, state);
-  const recNorm = normalizeFacilityText(recName);
-  const locNorm = normalizeFacilityText(loc.name);
+  const recNorm = normalizeLocationText(recName);
+  const locNorm = normalizeLocationText(loc.name);
   if(recNorm && recNorm === locNorm) return true;
   // Safety net for old single-facility data: anything without a real facility stamp
   // belongs to the original single-facility setup, not to Organization only.
-  if(isMorovisFacilityName(loc.name) && (!recId || isOrganizationOnlyFacilityName(recId)) && isOrganizationOnlyFacilityName(recName)) return true;
-  if(isMorovisFacilityName(loc.name) && isMorovisFacilityName(recName)) return true;
+  if(isLegacyPrimaryLocationName(loc.name) && (!recId || isOrganizationOnlyLocationName(recId)) && isOrganizationOnlyLocationName(recName)) return true;
+  if(isLegacyPrimaryLocationName(loc.name) && isLegacyPrimaryLocationName(recName)) return true;
   return false;
 }
 
 function isLegacyUnassignedRecord(record={}) {
-  const id = recordFacilityId(record);
+  const id = recordLocationId(record);
   const name = recordLocationName(record, {});
-  return (!id || isOrganizationOnlyFacilityName(id)) && isOrganizationOnlyFacilityName(name);
+  return (!id || isOrganizationOnlyLocationName(id)) && isOrganizationOnlyLocationName(name);
 }
 
 function countLegacyUnassignedRecords(state={}) {
@@ -850,22 +814,22 @@ function stampLegacyList(list=[], facilityId='', facilityName='') {
   return (list || []).map(item => isLegacyUnassignedRecord(item) ? { ...item, locationId:facilityId, facilityId, locationName:facilityName, facilityName, location:facilityName, facility:facilityName } : item);
 }
 
-function morovisFacilityForState(state={}) {
+function legacyPrimaryLocationForState(state={}) {
   const facilities = normalizeMaintForgeLocations(state).filter(f => f.active !== false);
-  return facilities.find(f => isMorovisFacilityName(f.name)) || null;
+  return facilities[0] || null;
 }
 
 function facilityAliasesFor(state={}, excludeId="") {
   return normalizeMaintForgeLocations(state)
     .filter(f => f && f.id !== excludeId && f.name !== excludeId)
-    .map(f => ({ id:String(f.id||""), idNorm:normalizeFacilityText(f.id||""), name:String(f.name||""), nameNorm:normalizeFacilityText(f.name||"") }));
+    .map(f => ({ id:String(f.id||""), idNorm:normalizeLocationText(f.id||""), name:String(f.name||""), nameNorm:normalizeLocationText(f.name||"") }));
 }
 
-function recordBelongsToOtherRealFacility(record={}, state={}, targetId="") {
-  const recId = String(recordFacilityId(record)||"");
+function recordBelongsToOtherRealLocation(record={}, state={}, targetId="") {
+  const recId = String(recordLocationId(record)||"");
   const recName = recordLocationName(record, state);
-  const recIdNorm = normalizeFacilityText(recId);
-  const recNameNorm = normalizeFacilityText(recName);
+  const recIdNorm = normalizeLocationText(recId);
+  const recNameNorm = normalizeLocationText(recName);
   return facilityAliasesFor(state, targetId).some(f => {
     if(recId && (recId === f.id || recId === f.name)) return true;
     if(recName && (recName === f.id || recName === f.name)) return true;
@@ -875,26 +839,26 @@ function recordBelongsToOtherRealFacility(record={}, state={}, targetId="") {
   });
 }
 
-function shouldMoveLegacyRecordToFacility(record={}, state={}, target={}) {
+function shouldMoveLegacyRecordToLocation(record={}, state={}, target={}) {
   if(!target?.id) return false;
-  const recId = String(recordFacilityId(record)||"");
+  const recId = String(recordLocationId(record)||"");
   const recName = recordLocationName(record, state);
-  const recIdNorm = normalizeFacilityText(recId);
-  const recNameNorm = normalizeFacilityText(recName);
-  const targetIdNorm = normalizeFacilityText(target.id);
-  const targetNameNorm = normalizeFacilityText(target.name);
+  const recIdNorm = normalizeLocationText(recId);
+  const recNameNorm = normalizeLocationText(recName);
+  const targetIdNorm = normalizeLocationText(target.id);
+  const targetNameNorm = normalizeLocationText(target.name);
 
   // Never steal records that clearly belong to another real facility.
-  if(recordBelongsToOtherRealFacility(record, state, target.id)) return false;
+  if(recordBelongsToOtherRealLocation(record, state, target.id)) return false;
 
-  // Already Morovis by id or name: normalize/stamp it so filters are consistent.
+  // Already associated with the single location: normalize/stamp it so older records remain consistent.
   if(recId === target.id || recId === target.name || recName === target.id || recName === target.name) return true;
   if((recIdNorm && (recIdNorm === targetIdNorm || recIdNorm === targetNameNorm)) || (recNameNorm && (recNameNorm === targetIdNorm || recNameNorm === targetNameNorm))) return true;
-  if(isMorovisFacilityName(recId) || isMorovisFacilityName(recName)) return true;
+  if(isLegacyPrimaryLocationName(recId) || isLegacyPrimaryLocationName(recName)) return true;
 
-  // Old pre-facility data often has no facility, Organization, All Facilities, Main, Default, etc.
+  // Old pre-facility data often has no facility, Organization, Location, Main, Default, etc.
   if(isLegacyUnassignedRecord(record)) return true;
-  if((!recId || isOrganizationOnlyFacilityName(recId)) && (!recName || isOrganizationOnlyFacilityName(recName))) return true;
+  if((!recId || isOrganizationOnlyLocationName(recId)) && (!recName || isOrganizationOnlyLocationName(recName))) return true;
 
   // If the stored facility string no longer matches any current facility, treat it as legacy.
   const all = facilityAliasesFor(state, "");
@@ -908,18 +872,18 @@ function shouldMoveLegacyRecordToFacility(record={}, state={}, target={}) {
   return false;
 }
 
-function stampRecordsToFacility(list=[], state={}, target={}) {
+function stampRecordsToLocation(list=[], state={}, target={}) {
   if(!target?.id) return list || [];
-  return (list || []).map(item => shouldMoveLegacyRecordToFacility(item, state, target)
+  return (list || []).map(item => shouldMoveLegacyRecordToLocation(item, state, target)
     ? { ...item, locationId:target.id, facilityId:target.id, locationName:target.name, facilityName:target.name, location:target.name, facility:target.name }
     : item
   );
 }
 
-function migrateLegacyDataToMorovis(state={}) {
-  const target = morovisFacilityForState(state) || defaultLegacyFacilityForState(state);
+function migrateLegacyDataToSingleLocation(state={}) {
+  const target = legacyPrimaryLocationForState(state) || defaultLegacyLocationForState(state);
   if(!target?.id) return state;
-  const stamp = list => stampRecordsToFacility(list, state, target);
+  const stamp = list => stampRecordsToLocation(list, state, target);
   const next = {
     ...state,
     equipment: stamp(state.equipment),
@@ -937,17 +901,17 @@ function migrateLegacyDataToMorovis(state={}) {
     fuelReadings: stamp(state.fuelReadings),
     workOrderRequests: stamp(state.workOrderRequests),
   };
-  return { ...next, legacyRepairNote:{ facilityId:target.id, facilityName:target.name, date:today(), automatic:true, morovisMigration:true } };
+  return { ...next, legacyRepairNote:{ facilityId:target.id, facilityName:target.name, date:today(), automatic:true, singleLocationMigration:true } };
 }
 
-function defaultLegacyFacilityForState(state={}) {
+function defaultLegacyLocationForState(state={}) {
   const facilities = normalizeMaintForgeLocations(state).filter(f => f.active !== false);
   if(!facilities.length) return null;
-  return facilities.find(f => String(f.name||"").toLowerCase().includes("morovis")) || facilities[0];
+  return facilities[0] || null;
 }
 
-function autoAssignLegacyDataToDefaultFacility(state={}) {
-  const target = defaultLegacyFacilityForState(state);
+function autoAssignLegacyDataToDefaultLocation(state={}) {
+  const target = defaultLegacyLocationForState(state);
   if(!target?.id) return state;
   const counts = countLegacyUnassignedRecords(state);
   if(!counts.total) return state;
@@ -975,13 +939,13 @@ function autoAssignLegacyDataToDefaultFacility(state={}) {
 function migrationSourceItems(list=[], state={}, fromId="") {
   const fromName = locationNameForId(state, fromId);
   const scoped = (list||[]).filter(item =>
-    recordFacilityId(item) === fromId ||
+    recordLocationId(item) === fromId ||
     recordLocationName(item, state).toLowerCase() === String(fromName||"").toLowerCase()
   );
   if(scoped.length) return scoped;
   // Older MaintForge templates did not have a facility stamp. Treat them as available
   // from the selected source facility so initial migrations do not appear to do nothing.
-  return (list||[]).filter(item => !recordFacilityId(item) && !recordLocationName(item, state));
+  return (list||[]).filter(item => !recordLocationId(item) && !recordLocationName(item, state));
 }
 
 function migrationTemplateCounts(state={}, fromId="") {
@@ -1002,30 +966,9 @@ function deepClonePlain(value) {
   catch(e) { return { ...(value || {}) }; }
 }
 function scopedStateForActiveLocation(state={}) {
-  const loc = activeMaintForgeLocation(state);
-  if(!loc) return state;
-  const equipmentIds = new Set((state.equipment||[]).filter(e=>recordMatchesActiveLocation(e,state)).map(e=>String(e.id)));
-  const eqLinked = (r={}) => !r.equipment && !r.equipmentId ? recordMatchesActiveLocation(r,state) : equipmentIds.has(String(r.equipment || r.equipmentId));
-  return {
-    ...state,
-    settings: activeFacilitySettings(state),
-    equipment:(state.equipment||[]).filter(e=>recordMatchesActiveLocation(e,state)),
-    parts:(state.parts||[]).filter(p=>recordMatchesActiveLocation(p,state)),
-    technicians:(state.technicians||[]).filter(t=>recordMatchesActiveLocation(t,state)),
-    inventoryItems:(state.inventoryItems||[]).filter(i=>eqLinked(i)),
-    workOrders:(state.workOrders||[]).filter(w=>eqLinked(w)),
-    workOrderRequests:(state.workOrderRequests||[]).filter(r=>recordMatchesActiveLocation(r,state)),
-    usageLogs:(state.usageLogs||[]).filter(u=>eqLinked(u)),
-    pmTasks:(state.pmTasks||[]).filter(t=>recordMatchesActiveLocation(t,state) || (!t.locationId && !recordLocationName(t,state))),
-    inspectionTasks:(state.inspectionTasks||[]).filter(t=>recordMatchesActiveLocation(t,state) || (!t.locationId && !recordLocationName(t,state))),
-    preventiveMaintenance:(state.preventiveMaintenance||[]).filter(t=>recordMatchesActiveLocation(t,state) || (!t.locationId && !recordLocationName(t,state))),
-    pmSchedules:(state.pmSchedules||[]).filter(s=>eqLinked(s)),
-    inspectionSchedules:(state.inspectionSchedules||[]).filter(s=>eqLinked(s)),
-    fuelContainers:(state.fuelContainers||[]).filter(c=>recordMatchesActiveLocation(c,state)),
-    fuelReadings:(state.fuelReadings||[]).filter(r=>recordMatchesActiveLocation(r,state)),
-  };
+  // Single-location MaintForge: every record in this company workspace belongs to this location.
+  return state;
 }
-
 function adjustInventoryForWO(parts=[], partsUsed=[], direction=-1) {
   // direction -1 consumes inventory, +1 restores inventory
   let next = [...(parts||[])];
@@ -1210,12 +1153,12 @@ function formatNotificationTime(notification) {
 }
 
 
-const MAINTFORGE_SINGLE_SITE_ID = "morovis";
-const MAINTFORGE_SINGLE_SITE_NAME = "Main Facility";
+const MAINTFORGE_SINGLE_SITE_ID = "MAIN-LOCATION";
+const MAINTFORGE_SINGLE_SITE_NAME = "Main Location";
 
 function normalizeMaintForgeSingleSite(input={}) {
   const state = { ...INIT, ...(input || {}) };
-  const existing = (state.locations || []).find(l => /morovis/i.test(String(l?.name || l?.id || ""))) || {};
+  const existing = (state.locations || [])[0] || {};
   const site = {
     ...existing,
     id: existing.id || MAINTFORGE_SINGLE_SITE_ID,
@@ -1425,16 +1368,16 @@ function reducer(state, { type, payload }) {
     }
     case "TRANSFER_EQUIPMENT": {
       const equipmentId = payload?.equipmentId;
-      const targetFacilityId = payload?.targetFacilityId;
+      const targetLocationId = payload?.targetLocationId;
       const transferAttachments = payload?.transferAttachments !== false;
-      if(!equipmentId || !targetFacilityId) return state;
+      if(!equipmentId || !targetLocationId) return state;
       const facilities = normalizeMaintForgeLocations(state);
-      const target = facilities.find(f => String(f.id) === String(targetFacilityId) || String(f.name) === String(targetFacilityId));
+      const target = facilities.find(f => String(f.id) === String(targetLocationId) || String(f.name) === String(targetLocationId));
       if(!target) return state;
       const eq = (state.equipment || []).find(e => String(e.id) === String(equipmentId));
       if(!eq) return state;
-      const oldFacilityId = eq.locationId || eq.facilityId || "";
-      const oldFacilityName = eq.locationName || eq.facilityName || eq.location || eq.facility || locationNameForId(state, oldFacilityId) || "Unassigned Inventory";
+      const oldLocationId = eq.locationId || eq.facilityId || "";
+      const oldLocationName = eq.locationName || eq.facilityName || eq.location || eq.facility || locationNameForId(state, oldLocationId) || "Unassigned Inventory";
       const targetStamp = { locationId:target.id, facilityId:target.id, locationName:target.name, facilityName:target.name, location:target.name, facility:target.name };
       const stampLinkedRecord = (record={}) => ({ ...record, ...targetStamp });
       const attachments = Array.isArray(eq.attachments) ? eq.attachments : [];
@@ -1448,12 +1391,12 @@ function reducer(state, { type, payload }) {
         category:a.category || "Attachment / Implement",
         turnInStatus:a.turnInStatus || "Active",
         condition:a.condition || "Good",
-        locationId:oldFacilityId,
-        facilityId:oldFacilityId,
-        locationName:oldFacilityName,
-        facilityName:oldFacilityName,
-        location:oldFacilityName,
-        facility:oldFacilityName,
+        locationId:oldLocationId,
+        facilityId:oldLocationId,
+        locationName:oldLocationName,
+        facilityName:oldLocationName,
+        location:oldLocationName,
+        facility:oldLocationName,
         parentEquipmentId:"",
         parentEquipmentName:"",
         detachedFromEquipmentId:eq.id,
@@ -1518,15 +1461,15 @@ function reducer(state, { type, payload }) {
     case "ADD_USAGE_LOG": return { ...state, usageLogs: [...(state.usageLogs||[]), payload] };
     case "UPDATE_USAGE_LOG": return { ...state, usageLogs: (state.usageLogs||[]).map(u=>u.id===payload.id?{...u,...payload}:u) };
     case "DELETE_USAGE_LOG": return { ...state, usageLogs: (state.usageLogs||[]).filter(u=>u.id!==payload) };
-    case "MIGRATE_LEGACY_TO_MOROVIS": {
-      return migrateLegacyDataToMorovis(state);
+    case "MIGRATE_LEGACY_TO_SINGLE_LOCATION": {
+      return migrateLegacyDataToSingleLocation(state);
     }
     case "ASSIGN_LEGACY_TO_FACILITY": {
       const facilityId = payload?.facilityId || state.activeLocationId;
       if(!facilityId || facilityId === "__all") return state;
       const facilityName = locationNameForId(state, facilityId);
       const target = normalizeMaintForgeLocations(state).find(f => f.id === facilityId || f.name === facilityId) || { id:facilityId, name:facilityName };
-      const stamp = list => stampRecordsToFacility(list, state, target);
+      const stamp = list => stampRecordsToLocation(list, state, target);
       return {
         ...state,
         equipment: stamp(state.equipment),
@@ -1649,12 +1592,12 @@ function reducer(state, { type, payload }) {
         locations: normalizedLocations,
         areas: normalizedAreas
       };
-      return autoAssignLegacyDataToDefaultFacility(next);
+      return autoAssignLegacyDataToDefaultLocation(next);
     }
     case "COMPLETE_SETUP": {
       const base = { ...state, settings: payload.settings, profile: payload.profile, technicians: payload.technicians, categories: payload.categories, setupComplete: true, organization:{ ...(state.organization||{}), name:payload.settings?.companyName||"" } };
       const locs = normalizeMaintForgeLocations(base);
-      return autoAssignLegacyDataToDefaultFacility({ ...base, locations:locs, activeLocationId:locs[0]?.id || "__all" });
+      return autoAssignLegacyDataToDefaultLocation({ ...base, locations:locs, activeLocationId:locs[0]?.id || "__all" });
     }
     case "RESET_SETUP":     return { ...state, setupComplete: false };
     default: return state;
@@ -1796,7 +1739,7 @@ const workOrderBrandFontSize = (name="") => {
   if(len > 12) return 19;
   return 21;
 };
-const workOrderFacilityFontSize = (name="") => {
+const workOrderLocationFontSize = (name="") => {
   const len = String(name || "").trim().length;
   if(len > 64) return 8.5;
   if(len > 52) return 9.5;
@@ -1805,7 +1748,7 @@ const workOrderFacilityFontSize = (name="") => {
   return 12.5;
 };
 
-const workOrderFacilityIdForBranding = (state={}, wo={}, eq={}) => {
+const workOrderLocationIdForBranding = (state={}, wo={}, eq={}) => {
   const locations = normalizeMaintForgeLocations(state);
   const findLocation = (value) => {
     const raw = String(value ?? "").trim();
@@ -1838,7 +1781,7 @@ const workOrderFacilityIdForBranding = (state={}, wo={}, eq={}) => {
 };
 
 const resolveWorkOrderBrandLogo = (state={}, wo={}, eq={}) => {
-  return resolveMaintForgeLogo(state, workOrderFacilityIdForBranding(state, wo, eq));
+  return resolveMaintForgeLogo(state, workOrderLocationIdForBranding(state, wo, eq));
 };
 
 
@@ -1958,7 +1901,7 @@ const EquipmentStatusNumberCell = ({ status, label, children, style={} }) => (
 );
 
 const MF_LAST_TAB_KEY = "maintforge:lastPage";
-const MF_LAST_FACILITY_KEY = "maintforge:lastFacilityId";
+const MF_LAST_FACILITY_KEY = "maintforge:lastLocationId";
 const readMFLocal = (key, fallback="") => {
   try { return localStorage.getItem(key) || fallback; } catch(e) { return fallback; }
 };
@@ -2044,40 +1987,34 @@ function Modal({ title, onClose, children, maxWidth=560, fullScreen=true }) {
 
 
 function HelpCenter({ state, onClose }) {
-  const role = state.userRole || "owner";
-  const isOwner = role === "owner" || role === "organization_owner";
-  const isAdmin = isOwner || role === "facility_admin" || role === "administrator";
-  const isMechanic = isAdmin || role === "mechanic";
-  const facilityName = locationNameForId(state, state.activeLocationId || "__all");
+  const isOwner = true;
+  const isAdmin = true;
+  const isMechanic = true;
+  const facilityName = state.settings?.location || state.settings?.cityState || "Location";
   const glossary = [
-    ["Organization", "The top-level company/account. Organization Owners can manage all facilities and company-wide reports."],
-    ["Facility", "A separate shop, branch, building, warehouse, or site. Facility data is isolated from other facilities."],
-    ["Area", "A building, department, zone, section, or physical area inside one facility."],
-    ["Foundation", "The Settings section where the Organization, Facilities, Areas, Users, Roles, Numbering, and Migration Center are managed."],
-    ["Migration", "Copies PM tasks, inspection tasks, and task templates from one facility to another. The copy is independent and can be edited without changing the original."],
-    ["Legacy Unassigned Data", "Older records created before the facility system existed. Use the repair banner to assign them to the correct facility."],
+    ["Company", "The company using this MaintForge workspace."],
+    ["Location", "The single location for this company account."],
+    ["Work Order", "A repair, service, or inspection record for equipment."],
+    ["Inventory", "Parts and supplies received, used, and kept on hand."],
   ];
   const topics = [
-    isOwner && ["Create and manage facilities", "Go to Settings → Foundation → Facilities. Add the facility name, address, contact info, and save. Use the facility switcher in the header to work inside that facility."],
-    isOwner && ["Fix records showing only under Organization", "Switch to the correct facility, use the unassigned data repair banner, and assign the old records to that facility. After that, the records show inside the facility and reports filter correctly."],
-    isOwner && ["Create users", "Go to Settings → Users & Roles. Enter a username, temporary password, role, and facility access. The user signs in with that username and only sees assigned facility data."],
-    isOwner && ["Migrate templates", "Go to Settings → Foundation → Migration Center. Choose From Facility and To Facility, select PM task library, inspection task library, or general tasks, then Copy Selected. The destination facility receives independent copies."],
-    isAdmin && ["Manage equipment", "Open Equipment, add or edit equipment for the active facility, assign the Facility and Area, add usage type, status, attachments, and inventory-related details."],
-    isAdmin && ["Manage inventory", "Open Parts or Equipment Inventory. Add parts, quantities, units, reorder levels, vendors, and link parts to models/equipment where needed."],
-    isAdmin && ["Preventive maintenance", "Open Preventive Maintenance. Build PM task templates with steps and parts, assign them to equipment, set time or usage triggers, and let the system generate service work orders when due."],
-    isAdmin && ["Inspection tasks", "Open Inspections. Create inspection templates, add steps, assign them to equipment, and track last/next inspection dates."],
-    isMechanic && ["Create a repair work order", "Open Work Orders, choose the equipment, enter the fault description, priority, usage, parts, labor, pictures, and save."],
-    isMechanic && ["Complete a work order", "Open the work order, enter work performed, labor, parts used, usage, notes, and mark it Completed. Inventory is consumed when the work order closes."],
-    isMechanic && ["Operator QR requests", "Operators scan the facility QR without logging in, choose/type equipment, add description and photos, then submit. Admins review the queue before creating a work order."],
-    isMechanic && ["Fuel tracking", "Open Fuel Tracking, choose the container, enter readings in inches/decimals/fractions or log refills. Reports can be printed and included in combined reports."],
-    ["Reports and printing", "Reports use the active facility. Switch to Organization Dashboard / All Facilities for company-wide reports. Printable work orders, equipment summaries, fuel reports, inventory reports, and combined reports can be printed from their sections."],
-  ].filter(Boolean);
+    ["Company settings", "Open Settings to update the company name, location, contact information, company logo, labor rate, and defaults."],
+    ["Manage equipment", "Open Equipment to add or edit equipment, usage type, status, area/building, attachments, and equipment details."],
+    ["Manage inventory", "Open Parts or Equipment Inventory to manage parts, quantities, units, reorder levels, vendors, and linked items."],
+    ["Preventive maintenance", "Open Preventive Maintenance to build PM tasks, assign them to equipment, and set time or usage triggers."],
+    ["Inspections", "Open Inspections to create templates, add steps, assign them to equipment, and track due dates."],
+    ["Create a work order", "Open Work Orders, choose equipment, enter the work details, priority, usage, parts, labor, pictures, and save."],
+    ["Complete a work order", "Open the work order, enter work performed, labor, parts used, usage, notes, and mark it Completed."],
+    ["Operator QR requests", "Operators scan the company QR without logging in, choose or type equipment, add a description and photos, then submit."],
+    ["Fuel tracking", "Open Fuel Tracking, choose the container, enter readings or refills, and print reports when needed."],
+    ["Reports and printing", "Reports use your company data. Printable work orders, equipment summaries, fuel reports, inventory reports, and combined reports can be printed from their sections."],
+  ];
   return (
-    <Modal title={`Help & Glossary — ${role.replace(/_/g," ")} — ${facilityName}`} onClose={onClose}>
+    <Modal title={`Help & Glossary — ${facilityName}`} onClose={onClose}>
       <div className="mf-admin-content" style={{ display:"grid", gap:14, minWidth:0 }}>
         <div style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:10, background:`linear-gradient(135deg, ${T.card}, ${T.grayLt})` }}>
-          <div style={{ fontWeight:800, color:T.text, marginBottom:4 }}>Role-aware help</div>
-          <div style={{ fontSize:13, color:T.subtext, lineHeight:1.45 }}>This help center shows guidance based on your current role. Owners see organization tools, facility administrators see facility management tools, and mechanics see work execution tools.</div>
+          <div style={{ fontWeight:800, color:T.text, marginBottom:4 }}>MaintForge help</div>
+          <div style={{ fontSize:13, color:T.subtext, lineHeight:1.45 }}>Quick guidance for equipment, work orders, inventory, PM, inspections, fuel, reports, and QR requests.</div>
         </div>
         <div>
           <div style={{ fontSize:12, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:8 }}>Glossary</div>
@@ -2092,18 +2029,7 @@ function HelpCenter({ state, onClose }) {
   );
 }
 
-function LegacyDataRepairBanner({ state, dispatch }) {
-  const counts = countLegacyUnassignedRecords(state);
-  const activeId = state.activeLocationId || "__all";
-  if(!counts.total || activeId === "__all") return null;
-  const facilityName = locationNameForId(state, activeId);
-  return (
-    <div className="no-print" style={{ marginBottom:14, padding:12, border:`1px solid #f59e0b`, borderRadius:10, background:"#fffbeb", color:"#78350f", display:"flex", gap:12, alignItems:"center", justifyContent:"space-between", flexWrap:"wrap" }}>
-      <div style={{ fontSize:13, lineHeight:1.35 }}><b>Unassigned legacy data found.</b> {counts.total} older record{counts.total===1?"":"s"} do not have a Facility stamp, so they may only show under Organization. Assign them to <b>{facilityName}</b> to make them appear in this facility.</div>
-      <Btn small onClick={()=>{ if(confirm(`Assign ${counts.total} unassigned legacy records to ${facilityName}?`)) dispatch({ type:"ASSIGN_LEGACY_TO_FACILITY", payload:{ facilityId:activeId } }); }}>Assign to {facilityName}</Btn>
-    </div>
-  );
-}
+function LegacyDataRepairBanner() { return null; }
 
 /* Reusable Document Uploader - handles attachments (PDF, images, etc.) stored as base64 */
 function DocUploader({ documents=[], onChange, label="Documents", category }) {
@@ -2215,7 +2141,7 @@ function Header({ notifications, dispatch, currentPage, onMenuToggle }) {
           <div className="mf-header-divider" style={{ width:1, height:28, background:T.border }} />
           <div>
             <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, letterSpacing:-.3, lineHeight:1.2 }}>MaintForge</div>
-            <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, letterSpacing:.3 }}>{settings.siteName || "Main Facility"}</div>
+            <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, letterSpacing:.3 }}>{settings.location || settings.cityState || "Location"}</div>
           </div>
           {currentPage && (
             <>
@@ -2430,39 +2356,39 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   const allUsageLogs = state.usageLogs || [];
   const notifications = state.notifications || [];
   const role = normalizeRole(state.userRole || "organization_admin");
-  const allFacilities = normalizeMaintForgeLocations(state).filter(f => f.active !== false);
+  const allLocations = normalizeMaintForgeLocations(state).filter(f => f.active !== false);
   const currentUserEmail = normalizeEmail(state.currentUser?.email || state.user?.email || state.profile?.email || "");
   const currentOrgUser = currentUserEmail ? (state.organizationUsers || []).find(u => normalizeEmail(u.email) === currentUserEmail) : null;
-  const profileFacilityIds = [
+  const profileLocationIds = [
     ...(Array.isArray(state.profile?.facilityIds) ? state.profile.facilityIds : []),
-    ...(Array.isArray(state.userFacilityIds) ? state.userFacilityIds : []),
-    ...(Array.isArray(state.assignedFacilityIds) ? state.assignedFacilityIds : []),
+    ...(Array.isArray(state.userLocationIds) ? state.userLocationIds : []),
+    ...(Array.isArray(state.assignedLocationIds) ? state.assignedLocationIds : []),
     ...(Array.isArray(currentOrgUser?.facilityIds) ? currentOrgUser.facilityIds : []),
     state.profile?.facilityId,
     state.profile?.locationId,
     currentOrgUser?.facilityId,
     currentOrgUser?.locationId,
   ].filter(Boolean).map(String);
-  const activeFacility = activeMaintForgeLocation(state);
+  const activeLocation = activeMaintForgeLocation(state);
   const restrictedRole = role !== "organization_admin";
-  const roleFacilityIds = (() => {
-    if(!restrictedRole) return activeFacility?.id ? [String(activeFacility.id)] : [];
-    if(activeFacility?.id && (profileFacilityIds.length === 0 || profileFacilityIds.includes(String(activeFacility.id)))) return [String(activeFacility.id)];
-    const ids = Array.from(new Set(profileFacilityIds));
+  const roleLocationIds = (() => {
+    if(!restrictedRole) return activeLocation?.id ? [String(activeLocation.id)] : [];
+    if(activeLocation?.id && (profileLocationIds.length === 0 || profileLocationIds.includes(String(activeLocation.id)))) return [String(activeLocation.id)];
+    const ids = Array.from(new Set(profileLocationIds));
     if(ids.length) return ids;
-    return allFacilities[0]?.id ? [String(allFacilities[0].id)] : [];
+    return allLocations[0]?.id ? [String(allLocations[0].id)] : [];
   })();
   const dashboardRecordMatchesScope = (record={}) => {
     if(!restrictedRole) return recordMatchesActiveLocation(record, state);
-    if(!roleFacilityIds.length) return false;
-    return roleFacilityIds.some(fid => recordMatchesActiveLocation(record, { ...state, activeLocationId: fid }));
+    if(!roleLocationIds.length) return false;
+    return roleLocationIds.some(fid => recordMatchesActiveLocation(record, { ...state, activeLocationId: fid }));
   };
-  const dashboardFacilityLabel = (() => {
-    if(!restrictedRole) return activeFacility?.name || "All Facilities";
-    const names = roleFacilityIds.map(id => locationNameForId(state, id)).filter(Boolean);
-    return names.length === 1 ? names[0] : `${names.length || 0} Assigned Facilities`;
+  const dashboardLocationLabel = (() => {
+    if(!restrictedRole) return activeLocation?.name || "Location";
+    const names = roleLocationIds.map(id => locationNameForId(state, id)).filter(Boolean);
+    return names.length === 1 ? names[0] : `${names.length || 0} Assigned Locations`;
   })();
-  const facilityScopeLabel = dashboardFacilityLabel;
+  const facilityScopeLabel = dashboardLocationLabel;
   const eqs = allEqs.filter(e => dashboardRecordMatchesScope(e));
   const scopedEqIds = new Set(eqs.map(e => String(e.id || e.equipmentId || "")).filter(Boolean));
   const belongsToScopedEquipment = (record={}) => {
@@ -2621,7 +2547,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   };
   const allQuickLinks = quickLinksForRole();
   const defaultQuickLinkTabs = () => allQuickLinks.map(link => link.tab);
-  const quickLinksKey = `maintforge_dashboard_quick_links_v1_${role}_${restrictedRole ? roleFacilityIds.join("_") || "assigned" : "all"}`;
+  const quickLinksKey = `maintforge_dashboard_quick_links_v1_${role}_${restrictedRole ? roleLocationIds.join("_") || "assigned" : "all"}`;
   const loadQuickLinks = () => {
     try {
       const saved = JSON.parse(localStorage.getItem(quickLinksKey) || "null");
@@ -2670,7 +2596,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     if(r === "mechanic") return ["quick_links","active_work","due_today","awaiting_parts","schedule_due_count","my_work","priority_queue","equipment_watch","schedule_due","recent_activity"];
     if(r === "viewer") return ["quick_links","readiness","active_work","deadline","completed_month","readiness_breakdown","equipment_watch","fuel_levels","recent_activity"];
     if(r === "supervisor") return ["quick_links","readiness","active_work","overdue_work","deadline","due_today","schedule_due_count","requests","today_focus","priority_queue","equipment_watch","schedule_due","inventory_requests"];
-    if(r === "organization_admin") return ["quick_links","readiness","active_work","overdue_work","deadline","schedule_due_count","requests","low_stock","month_spend","facility_readiness","readiness_breakdown","fuel_levels","today_focus","priority_queue","schedule_due","equipment_watch","inventory_requests"];
+    if(r === "organization_admin") return ["quick_links","readiness","active_work","overdue_work","deadline","schedule_due_count","requests","low_stock","month_spend","readiness_breakdown","fuel_levels","today_focus","priority_queue","schedule_due","equipment_watch","inventory_requests"];
     return ["quick_links","readiness","active_work","overdue_work","deadline","schedule_due_count","requests","low_stock","month_spend","readiness_breakdown","fuel_levels","today_focus","priority_queue","schedule_due","equipment_watch","inventory_requests"];
   };
   const layoutKey = `maintforge_dashboard_layout_v5_adaptive_${role}`;
@@ -2736,9 +2662,8 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     due_today: { title:"Due Today", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <SmallCard title="Due Today" value={dueTodayWOs.length} sub={`${inProgressWOs.length} in progress • ${openWOs.length} open`} color={dueTodayWOs.length?T.amber:T.green} tab="workorders" /> },
     work_mix: { title:"Work Mix", size:"small", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <SmallCard title="Work Mix" value={`${repairsOpen}/${serviceOpen}/${inspectionOpen}`} sub="Repair / Service / Inspection active WOs" color={repairsOpen?T.red:serviceOpen?T.amber:T.green} tab="workorders" /> },
     readiness_breakdown: { title:"Readiness Breakdown", size:"wide", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <Panel title={`Readiness Breakdown — ${facilityScopeLabel}`} action={<Btn small variant="secondary" onClick={()=>click("equipment")}>Equipment</Btn>}><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(150px,100%),1fr))", gap:10, marginTop:8 }}><SmallCard title="Ready" value={readyEqs.length} sub="Fully operational" color={T.green} tab="equipment" /><SmallCard title="Deficient" value={deficientEqs.length} sub="Can work, needs attention" color={T.amber} tab="equipment" /><SmallCard title="Deadline" value={deadlineEqs.length} sub="Out of service" color={T.red} tab="equipment" /></div></Panel> },
-    facility_readiness: { title:"Facility Readiness", size:"full", tab:"equipment", roles:["organization_admin"], render:()=> <Panel title="Facility Readiness" action={<Btn small variant="secondary" onClick={()=>click("equipment")}>Equipment</Btn>}><div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(min(170px,100%),1fr))", gap:10, marginTop:8, marginBottom:12 }}><SmallCard title="Organization Readiness" value={`${organizationReadinessSummary.readiness}%`} sub={`${organizationReadinessSummary.ready} ready of ${organizationReadinessSummary.assets} assets`} color={organizationReadinessSummary.readiness>=85?T.green:organizationReadinessSummary.readiness>=65?T.amber:T.red} tab="equipment" /><SmallCard title="Organization Assets" value={organizationReadinessSummary.assets} sub={`${organizationReadinessSummary.deficient} deficient • ${organizationReadinessSummary.deadline} deadline`} color={organizationReadinessSummary.deadline?T.red:organizationReadinessSummary.deficient?T.amber:T.green} tab="equipment" /><SmallCard title="Organization Active WOs" value={organizationReadinessSummary.activeWork} sub={`Month spend ${moneyFmt(organizationReadinessSummary.monthSpend)}`} color={organizationReadinessSummary.activeWork?T.accent:T.green} tab="workorders" /></div>{facilityDashboardRows.length ? <div style={{ overflowX:"auto", marginTop:8 }}><table style={{ width:"100%", borderCollapse:"collapse", minWidth:760 }}><thead><tr>{["Facility","Readiness","Assets","Ready","Deficient","Deadline","Active WOs","Month Spend"].map(h=><th key={h} style={{ textAlign:h==="Facility"?"left":"right", color:T.muted, fontSize:12, letterSpacing:.35, textTransform:"uppercase", padding:"9px 8px", borderBottom:`1px solid ${T.border}` }}>{h}</th>)}</tr></thead><tbody>{facilityDashboardRows.map(row => <tr key={row.id} onClick={()=>click("equipment")} style={{ cursor:"pointer" }}><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, fontWeight:900, color:T.text }}>{row.name}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", fontWeight:950, color:row.readiness>=85?T.green:row.readiness>=65?T.amber:T.red }}>{row.readiness}%</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right" }}>{row.assets}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", color:T.green, fontWeight:900 }}>{row.ready}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", color:T.amber, fontWeight:900 }}>{row.deficient}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", color:T.red, fontWeight:900 }}>{row.deadline}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", fontWeight:900 }}>{row.activeWork}</td><td style={{ padding:"10px 8px", borderBottom:`1px solid ${T.border}`, textAlign:"right", fontWeight:900 }}>{moneyFmt(row.monthSpend)}</td></tr>)}</tbody></table></div> : <div style={{ padding:14, color:T.muted }}>No facilities found yet. Add facilities in Settings to see readiness by facility.</div>}</Panel> },
-    fuel_levels: { title:"Fuel Levels", size:"wide", tab:"fuel", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <Panel title={`Fuel Levels — ${facilityScopeLabel}`} action={<Btn small variant="secondary" onClick={()=>click("fuel")}>Fuel</Btn>}>{fuelLevels.length ? fuelLevels.slice(0,6).map(c=><ActionRow key={c.id || c.name} title={c.name || c.containerName || "Fuel Container"} sub={`${Math.round(c._percent || 0)}% full${Number.isFinite(Number(c._gallons)) ? ` • ${Math.round(c._gallons).toLocaleString()} gallons` : ""}${c._latestInches ? ` • ${c._latestInches} in` : ""}${c._latestDate ? ` • ${c._latestDate}` : ""}`} badge={c._percent <= 25 && c._percent > 0 ? "Low" : c._percent >= 75 ? "Full" : "OK"} color={c._percent <= 25 && c._percent > 0 ? T.red : c._percent >= 75 ? T.green : T.amber} tab="fuel" />) : <div style={{ padding:14, color:T.muted }}>No fuel containers found for this facility.</div>}</Panel> },
-    today_focus: { title:"Facility Manager Focus", size:"wide", tab:"workorders", roles:["organization_admin","facility_admin","supervisor"], render:()=> <Panel title={`Facility Manager Focus — ${facilityScopeLabel}`} action={<Btn small onClick={()=>click("workorders")}>Work Orders</Btn>}>{overdueWOs.slice(0,3).map(w=><ActionRow key={`od-${w.id}`} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "Overdue Work Order"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • Due ${w.due || "No due date"} • ${w.status || "Open"}`} badge="Overdue" color={T.red} tab="workorders" />)}{highPriority.slice(0,3).map(w=><ActionRow key={`hp-${w.id}`} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "High Priority"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • ${w.status || "Open"}${w.due ? ` • Due ${w.due}` : ""}`} badge="High" color={T.red} tab="workorders" />)}{deadlineEqs.slice(0,3).map(e=><ActionRow key={`dl-${e.id}`} title={`${e.id} — ${e.name || e.nomenclature || "Deadline Equipment"}`} sub={`${e.locationName || e.location || facilityScopeLabel} • ${e.category || e.type || "Equipment"}`} badge="Deadline" color={T.red} tab="equipment" />)}{!overdueWOs.length && !highPriority.length && !deadlineEqs.length && <div style={{ padding:14, color:T.muted }}>No urgent overdue work, high-priority WOs, or deadline equipment right now.</div>}</Panel> },
+    fuel_levels: { title:"Fuel Levels", size:"wide", tab:"fuel", roles:["organization_admin","facility_admin","supervisor","viewer"], render:()=> <Panel title={`Fuel Levels — ${facilityScopeLabel}`} action={<Btn small variant="secondary" onClick={()=>click("fuel")}>Fuel</Btn>}>{fuelLevels.length ? fuelLevels.slice(0,6).map(c=><ActionRow key={c.id || c.name} title={c.name || c.containerName || "Fuel Container"} sub={`${Math.round(c._percent || 0)}% full${Number.isFinite(Number(c._gallons)) ? ` • ${Math.round(c._gallons).toLocaleString()} gallons` : ""}${c._latestInches ? ` • ${c._latestInches} in` : ""}${c._latestDate ? ` • ${c._latestDate}` : ""}`} badge={c._percent <= 25 && c._percent > 0 ? "Low" : c._percent >= 75 ? "Full" : "OK"} color={c._percent <= 25 && c._percent > 0 ? T.red : c._percent >= 75 ? T.green : T.amber} tab="fuel" />) : <div style={{ padding:14, color:T.muted }}>No fuel containers found yet.</div>}</Panel> },
+    today_focus: { title:"Location Manager Focus", size:"wide", tab:"workorders", roles:["organization_admin","facility_admin","supervisor"], render:()=> <Panel title={`Location Manager Focus — ${facilityScopeLabel}`} action={<Btn small onClick={()=>click("workorders")}>Work Orders</Btn>}>{overdueWOs.slice(0,3).map(w=><ActionRow key={`od-${w.id}`} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "Overdue Work Order"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • Due ${w.due || "No due date"} • ${w.status || "Open"}`} badge="Overdue" color={T.red} tab="workorders" />)}{highPriority.slice(0,3).map(w=><ActionRow key={`hp-${w.id}`} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "High Priority"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • ${w.status || "Open"}${w.due ? ` • Due ${w.due}` : ""}`} badge="High" color={T.red} tab="workorders" />)}{deadlineEqs.slice(0,3).map(e=><ActionRow key={`dl-${e.id}`} title={`${e.id} — ${e.name || e.nomenclature || "Deadline Equipment"}`} sub={`${e.locationName || e.location || facilityScopeLabel} • ${e.category || e.type || "Equipment"}`} badge="Deadline" color={T.red} tab="equipment" />)}{!overdueWOs.length && !highPriority.length && !deadlineEqs.length && <div style={{ padding:14, color:T.muted }}>No urgent overdue work, high-priority WOs, or deadline equipment right now.</div>}</Panel> },
     my_work: { title:"My Work", size:"wide", tab:"workorders", roles:["mechanic","supervisor","facility_admin","organization_admin"], render:()=> <Panel title="My Work / Assigned Work" action={<Btn small onClick={()=>click("workorders")}>Open</Btn>}>{(assignedToMe.length ? assignedToMe : activeWOs.slice(0,4)).slice(0,6).map(w=><ActionRow key={w.id} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "Work Order"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • ${w.status || "Open"}`} badge={w.priority || "Normal"} color={w.priority==="High"?T.red:w.priority==="Medium"?T.amber:T.accent} tab="workorders" />)}{!activeWOs.length && <div style={{ padding:14, color:T.muted }}>No active assigned work.</div>}</Panel> },
     priority_queue: { title:"Priority Work Queue", size:"wide", tab:"workorders", roles:["organization_admin","facility_admin","supervisor","mechanic"], render:()=> <Panel title="Priority Work Queue" action={<Btn small onClick={()=>click("workorders")}>View All</Btn>}>{priorityList.length ? priorityList.map(w=><ActionRow key={w.id} title={`${w.id || w.woNumber || "WO"} — ${w.title || w.faultDescription || "Work Order"}`} sub={`${eqName(workOrderEquipmentId(w)||w.equipment)} • Due ${w.due || "No due date"} • ${w.status || "Open"}`} badge={w.priority || "Normal"} color={w.priority==="High"?T.red:w.priority==="Medium"?T.amber:T.accent} tab="workorders" />) : <div style={{ padding:14, color:T.muted }}>No active work orders. Great time to review PM and inventory.</div>}</Panel> },
     equipment_watch: { title:"Equipment Watch", size:"wide", tab:"equipment", roles:["organization_admin","facility_admin","supervisor","mechanic","viewer"], render:()=> <Panel title="Equipment Watch" action={<Btn small variant="secondary" onClick={()=>click("equipment")}>Equipment</Btn>}>{equipmentWatch.length ? equipmentWatch.map(e=><ActionRow key={e.id} title={`${e.id} — ${e.name || e.nomenclature || "Equipment"}`} sub={`${e.locationName || e.location || "No facility"} • ${e.category || e.type || "No category"}`} badge={e.status || "Status"} color={equipmentStatusTipColor(e.status)} tab="equipment" />) : <div style={{ padding:14, color:T.muted }}>No deadline or deficient equipment in this view.</div>}</Panel> },
@@ -3226,9 +3151,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
     const companyName = gs.companyName || "MaintForge";
     const companyLogo = resolveWorkOrderBrandLogo(state, wo, eq || {});
-    const printableFacilityName = (() => {
-      const raw = recordLocationName(wo, state) || recordLocationName(eq || {}, state) || activeFacilitySettings(state)?.activeFacilityName || gs.siteName || gs.location || "";
-      if(!raw || raw === "All Facilities") return "";
+    const printableLocationName = (() => {
+      const raw = recordLocationName(wo, state) || recordLocationName(eq || {}, state) || activeLocationSettings(state)?.activeLocationName || gs.siteName || gs.location || "";
+      if(!raw || raw === "Location") return "";
       if(typeof raw === "object") return raw.name || raw.location || raw.title || "";
       return String(raw || "").trim();
     })();
@@ -3347,7 +3272,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
       <div class="outer">
         <header class="top">
           <div class="logoBox">${companyLogo?`<img src="${companyLogo}" alt="Logo">`:`<div class="logoText">LOGO</div>`}</div>
-          <div class="companyBox"><div class="company" style="font-size:${workOrderBrandFontSize(companyName)}px">${h(companyName)}</div>${printableFacilityName ? `<div class="facilityName" style="font-size:${workOrderFacilityFontSize(printableFacilityName)}px">${h(printableFacilityName)}</div>` : ""}<div class="typePill"><span>${typeIcon}</span><span>${h(workType)}</span></div></div>
+          <div class="companyBox"><div class="company" style="font-size:${workOrderBrandFontSize(companyName)}px">${h(companyName)}</div>${printableLocationName ? `<div class="facilityName" style="font-size:${workOrderLocationFontSize(printableLocationName)}px">${h(printableLocationName)}</div>` : ""}<div class="typePill"><span>${typeIcon}</span><span>${h(workType)}</span></div></div>
           <div class="numberBox"><div class="woNumber"><div class="label">Work Order Number</div><div class="number">${h(wo.id || "")}</div></div><div class="status ${statusClass}">${h(wo.status || "Open")}</div></div>
         </header>
 
@@ -4334,7 +4259,7 @@ function Equipment({ state, dispatch }) {
     const summaryLogo = resolveWorkOrderBrandLogo(state, {}, eq || {});
     win.document.write(`<div class="header">${summaryLogo?`<img class="logo" src="${summaryLogo}" alt="Logo">`:""}<div class="titleBlock"><h1>${esc(settings.companyName || "MaintForge")}</h1><div class="eqNum">Equipment Summary — ${esc(eq.id||"—")}</div><div class="subtitle">${esc(eq.name || eq.nomenclature || "—")} · ${esc([eq.year,eq.make,eq.model].filter(Boolean).join(" ") || "—")}</div></div><div style="text-align:right;color:#667085;font-size:11px">Generated: ${new Date().toLocaleDateString()}</div></div>`);
     win.document.write(`<div class="metrics">${metric("Current " + usage.label, usage.display ?? Number(usage.value||0).toLocaleString(undefined,{maximumFractionDigits:1}))}${metric("Lifetime Spent", moneyFmt(fin.lifetimeSpent))}${metric("FY Spent", moneyFmt(fin.fySpent))}${metric("Total WOs", fin.totalWOs)}${metric("Lifetime Labor", fin.lifetimeLaborHours.toFixed(1)+"h")}${metric("FY Labor", fin.fyLaborHours.toFixed(1)+"h")}${metric("Open WOs", fin.openWOs)}${metric("Completed WOs", fin.completedWOs)}</div>`);
-    win.document.write(`<div class="sectionTitle">Equipment Information</div><div class="grid">${[["Equipment #",eq.id],["Nomenclature",eq.name||eq.nomenclature],["Year",eq.year],["Make",eq.make],["Model",eq.model],["Serial #",eq.serial],["EIL #",eq.eilNumber],["Facility",eq.location],["Area",eq.area],["Category",eq.category||eq.type],["Acquisition Date",eq.acquisitionDate],["Purchase Price",eq.acquisitionCost?moneyFmt(eq.acquisitionCost):""],["Status",eq.status||"Fully Operational"]].map(([k,v])=>`<div class="field"><div class="label">${esc(k)}</div><div class="value">${esc(v||"—")}</div></div>`).join("")}</div>`);
+    win.document.write(`<div class="sectionTitle">Equipment Information</div><div class="grid">${[["Equipment #",eq.id],["Nomenclature",eq.name||eq.nomenclature],["Year",eq.year],["Make",eq.make],["Model",eq.model],["Serial #",eq.serial],["EIL #",eq.eilNumber],["Location",eq.location],["Area",eq.area],["Category",eq.category||eq.type],["Acquisition Date",eq.acquisitionDate],["Purchase Price",eq.acquisitionCost?moneyFmt(eq.acquisitionCost):""],["Status",eq.status||"Fully Operational"]].map(([k,v])=>`<div class="field"><div class="label">${esc(k)}</div><div class="value">${esc(v||"—")}</div></div>`).join("")}</div>`);
     win.document.write(`<div class="sectionTitle">Work Order Totals</div><table><tr><th>Type</th><th class="right">Count</th></tr><tr><td>Repair</td><td class="right">${fin.repairWOs}</td></tr><tr><td>Service / PM</td><td class="right">${fin.serviceWOs}</td></tr><tr><td>Inspection</td><td class="right">${fin.inspectionWOs}</td></tr></table>`);
     win.document.write(`<div class="sectionTitle">Work Order History</div><table><tr><th>WO #</th><th>Type</th><th>Status</th><th>Date</th><th>Description</th><th class="right">Labor</th><th class="right">Cost</th></tr>${wos.map(w=>`<tr><td>${esc(w.id||"—")}</td><td>${esc(w.woType||w.type||"—")}</td><td>${esc(w.status||"—")}</td><td>${esc(workOrderDate(w)||"—")}</td><td>${esc(w.title||w.faultDescription||w.description||"—")}</td><td class="right">${esc((+w.laborHours||0).toFixed(1))}h</td><td class="right">${esc(moneyFmt(woTotalCost(w)))}</td></tr>`).join("")}${!wos.length?`<tr><td colspan="7" style="text-align:center;color:#667085;padding:18px">No work orders for this equipment.</td></tr>`:""}</table>`);
     if(eq.notes) win.document.write(`<div class="sectionTitle">Notes</div><div style="white-space:pre-wrap;border:1px solid #e5e7eb;border-radius:8px;padding:10px">${esc(eq.notes)}</div>`);
@@ -4347,9 +4272,9 @@ function Equipment({ state, dispatch }) {
     const eq = state.equipment.find(e => e.id === wo.equipment) || {};
     const gs = state.settings || {};
     const historyCompanyLogo = resolveWorkOrderBrandLogo(state, wo, eq || {});
-    const historyFacilityName = (() => {
-      const raw = recordLocationName(wo, state) || recordLocationName(eq || {}, state) || activeFacilitySettings(state)?.activeFacilityName || gs.siteName || gs.location || "";
-      if(!raw || raw === "All Facilities") return "";
+    const historyLocationName = (() => {
+      const raw = recordLocationName(wo, state) || recordLocationName(eq || {}, state) || activeLocationSettings(state)?.activeLocationName || gs.siteName || gs.location || "";
+      if(!raw || raw === "Location") return "";
       if(typeof raw === "object") return raw.name || raw.location || raw.title || "";
       return String(raw || "").trim();
     })();
@@ -4446,7 +4371,7 @@ function Equipment({ state, dispatch }) {
       <div class="page"><div class="outer">
         <header class="top">
           <div class="logoBox">${historyCompanyLogo ? `<img src="${historyCompanyLogo}" alt="Logo">` : `<div class="logoText">LOGO</div>`}</div>
-          <div class="companyBox"><div class="company" style="font-size:${workOrderBrandFontSize(gs.companyName || "MaintForge")}px">${h(gs.companyName || "MaintForge")}</div>${historyFacilityName ? `<div class="facilityName" style="font-size:${workOrderFacilityFontSize(historyFacilityName)}px">${h(historyFacilityName)}</div>` : ""}<div class="typePill">${h(type.toUpperCase())}</div></div>
+          <div class="companyBox"><div class="company" style="font-size:${workOrderBrandFontSize(gs.companyName || "MaintForge")}px">${h(gs.companyName || "MaintForge")}</div>${historyLocationName ? `<div class="facilityName" style="font-size:${workOrderLocationFontSize(historyLocationName)}px">${h(historyLocationName)}</div>` : ""}<div class="typePill">${h(type.toUpperCase())}</div></div>
           <div class="numberBox"><div class="woNumber"><div class="label">Work Order Number</div><div class="number">${h(wo.id || "")}</div></div><div class="status">${h(wo.status || "Open")}</div></div>
         </header>
         <div class="dateGrid">
@@ -4645,9 +4570,6 @@ function Equipment({ state, dispatch }) {
       </Field>
       <Field label="Serial Number" half>
         <SmartInput historyKey="equipment.serial" style={inp} value={form.serial||""} onChange={e=>setForm(f=>({...f,serial:e.target.value}))} />
-      </Field>
-      <Field label="Facility" half>
-        <SmartInput historyKey="equipment.facility" style={inp} listId="equipment-facility-history" extraOptions={[...new Set([...(state.settings?.locations||[]), ...(state.equipment||[]).map(e=>e.location).filter(Boolean)])]} value={form.location||""} onChange={e=>setForm(f=>({...f,location:e.target.value,facility:e.target.value}))} placeholder="Select or type facility..." />
       </Field>
       <Field label="Area / Building / Department" half>
         <SmartInput historyKey="equipment.area" style={inp} listId="equipment-area-history" extraOptions={[...new Set([...(state.settings?.areas||[]).map(a=>typeof a==="string"?a:a.name), ...(state.equipment||[]).map(e=>e.area).filter(Boolean)])]} value={form.area||""} onChange={e=>setForm(f=>({...f,area:e.target.value}))} placeholder="e.g. Maintenance Building" />
@@ -5126,7 +5048,7 @@ function Equipment({ state, dispatch }) {
           <Card>
             <h4 style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Equipment Details</h4>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"12px 20px" }}>
-              {[["Type",eq.type],["Facility",eq.location],["Area",eq.area],["Serial Number",eq.serial],["EIL #",eq.eilNumber],["Year",eq.year],["Make",eq.make],["Model",eq.model],["Acquisition Date",eq.acquisitionDate],["Purchase Price",eq.acquisitionCost?moneyFmt(eq.acquisitionCost):"—"],["Warranty Start",eq.warrantyStart],["Warranty End",eq.warrantyEnd]].map(([k,v])=>(
+              {[["Type",eq.type],["Location",eq.location],["Area",eq.area],["Serial Number",eq.serial],["EIL #",eq.eilNumber],["Year",eq.year],["Make",eq.make],["Model",eq.model],["Acquisition Date",eq.acquisitionDate],["Purchase Price",eq.acquisitionCost?moneyFmt(eq.acquisitionCost):"—"],["Warranty Start",eq.warrantyStart],["Warranty End",eq.warrantyEnd]].map(([k,v])=>(
                 <div key={k}>
                   <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div>
                   <div style={{ fontFamily:T.sans, fontSize:13, color:T.text, marginTop:3 }}>{v||"—"}</div>
@@ -5232,7 +5154,7 @@ function Equipment({ state, dispatch }) {
             const faultInfo = (e) => equipmentFaultInfo(state, e);
             const statusRank = s => s==="Out of Service / Deadline" ? 0 : s==="Operational with Deficiencies" ? 1 : s==="Fully Operational" ? 2 : 3;
             const reportEqs = [...allEquipment].sort((a,b)=>statusRank(a.status)-statusRank(b.status) || String(a.id||"").localeCompare(String(b.id||"")));
-            const exportRows = reportEqs.map(e=>{ const f=faultInfo(e); return {Status:e.status||"Fully Operational", "Equipment #":e.id||"", Nomenclature:e.name||e.nomenclature||"", Facility:e.location||"", Area:e.area||"", "Make/Model":`${e.make||""} ${e.model||""}`.trim(), "Serial #":e.serial||"", "EIL #":e.eilNumber||"", "Fault Date":f.faultDate||"", "Fault / Deficiency Description":f.description||"", "Open Work Orders":f.openWOs||""}; });
+            const exportRows = reportEqs.map(e=>{ const f=faultInfo(e); return {Status:e.status||"Fully Operational", "Equipment #":e.id||"", Nomenclature:e.name||e.nomenclature||"", Location:e.location||"", Area:e.area||"", "Make/Model":`${e.make||""} ${e.model||""}`.trim(), "Serial #":e.serial||"", "EIL #":e.eilNumber||"", "Fault Date":f.faultDate||"", "Fault / Deficiency Description":f.description||"", "Open Work Orders":f.openWOs||""}; });
             const win = window.open("","_blank");
             const rowHtml = (e) => {
               const f = faultInfo(e);
@@ -5240,7 +5162,7 @@ function Equipment({ state, dispatch }) {
             };
             const section = (title, rows, cls) => {
               if(!rows.length) return "";
-              return `<div class="section"><h2 class="${cls}">${esc(title)} (${rows.length})</h2><table><tr><th>Equip #</th><th>Nomenclature / Facility</th><th>Status</th><th>Make/Model</th><th>Serial #</th><th>EIL #</th><th>Fault Date</th><th>Fault / Deficiency / Open WO Description</th></tr>${rows.map(rowHtml).join("")}</table></div>`;
+              return `<div class="section"><h2 class="${cls}">${esc(title)} (${rows.length})</h2><table><tr><th>Equip #</th><th>Nomenclature / Location</th><th>Status</th><th>Make/Model</th><th>Serial #</th><th>EIL #</th><th>Fault Date</th><th>Fault / Deficiency / Open WO Description</th></tr>${rows.map(rowHtml).join("")}</table></div>`;
             };
             const oos = reportEqs.filter(e=>e.status==="Out of Service / Deadline");
             const def = reportEqs.filter(e=>e.status==="Operational with Deficiencies");
@@ -5264,7 +5186,7 @@ function Equipment({ state, dispatch }) {
           <span style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.muted, paddingBottom:6 }}>Filter by:</span>
           {[
             ["Category", categories,   typeF,     setTypeF,     180],
-            ["Facility",locations,    locationF, setLocationF, 160],
+            ["Location",locations,    locationF, setLocationF, 160],
           ].map(([label, opts, val, set, width])=>(
             <div key={label} style={{ display:"flex", flexDirection:"column", gap:4 }}>
               <label style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{label}</label>
@@ -5706,7 +5628,7 @@ function Parts({ state, dispatch }) {
             <datalist id="part-model-options">{modelOptions.map(m=><option key={m} value={m} />)}</datalist>
             <Field label="Vendor" half><input style={inp} value={form.vendor||""} onChange={F("vendor")} /></Field>
             <Field label="PO Number" half><input style={inp} value={form.poNumber||""} onChange={F("poNumber")} /></Field>
-            <Field label="Facility" half><input style={inp} value={form.location||""} onChange={F("location")} /></Field>
+            <Field label="Location" half><input style={inp} value={form.location||""} onChange={F("location")} /></Field>
             <Field label="Date Received" half><input style={inp} type="date" value={form.dateReceived||""} onChange={F("dateReceived")} /></Field>
             <Field label="Unit Cost ($)" half><input style={inp} {...decimalInputAttrs()} value={form.unitCost ?? ""} onChange={e=>setForm(f=>({...f,unitCost:sanitizeDecimalInput(e.target.value)}))} /></Field>
             <Field label="Qty on Hand" half><input style={inp} type="number" value={form.qty||0} onChange={F("qty")} /></Field>
@@ -5746,7 +5668,7 @@ function Parts({ state, dispatch }) {
               <input style={inp} type="number" placeholder="Qty" value={p.qty} onChange={e=>setPoRow(i,"qty",e.target.value)} />
               <select style={sel} value={p.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, p.unit||"ea", v=>setPoRow(i,"unit",v))}>{getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}<option value="__new_unit__">+ Add new...</option></select>
               <input style={inp} {...decimalInputAttrs({ placeholder:"0.00" })} value={p.unitCost} onChange={e=>setPoRow(i,"unitCost",sanitizeDecimalInput(e.target.value))} />
-              <input style={inp} placeholder="Facility" value={p.location} onChange={e=>setPoRow(i,"location",e.target.value)} />
+              <input style={inp} placeholder="Location" value={p.location} onChange={e=>setPoRow(i,"location",e.target.value)} />
               <input style={inp} list="po-model-options" placeholder="Fits model" value={p.modelFit||""} onChange={e=>setPoRow(i,"modelFit",e.target.value)} />
               <datalist id="po-model-options">{modelOptions.map(m=><option key={m} value={m} />)}</datalist>
               {poForm.parts.length>1?<button onClick={()=>delPoRow(i)} style={{ background:"none", border:`1px solid ${T.red}`, borderRadius:5, color:T.red, cursor:"pointer", padding:"6px 8px", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>:<div/>}
@@ -7849,7 +7771,7 @@ function EquipmentInventory({ state, dispatch }) {
   const [modal, setModal]   = useState(null); /* "add" | "turnin" | item-object */
   const [form, setForm]     = useState({});
   const [turnInForm, setTurnInForm] = useState({ equipmentId:"", reason:"", date:today(), paperwork:"" });
-  const [transferForm, setTransferForm] = useState({ equipmentId:"", targetFacilityId:"", transferAttachments:true });
+  const [transferForm, setTransferForm] = useState({ equipmentId:"", targetLocationId:"", transferAttachments:true });
   const [search, setSearch] = useState("");
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
   const isDark = T.bg === DARK_THEME.bg;
@@ -7893,7 +7815,7 @@ function EquipmentInventory({ state, dispatch }) {
   const items    = [...eqAsInventory, ...attachmentAsInventory, ...invOnly];
   const orgLocations = normalizeMaintForgeLocations(state).filter(l=>l.active!==false);
   const inventoryLocationOptions = orgLocations.length
-    ? orgLocations.map(l=>({ id:l.id || l.name, name:l.name || String(l.id || "Facility") }))
+    ? orgLocations.map(l=>({ id:l.id || l.name, name:l.name || String(l.id || "Location") }))
     : ["Main Shop","Motor Pool","Storage"].map(name=>({ id:name, name }));
   const active   = items.filter(i=>!["Turned-in","Disposed"].includes(i.turnInStatus));
   const archived = items.filter(i=>["Turned-in","Disposed"].includes(i.turnInStatus));
@@ -7911,9 +7833,9 @@ function EquipmentInventory({ state, dispatch }) {
   const openTurnIn = () => { setTurnInForm({ equipmentId:"", reason:"", date:today(), paperwork:"" }); setModal("turnin"); };
   const openTransfer = (item=null) => {
     const selected = item?._source === "equipment" ? item : null;
-    const currentFacilityId = selected?.locationId || selected?.facilityId || state.activeLocationId || "";
-    const firstTarget = orgLocations.find(l=>String(l.id)!==String(currentFacilityId)) || orgLocations[0] || null;
-    setTransferForm({ equipmentId:selected?.id || "", targetFacilityId:firstTarget?.id || "", transferAttachments:true });
+    const currentLocationId = selected?.locationId || selected?.facilityId || state.activeLocationId || "";
+    const firstTarget = orgLocations.find(l=>String(l.id)!==String(currentLocationId)) || orgLocations[0] || null;
+    setTransferForm({ equipmentId:selected?.id || "", targetLocationId:firstTarget?.id || "", transferAttachments:true });
     setModal("transfer");
   };
   const openItem = item => { setForm({...item}); setModal(item); };
@@ -7967,12 +7889,12 @@ function EquipmentInventory({ state, dispatch }) {
   const saveTransfer = () => {
     const item = (state.equipment||[]).find(e=>String(e.id)===String(transferForm.equipmentId));
     if(!item) return alert("Select equipment to transfer.");
-    if(!transferForm.targetFacilityId) return alert("Select the facility receiving this equipment.");
-    const targetName = locationNameForId(state, transferForm.targetFacilityId);
+    if(!transferForm.targetLocationId) return alert("Select the facility receiving this equipment.");
+    const targetName = locationNameForId(state, transferForm.targetLocationId);
     const attachmentCount = (item.attachments||[]).length;
     const attachmentText = attachmentCount ? (transferForm.transferAttachments ? `\n\n${attachmentCount} attachment(s) will transfer with this equipment.` : `\n\n${attachmentCount} attachment(s) will stay in the current facility inventory with no parent equipment.`) : "";
     if(!confirm(`Transfer ${item.id} — ${item.name || item.nomenclature || "Equipment"} to ${targetName}?\n\nThis will also move related work orders, PM, inspections, schedules, usage logs, requests, and linked records.${attachmentText}`)) return;
-    dispatch({ type:"TRANSFER_EQUIPMENT", payload:{ equipmentId:item.id, targetFacilityId:transferForm.targetFacilityId, transferAttachments:transferForm.transferAttachments } });
+    dispatch({ type:"TRANSFER_EQUIPMENT", payload:{ equipmentId:item.id, targetLocationId:transferForm.targetLocationId, transferAttachments:transferForm.transferAttachments } });
     setModal(null);
   };
 
@@ -8019,7 +7941,7 @@ function EquipmentInventory({ state, dispatch }) {
         <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
           <input style={{ ...inp, maxWidth:220 }} placeholder="Search inventory..." value={search} onChange={e=>setSearch(e.target.value)} />
           <button type="button" onClick={()=>setMissingEeOnly(v=>!v)} style={{ padding:"7px 12px", borderRadius:7, border:`1px solid ${missingEeOnly?T.red:T.border}`, background:missingEeOnly?(isDark?"rgba(239,68,68,.16)":"#fee2e2"):(isDark?T.surface:"#fff"), color:missingEeOnly?T.red:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:700 }}>No EE ({items.filter(i=>!String(i.eilNumber||"").trim()).length})</button>
-          {tab==="active" && <Btn variant="secondary" onClick={()=>openTransfer()}>Transfer Equipment</Btn>}
+          
           {tab==="active" && <Btn variant="secondary" onClick={openTurnIn}>Turn In Equipment</Btn>}
           {tab==="active" && <Btn onClick={openAdd}>+ Add Item</Btn>}
         </div>
@@ -8117,55 +8039,6 @@ function EquipmentInventory({ state, dispatch }) {
         </Modal>
       )}
 
-      {/* Transfer modal */}
-      {modal==="transfer"&&(() => {
-        const selectedEq = (state.equipment||[]).find(e=>String(e.id)===String(transferForm.equipmentId));
-        const selectedAttachments = selectedEq?.attachments || [];
-        const relatedCounts = selectedEq ? {
-          workOrders:(state.workOrders||[]).filter(w=>String(workOrderEquipmentId(w)||w.equipment||w.equipmentId)===String(selectedEq.id)).length,
-          pmSchedules:(state.pmSchedules||[]).filter(s=>String(s.equipmentId||s.equipment)===String(selectedEq.id)).length,
-          inspections:(state.inspectionSchedules||[]).filter(s=>String(s.equipmentId||s.equipment)===String(selectedEq.id)).length,
-          usageLogs:(state.usageLogs||[]).filter(l=>String(l.equipmentId||l.equipment||l.eqId)===String(selectedEq.id)).length,
-        } : { workOrders:0, pmSchedules:0, inspections:0, usageLogs:0 };
-        const currentFacilityId = selectedEq?.locationId || selectedEq?.facilityId || "";
-        return <Modal title="Transfer Equipment Between Facilities" onClose={()=>setModal(null)}>
-          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-            <div style={{ padding:14, border:`1px solid ${T.border}`, borderRadius:14, background:T.grayLt }}>
-              <div style={{ fontWeight:900, color:T.text, marginBottom:4 }}>Safe transfer</div>
-              <div style={{ color:T.muted, fontSize:12, lineHeight:1.45 }}>This moves the equipment and all linked records to the selected facility: work orders, usage logs, PM schedules, inspection schedules, requests, and linked records. Attachments can move with the equipment or stay behind as inventory items with no parent equipment.</div>
-            </div>
-            <Field label="Equipment to transfer">
-              <select style={sel} value={transferForm.equipmentId} onChange={e=>{
-                const eq = (state.equipment||[]).find(x=>String(x.id)===String(e.target.value));
-                const fromId = eq?.locationId || eq?.facilityId || "";
-                const firstTarget = orgLocations.find(l=>String(l.id)!==String(fromId)) || orgLocations[0] || null;
-                setTransferForm(f=>({...f,equipmentId:e.target.value,targetFacilityId:firstTarget?.id||""}));
-              }}>
-                <option value="">-- Select Equipment --</option>
-                {(state.equipment||[]).filter(e=>!["Turned-in","Disposed"].includes(e.turnInStatus)).map(e=><option key={e.id} value={e.id}>{e.id} — {e.name || e.nomenclature || "Equipment"} ({e.locationName || e.location || "No facility"})</option>)}
-              </select>
-            </Field>
-            <Field label="Receiving facility">
-              <select style={sel} value={transferForm.targetFacilityId} onChange={e=>setTransferForm(f=>({...f,targetFacilityId:e.target.value}))}>
-                <option value="">-- Select Receiving Facility --</option>
-                {orgLocations.filter(l=>String(l.id)!==String(currentFacilityId)).map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
-              </select>
-            </Field>
-            {selectedEq && <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:10 }}>
-              {[ ["Work Orders", relatedCounts.workOrders], ["PM Schedules", relatedCounts.pmSchedules], ["Inspections", relatedCounts.inspections], ["Usage Logs", relatedCounts.usageLogs], ["Attachments", selectedAttachments.length] ].map(([label,value])=><div key={label} style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:12, background:T.card }}><div style={{ fontSize:20, fontWeight:950, color:T.text }}>{value}</div><div style={{ fontSize:11, color:T.muted, fontWeight:800, textTransform:"uppercase" }}>{label}</div></div>)}
-            </div>}
-            {!!selectedAttachments.length && <label style={{ display:"flex", gap:10, alignItems:"flex-start", padding:12, border:`1px solid ${T.border}`, borderRadius:12, background:T.card, cursor:"pointer" }}>
-              <input type="checkbox" checked={transferForm.transferAttachments!==false} onChange={e=>setTransferForm(f=>({...f,transferAttachments:e.target.checked}))} />
-              <span><b>Transfer attachments with this equipment</b><br/><span style={{ color:T.muted, fontSize:12 }}>If unchecked, attachments stay in the current facility inventory with no parent equipment.</span></span>
-            </label>}
-          </div>
-          <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:14 }}>
-            <Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn>
-            <Btn onClick={saveTransfer}>Transfer Equipment</Btn>
-          </div>
-        </Modal>;
-      })()}
-
       {/* Turn-in modal */}
       {modal==="turnin"&&(
         <Modal title="Equipment Turn-in" onClose={()=>setModal(null)}>
@@ -8201,7 +8074,7 @@ function reportHeaderHTML(state, title) {
   const s = state.settings || {};
   const companyName = s.companyName || "Maintenance Department";
   const dept = s.department || "Maintenance Department";
-  const logo = resolveMaintForgeLogo(state, state.activeLocationId || "__all");
+  const logo = resolveMaintForgeLogo(state);
   return `<div style="display:flex;align-items:center;gap:16px;border-bottom:3px solid #1a1a2e;padding-bottom:14px;margin-bottom:16px">
     ${logo?`<img src="${logo}" style="height:60px;max-width:120px;object-fit:contain" alt="logo">`:""}
     <div>
@@ -8663,28 +8536,28 @@ function ReportCombined({ state }) {
 
 
 
-function slugifyFacility(value="") {
+function slugifyLocation(value="") {
   return String(value || "facility").toLowerCase().trim().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"") || "facility";
 }
 
-function normalizeFacilityName(value="") {
+function normalizeLocationName(value="") {
   return String(value || "").toLowerCase().trim().replace(/\s+/g," ");
 }
 
-function equipmentFacilityValues(eq={}) {
+function equipmentLocationValues(eq={}) {
   return [
     eq.location, eq.facility, eq.site, eq.siteName, eq.facilityName,
-    eq.assignedFacility, eq.baseLocation, eq.currentLocation, eq.shop, eq.department
-  ].map(normalizeFacilityName).filter(Boolean);
+    eq.assignedLocation, eq.baseLocation, eq.currentLocation, eq.shop, eq.department
+  ].map(normalizeLocationName).filter(Boolean);
 }
 
-function equipmentMatchesFacility(eq={}, facility="") {
-  const fac = normalizeFacilityName(facility);
+function equipmentMatchesLocation(eq={}, facility="") {
+  const fac = normalizeLocationName(facility);
   if(!fac) return true;
-  const slug = normalizeFacilityName(slugifyFacility(facility));
-  const candidates = equipmentFacilityValues(eq);
+  const slug = normalizeLocationName(slugifyLocation(facility));
+  const candidates = equipmentLocationValues(eq);
   if(!candidates.length) return false;
-  return candidates.some(c => c === fac || c === slug || slugifyFacility(c) === slugifyFacility(facility));
+  return candidates.some(c => c === fac || c === slug || slugifyLocation(c) === slugifyLocation(facility));
 }
 
 function equipmentPublicId(eq={}, idx=0) {
@@ -8697,8 +8570,8 @@ function equipmentPublicName(eq={}) {
 
 function buildWORequestEquipmentList(equipment=[], facility="") {
   const allEquipment = Array.isArray(equipment) ? equipment : [];
-  const exact = allEquipment.filter(e => equipmentMatchesFacility(e, facility));
-  const unassigned = allEquipment.filter(e => !equipmentFacilityValues(e).length);
+  const exact = allEquipment.filter(e => equipmentMatchesLocation(e, facility));
+  const unassigned = allEquipment.filter(e => !equipmentLocationValues(e).length);
   const source = exact.length
     ? [...exact, ...unassigned.filter(e=>!exact.some(x=>equipmentPublicId(x)===equipmentPublicId(e)))]
     : allEquipment;
@@ -8724,26 +8597,26 @@ function buildWORequestEquipmentList(equipment=[], facility="") {
   });
 }
 
-function makeStableFacilityQrToken() {
+function makeStableLocationQrToken() {
   return `fac_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,10)}`;
 }
 
-function getFacilityQrToken(settings={}, facility="") {
+function getLocationQrToken(settings={}, facility="") {
   const ids = settings.facilityQrIds || {};
-  return ids[facility] || slugifyFacility(facility);
+  return ids[facility] || slugifyLocation(facility);
 }
 
-function requestUrlForFacility(facility="", settings={}, ownerUserId="") {
+function requestUrlForLocation(facility="", settings={}, ownerUserId="") {
   try {
     const base = window.location.origin + window.location.pathname;
-    const token = getFacilityQrToken(settings, facility);
+    const token = getLocationQrToken(settings, facility);
     const params = new URLSearchParams();
     params.set("woRequest", token);
     if(ownerUserId) params.set("owner", ownerUserId);
     if(facility) params.set("facility", facility);
     return `${base}?${params.toString()}`;
   } catch(e) {
-    const token = getFacilityQrToken(settings, facility);
+    const token = getLocationQrToken(settings, facility);
     return `?woRequest=${encodeURIComponent(token)}${ownerUserId?`&owner=${encodeURIComponent(ownerUserId)}`:""}${facility?`&facility=${encodeURIComponent(facility)}`:""}`;
   }
 }
@@ -8981,11 +8854,11 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
   const portalEquipment = Array.isArray(publicPortal?.equipment_json) ? publicPortal.equipment_json : [];
   const equipmentSource = publicMode ? portalEquipment : (state.equipment||[]);
   const facilities = [...new Set([...(settings.locations||[]), ...equipmentSource.map(e=>e.location).filter(Boolean), settings.location, settings.siteName].filter(Boolean))];
-  const allFacilities = facilities.length ? facilities : [publicPortal?.facility || "Main Facility"];
+  const allLocations = facilities.length ? facilities : [publicPortal?.facility || "Main Location"];
   const facilityQrIds = settings.facilityQrIds || {};
-  const facilityFromToken = portalToken ? (publicPortal?.facility || allFacilities.find(f=>facilityQrIds[f]===portalToken) || allFacilities.find(f=>slugifyFacility(f)===portalToken) || allFacilities[0]) : "";
-  const defaultFacility = facilityFromToken || allFacilities[0] || "Main Facility";
-  const [facility, setFacility] = useState(defaultFacility);
+  const facilityFromToken = portalToken ? (publicPortal?.facility || allLocations.find(f=>facilityQrIds[f]===portalToken) || allLocations.find(f=>slugifyLocation(f)===portalToken) || allLocations[0]) : "";
+  const defaultLocation = facilityFromToken || allLocations[0] || "Main Location";
+  const [facility, setLocation] = useState(defaultLocation);
   const [requestForm, setRequestForm] = useState({ requestedBy:"", faultDate:today(), equipment:"", description:"", photos:[] });
   const [equipmentSearch, setEquipmentSearch] = useState("");
   const [showSubmit, setShowSubmit] = useState(isOperatorPortal);
@@ -9030,32 +8903,32 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
   }, [isOperatorPortal, activeSession?.user?.id]);
 
   useEffect(()=>{
-    const missing = allFacilities.filter(f=>!facilityQrIds[f]);
+    const missing = allLocations.filter(f=>!facilityQrIds[f]);
     if(missing.length && !isOperatorPortal) {
       const nextIds = { ...facilityQrIds };
-      missing.forEach(f=>{ if(!nextIds[f]) nextIds[f] = makeStableFacilityQrToken(); });
+      missing.forEach(f=>{ if(!nextIds[f]) nextIds[f] = makeStableLocationQrToken(); });
       dispatch({ type:"UPDATE_SETTINGS", payload:{ ...settings, facilityQrIds:nextIds } });
     }
-  }, [allFacilities.join("|"), isOperatorPortal]);
+  }, [allLocations.join("|"), isOperatorPortal]);
 
   useEffect(()=>{
-    if(isOperatorPortal && facilityFromToken && facility !== facilityFromToken) setFacility(facilityFromToken);
+    if(isOperatorPortal && facilityFromToken && facility !== facilityFromToken) setLocation(facilityFromToken);
   }, [portalToken, facilityFromToken]);
   useEffect(()=>{
     if(isOperatorPortal || !activeSession?.user?.id) return;
     const timer = setTimeout(()=>{
-      (allFacilities||[]).forEach(fac=>{
-        const token = getFacilityQrToken(settings, fac);
+      (allLocations||[]).forEach(fac=>{
+        const token = getLocationQrToken(settings, fac);
         upsertWORequestPortal({ token, ownerUserId:session.user.id, facility:fac, settings, equipment:state.equipment||[] });
       });
     }, 600);
     return ()=>clearTimeout(timer);
-  }, [isOperatorPortal, activeSession?.user?.id, allFacilities.join("|"), JSON.stringify(facilityQrIds), (state.equipment||[]).length, settings.companyName]);
+  }, [isOperatorPortal, activeSession?.user?.id, allLocations.join("|"), JSON.stringify(facilityQrIds), (state.equipment||[]).length, settings.companyName]);
 
 
-  const exactEqForFacility = equipmentSource.filter(e=>equipmentMatchesFacility(e, facility));
-  const eqForFacility = exactEqForFacility.length ? exactEqForFacility : equipmentSource;
-  const equipmentSuggestions = eqForFacility.filter(e=>{
+  const exactEqForLocation = equipmentSource.filter(e=>equipmentMatchesLocation(e, facility));
+  const eqForLocation = exactEqForLocation.length ? exactEqForLocation : equipmentSource;
+  const equipmentSuggestions = eqForLocation.filter(e=>{
     const q = equipmentSearch.trim().toLowerCase();
     if(!q) return false;
     const text = `${e.id||""} ${e.name||""} ${e.nomenclature||""} ${e.category||""} ${e.make||""} ${e.model||""} ${e.serial||""}`.toLowerCase();
@@ -9083,7 +8956,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
     const eq = equipmentSource.find(e=>e.id===requestForm.equipment) || {};
     const req = {
       id:`WOR-${String(Date.now()).slice(-6)}`,
-      facility: facility || eq.location || defaultFacility,
+      facility: facility || eq.location || defaultLocation,
       submittedDate: today(),
       createdAt: new Date().toISOString(),
       faultDate: requestForm.faultDate || today(),
@@ -9140,14 +9013,14 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
   };
 
   const printQR = async (fac) => {
-    const token = getFacilityQrToken(settings, fac);
-    const url = requestUrlForFacility(fac, settings, activeSession?.user?.id || "");
+    const token = getLocationQrToken(settings, fac);
+    const url = requestUrlForLocation(fac, settings, activeSession?.user?.id || "");
     await upsertWORequestPortal({ token, ownerUserId:activeSession?.user?.id, facility:fac, settings, equipment:state.equipment||[] });
     const win = window.open("","_blank");
     if(!win) { alert("Pop-up blocked. Allow pop-ups to print the QR code."); return; }
     win.document.write(`<html><head><title>Work Order Request QR</title><style>
       body{font-family:Arial,sans-serif;text-align:center;padding:28px;color:#111;background:#fff}.sheet{max-width:520px;margin:0 auto;border:2px solid #111;border-radius:16px;padding:26px}.brand{font-size:24px;font-weight:800;margin:0 0 4px}.facility{font-size:18px;font-weight:700;margin:0 0 18px}.instructions{font-size:16px;line-height:1.35;margin:0 0 18px}.qr{width:300px;height:300px;max-width:88vw;background:#fff}.footer{font-size:12px;margin-top:18px;color:#555}.note{font-size:12px;color:#555;margin-top:12px}button{margin-top:22px;padding:10px 18px;border:none;border-radius:8px;background:#111827;color:#fff;font-weight:700;cursor:pointer}@media print{button{display:none}body{padding:0}.sheet{border:2px solid #111;margin-top:20px}}
-    </style></head><body><div class="sheet"><div class="brand">${htmlEscape(settings.companyName||"MaintForge")}</div><div class="facility">${htmlEscape(fac)}</div><p class="instructions">Scan this QR code to submit a maintenance work order request.</p><img class="qr" src="${qrUrlForText(url)}"/><div class="note">This QR code is permanent for this facility. Do not replace unless intentionally regenerated by the owner.</div><div class="footer">MaintForge Work Order Requests</div></div><button onclick="window.print()">Print QR Code</button></body></html>`);
+    </style></head><body><div class="sheet"><div class="brand">${htmlEscape(settings.companyName||"MaintForge")}</div><div class="facility">${htmlEscape(fac)}</div><p class="instructions">Scan this QR code to submit a maintenance work order request.</p><img class="qr" src="${qrUrlForText(url)}"/><div class="note">This QR code is permanent for this company location. Do not replace it unless intentionally regenerated.</div><div class="footer">MaintForge Work Order Requests</div></div><button onclick="window.print()">Print QR Code</button></body></html>`);
     win.document.close();
   };
 
@@ -9163,7 +9036,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
   const RequestReview = ({ r }) => r ? <Modal title="Review Work Order Request" onClose={()=>setReviewRequest(null)}>
     <div style={{ display:"grid", gap:14 }}>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:10 }}>
-        <div><b>Facility</b><br/>{r.facility}</div>
+        <div><b>Location</b><br/>{r.facility}</div>
         <div><b>Equipment</b><br/>{r.equipment}<br/><span style={{ color:T.muted }}>{r.equipmentName}</span></div>
         <div><b>Requested By</b><br/>{r.requestedBy}</div>
         <div><b>Fault Date</b><br/>{r.faultDate}</div>
@@ -9185,7 +9058,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
       <Card>
         <SectionHeading sub="Submit a maintenance request. No account is required.">Work Order Request</SectionHeading>
         <div className="wo-request-form-grid" style={{ display:"grid", gridTemplateColumns:"1fr", gap:12 }}>
-          <Field label="Facility"><input style={inp} value={facility} disabled /></Field>
+          <Field label="Location"><input style={inp} value={facility} disabled /></Field>
           <Field label="Fault Date"><input style={inp} type="date" value={requestForm.faultDate} onChange={e=>updateForm("faultDate",e.target.value)} /></Field>
           <Field label="Requested By"><input style={inp} value={requestForm.requestedBy} onChange={e=>updateForm("requestedBy",e.target.value)} placeholder="Your name" /></Field>
           <Field label="Equipment">
@@ -9196,7 +9069,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
               </div>}
             </div>
             {selectedEquipment && <div style={{ fontSize:12, color:T.green, marginTop:6 }}>Selected: <b>{selectedEquipment.id}</b> — {selectedEquipment.name||selectedEquipment.nomenclature||"Equipment"}</div>}
-            {!eqForFacility.length && <div style={{ fontSize:12, color:T.amber, marginTop:6, lineHeight:1.4 }}>Equipment list is still syncing for this facility. You can still type the equipment number/name and submit the request.</div>}
+            {!eqForLocation.length && <div style={{ fontSize:12, color:T.amber, marginTop:6, lineHeight:1.4 }}>Equipment list is still syncing for this company. You can still type the equipment number/name and submit the request.</div>}
           </Field>
           <Field label="Photos (Optional)"><input style={inp} type="file" accept="image/*" capture="environment" multiple onChange={e=>handlePhotos(e.target.files)} /></Field>
           <Field label="Problem / Fault Description"><textarea style={{...inp, minHeight:150}} value={requestForm.description} onChange={e=>updateForm("description",e.target.value)} placeholder="Describe what is wrong, where it is located, and what happened." /></Field>
@@ -9210,19 +9083,12 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
   return <div className="wo-requests-page" style={{ display:"grid", gap:16 }}>
     <Card>
       <div className="wo-request-header-row" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, marginBottom:10 }}>
-        <SectionHeading sub="Owner/Admin request queue. QR codes are printed from the button in the corner and are permanent per facility.">Work Order Requests</SectionHeading>
-        <Btn small onClick={()=>setShowQRPicker(true)}>Print QR Code</Btn>
+        <SectionHeading sub="Review operator requests and create work orders when needed. The company QR code remains permanent.">Work Order Requests</SectionHeading>
+        <Btn small onClick={()=>printQR(allLocations[0] || state.settings?.location || "Main Location")}>Print QR Code</Btn>
       </div>
     </Card>
 
-    {showQRPicker && <Modal title="Print QR Code" onClose={()=>setShowQRPicker(false)}>
-      <div style={{ display:"grid", gap:10 }}>
-        <div style={{ fontSize:13, color:T.muted, lineHeight:1.4 }}>Choose one facility. Only that facility QR code will be generated for printing. This QR code is permanent for that facility.</div>
-        {allFacilities.map(fac=><button key={fac} onClick={async()=>{ await printQR(fac); setShowQRPicker(false); }} style={{ textAlign:"left", padding:"14px 16px", borderRadius:12, border:`1px solid ${T.border}`, background:T.surface, cursor:"pointer", color:T.text }}>
-          <div style={{ fontWeight:900, fontSize:15 }}>{fac}</div>
-        </button>)}
-      </div>
-    </Modal>}
+    
 
     {reviewRequest && <RequestReview r={reviewRequest} />}
 
@@ -9239,7 +9105,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
           <div className="wo-request-mobile-meta" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:10 }}>
             <div><b>Fault Date</b><br/>{r.faultDate}</div>
             <div><b>Submitted</b><br/>{r.submittedDate}</div>
-            <div><b>Facility</b><br/>{r.facility}</div>
+            <div><b>Location</b><br/>{r.facility}</div>
             <div><b>Requested By</b><br/>{r.requestedBy}</div>
           </div>
           <div style={{ fontSize:13, lineHeight:1.4, marginBottom:12 }}><b>Operator Statement</b><br/>{r.description}</div>
@@ -9250,7 +9116,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
         {!requests.length && <div style={{ padding:20, textAlign:"center", color:T.muted, border:`1px dashed ${T.border}`, borderRadius:12 }}>No requests found.</div>}
       </div>
 
-      <div className="wo-request-desktop-table mobile-x-scroll"><table style={{ width:"100%", borderCollapse:"collapse" }}><thead><tr>{["Submitted","Fault Date","Facility","Equipment","Requested By","Statement / Pictures","Status","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, color:T.muted }}>{h}</th>)}</tr></thead><tbody>
+      <div className="wo-request-desktop-table mobile-x-scroll"><table style={{ width:"100%", borderCollapse:"collapse" }}><thead><tr>{["Submitted","Fault Date","Location","Equipment","Requested By","Statement / Pictures","Status","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, color:T.muted }}>{h}</th>)}</tr></thead><tbody>
         {requests.map(r=><tr key={r.id}><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.submittedDate}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, fontWeight:800 }}>{r.faultDate}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.facility}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}><b>{r.equipment}</b><br/><span style={{ color:T.muted, fontSize:12 }}>{r.equipmentName}</span></td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.requestedBy}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, maxWidth:360 }}><div style={{ marginBottom:6 }}>{r.description}</div>{(r.photos||[]).length>0?<span style={{ fontSize:12, color:T.accent, fontWeight:800 }}>{r.photos.length} picture{r.photos.length!==1?"s":""} attached</span>:<span style={{ fontSize:12, color:T.muted }}>No pictures</span>}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.status}{r.convertedWO?<><br/><b>{r.convertedWO}</b></>:null}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}><RequestActions r={r} /></td></tr>)}
         {!requests.length && <tr><td colSpan="8" style={{ padding:24, textAlign:"center", color:T.muted }}>No requests found.</td></tr>}
       </tbody></table></div>
@@ -9259,807 +9125,50 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
 }
 
 
-function SystemSettings({ state, dispatch, onClose, currentUser }) {
+function SystemSettings({ state, dispatch, onClose }) {
   const s = state.settings || {};
-  const [form, setForm] = useState({
-    companyName:   s.companyName   || "Maintenance Department",
-    department:    s.department    || "Maintenance Department",
-    location:      s.location      || "",
-    phone:         s.phone         || "",
-    email:         s.email         || "",
-    siteName:      s.siteName      || "",
-    region:        s.region        || "",
-    address:       s.address       || "",
-    cityState:     s.cityState     || "",
-    locations:     normalizeMaintForgeLocations(state),
-    areas:         normalizeMaintForgeAreas(state),
-    _selectedFacilityId: state.activeLocationId && state.activeLocationId !== "__all" ? state.activeLocationId : (normalizeMaintForgeLocations(state)[0]?.id || ""),
-    _newLoc:       "",
-    _newArea:      "",
-    _areaFacilityId: state.activeLocationId && state.activeLocationId !== "__all" ? state.activeLocationId : (normalizeMaintForgeLocations(state)[0]?.id || ""),
-    _newAreaFacilityId: "",
-    accentColor:   s.accentColor   || "#0052cc",
-    theme:         s.theme         || "light",
-    dateFormat:    s.dateFormat    || "MM/DD/YYYY",
-    currency:      s.currency      || "USD",
-    defaultPriority: s.defaultPriority || "Medium",
-    laborRateDefault: s.laborRateDefault || 45,
-    includeLaborInSpending: s.includeLaborInSpending !== false,
-    logo:          s.logo          || "",
-    logoMode:      s.logoMode || s.brandLogoMode || "company",
-    requireTech:   s.requireTech   || false,
+  const [form,setForm] = useState({
+    companyName:s.companyName || "",
+    location:s.location || s.cityState || "",
+    address:s.address || "",
+    cityState:s.cityState || "",
+    phone:s.phone || "",
+    email:s.email || "",
+    logo:s.logo || s.companyLogo || "",
+    accentColor:s.accentColor || "#0052cc",
+    dateFormat:s.dateFormat || "MM/DD/YYYY",
+    currency:s.currency || "USD",
+    defaultPriority:s.defaultPriority || "Medium",
+    laborRateDefault:s.laborRateDefault || 45,
+    includeLaborInSpending:s.includeLaborInSpending !== false,
+    requireTech:s.requireTech || false,
   });
-  const foundationState = { ...state, settings:form, locations:normalizeMaintForgeLocations({ ...state, settings:form }) };
-  const orgLocations = normalizeMaintForgeLocations(foundationState);
-  const orgAreas = normalizeMaintForgeAreas(foundationState);
-  const [userForm, setUserForm] = useState({ username:"", password:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] });
-  const [userSaveBusy, setUserSaveBusy] = useState(false);
-  const [userSaveMsg, setUserSaveMsg] = useState("");
-  const [inviteForm, setInviteForm] = useState({ email:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] });
-  const organizationUsers = normalizeOrgUsers(state, currentUser);
-  const currentUserEmail = normalizeEmail(currentUser?.email);
-  const existingUsernameUser = organizationUsers.find(u => normalizeUsername(u.username) && normalizeUsername(u.username) === normalizeUsername(userForm.username));
-  const inviteEmail = normalizeEmail(inviteForm.email);
-  const existingUserForInvite = organizationUsers.find(u => normalizeEmail(u.email) === inviteEmail);
-  const existingInviteForEmail = (state.userInvites||[]).find(inv => normalizeEmail(inv.email) === inviteEmail);
-  const backupFileInputRef = useRef(null);
-  const backupCounts = {
-    equipment:(state.equipment||[]).length,
-    workOrders:(state.workOrders||[]).length,
-    parts:(state.parts||[]).length,
-    facilities:orgLocations.length,
+  const F=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
+  const handleLogo=e=>{ const file=e.target.files?.[0]; if(!file)return; const r=new FileReader(); r.onload=ev=>setForm(f=>({...f,logo:ev.target.result})); r.readAsDataURL(file); };
+  const save=()=>{
+    const loc=(form.location || form.cityState || "Main Location").trim();
+    dispatch({type:"UPDATE_SETTINGS",payload:{...s,...form,siteName:loc,location:loc,logoMode:"company",brandLogoMode:"company",locations:[{id:"MAIN-LOCATION",name:loc,address:form.address,cityState:form.cityState,phone:form.phone,email:form.email,logo:form.logo,active:true}]}});
+    onClose();
   };
-  const [cloudBackups, setCloudBackups] = useState([]);
-  const [cloudBackupBusy, setCloudBackupBusy] = useState(false);
-  const [cloudBackupMsg, setCloudBackupMsg] = useState("");
-  const ownerWorkspaceId = state.ownerUserId || state.organizationOwnerId || currentUser?.id || "";
-  const canManageCloudBackups = !!currentUser?.id && currentUser.id === ownerWorkspaceId && isOrganizationAdminRole(state.userRole || currentUser?.role || "organization_admin");
-
-  const refreshCloudBackups = async () => {
-    if(!canManageCloudBackups) return;
-    setCloudBackupBusy(true);
-    setCloudBackupMsg("");
-    try {
-      const { data, error } = await supabase
-        .from("maintforge_backups")
-        .select("id,backup_date,backup_kind,record_counts,created_at")
-        .eq("owner_user_id", ownerWorkspaceId)
-        .order("created_at", { ascending:false })
-        .limit(50);
-      if(error) throw error;
-      setCloudBackups(Array.isArray(data) ? data : []);
-      setCloudBackupMsg(data?.length ? "Cloud backup protection is active." : "Cloud backup table is active. No snapshots are listed yet.");
-    } catch(e) {
-      console.error("Cloud backup list error:", e);
-      setCloudBackups([]);
-      setCloudBackupMsg("Cloud backup protection is not installed or cannot be read. Run MaintForge_Supabase_Data_Safety_v1.sql in Supabase, then refresh this section.");
-    } finally {
-      setCloudBackupBusy(false);
-    }
-  };
-
-  useEffect(() => {
-    if(canManageCloudBackups) refreshCloudBackups();
-  }, [canManageCloudBackups, ownerWorkspaceId]);
-
-  const createCloudBackupNow = async () => {
-    if(!canManageCloudBackups || cloudBackupBusy) return;
-    setCloudBackupBusy(true);
-    try {
-      const { error } = await supabase.rpc("maintforge_create_backup_now");
-      if(error) throw error;
-      setCloudBackupMsg("Safety snapshot created in Supabase. It is separate from the live workspace.");
-      await refreshCloudBackups();
-    } catch(e) {
-      console.error("Create cloud backup error:", e);
-      setCloudBackupMsg(`Could not create cloud snapshot: ${e?.message || e}`);
-    } finally {
-      setCloudBackupBusy(false);
-    }
-  };
-
-  const downloadCloudBackup = async (backup) => {
-    if(!backup?.id) return;
-    try {
-      const { data, error } = await supabase.from("maintforge_backups").select("data,backup_date,backup_kind,created_at").eq("id", backup.id).single();
-      if(error) throw error;
-      const stamp = String(data.backup_date || data.created_at || "backup").replace(/[:.]/g,"-");
-      const blob = new Blob([JSON.stringify(data.data, null, 2)], { type:"application/json" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `MaintForge_CLOUD_${data.backup_kind || "backup"}_${stamp}.json`;
-      a.click();
-      URL.revokeObjectURL(a.href);
-    } catch(e) {
-      console.error(e);
-      alert(`Could not download cloud backup: ${e?.message || e}`);
-    }
-  };
-
-  const restoreCloudBackup = async (backup) => {
-    if(!backup?.id || !canManageCloudBackups) return;
-    const c = backup.record_counts || {};
-    const ok = confirm(`Restore this protected cloud backup?\n\nDate: ${backup.backup_date || backup.created_at}\nEquipment: ${c.equipment || 0}\nWork Orders: ${c.workOrders || 0}\nParts: ${c.parts || 0}\nFacilities: ${c.facilities || 0}\n\nMaintForge will create a PRE-RESTORE cloud snapshot of the current workspace first. The selected backup itself will not be changed.`);
-    if(!ok) return;
-    setCloudBackupBusy(true);
-    try {
-      const { error } = await supabase.rpc("maintforge_restore_cloud_backup", { p_backup_id:backup.id });
-      if(error) throw error;
-      const row = await fetchUserStateRow(ownerWorkspaceId);
-      if(row?.error) throw row.error;
-      if(!row?.data) throw new Error("Restore finished but the owner workspace could not be reloaded.");
-      const restored = ensureCurrentOrganizationAdmin(normalizeLoadedUserState(row.data, ownerWorkspaceId), currentUser);
-      dispatch({ type:"REPLACE_STATE", payload:restored });
-      try { localStorage.setItem("ncaState", JSON.stringify(restored)); localStorage.setItem("ncaState:lastUserId", ownerWorkspaceId); } catch(e) {}
-      setCloudBackupMsg("Cloud backup restored. A separate pre-restore snapshot was created automatically.");
-      await refreshCloudBackups();
-    } catch(e) {
-      console.error("Cloud restore error:", e);
-      alert(`Cloud restore failed: ${e?.message || e}`);
-    } finally {
-      setCloudBackupBusy(false);
-    }
-  };
-  const adminSections = [
-    { id:"admin-safety", label:"Data Safety", icon:"🛡️", sub:"Backups and restore" },
-    { id:"admin-organization", label:"Company", icon:"🏢", sub:"Company info and logo" },
-    { id:"admin-preferences", label:"Work Order Defaults", icon:"🛠️", sub:"Theme, costs, priority" },
-    { id:"admin-appearance", label:"Appearance", icon:"🎨", sub:"Accent color" },
-    { id:"admin-danger", label:"Danger Zone", icon:"⚠️", sub:"Reset tools" },
-  ];
-  const goAdminSection = (id) => {
-    const el = document.getElementById(id);
-    if(el) el.scrollIntoView({ behavior:"smooth", block:"start" });
-  };
-  const downloadDataBackup = () => {
-    try {
-      const backup = ensureCurrentOrganizationAdmin(normalizeLoadedUserState(state, currentUser?.id || state.ownerUserId || ""), currentUser);
-      const stamp = new Date().toISOString().replace(/[:.]/g,"-");
-      const name = `MaintForge_BACKUP_${stamp}.json`;
-      const blob = new Blob([JSON.stringify(backup, null, 2)], { type:"application/json" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = name;
-      a.click();
-      URL.revokeObjectURL(a.href);
-    } catch(e) {
-      console.error(e);
-      alert("Could not download backup. Check the console for details.");
-    }
-  };
-  const loadDataBackup = (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if(!file) return;
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const parsed = JSON.parse(String(reader.result || "{}"));
-        const counts = {
-          equipment:(parsed.equipment||[]).length,
-          workOrders:(parsed.workOrders||[]).length,
-          parts:(parsed.parts||[]).length,
-          facilities:(parsed.locations||[]).length,
-        };
-        if(counts.equipment === 0 && counts.workOrders === 0 && counts.parts === 0) {
-          alert("This backup looks empty. Restore cancelled.");
-          return;
-        }
-        if(!canManageCloudBackups) {
-          alert("Only the signed-in Organization Administrator can restore a full workspace backup.");
-          return;
-        }
-        const restored = ensureCurrentOrganizationAdmin(normalizeLoadedUserState(parsed, ownerWorkspaceId), currentUser);
-        const msg = `Restore this backup?\n\nBACKUP FILE\nEquipment: ${counts.equipment}\nWork Orders: ${counts.workOrders}\nParts: ${counts.parts}\nFacilities: ${counts.facilities}\n\nCURRENT APP\nEquipment: ${backupCounts.equipment}\nWork Orders: ${backupCounts.workOrders}\nParts: ${backupCounts.parts}\nFacilities: ${backupCounts.facilities}\n\nMaintForge will create a protected PRE-RESTORE cloud snapshot before replacing the live workspace.`;
-        if(!confirm(msg)) return;
-        try { localStorage.setItem(`MaintForge_emergency_before_restore_${Date.now()}`, JSON.stringify(state)); } catch(e) {}
-
-        const { error } = await supabase.rpc("maintforge_restore_uploaded_backup", { p_state:restored });
-        if(error) throw error;
-
-        const row = await fetchUserStateRow(ownerWorkspaceId);
-        if(row?.error) throw row.error;
-        const finalState = ensureCurrentOrganizationAdmin(normalizeLoadedUserState(row?.data || restored, ownerWorkspaceId), currentUser);
-        dispatch({ type:"REPLACE_STATE", payload:finalState });
-        try { localStorage.setItem("ncaState", JSON.stringify(finalState)); localStorage.setItem("ncaState:lastUserId", ownerWorkspaceId); } catch(e) {}
-        setCloudBackupMsg("Backup restored safely. A protected pre-restore snapshot was saved in Supabase first.");
-        await refreshCloudBackups();
-        alert("Backup restored safely to Supabase. A protected pre-restore cloud snapshot was created first.");
-      } catch(e) {
-        console.error(e);
-        const message = String(e?.message || e);
-        if(message.includes("maintforge_restore_uploaded_backup") || message.includes("function") || message.includes("schema cache")) {
-          alert("Safe cloud restore is not installed yet. Run MaintForge_Supabase_Data_Safety_v1.sql in Supabase first. Nothing was restored.");
-        } else {
-          alert(`Could not restore this backup: ${message}`);
-        }
-      }
-    };
-    reader.readAsText(file);
-  };
-
-  const [migrationForm, setMigrationForm] = useState({ fromId:orgLocations[0]?.id || "", toId:orgLocations[1]?.id || orgLocations[0]?.id || "", pmTasks:true, inspectionTasks:true, tasks:true });
-  const toggleUserFacility = (id) => setUserForm(f => {
-    const set = new Set(Array.isArray(f.facilityIds) ? f.facilityIds : []);
-    if(set.has(id)) set.delete(id); else set.add(id);
-    return { ...f, facilityIds:Array.from(set) };
-  });
-  const createAdminMadeUser = async () => {
-    if(userSaveBusy) return;
-    setUserSaveMsg("");
-    const username = normalizeUsername(userForm.username);
-    if(!username) { alert("Enter a username."); return; }
-    if(username.includes("@")) { alert("Use a simple username without @. Email login is only for the main Supabase account."); return; }
-    if((userForm.password||"").length < 6) { alert("Password must be at least 6 characters."); return; }
-    if(existingUsernameUser) { alert(`Username ${username} already exists. Choose a different username.`); return; }
-    const facilityIds = Array.isArray(userForm.facilityIds) && userForm.facilityIds.length ? userForm.facilityIds : [];
-    if(!isOrganizationAdminRole(userForm.role) && facilityIds.length === 0) { alert("Assign at least one facility so this user can see data."); return; }
-
-    setUserSaveBusy(true);
-    try {
-      const newUser = await buildMaintForgeAppUser({ ...userForm, username, facilityIds });
-
-      // Update the visible app state immediately so the button never feels dead.
-      // Then save that exact same state to Supabase right away so username login works after sign-out.
-      const email = normalizeEmail(newUser.email);
-      const existingUsers = normalizeOrgUsers(state, currentUser).filter(u =>
-        normalizeEmail(u.email) !== email && normalizeUsername(u.username || "") !== username
-      );
-      const nextState = { ...state, organizationUsers:[newUser, ...existingUsers] };
-      dispatch({ type:"UPSERT_ORG_USER", payload:newUser });
-
-      const ownerId = state.ownerUserId || state.organizationOwnerId || currentUser?.id || "";
-      if(!ownerId) {
-        setUserSaveMsg("User was added on this screen, but the owner workspace ID was not found. Sign out/in as the owner admin and create the user again.");
-        alert("User was added on this screen, but it could not be saved because the owner workspace ID was not found.");
-        return;
-      }
-
-      const cloudState = prepareSharedOrganizationStateForCloudSave(nextState, currentUser);
-      const saveResult = await supabase
-        .from("user_state")
-        .upsert({
-          user_id:ownerId,
-          data:cloudState,
-          updated_at:new Date().toISOString(),
-        }, { onConflict:"user_id" });
-
-      if(saveResult.error) {
-        console.error("Create username user save error:", saveResult.error);
-        setSyncStatus("error");
-        setUserSaveMsg(`User was added on this screen, but cloud save failed: ${saveResult.error.message || "Supabase rejected the save."}`);
-        alert("The user was added on this screen, but it did NOT save to Supabase. Do not sign out yet. Check the console/Supabase policy error, then save Settings again.");
-        return;
-      }
-
-      try {
-        localStorage.setItem("ncaState", JSON.stringify(ensureCurrentOrganizationAdmin(cloudState, currentUser)));
-        localStorage.setItem("ncaState:lastUserId", ownerId);
-      } catch(e) {}
-      setSyncStatus("saved");
-      setUserSaveMsg(`Saved: ${username} can now sign in with the assigned password and facility access.`);
-      setUserForm({ username:"", password:"", name:"", role:"mechanic", facilityIds:orgLocations[0]?.id ? [orgLocations[0].id] : [] });
-      alert(`User ${username} created and saved. They can now sign in with that username/password and will only see their assigned facility data.`);
-    } catch(e) {
-      console.error("Create username user error:", e);
-      setSyncStatus("error");
-      setUserSaveMsg(`Create user failed: ${e?.message || "Check the browser console for details."}`);
-      alert(`Create user failed: ${e?.message || "Check the browser console for details."}`);
-    } finally {
-      setUserSaveBusy(false);
-    }
-  };
-  const resetAdminMadeUserPassword = async (user) => {
-    const nextPass = prompt(`Enter a new password for ${user.username || user.name}:`);
-    if(!nextPass) return;
-    if(nextPass.length < 6) return alert("Password must be at least 6 characters.");
-    const salt = makeSalt();
-    const passwordHash = await hashMaintForgePassword(nextPass, salt);
-    dispatch({ type:"UPSERT_ORG_USER", payload:{ ...user, passwordSalt:salt, passwordHash, status:"Active", active:true } });
-    alert("Password reset. Give the new password to the user.");
-  };
-  const toggleInviteFacility = (id) => setInviteForm(f => {
-    const set = new Set(Array.isArray(f.facilityIds) ? f.facilityIds : []);
-    if(set.has(id)) set.delete(id); else set.add(id);
-    return { ...f, facilityIds:Array.from(set) };
-  });
-  const createInvitePayload = () => {
-    const token = `INVITE-${Date.now()}-${Math.random().toString(36).slice(2,8).toUpperCase()}`;
-    const facilityIds = Array.isArray(inviteForm.facilityIds) && inviteForm.facilityIds.length ? inviteForm.facilityIds : (orgLocations[0]?.id ? [orgLocations[0].id] : []);
-    const locationNames = facilityIds.map(id => locationNameForId(foundationState, id)).filter(Boolean);
-    const email = normalizeEmail(inviteForm.email);
-    const ownerUserId = state.ownerUserId || currentUser?.id || "";
-    const inviteUrl = inviteUrlForToken(token, email, ownerUserId, inviteForm.role, facilityIds);
-    return {
-      ...inviteForm,
-      email,
-      role:normalizeRole(inviteForm.role),
-      token,
-      inviteUrl,
-      facilityIds,
-      locationId:facilityIds[0] || "",
-      locationName:locationNames.join(", "),
-      ownerUserId,
-      organizationId:state.organization?.id || "",
-      organizationName:form.companyName || state.organization?.name || form.department || "",
-      note:"Manual invite URL generated. Existing users can accept the invite and will be connected to this organization.",
-    };
-  };
-  const saveRegisteredUserRole = (user, patch={}) => {
-    const next = { ...user, ...patch, role:normalizeRole(patch.role || user.role), status:"Active" };
-    dispatch({ type:"UPSERT_ORG_USER", payload:next });
-  };
-  const createSafeInvite = async () => {
-    if(!inviteEmail) return alert("Enter an email first.");
-    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inviteEmail)) return alert("Enter a valid email address.");
-    if(inviteEmail === currentUserEmail) return alert("That is your current account. You are already the Organization Administrator. Use the registered user list to change roles, but do not invite yourself.");
-    if(existingUserForInvite) return alert(`${existingUserForInvite.email} is already registered in this organization. Change their role in the Registered Users list instead of inviting them again.`);
-    if(existingInviteForEmail && !confirm("There is already a pending invite for this email. Replace it with a new invite?")) return;
-    const payload = createInvitePayload();
-    const email = normalizeEmail(payload.email);
-    const inviteRecord = { id:`INV-${Date.now()}`, status:"Pending", created:today(), ...payload, email, role:normalizeRole(payload.role) };
-    const existingInvites = (state.userInvites||[]).filter(inv => normalizeEmail(inv.email) !== email);
-    const nextState = { ...state, userInvites:[inviteRecord, ...existingInvites] };
-    dispatch({ type:"ADD_USER_INVITE", payload });
-    try {
-      const ownerId = state.ownerUserId || currentUser?.id || "";
-      if(ownerId) {
-        await supabase.from("user_state").upsert({
-          user_id:ownerId,
-          data:prepareSharedOrganizationStateForCloudSave(nextState, currentUser),
-          updated_at:new Date().toISOString(),
-        }, { onConflict:"user_id" });
-      }
-      const accessSave = await upsertInviteAccessRecord({ ...inviteRecord, ownerUserId:ownerId }, nextState, currentUser);
-      if(!accessSave.ok) {
-        const extra = accessSave.missingTable
-          ? "\n\nThe organization invite access tables/policies are missing. Run the supplied Supabase SQL migration before sending invites."
-          : "\n\nThe organization invite access record could not be saved. Check Supabase permissions and try again.";
-        alert("Invite was created on this screen, but the reliable invite access record did not save. Do not send the link yet." + extra);
-        return;
-      }
-    } catch(e) {
-      console.error("Invite immediate save failed:", e);
-      alert("Invite was created on this screen, but the cloud save failed. Do not send the link yet. Check your connection and try again.");
-      return;
-    }
-    copyTextToClipboard(payload.inviteUrl)
-      .then(()=>alert("Invite URL created, saved to the cloud, and copied. Share it manually with the new user. Existing registered users can sign in from this invite link to connect to this organization."))
-      .catch(()=>alert(`Invite URL created and saved to the cloud. Copy it from the Pending Invite Records section:
-
-${payload.inviteUrl}`));
-    setInviteForm(f=>({...f,email:"",name:""}));
-  };
-  const copyInviteUrl = (inv) => {
-    const url = inv.inviteUrl || inviteUrlForToken(inv.token, inv.email, inv.ownerUserId || state.ownerUserId || currentUser?.id || "", inv.role, inv.facilityIds || (inv.locationId ? [inv.locationId] : []));
-    copyTextToClipboard(url)
-      .then(()=>alert("Invite URL copied."))
-      .catch(()=>prompt("Copy this invite URL:", url));
-  };
-  const currentMigrationCounts = migrationTemplateCounts(foundationState, migrationForm.fromId);
-  const selectedMigrationTotal = (migrationForm.pmTasks ? currentMigrationCounts.pmTasks : 0) + (migrationForm.inspectionTasks ? currentMigrationCounts.inspectionTasks : 0) + (migrationForm.tasks ? currentMigrationCounts.tasks : 0);
-  const copySelectedTemplates = () => {
-    if(migrationForm.fromId===migrationForm.toId) return alert("Choose two different facilities.");
-    if(!migrationForm.pmTasks && !migrationForm.inspectionTasks && !migrationForm.tasks) return alert("Choose at least one template type to copy.");
-    if(selectedMigrationTotal <= 0) return alert("No templates were found in the source facility. If the templates were just created, save Settings first and make sure you are copying from the correct Facility.");
-    dispatch({type:"MIGRATE_TEMPLATES", payload:migrationForm});
-    alert(`Copied ${selectedMigrationTotal} independent template${selectedMigrationTotal===1?"":"s"} to ${locationNameForId(foundationState, migrationForm.toId)}. They can now be edited there without changing the originals.`);
-  };
-  const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
-  const facilityListForForm = () => normalizeMaintForgeLocations({ ...state, settings:form, locations:form.locations });
-  const selectedFacility = facilityListForForm().find(l => l.id === form._selectedFacilityId) || facilityListForForm()[0] || null;
-  const selectedAreaFacilityId = form._areaFacilityId || selectedFacility?.id || orgLocations[0]?.id || "";
-  const selectedAreaFacilityName = locationNameForId(foundationState, selectedAreaFacilityId);
-  const areasForSelectedFacility = normalizeMaintForgeAreas({ ...foundationState, settings:{ ...form, areas:form.areas || [] }, areas:form.areas || [] }, selectedAreaFacilityId);
-  const updateSelectedFacility = (patch) => setForm(f => {
-    const list = normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations });
-    const id = f._selectedFacilityId || list[0]?.id || "";
-    const next = list.map(l => l.id === id ? { ...l, ...patch } : l);
-    return { ...f, locations:next };
-  });
-  // Keep Settings inputs mounted while typing.
-  // This is a render helper, not a nested React component, because nested component
-  // definitions are recreated on every keystroke and can cause the input to lose focus.
-  const facilityField = (key, label, placeholder="") => (
-    <div style={{ marginBottom:10 }}>
-      <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:5 }}>{label}</label>
-      <input
-        style={{ ...inp, width:"100%", boxSizing:"border-box" }}
-        value={selectedFacility?.[key] || ""}
-        onChange={e=>updateSelectedFacility({ [key]:e.target.value })}
-        placeholder={placeholder}
-      />
+  return <Modal title="Settings" onClose={onClose} maxWidth={760}>
+    <div style={{maxWidth:760,margin:"0 auto"}}>
+      <div style={{padding:16,border:`1px solid ${T.border}`,borderRadius:14,background:T.surface,marginBottom:16}}>
+        <div style={{fontSize:15,fontWeight:900,marginBottom:4}}>Company</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:14}}>One company, one location. This information is used throughout MaintForge and on printable work orders and reports.</div>
+        <Field label="Company Name"><input style={inp} value={form.companyName} onChange={F("companyName")} placeholder="ABC Equipment Services" /></Field>
+        <Field label="Location"><input style={inp} value={form.location} onChange={F("location")} placeholder="Miami, FL" /></Field>
+        <Field label="Address"><input style={inp} value={form.address} onChange={F("address")} placeholder="Street address" /></Field>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}><Field label="Phone"><input style={inp} value={form.phone} onChange={F("phone")} /></Field><Field label="Email"><input style={inp} type="email" value={form.email} onChange={F("email")} /></Field></div>
+        <Field label="Company Logo"><div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap"}}>{form.logo&&<img src={form.logo} alt="Company logo" style={{height:56,maxWidth:140,objectFit:"contain"}}/>}<label style={{padding:"8px 12px",border:`1px solid ${T.accent}`,borderRadius:7,color:T.accent,fontSize:12,fontWeight:800,cursor:"pointer"}}>Upload Logo<input type="file" accept="image/*" onChange={handleLogo} style={{display:"none"}}/></label>{form.logo&&<button type="button" onClick={()=>setForm(f=>({...f,logo:""}))} style={{background:"none",border:0,color:T.red,fontWeight:800,cursor:"pointer"}}>Remove</button>}</div></Field>
+      </div>
+      <div style={{padding:16,border:`1px solid ${T.border}`,borderRadius:14,background:T.surface,marginBottom:16}}>
+        <div style={{fontSize:15,fontWeight:900,marginBottom:12}}>Defaults</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}><Field label="Default Labor Rate"><input style={inp} {...decimalInputAttrs({placeholder:"45"})} value={form.laborRateDefault} onChange={e=>setForm(f=>({...f,laborRateDefault:sanitizeDecimalInput(e.target.value)}))}/></Field><Field label="Default Priority"><select style={sel} value={form.defaultPriority} onChange={F("defaultPriority")}><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select></Field></div>
+        <Field label="Accent Color"><div style={{display:"flex",gap:10,alignItems:"center"}}><input type="color" value={form.accentColor} onChange={F("accentColor")} style={{width:44,height:36}}/><span style={{fontFamily:T.mono,fontSize:12}}>{form.accentColor}</span></div></Field>
+      </div>
+      <div style={{display:"flex",justifyContent:"flex-end",gap:8}}><Btn variant="secondary" onClick={onClose}>Cancel</Btn><Btn onClick={save}>Save Settings</Btn></div>
     </div>
-  );
-  const Toggle = ({label, k, sub}) => (
-    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 0", borderBottom:`1px solid ${T.border}` }}>
-      <div>
-        <div style={{ fontFamily:T.sans, fontSize:13, color:T.text, fontWeight:500 }}>{label}</div>
-        {sub && <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:2 }}>{sub}</div>}
-      </div>
-      <button type="button" onClick={()=>setForm(f=>({...f,[k]:!f[k]}))} style={{ width:44, height:24, borderRadius:12, border:"none", background:form[k]?T.accent:"#d1d5db", cursor:"pointer", position:"relative", transition:"background .2s", flexShrink:0 }}>
-        <span style={{ position:"absolute", top:3, left:form[k]?22:3, width:18, height:18, borderRadius:"50%", background:T.card, transition:"left .2s", display:"block", boxShadow:"0 1px 3px rgba(0,0,0,.2)" }}/>
-      </button>
-    </div>
-  );
-
-  const handleLogo = e => {
-    const file = e.target.files[0]; if(!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => setForm(f=>({...f, logo:ev.target.result}));
-    reader.readAsDataURL(file);
-  };
-
-  const handleSelectedFacilityLogo = e => {
-    const file = e.target.files[0]; if(!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => updateSelectedFacility({ logo:ev.target.result, facilityLogo:ev.target.result });
-    reader.readAsDataURL(file);
-    e.target.value = "";
-  };
-
-  const [settingsSavedNotice, setSettingsSavedNotice] = useState("");
-  const save = () => {
-    const { _newLoc, _newArea, _newAreaFacilityId, _areaFacilityId, _selectedFacilityId, ...cleanForm } = form;
-    const cleanLocations = normalizeMaintForgeLocations({ ...state, settings:cleanForm, locations:cleanForm.locations });
-    const cleanAreas = normalizeMaintForgeAreas({ ...state, settings:cleanForm, locations:cleanLocations, areas:cleanForm.areas || [] });
-    dispatch({ type:"UPDATE_SETTINGS", payload:{ ...cleanForm, brandLogoMode:cleanForm.logoMode, locations: cleanLocations, areas: cleanAreas } });
-    setSettingsSavedNotice("Settings saved. Admin Center stayed open so you can keep working.");
-    window.setTimeout(()=>setSettingsSavedNotice(""), 3200);
-  };
-
-  return (
-    <Modal title="Admin Center" onClose={onClose} maxWidth={1080}>
-      <div className="mf-admin-shell" style={{ display:"grid", gridTemplateColumns:"240px minmax(0,1fr)", gap:16, maxHeight:"72vh", minHeight:0 }}>
-        <div className="mf-admin-nav" style={{ border:`1px solid ${T.border}`, borderRadius:14, background:T.grayLt, padding:10, overflowY:"auto", minWidth:0 }}>
-          <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:900, color:T.text, marginBottom:8 }}>Admin Center</div>
-          <div style={{ display:"grid", gap:6 }}>
-            {adminSections.map(sec => (
-              <button key={sec.id} type="button" onClick={()=>goAdminSection(sec.id)} style={{ textAlign:"left", border:`1px solid ${T.border}`, borderRadius:10, padding:"9px 10px", background:T.surface, color:T.text, cursor:"pointer", fontFamily:T.sans }}>
-                <div style={{ display:"flex", gap:8, alignItems:"center", fontSize:12, fontWeight:900 }}><span>{sec.icon}</span><span>{sec.label}</span></div>
-                <div style={{ marginLeft:24, fontSize:10, color:T.muted, marginTop:2 }}>{sec.sub}</div>
-              </button>
-            ))}
-          </div>
-          <div style={{ marginTop:12, padding:10, border:`1px solid ${T.border}`, borderRadius:10, background:T.card, fontSize:11, color:T.muted, lineHeight:1.35 }}>
-            Tip: download a backup before roles, facilities, or restore changes.
-          </div>
-        </div>
-        <div className="mf-admin-content" style={{ display:"flex", flexDirection:"column", gap:0, overflowY:"auto", paddingRight:4, minWidth:0 }}>
-
-          <div id="admin-safety" style={{ marginBottom:16, padding:14, border:`1px solid ${T.border}`, borderRadius:14, background:T.greenLt }}>
-            <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"flex-start", flexWrap:"wrap" }}>
-              <div>
-                <div style={{ fontFamily:T.sans, fontSize:15, fontWeight:900, color:T.text }}>🛡️ Data Safety</div>
-                <div style={{ fontSize:12, color:T.subtext, marginTop:4 }}>The live workspace and protected cloud backups are separate. Daily snapshots are append-only and today's save cannot overwrite yesterday's snapshot.</div>
-                <div style={{ fontSize:11, color:T.muted, marginTop:6 }}>Current loaded data: Equipment {backupCounts.equipment}, Work Orders {backupCounts.workOrders}, Parts {backupCounts.parts}, Facilities {backupCounts.facilities}</div>
-              </div>
-              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                <Btn onClick={downloadDataBackup}>Download Local Backup</Btn>
-                <Btn variant="secondary" onClick={()=>backupFileInputRef.current?.click()}>Upload Last Known Backup</Btn>
-                <input ref={backupFileInputRef} type="file" accept="application/json,.json" onChange={loadDataBackup} style={{ display:"none" }} />
-              </div>
-            </div>
-
-            <div style={{ marginTop:12, padding:12, border:`1px solid ${T.border}`, borderRadius:10, background:T.surface }}>
-              <div style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"center", flexWrap:"wrap" }}>
-                <div>
-                  <div style={{ fontWeight:900, color:T.text, fontSize:13 }}>Protected Supabase Cloud Backups</div>
-                  <div style={{ color:T.muted, fontSize:11, marginTop:3 }}>Automatic daily snapshot at 3:15 AM Puerto Rico time. 14 daily snapshots are retained; manual/pre-restore snapshots are retained for 30 days.</div>
-                </div>
-                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                  <Btn small variant="secondary" onClick={refreshCloudBackups} disabled={cloudBackupBusy || !canManageCloudBackups}>Refresh</Btn>
-                  <Btn small onClick={createCloudBackupNow} disabled={cloudBackupBusy || !canManageCloudBackups}>{cloudBackupBusy ? "Working…" : "Create Safety Snapshot Now"}</Btn>
-                </div>
-              </div>
-              {!!cloudBackupMsg && <div style={{ marginTop:8, fontSize:11, color:cloudBackupMsg.includes("not installed") || cloudBackupMsg.includes("Could not") ? T.red : T.muted }}>{cloudBackupMsg}</div>}
-              {!canManageCloudBackups && <div style={{ marginTop:8, fontSize:11, color:T.muted }}>Cloud backup history is available only to the signed-in Organization Administrator account.</div>}
-              {canManageCloudBackups && cloudBackups.length > 0 && (
-                <div style={{ marginTop:10, display:"grid", gap:7 }}>
-                  {cloudBackups.map(b => { const c=b.record_counts||{}; return (
-                    <div key={b.id} style={{ display:"grid", gridTemplateColumns:"minmax(150px,1fr) minmax(260px,2fr) auto", gap:10, alignItems:"center", padding:9, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
-                      <div><div style={{ fontWeight:900, color:T.text, fontSize:12 }}>{b.backup_date}</div><div style={{ fontSize:10, color:T.muted, textTransform:"uppercase" }}>{String(b.backup_kind||"backup").replace("_"," ")}</div></div>
-                      <div style={{ fontSize:11, color:T.subtext }}>Equipment {c.equipment||0} · Work Orders {c.workOrders||0} · Parts {c.parts||0} · Facilities {c.facilities||0}</div>
-                      <div style={{ display:"flex", gap:6, justifyContent:"flex-end", flexWrap:"wrap" }}><Btn small variant="secondary" onClick={()=>downloadCloudBackup(b)}>Download</Btn><Btn small onClick={()=>restoreCloudBackup(b)}>Restore</Btn></div>
-                    </div>
-                  ); })}
-                </div>
-              )}
-            </div>
-          </div>
-
-        {/* Organization */}
-        <div id="admin-organization" style={{ marginBottom:16, padding:14, border:`1px solid ${T.border}`, borderRadius:14, background:T.card }}>
-          <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Organization</div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
-            <Field label="Company / Organization Name">
-              <input style={inp} value={form.companyName} onChange={F("companyName")} placeholder="Maintenance Department" />
-            </Field>
-            <Field label="Department" half>
-              <input style={inp} value={form.department} onChange={F("department")} placeholder="Maintenance Department" />
-            </Field>
-            <Field label="Location / Site" half>
-              <input style={inp} value={form.location} onChange={F("location")} placeholder="e.g. Miami Maintenance Shop" />
-            </Field>
-            <Field label="Phone" half>
-              <input style={inp} value={form.phone} onChange={F("phone")} placeholder="(555) 000-0000" />
-            </Field>
-            <Field label="Email" half>
-              <input style={inp} value={form.email} onChange={F("email")} placeholder="maintenance@example.gov" />
-            </Field>
-          </div>
-          <div style={{ marginBottom:14 }}>
-            <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:6 }}>Company / Organization Logo</label>
-            <div style={{ display:"flex", gap:12, alignItems:"center", flexWrap:"wrap" }}>
-              {form.logo && <img src={form.logo} alt="logo" style={{ height:48, objectFit:"contain", border:`1px solid ${T.border}`, borderRadius:6, padding:4, background:T.surface }} />}
-              <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.accent, cursor:"pointer", padding:"7px 14px", border:`1px solid ${T.accent}`, borderRadius:6 }}>
-                Upload Company Logo
-                <input type="file" accept="image/*" onChange={handleLogo} style={{ display:"none" }} />
-              </label>
-              {form.logo && <button type="button" onClick={()=>setForm(f=>({...f,logo:""}))} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>Remove</button>}
-            </div>
-          </div>
-          <div style={{ marginBottom:14, padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
-            <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:8 }}>Logo Display Mode</label>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-              <button type="button" onClick={()=>setForm(f=>({...f,logoMode:"company"}))} style={{ textAlign:"left", padding:10, borderRadius:8, border:`1px solid ${form.logoMode === "company" ? T.accent : T.border}`, background:form.logoMode === "company" ? T.accentLt : T.surface, color:T.text, cursor:"pointer" }}>
-                <b>Use company logo everywhere</b><br/><span style={{ fontSize:11, color:T.muted }}>One main logo shows across all facilities, work orders, reports, and headers.</span>
-              </button>
-              <button type="button" onClick={()=>setForm(f=>({...f,logoMode:"facility"}))} style={{ textAlign:"left", padding:10, borderRadius:8, border:`1px solid ${form.logoMode === "facility" ? T.accent : T.border}`, background:form.logoMode === "facility" ? T.accentLt : T.surface, color:T.text, cursor:"pointer" }}>
-                <b>Use facility logos when available</b><br/><span style={{ fontSize:11, color:T.muted }}>Each selected facility can show its own logo. If missing, it falls back to the company logo.</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Preferences */}
-        <div id="admin-preferences" style={{ marginBottom:16, padding:14, border:`1px solid ${T.border}`, borderRadius:14, background:T.card }}>
-          <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Preferences</div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
-            <Field label="Appearance / Theme" half>
-              <select style={sel} value={form.theme} onChange={F("theme")}>
-                <option value="light">☀️ Light Mode</option>
-                <option value="dark">🌙 Dark Mode</option>
-                <option value="system">💻 System Default</option>
-              </select>
-            </Field>
-            <Field label="Default Work Order Priority" half>
-              <select style={sel} value={form.defaultPriority} onChange={F("defaultPriority")}>
-                {["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}
-              </select>
-            </Field>
-            <Field label="Default Labor Rate ($/hr)" half>
-              <input style={inp} {...decimalInputAttrs()} value={form.laborRateDefault} onChange={e=>setForm(f=>({...f,laborRateDefault:sanitizeDecimalInput(e.target.value)}))} />
-            </Field>
-            <Field label="Date Format" half>
-              <select style={sel} value={form.dateFormat} onChange={F("dateFormat")}>
-                {["MM/DD/YYYY","DD/MM/YYYY","YYYY-MM-DD"].map(d=><option key={d}>{d}</option>)}
-              </select>
-            </Field>
-            <Field label="Currency" half>
-              <select style={sel} value={form.currency} onChange={F("currency")}>
-                {["USD","EUR","GBP","CAD"].map(c=><option key={c}>{c}</option>)}
-              </select>
-            </Field>
-          </div>
-          <Toggle label="Include labor in spending totals" k="includeLaborInSpending" sub="Turn off to show parts + outside services only on spending cards and reports. Labor still appears as its own breakdown line." />
-          <Toggle label="Require mechanic on work orders" k="requireTech" sub="Work orders cannot be saved without a mechanic assigned" />
-        </div>
-
-        {/* Foundation */}
-        <div id="admin-facilities" style={{ display:"none", marginBottom:16, padding:14, border:`1px solid ${T.border}`, borderRadius:14, background:T.card }}>
-          <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Foundation — Facilities & Areas</div>
-          <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginBottom:10 }}>Create separate Facilities for independent shops/sites. Add Areas for buildings, departments, zones, or sections inside a Facility.</div>
-          <div style={{ display:"flex", gap:8, marginBottom:10 }}>
-            <input style={{ ...inp, flex:1 }} placeholder="Add facility (e.g. Main Shop, Warehouse, San Juan Branch)..." value={form._newLoc||""} onChange={e=>setForm(f=>({...f,_newLoc:e.target.value}))} onKeyDown={e=>{ if(e.key==="Enter"&&form._newLoc?.trim()){ e.preventDefault(); setForm(f=>{ const name=f._newLoc.trim(); const list=normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations }); const exists=list.some(x=>x.name.toLowerCase()===name.toLowerCase()); const next=exists?list:[...list,{ id:`FAC-${Date.now()}`, name, address:"", cityState:"", phone:"", email:"", manager:"", active:true }]; const selectedId=exists?(f._selectedFacilityId||list[0]?.id||""):next[next.length-1].id; return {...f,locations:next,_selectedFacilityId:selectedId,_areaFacilityId:selectedId,_newAreaFacilityId:selectedId,_newLoc:""}; }); }}} />
-            <Btn small onClick={()=>{ if(form._newLoc?.trim()) setForm(f=>{ const name=f._newLoc.trim(); const list=normalizeMaintForgeLocations({ ...state, settings:f, locations:f.locations }); const exists=list.some(x=>x.name.toLowerCase()===name.toLowerCase()); const next=exists?list:[...list,{ id:`FAC-${Date.now()}`, name, address:"", cityState:"", phone:"", email:"", manager:"", active:true }]; const selectedId=exists?(f._selectedFacilityId||list[0]?.id||""):next[next.length-1].id; return {...f,locations:next,_selectedFacilityId:selectedId,_areaFacilityId:selectedId,_newAreaFacilityId:selectedId,_newLoc:""}; }); }}>Add Facility</Btn>
-          </div>
-          {facilityListForForm().length===0 ? (
-            <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, fontStyle:"italic", padding:"8px 0" }}>No facilities defined. Add one above.</div>
-          ) : (
-            <div style={{ display:"grid", gridTemplateColumns:"260px 1fr", gap:12, alignItems:"start" }}>
-              <div style={{ display:"flex", flexDirection:"column", gap:4, maxHeight:260, overflowY:"auto" }}>
-                {facilityListForForm().map((loc)=>(
-                  <button key={loc.id} type="button" onClick={()=>setForm(f=>({...f,_selectedFacilityId:loc.id,_areaFacilityId:loc.id,_newAreaFacilityId:loc.id}))} style={{ textAlign:"left", padding:"9px 12px", background:form._selectedFacilityId===loc.id?T.accentLt:T.grayLt, border:`1px solid ${form._selectedFacilityId===loc.id?T.accent:T.border}`, borderRadius:6, color:T.text, cursor:"pointer", fontFamily:T.sans, fontSize:13 }}>
-                    <b>{loc.name}</b><br/><span style={{ color:T.muted, fontSize:11 }}>{loc.address || "No address"}</span>
-                  </button>
-                ))}
-              </div>
-              <div style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.surface }}>
-                <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:8 }}>Edit Selected Facility</div>
-                <div style={{ fontSize:11, color:T.muted, marginBottom:10 }}>Organization Owners choose which Facility to edit here. Facility Administrators should only see their assigned Facility.</div>
-                <div style={{ marginBottom:12, padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
-                  <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:6 }}>Facility Logo</label>
-                  <div style={{ display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
-                    {selectedFacility?.logo ? <img src={selectedFacility.logo} alt="facility logo" style={{ height:46, maxWidth:110, objectFit:"contain", border:`1px solid ${T.border}`, borderRadius:6, padding:4, background:T.surface }} /> : <span style={{ fontSize:11, color:T.muted }}>No facility logo uploaded.</span>}
-                    <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.accent, cursor:"pointer", padding:"7px 12px", border:`1px solid ${T.accent}`, borderRadius:6, background:T.surface }}>
-                      Upload Facility Logo
-                      <input type="file" accept="image/*" onChange={handleSelectedFacilityLogo} style={{ display:"none" }} />
-                    </label>
-                    {selectedFacility?.logo && <button type="button" onClick={()=>updateSelectedFacility({ logo:"", facilityLogo:"" })} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:700 }}>Remove</button>}
-                  </div>
-                  <div style={{ fontSize:11, color:T.muted, marginTop:6 }}>{form.logoMode === "facility" ? "This logo will show when this Facility is selected. It falls back to the company logo if blank." : "Company logo mode is currently on, so this facility logo is stored but not displayed until facility logo mode is selected."}</div>
-                </div>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 12px" }}>
-                  <div style={{ gridColumn:"span 2" }}>{facilityField("name", "Facility Name")}</div>
-                  {facilityField("manager", "Manager")}
-                  <div style={{ gridColumn:"span 2" }}>{facilityField("address", "Address")}</div>
-                  {facilityField("cityState", "City, State")}
-                  {facilityField("phone", "Phone")}
-                  {facilityField("email", "Email")}
-                </div>
-                <button type="button" onClick={()=>setForm(f=>{ const list=facilityListForForm(); const removeId=f._selectedFacilityId; if(!removeId) return f; if(list.length<=1) { alert("At least one facility is required. Create another facility before deleting this one."); return f; } if(!confirm("Delete this facility from Foundation? Records are not deleted, but unassigned records may need reassignment.")) return f; const next=list.filter(l=>l.id!==removeId); return {...f,locations:next,areas:(f.areas||[]).filter(a=>(typeof a==="string"?"":(a.facilityId||a.locationId||""))!==removeId),_selectedFacilityId:next[0]?.id||"",_areaFacilityId:next[0]?.id||"",_newAreaFacilityId:next[0]?.id||""}; })} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:700, padding:0 }}>Delete selected facility</button>
-              </div>
-            </div>
-          )}
-
-          <div style={{ marginTop:14, padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
-            <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:8 }}>Areas Inside a Facility</div>
-            <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginBottom:8 }}>Use Areas for Administration Building, Maintenance Building, Warehouse, Fuel Station, sections, or other places inside one Facility. Areas are saved separately per Facility.</div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr auto", gap:8, alignItems:"center" }}>
-              <select style={sel} value={selectedAreaFacilityId} onChange={e=>setForm(f=>({...f,_areaFacilityId:e.target.value,_newAreaFacilityId:e.target.value}))}>
-                {orgLocations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
-              </select>
-              <input style={inp} placeholder={`Add area for ${selectedAreaFacilityName}...`} value={form._newArea||""} onChange={e=>setForm(f=>({...f,_newArea:e.target.value}))} onKeyDown={e=>{ if(e.key==="Enter"&&form._newArea?.trim()){ e.preventDefault(); setForm(f=>{ const facId=f._areaFacilityId || f._newAreaFacilityId || selectedAreaFacilityId || orgLocations[0]?.id || ""; const facName=locationNameForId({ ...state, settings:f }, facId); const next={ id:`AREA-${Date.now()}`, name:f._newArea.trim(), facilityId:facId, locationId:facId, facilityName:facName }; const exists=normalizeMaintForgeAreas({ ...state, settings:f, areas:f.areas||[] }, facId).some(a=>String(a.name||"").toLowerCase()===next.name.toLowerCase()); return exists ? {...f,_newArea:"",_areaFacilityId:facId,_newAreaFacilityId:facId} : {...f,areas:[...(f.areas||[]),next],_newArea:"",_areaFacilityId:facId,_newAreaFacilityId:facId}; }); }}} />
-              <Btn small onClick={()=>{ if(form._newArea?.trim()) setForm(f=>{ const facId=f._areaFacilityId || f._newAreaFacilityId || selectedAreaFacilityId || orgLocations[0]?.id || ""; const facName=locationNameForId({ ...state, settings:f }, facId); const next={ id:`AREA-${Date.now()}`, name:f._newArea.trim(), facilityId:facId, locationId:facId, facilityName:facName }; const exists=normalizeMaintForgeAreas({ ...state, settings:f, areas:f.areas||[] }, facId).some(a=>String(a.name||"").toLowerCase()===next.name.toLowerCase()); return exists ? {...f,_newArea:"",_areaFacilityId:facId,_newAreaFacilityId:facId} : {...f,areas:[...(f.areas||[]),next],_newArea:"",_areaFacilityId:facId,_newAreaFacilityId:facId}; }); }}>Add Area</Btn>
-            </div>
-            <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:8 }}>Showing areas for <b>{selectedAreaFacilityName}</b> only.</div>
-            {areasForSelectedFacility.length===0 ? <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, fontStyle:"italic", padding:"8px 0" }}>No areas defined for this facility yet.</div> : (
-              <div style={{ display:"flex", flexDirection:"column", gap:4, maxHeight:180, overflowY:"auto", marginTop:10 }}>
-                {areasForSelectedFacility.map((a,i)=>(
-                  <div key={a.id||i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"7px 12px", background:T.surface, borderRadius:6, border:`1px solid ${T.border}` }}>
-                    <span style={{ fontFamily:T.sans, fontSize:13, color:T.text }}><b>{a.name}</b><span style={{ color:T.muted }}> — {a.facilityName || selectedAreaFacilityName}</span></span>
-                    <button onClick={()=>setForm(f=>({...f,areas:(f.areas||[]).filter(area=>{ const item=typeof area==="string"?{name:area,facilityId:orgLocations[0]?.id||""}:area; const sameId=a.id && item.id===a.id; const sameNameFacility=String(item.name||"").toLowerCase()===String(a.name||"").toLowerCase() && String(item.facilityId||item.locationId||"")===String(a.facilityId||""); return !(sameId || sameNameFacility); })}))} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:16, lineHeight:1, padding:"0 4px" }}>×</button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div id="admin-users" style={{ display:"none", marginTop:14, padding:14, border:`1px solid ${T.border}`, borderRadius:14, background:T.grayLt }}>
-            <div style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"flex-start", marginBottom:10 }}>
-              <div>
-                <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:900, color:T.text }}>👥 Users & Roles</div>
-                <div style={{ fontSize:11, color:T.muted, marginTop:3 }}>The signed-in creator is automatically the Organization Administrator. Create username/password users here, assign their role, and lock them to the correct facility data.</div>
-              </div>
-              <span style={{ fontSize:11, fontWeight:800, color:T.green, background:T.greenLt, border:`1px solid ${T.border}`, borderRadius:999, padding:"5px 9px", whiteSpace:"nowrap" }}>Current Admin: {currentUserEmail || "Signed-in user"}</span>
-            </div>
-
-            <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(170px,1fr))", gap:8, marginBottom:12 }}>
-              {ROLE_OPTIONS.map(r => (
-                <div key={r.value} style={{ padding:9, border:`1px solid ${T.border}`, borderRadius:10, background:T.surface }}>
-                  <div style={{ fontSize:12, fontWeight:900, color:T.text }}>{r.label}</div>
-                  <div style={{ fontSize:10, color:T.muted, lineHeight:1.35, marginTop:3 }}>
-                    {r.value === "organization_admin" ? "Full organization access, users, roles, settings, reports, and all facilities." :
-                     r.value === "facility_manager" ? "Manages assigned facilities, equipment, work orders, PM, inspections, and reports." :
-                     r.value === "supervisor" ? "Shop lead access for work orders, PM, inspections, assignments, labor, and parts." :
-                     r.value === "mechanic" ? "Updates assigned work, labor, parts, notes, photos, and inspections." :
-                     "Read-only access for leadership, audits, and reporting."}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:900, color:T.text, marginBottom:8 }}>Registered Users</div>
-            <div style={{ display:"grid", gap:8, marginBottom:12 }}>
-              {organizationUsers.map(user => (
-                <div key={user.email || user.username} style={{ display:"grid", gridTemplateColumns:"minmax(180px,1.2fr) minmax(160px,.9fr) minmax(160px,1fr) auto", gap:8, alignItems:"center", padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.surface }}>
-                  <div style={{ minWidth:0 }}>
-                    <div style={{ fontSize:13, fontWeight:800, color:T.text, overflow:"hidden", textOverflow:"ellipsis" }}>{user.name || user.username || user.email}</div>
-                    <div style={{ fontSize:11, color:T.muted, overflow:"hidden", textOverflow:"ellipsis" }}>{user.username ? `Username: ${user.username}` : user.email}{user.email===currentUserEmail ? " — you" : ""}{user.status==="Disabled" ? " — disabled" : ""}</div>
-                  </div>
-                  <select style={sel} value={normalizeRole(user.role)} onChange={e=>saveRegisteredUserRole(user, { role:e.target.value })}>
-                    {ROLE_OPTIONS.map(r=><option key={r.value} value={r.value}>{r.label}</option>)}
-                  </select>
-                  <div style={{ fontSize:11, color:T.muted }}>
-                    {(user.facilityIds||[]).length ? (user.facilityIds||[]).map(id=>locationNameForId(foundationState,id)).filter(Boolean).join(", ") : "All facilities / organization level"}
-                  </div>
-                  <div style={{ display:"flex", gap:6, justifyContent:"flex-end" }}>
-                    {user.appLogin && <Btn small variant="secondary" onClick={()=>resetAdminMadeUserPassword(user)}>Reset Password</Btn>}
-                    {user.email!==currentUserEmail && user.appLogin && <Btn small variant="secondary" onClick={()=>dispatch({type:"UPSERT_ORG_USER", payload:{...user,status:user.status==="Disabled"?"Active":"Disabled",active:user.status==="Disabled"}})}>{user.status==="Disabled"?"Enable":"Disable"}</Btn>}
-                    {user.email!==currentUserEmail && <Btn small variant="danger" onClick={()=>confirm(`Remove ${user.username || user.email} from this organization list?`)&&dispatch({type:"REMOVE_ORG_USER", payload:user.email || user.username})}>Remove</Btn>}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ padding:10, border:`1px solid ${T.border}`, borderRadius:8, background:T.card }}>
-              <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:8 }}>Create Username / Password User</div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-                <input style={inp} placeholder="Full name" value={userForm.name} onChange={e=>setUserForm(f=>({...f,name:e.target.value}))} />
-                <input style={inp} placeholder="Username" value={userForm.username} onChange={e=>setUserForm(f=>({...f,username:e.target.value}))} />
-                <input style={inp} type="password" placeholder="Temporary password" value={userForm.password} onChange={e=>setUserForm(f=>({...f,password:e.target.value}))} />
-                <select style={sel} value={userForm.role} onChange={e=>setUserForm(f=>({...f,role:e.target.value}))}>{ROLE_OPTIONS.filter(r=>r.value!=="organization_admin").map(r=><option key={r.value} value={r.value}>{r.label}</option>)}</select>
-              </div>
-              <div style={{ marginTop:10, display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))", gap:6 }}>
-                {orgLocations.map(loc=><label key={loc.id} style={{ display:"flex", gap:7, alignItems:"center", fontSize:12, color:T.text, border:`1px solid ${T.border}`, borderRadius:8, padding:"7px 8px", background:T.surface }}>
-                  <input type="checkbox" checked={(userForm.facilityIds||[]).includes(loc.id)} onChange={()=>toggleUserFacility(loc.id)} />
-                  <span>{loc.name}</span>
-                </label>)}
-              </div>
-              <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginTop:10, alignItems:"center", flexWrap:"wrap" }}>
-                <div style={{ fontSize:11, color:existingUsernameUser?T.red:T.muted }}>{existingUsernameUser ? "That username already exists." : "The user will log in with this username/password and the app will lock data to the assigned facilities."}</div>
-                <Btn small onClick={createAdminMadeUser} style={userSaveBusy ? { opacity:.65, pointerEvents:"none" } : {}}>{userSaveBusy ? "Creating..." : "Create User"}</Btn>
-              </div>
-              {userSaveMsg && <div style={{ marginTop:8, padding:"8px 10px", border:`1px solid ${userSaveMsg.toLowerCase().includes("fail") || userSaveMsg.toLowerCase().includes("not") ? T.red : T.green}`, borderRadius:8, fontSize:12, color:userSaveMsg.toLowerCase().includes("fail") || userSaveMsg.toLowerCase().includes("not") ? T.red : T.green, background:T.surface }}>{userSaveMsg}</div>}
-            </div>
-
-            {(state.userInvites||[]).length>0 && <div style={{ marginTop:10, padding:10, border:`1px dashed ${T.border}`, borderRadius:8, background:T.surface, fontSize:12, color:T.muted }}>
-              Old invite records are no longer used. You can remove them safely; username/password users replace the invite flow.
-              <div style={{ marginTop:8 }}><Btn small variant="danger" onClick={()=>{ if(confirm("Remove all old pending invite records?")) (state.userInvites||[]).forEach(inv=>dispatch({type:"DELETE_USER_INVITE", payload:inv.id || inv.email})); }}>Remove Old Invites</Btn></div>
-            </div>}
-          </div>
-
-          <div style={{ marginTop:14, padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt }}>
-            <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:8 }}>Migrate / Copy Templates Between Facilities</div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-              <Field label="From Facility" half><select style={sel} value={migrationForm.fromId} onChange={e=>setMigrationForm(f=>({...f,fromId:e.target.value}))}>{orgLocations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
-              <Field label="To Facility" half><select style={sel} value={migrationForm.toId} onChange={e=>setMigrationForm(f=>({...f,toId:e.target.value}))}>{orgLocations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
-            </div>
-            <div style={{ display:"flex", gap:12, flexWrap:"wrap", fontSize:12, color:T.text }}>
-              <label><input type="checkbox" checked={migrationForm.pmTasks} onChange={e=>setMigrationForm(f=>({...f,pmTasks:e.target.checked}))}/> PM task library</label>
-              <label><input type="checkbox" checked={migrationForm.inspectionTasks} onChange={e=>setMigrationForm(f=>({...f,inspectionTasks:e.target.checked}))}/> Inspection task library</label>
-              <label><input type="checkbox" checked={migrationForm.tasks} onChange={e=>setMigrationForm(f=>({...f,tasks:e.target.checked}))}/> General task library</label>
-            </div>
-            <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginTop:8, alignItems:"center" }}>
-              <div style={{ fontSize:11, color:T.muted }}>This creates independent copies in the destination facility. Found in source: PM {currentMigrationCounts.pmTasks}, Inspections {currentMigrationCounts.inspectionTasks}, General {currentMigrationCounts.tasks}. The destination mechanic can edit their copy without changing the original templates.</div>
-              <Btn small onClick={copySelectedTemplates}>Copy Selected</Btn>
-            </div>
-            {state.lastMigrationResult && <div style={{ marginTop:8, fontSize:12, color:T.subtext, padding:8, border:`1px solid ${T.border}`, borderRadius:6, background:T.surface }}>Last migration: <b style={{ color:T.text }}>{state.lastMigrationResult.total}</b> copied from {state.lastMigrationResult.fromName} to {state.lastMigrationResult.toName} — PM {state.lastMigrationResult.pmTasks}, Inspections {state.lastMigrationResult.inspectionTasks}, General {state.lastMigrationResult.tasks}.</div>}
-          </div>
-
-          <div style={{ marginTop:14 }}>
-            <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:8, paddingBottom:6, borderBottom:`1px solid ${T.border}` }}>Organization Default / Fallback Site Info</div>
-            <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginBottom:8 }}>Daily screens and reports use the active Facility information above. These fields are only fallback defaults when no Facility is selected.</div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
-              <Field label="Site / Facility Name">
-                <input style={inp} value={form.siteName||""} onChange={e=>setForm(f=>({...f,siteName:e.target.value}))} placeholder="e.g. Miami Maintenance Facility" />
-              </Field>
-              <Field label="Region / District" half>
-                <input style={inp} value={form.region||""} onChange={e=>setForm(f=>({...f,region:e.target.value}))} placeholder="e.g. Southeast Region" />
-              </Field>
-              <Field label="Address">
-                <input style={inp} value={form.address||""} onChange={e=>setForm(f=>({...f,address:e.target.value}))} />
-              </Field>
-              <Field label="City, State" half>
-                <input style={inp} value={form.cityState||""} onChange={e=>setForm(f=>({...f,cityState:e.target.value}))} placeholder="Miami, FL" />
-              </Field>
-            </div>
-          </div>
-
-          <div id="admin-appearance" style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}`, marginTop:8 }}>Appearance</div>
-          <Field label="Accent Color">
-            <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-              <input type="color" value={form.accentColor} onChange={F("accentColor")} style={{ width:44, height:36, border:`1px solid ${T.border}`, borderRadius:6, cursor:"pointer", padding:2 }} />
-              <span style={{ fontFamily:T.mono, fontSize:12, color:T.muted }}>{form.accentColor}</span>
-              <div style={{ flex:1, height:8, borderRadius:4, background:form.accentColor }}/>
-            </div>
-          </Field>
-        </div>
-
-        <div id="admin-danger" style={{ marginBottom:16, padding:14, border:`1px solid ${T.red}`, borderRadius:14, background:T.redLt }}>
-          <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:900, color:T.red }}>⚠️ Danger Zone</div>
-          <div style={{ fontSize:12, color:T.subtext, marginTop:4 }}>These actions can affect your data or setup. Download a backup first.</div>
-          <div style={{ display:"flex", gap:8, marginTop:10, flexWrap:"wrap" }}>
-            <Btn variant="danger" onClick={()=>{ const ok=prompt('Type RESET to delete local browser data. This does not delete your downloaded backups.'); if(ok === 'RESET'){ localStorage.removeItem('ncaState'); window.location.reload(); } }}>Reset Local Browser Data</Btn>
-            <Btn variant="secondary" onClick={()=>{ const ok=prompt('Type SETUP to restart the setup wizard. Your data will be kept.'); if(ok === 'SETUP'){ dispatch({type:'RESET_SETUP'}); onClose(); }}}>Restart Setup Wizard</Btn>
-          </div>
-        </div>
-      </div>
-      </div>
-
-
-      <div className="mf-admin-footer" style={{ display:"flex", gap:10, justifyContent:"space-between", alignItems:"center", marginTop:16, padding:"14px", border:`1px solid ${T.border}`, borderRadius:14, background:T.surface, boxShadow:"none", position:"static", zIndex:1, flexWrap:"wrap" }}>
-        <div style={{ fontSize:12, color:settingsSavedNotice ? T.green : T.muted, minWidth:220, lineHeight:1.35, fontWeight:settingsSavedNotice ? 800 : 400 }}>
-          {settingsSavedNotice || "Admin Center changes stay local until you click Save Settings."}
-        </div>
-        <div className="mf-admin-footer-actions" style={{ display:"flex", gap:8, flexWrap:"wrap", justifyContent:"flex-end" }}>
-          <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
-          <Btn onClick={save}>Save Settings</Btn>
-        </div>
-      </div>
-    </Modal>
-  );
+  </Modal>;
 }
 
 /* SETUP WIZARD - first-run onboarding */
@@ -10067,7 +9176,7 @@ ${payload.inviteUrl}`));
 function SetupWizard({ onComplete }) {
   const [step, setStep] = useState(1);
   const [data, setData] = useState({
-    companyName:"", siteName:"", phone:"", email:"", address:"", cityState:"", logo:"",
+    companyName:"", location:"", phone:"", email:"", address:"", cityState:"", logo:"",
     firstName:"", lastName:"", position:"Mechanic", profilePhone:"", profileEmail:"", laborRate:45,
     categories:["Mowers","Vehicles","Tractors","Irrigation","Tools","Trailers"],
     accentColor:"#0052cc", defaultPriority:"Medium", dateFormat:"MM/DD/YYYY", currency:"USD"
@@ -10078,9 +9187,9 @@ function SetupWizard({ onComplete }) {
     if(step===1 && !data.companyName.trim()) return alert("Enter your company name to continue.");
     if(step===2 && !data.firstName.trim()) return alert("Enter your first name to continue.");
     if(step<3) return setStep(v=>v+1);
-    const siteName=(data.siteName||"Main Facility").trim();
+    const location=(data.location||data.cityState||"Main Location").trim();
     onComplete({
-      settings:{ companyName:data.companyName.trim(), department:"Maintenance", siteName, location:siteName, phone:data.phone, email:data.email, address:data.address, cityState:data.cityState, logo:data.logo, logoMode:"company", locations:[siteName], accentColor:data.accentColor, defaultPriority:data.defaultPriority, laborRateDefault:+data.laborRate||45, dateFormat:data.dateFormat, currency:data.currency, includeLaborInSpending:true, requireTech:false },
+      settings:{ companyName:data.companyName.trim(), department:"Maintenance", siteName:location, location, phone:data.phone, email:data.email, address:data.address, cityState:data.cityState, logo:data.logo, logoMode:"company", locations:[{id:"MAIN-LOCATION",name:location,address:data.address,cityState:data.cityState,phone:data.phone,email:data.email,logo:data.logo,active:true}], accentColor:data.accentColor, defaultPriority:data.defaultPriority, laborRateDefault:+data.laborRate||45, dateFormat:data.dateFormat, currency:data.currency, includeLaborInSpending:true, requireTech:false },
       profile:{ firstName:data.firstName.trim(), lastName:data.lastName.trim(), position:data.position||"Mechanic", phone:data.profilePhone, email:data.profileEmail },
       technicians:[{ id:"TECH-001", name:`${data.firstName} ${data.lastName}`.trim(), position:data.position||"Mechanic", laborRate:+data.laborRate||45 }],
       categories:data.categories
@@ -10093,7 +9202,7 @@ function SetupWizard({ onComplete }) {
         {step===1 && <>
           <div style={{ textAlign:"center", marginBottom:22 }}><div style={{ fontSize:44 }}>👋</div><h2 style={{ margin:"6px 0", fontFamily:T.sans, fontSize:25, color:T.text }}>Set up MaintForge</h2><p style={{ margin:0, color:T.muted, fontSize:14 }}>Just the basics. You can be working in about a minute.</p></div>
           <Field label="Company Name *"><input style={inp} value={data.companyName} onChange={F("companyName")} placeholder="e.g. ABC Equipment Services" autoFocus /></Field>
-          <Field label="Facility / Shop Name"><input style={inp} value={data.siteName} onChange={F("siteName")} placeholder="Main Facility" /></Field>
+          <Field label="Location"><input style={inp} value={data.location} onChange={F("location")} placeholder="Miami, FL" /></Field>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 14px" }}><Field label="Phone"><input style={inp} value={data.phone} onChange={F("phone")} /></Field><Field label="Email"><input style={inp} type="email" value={data.email} onChange={F("email")} /></Field></div>
           <Field label="Address"><input style={inp} value={data.address} onChange={F("address")} placeholder="Street address" /></Field>
           <Field label="City, State"><input style={inp} value={data.cityState} onChange={F("cityState")} placeholder="City, State" /></Field>
@@ -10102,11 +9211,11 @@ function SetupWizard({ onComplete }) {
         {step===2 && <>
           <div style={{marginBottom:20}}><h2 style={{margin:"0 0 6px",fontSize:22}}>Your profile</h2><p style={{margin:0,color:T.muted,fontSize:13}}>This creates your mechanic profile for work orders and labor entries.</p></div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}><Field label="First Name *"><input style={inp} value={data.firstName} onChange={F("firstName")} autoFocus /></Field><Field label="Last Name"><input style={inp} value={data.lastName} onChange={F("lastName")} /></Field><Field label="Job Title"><input style={inp} value={data.position} onChange={F("position")} placeholder="Mechanic" /></Field><Field label="Labor Rate ($/hr)"><input style={inp} {...decimalInputAttrs({placeholder:"45"})} value={data.laborRate} onChange={e=>setData(d=>({...d,laborRate:sanitizeDecimalInput(e.target.value)}))}/></Field></div>
-          <div style={{padding:12,border:`1px solid ${T.border}`,borderRadius:10,background:T.grayLt,fontSize:12,color:T.subtext}}>That’s it. No organizations, facility assignments, invite codes, or permission setup required.</div>
+          <div style={{padding:12,border:`1px solid ${T.border}`,borderRadius:10,background:T.grayLt,fontSize:12,color:T.subtext}}>That’s it. Your company and location are ready. No complicated account setup required.</div>
         </>}
         {step===3 && <>
           <div style={{textAlign:"center",padding:"8px 0 16px"}}><div style={{fontSize:50}}>✓</div><h2 style={{margin:"4px 0 8px",fontSize:24}}>Ready to go</h2><p style={{margin:"0 auto",maxWidth:460,color:T.muted,lineHeight:1.5}}>MaintForge will start with common equipment categories. Add your first piece of equipment, then create work orders, PM schedules, inspections, inventory, and fuel records as you need them.</p></div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,padding:14,border:`1px solid ${T.border}`,borderRadius:12,background:T.grayLt,fontSize:12}}><div><span style={{color:T.muted}}>Company</span><br/><b>{data.companyName}</b></div><div><span style={{color:T.muted}}>Facility</span><br/><b>{data.siteName||"Main Facility"}</b></div><div><span style={{color:T.muted}}>User</span><br/><b>{data.firstName} {data.lastName}</b></div><div><span style={{color:T.muted}}>Role</span><br/><b>{data.position||"Mechanic"}</b></div></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,padding:14,border:`1px solid ${T.border}`,borderRadius:12,background:T.grayLt,fontSize:12}}><div><span style={{color:T.muted}}>Company</span><br/><b>{data.companyName}</b></div><div><span style={{color:T.muted}}>Location</span><br/><b>{data.location||data.cityState||"Main Location"}</b></div><div><span style={{color:T.muted}}>User</span><br/><b>{data.firstName} {data.lastName}</b></div><div><span style={{color:T.muted}}>Title</span><br/><b>{data.position||"Mechanic"}</b></div></div>
         </>}
         <div style={{display:"flex",justifyContent:"space-between",marginTop:24,paddingTop:16,borderTop:`1px solid ${T.border}`}}>{step>1?<Btn variant="secondary" onClick={()=>setStep(v=>v-1)}>← Back</Btn>:<div/>}<Btn onClick={next}>{step===3?"Start Using MaintForge →":"Continue →"}</Btn></div>
       </div>
@@ -10434,7 +9543,7 @@ async function fetchUserStateRow(userId="") {
 
 
 /* OWNER WORKSPACE SAFETY -----------------------------------------------------
-   Supabase/email sign-in is reserved for the Organization Administrator.
+   Supabase/email sign-in is reserved for the Account Owner.
    Never infer that the owner is an invited/assigned user by scanning other
    workspaces. Assigned users sign in only through MaintForge username/password.
 */
@@ -10520,10 +9629,10 @@ async function findOwnerWorkspaceRecoveryCandidate(currentUser=null, ownData=nul
 
 function readOwnerLocalRecovery(currentUser=null) {
   try {
-    const raw = localStorage.getItem("ncaState");
+    const raw = localStorage.getItem("maintforgeState");
     if(!raw) return null;
     const parsed = JSON.parse(raw);
-    const lastUserId = localStorage.getItem("ncaState:lastUserId") || "";
+    const lastUserId = localStorage.getItem("maintforgeState:lastUserId") || "";
     if(lastUserId && currentUser?.id && lastUserId !== currentUser.id) return null;
     if(!isSubstantiveMaintForgeWorkspace(parsed)) return null;
     return parsed;
@@ -10542,7 +9651,7 @@ function isMissingRelationError(error) {
 }
 
 function normalizeInviteAccessRow(row={}, fallback={}) {
-  const facilityIds = Array.isArray(row.facility_ids) ? row.facility_ids : invitedUserFacilityIdsFrom(row.facility_ids || row.facilityIds || row.facilities || fallback.facilityIds || fallback.facilities || "");
+  const facilityIds = Array.isArray(row.facility_ids) ? row.facility_ids : invitedUserLocationIdsFrom(row.facility_ids || row.facilityIds || row.facilities || fallback.facilityIds || fallback.facilities || "");
   return cleanInviteInfo({
     token:row.token || fallback.token || "",
     email:row.invited_email || row.email || fallback.email || "",
@@ -10570,7 +9679,7 @@ async function upsertInviteAccessRecord(invite={}, ownerState={}, currentUser=nu
       invited_email:normalizeEmail(clean.email),
       invited_name:invite.name || "",
       role:normalizeRole(clean.role || invite.role || "viewer"),
-      facility_ids:invitedUserFacilityIdsFrom(clean),
+      facility_ids:invitedUserLocationIdsFrom(clean),
       organization_name:clean.organizationName || ownerState?.settings?.companyName || ownerState?.organization?.name || "",
       status:"pending",
       created_by:currentUser?.id || clean.ownerUserId,
@@ -10619,7 +9728,7 @@ async function upsertOrganizationMembershipFromInvite(invite={}, currentUser=nul
       user_id:currentUser.id,
       email:normalizeEmail(currentUser.email || clean.email),
       role:normalizeRole(clean.role || "viewer"),
-      facility_ids:invitedUserFacilityIdsFrom(clean),
+      facility_ids:invitedUserLocationIdsFrom(clean),
       invite_token:clean.token || "",
       status:"active",
       accepted_at:new Date().toISOString(),
@@ -10666,7 +9775,7 @@ async function createInviteAccessRecordRpc(invite={}, ownerState={}, currentUser
       invited_email_arg: normalizeEmail(clean.email),
       invited_name_arg: invite.name || "",
       invite_role_arg: normalizeRole(clean.role || invite.role || "viewer"),
-      facility_ids_arg: invitedUserFacilityIdsFrom(clean),
+      facility_ids_arg: invitedUserLocationIdsFrom(clean),
       organization_name_arg: clean.organizationName || ownerState?.settings?.companyName || ownerState?.organization?.name || "",
     });
     if(error) {
@@ -10787,14 +9896,14 @@ async function findOrganizationStateForInvite(inviteInfo={}, currentUser=null) {
     // Reliability fallback: fresh invite URLs now carry the assigned role and facilities.
     // If the owner row exists but the pending invite record was not saved yet, still connect
     // the invited account using the URL scope instead of sending them back to old data.
-    if(ownerRow?.data && inviteInfo?.role && invitedUserFacilityIdsFrom(inviteInfo).length && email) {
+    if(ownerRow?.data && inviteInfo?.role && invitedUserLocationIdsFrom(inviteInfo).length && email) {
       const fallbackInvite = {
         id:`URL-${inviteInfo.token}`,
         token:inviteInfo.token,
         email,
         role:normalizeRole(inviteInfo.role),
-        facilityIds:invitedUserFacilityIdsFrom(inviteInfo),
-        locationId:inviteInfo.locationId || invitedUserFacilityIdsFrom(inviteInfo)[0] || "",
+        facilityIds:invitedUserLocationIdsFrom(inviteInfo),
+        locationId:inviteInfo.locationId || invitedUserLocationIdsFrom(inviteInfo)[0] || "",
         ownerUserId:ownerId,
         organizationName:inviteInfo.organizationName || ownerState.organization?.name || ownerState.settings?.companyName || "",
         status:"Accepted from URL",
@@ -10843,7 +9952,7 @@ async function findOrganizationMembershipForUser(currentUser=null) {
       );
       if(member) {
         const role = normalizeRole(member.role || "viewer");
-        const facilityIds = invitedUserFacilityIdsFrom(member);
+        const facilityIds = invitedUserLocationIdsFrom(member);
         const invite = {
           token:member.inviteToken || ownerState.inviteToken || "",
           email:member.email || email,
@@ -10861,7 +9970,7 @@ async function findOrganizationMembershipForUser(currentUser=null) {
 }
 
 function buildInvitePointerState(userId="", ownerUserId="", email="", invite={}) {
-  const facilityIds = invitedUserFacilityIdsFrom(invite);
+  const facilityIds = invitedUserLocationIdsFrom(invite);
   return {
     ownerUserId,
     setupComplete:true,
@@ -10870,7 +9979,7 @@ function buildInvitePointerState(userId="", ownerUserId="", email="", invite={})
     personalWorkspaceCleared:true,
     email:normalizeEmail(email),
     userRole:normalizeRole(invite?.role || "viewer"),
-    userFacilityIds:facilityIds,
+    userLocationIds:facilityIds,
     activeLocationId:isOrganizationAdminRole(invite?.role || "viewer") ? "__all" : (facilityIds[0] || "__all"),
     inviteToken:invite?.token || "",
     acceptedOrganizationOwnerId:ownerUserId,
@@ -10901,8 +10010,8 @@ async function saveInvitePointerForUser(userId="", ownerUserId="", email="", inv
       updated_at:new Date().toISOString(),
     }, { onConflict:"user_id" });
     try {
-      localStorage.removeItem("ncaState");
-      localStorage.removeItem("ncaState:lastUserId");
+      localStorage.removeItem("maintforgeState");
+      localStorage.removeItem("maintforgeState:lastUserId");
     } catch(e) {}
   } catch(e) {
     console.error("Could not save invite pointer:", e);
@@ -10920,8 +10029,8 @@ function buildMemberPointerFromOrganizationState(state={}, currentUser=null) {
   return {
     token:state.inviteToken || member.inviteToken || "",
     role:normalizeRole(member.role || state.userRole || "viewer"),
-    facilityIds:invitedUserFacilityIdsFrom(member).length ? invitedUserFacilityIdsFrom(member) : invitedUserFacilityIdsFrom(state),
-    locationId:member.locationId || invitedUserFacilityIdsFrom(member)[0] || invitedUserFacilityIdsFrom(state)[0] || "",
+    facilityIds:invitedUserLocationIdsFrom(member).length ? invitedUserLocationIdsFrom(member) : invitedUserLocationIdsFrom(state),
+    locationId:member.locationId || invitedUserLocationIdsFrom(member)[0] || invitedUserLocationIdsFrom(state)[0] || "",
   };
 }
 
@@ -10944,7 +10053,7 @@ function prepareSharedOrganizationStateForCloudSave(state={}, currentUser=null) 
     organizationUsers,
     currentUser:ownerUser ? { id:ownerUserId, email:ownerEmail } : null,
     userRole:"organization_admin",
-    userFacilityIds:[],
+    userLocationIds:[],
     activeLocationId:"__all",
     invitedMember:false,
     inviteAccepted:false,
@@ -11022,7 +10131,7 @@ export default function App() {
     };
   }, []);
 
-  /* Load Organization Administrator data from Supabase.
+  /* Load Account Owner data from Supabase.
      IMPORTANT: email/Supabase login NEVER scans other workspaces for membership.
      Assigned users enter only through the MaintForge username/password login path. */
   useEffect(() => {
@@ -11146,7 +10255,7 @@ export default function App() {
           dispatch({ type:"REPLACE_STATE", payload:{
             ...blankUserState(activeUser?.id || ""),
             setupComplete:true,
-            inviteConnectionError:"MaintForge could not safely load the Organization Administrator workspace. Cloud saving is stopped so no additional data can be overwritten. Refresh once; if this remains, restore from backup or inspect user_state in Supabase.",
+            inviteConnectionError:"MaintForge could not safely load the Account Owner workspace. Cloud saving is stopped so no additional data can be overwritten. Refresh once; if this remains, restore from backup or inspect user_state in Supabase.",
           } });
         }
       } finally {
@@ -11167,8 +10276,8 @@ export default function App() {
 
     try {
       const localState = normalizeMaintForgeSingleSite(state);
-      localStorage.setItem("ncaState", JSON.stringify(localState));
-      localStorage.setItem("ncaState:lastUserId", activeUser.id);
+      localStorage.setItem("maintforgeState", JSON.stringify(localState));
+      localStorage.setItem("maintforgeState:lastUserId", activeUser.id);
     } catch(e) { console.error("Local safety save failed:", e); }
 
     // Always replace the queued snapshot with the newest state. This prevents a burst
@@ -11245,8 +10354,8 @@ export default function App() {
 
           setLastSaveError(null);
           try {
-            localStorage.setItem("ncaState", JSON.stringify(ensureCurrentOrganizationAdmin(cloudState, pendingUser)));
-            localStorage.setItem("ncaState:lastUserId", pendingUser.id);
+            localStorage.setItem("maintforgeState", JSON.stringify(ensureCurrentOrganizationAdmin(cloudState, pendingUser)));
+            localStorage.setItem("maintforgeState:lastUserId", pendingUser.id);
           } catch(e) {}
         }
 
@@ -11292,7 +10401,7 @@ export default function App() {
   async function restoreRecoveredOwnerWorkspace() {
     if(!ownerRecovery?.locked || !ownerRecovery?.state || !activeUser?.id) return;
     const counts = ownerRecovery.counts || maintForgeWorkspaceCounts(ownerRecovery.state);
-    const ok = window.confirm(`Restore this recovered workspace to your owner account?\n\nEquipment: ${counts.equipment||0}\nWork Orders: ${counts.workOrders||0}\nParts: ${counts.parts||0}\nFacilities: ${counts.facilities||0}\n\nThe recovery source will not be deleted.`);
+    const ok = window.confirm(`Restore this recovered workspace to your owner account?\n\nEquipment: ${counts.equipment||0}\nWork Orders: ${counts.workOrders||0}\nParts: ${counts.parts||0}\nLocations: ${counts.facilities||0}\n\nThe recovery source will not be deleted.`);
     if(!ok) return;
     try {
       setSyncStatus("saving");
@@ -11314,13 +10423,13 @@ export default function App() {
       }, { onConflict:"user_id" });
       if(error) throw error;
       try {
-        localStorage.setItem("ncaState", JSON.stringify(restored));
-        localStorage.setItem("ncaState:lastUserId", activeUser.id);
+        localStorage.setItem("maintforgeState", JSON.stringify(restored));
+        localStorage.setItem("maintforgeState:lastUserId", activeUser.id);
       } catch(e) {}
       dispatch({ type:"REPLACE_STATE", payload:ensureCurrentOrganizationAdmin(restored, activeUser) });
       setOwnerRecovery(null);
       setSyncStatus("saved");
-      setAuthInfoMsg("✓ Recovered workspace restored to the Organization Administrator account. Normal cloud saving is active again.");
+      setAuthInfoMsg("✓ Recovered workspace restored to the Account Owner account. Normal cloud saving is active again.");
       setTimeout(()=>setSyncStatus("idle"), 2000);
     } catch(e) {
       console.error("Owner recovery restore failed:", e);
@@ -11335,46 +10444,15 @@ export default function App() {
 
   async function handleLogin() {
     setAuthError(""); setAuthInfoMsg("");
-    const loginId = authEmail.trim();
-    if(!loginId) { setAuthError("Please enter your username or email."); return; }
+    const email = authEmail.trim();
+    if(!email) { setAuthError("Please enter your email."); return; }
+    if(!validateEmail(email)) { setAuthError("Please enter a valid email address."); return; }
     if(!authPassword) { setAuthError("Please enter your password."); return; }
     setAuthBusy(true);
     try {
-      if(loginId.includes("@")) {
-        const { error } = await supabase.auth.signInWithPassword({
-          email: loginId,
-          password: authPassword,
-        });
-        if (error) setAuthError(error.message);
-      } else {
-        const result = await findMaintForgeUsernameLogin(loginId, authPassword);
-        if(!result.ok) {
-          setAuthError(result.error || "Invalid username or password.");
-        } else {
-          const appUser = result.appUser || {};
-          const user = {
-            id:appUser.userId || appUser.id || `APPUSER-${normalizeUsername(loginId)}`,
-            email:appUser.email || emailForUsername(loginId),
-            username:normalizeUsername(appUser.username || loginId),
-            user_metadata:{ name:appUser.name || appUser.username || loginId, username:normalizeUsername(appUser.username || loginId) },
-            appLogin:true,
-          };
-          const loaded = normalizeLoadedUserState(result.ownerState || {}, result.ownerUserId || "");
-          const scoped = ensureCurrentOrganizationAdmin({ ...loaded, ownerUserId:result.ownerUserId || loaded.ownerUserId, organizationOwnerId:result.ownerUserId || loaded.organizationOwnerId }, user);
-          if(!isOrganizationAdminRole(scoped.userRole) && !(scoped.userFacilityIds||[]).length) {
-            setAuthError("Your account is not assigned to an active facility. Contact your administrator.");
-          } else {
-            setAppSession({ user, maintForgeAppLogin:true, ownerUserId:result.ownerUserId, source:result.source, username:user.username, password:authPassword });
-            dispatch({ type:"REPLACE_STATE", payload:{ ...scoped, appLoginActive:true } });
-            setDataLoaded(true);
-            setAuthPassword("");
-            setAuthInfoMsg(`✓ Signed in as ${user.username}.`);
-          }
-        }
-      }
-    } finally {
-      setAuthBusy(false);
-    }
+      const { error } = await supabase.auth.signInWithPassword({ email, password:authPassword });
+      if(error) setAuthError(error.message);
+    } finally { setAuthBusy(false); }
   }
 
   async function handleSignup() {
@@ -11384,7 +10462,7 @@ export default function App() {
     if(!authPassword) { setAuthError("Please enter a password."); return; }
     if(authPassword.length < 6) { setAuthError("Password must be at least 6 characters."); return; }
     if(authPassword !== authConfirmPassword) { setAuthError("Passwords do not match."); return; }
-    try { localStorage.removeItem("ncaState"); localStorage.removeItem("ncaState:lastUserId"); } catch(e) {}
+    try { localStorage.removeItem("maintforgeState"); localStorage.removeItem("maintforgeState:lastUserId"); } catch(e) {}
     setAuthBusy(true);
     const { error, data } = await supabase.auth.signUp({
       email: authEmail.trim(),
@@ -11440,7 +10518,7 @@ export default function App() {
       await saveInvitePointerForUser(session.user.id, inviteMatch.ownerUserId, session.user.email, inviteMatch.invite);
       await markInviteAccessAccepted(inviteMatch.invite?.token || clean.token, session.user);
       clearPendingInviteInfo();
-      try { localStorage.removeItem("ncaState"); localStorage.removeItem("ncaState:lastUserId"); } catch(e) {}
+      try { localStorage.removeItem("maintforgeState"); localStorage.removeItem("maintforgeState:lastUserId"); } catch(e) {}
       dispatch({ type:"REPLACE_STATE", payload:invitedUiState });
       setInviteCodeInput("");
       setAuthInfoMsg(`✓ Invite accepted. You are connected to ${acceptedState.settings?.companyName || acceptedState.organization?.name || inviteMatch.invite.organizationName || "the organization"} as ${roleLabel(acceptedState.userRole)}.`);
@@ -11503,7 +10581,7 @@ export default function App() {
   }
 
   async function handleLogout() {
-    try { localStorage.removeItem("ncaState"); } catch(e) {}
+    try { localStorage.removeItem("maintforgeState"); } catch(e) {}
     setAppSession(null);
     await supabase.auth.signOut();
   }
@@ -11538,25 +10616,25 @@ export default function App() {
 
   useEffect(() => {
     if(!dataLoaded || !activeSession) return;
-    const savedFacilityId = readMFLocal(MF_LAST_FACILITY_KEY, "");
+    const savedLocationId = readMFLocal(MF_LAST_FACILITY_KEY, "");
     const role = normalizeRole(state.userRole || "viewer");
-    const assignedIds = invitedUserFacilityIdsFrom({ facilityIds:state.userFacilityIds });
+    const assignedIds = invitedUserLocationIdsFrom({ facilityIds:state.userLocationIds });
     const isOrgAdmin = isOrganizationAdminRole(role);
-    const isValidFacility = savedFacilityId === "__all" || maintLocations.some(l => l.id === savedFacilityId);
+    const isValidLocation = savedLocationId === "__all" || maintLocations.some(l => l.id === savedLocationId);
     if(isOrgAdmin) {
-      if(savedFacilityId && isValidFacility && savedFacilityId !== (state.activeLocationId || "__all")) {
-        dispatch({ type:"SET_ACTIVE_LOCATION", payload:savedFacilityId });
+      if(savedLocationId && isValidLocation && savedLocationId !== (state.activeLocationId || "__all")) {
+        dispatch({ type:"SET_ACTIVE_LOCATION", payload:savedLocationId });
       }
       return;
     }
     const fallbackAssigned = assignedIds[0] || "";
     const currentAllowed = state.activeLocationId && state.activeLocationId !== "__all" && assignedIds.includes(String(state.activeLocationId));
-    const savedAllowed = savedFacilityId && savedFacilityId !== "__all" && assignedIds.includes(String(savedFacilityId));
-    const nextFacility = savedAllowed ? savedFacilityId : (currentAllowed ? state.activeLocationId : fallbackAssigned);
-    if(nextFacility && nextFacility !== (state.activeLocationId || "__all")) {
-      dispatch({ type:"SET_ACTIVE_LOCATION", payload:nextFacility });
+    const savedAllowed = savedLocationId && savedLocationId !== "__all" && assignedIds.includes(String(savedLocationId));
+    const nextLocation = savedAllowed ? savedLocationId : (currentAllowed ? state.activeLocationId : fallbackAssigned);
+    if(nextLocation && nextLocation !== (state.activeLocationId || "__all")) {
+      dispatch({ type:"SET_ACTIVE_LOCATION", payload:nextLocation });
     }
-  }, [dataLoaded, activeSession?.user?.id, maintLocations.length, state.userRole, JSON.stringify(state.userFacilityIds||[])]);
+  }, [dataLoaded, activeSession?.user?.id, maintLocations.length, state.userRole, JSON.stringify(state.userLocationIds||[])]);
 
   useEffect(() => {
     if(!dataLoaded || !activeSession) return;
@@ -11568,12 +10646,12 @@ export default function App() {
 
   useEffect(() => {
     if(!dataLoaded || !activeSession) return;
-    const morovis = morovisFacilityForState(state);
-    if(!morovis?.id) return;
+    const primaryLocation = legacyPrimaryLocationForState(state);
+    if(!primaryLocation?.id) return;
     const needsRepair = countLegacyUnassignedRecords(state).total > 0 ||
-      (state.activeLocationId === morovis.id && (visibleState.equipment||[]).length === 0 && (state.equipment||[]).length > 0);
-    if(needsRepair && !state.legacyRepairNote?.morovisMigration) {
-      dispatch({ type:"MIGRATE_LEGACY_TO_MOROVIS" });
+      (state.activeLocationId === primaryLocation.id && (visibleState.equipment||[]).length === 0 && (state.equipment||[]).length > 0);
+    if(needsRepair && !state.legacyRepairNote?.singleLocationMigration) {
+      dispatch({ type:"MIGRATE_LEGACY_TO_SINGLE_LOCATION" });
     }
   }, [dataLoaded, activeSession?.user?.id, state.activeLocationId, state.equipment?.length, state.workOrders?.length, state.locations?.length]);
 
@@ -11623,17 +10701,17 @@ export default function App() {
     if(publicPortalLoading) return <div style={{ padding:40, fontSize:20, fontFamily:T.sans }}>Loading request form...</div>;
     if(!publicPortal) {
       const token = getWORequestPortalToken();
-      const fallbackFacility = getWORequestUrlParam("facility") || "Facility";
+      const fallbackLocation = getWORequestUrlParam("facility") || "Location";
       const fallbackOwner = getWORequestUrlParam("owner") || "";
       const fallbackPortal = fallbackOwner ? {
         token,
         owner_user_id:fallbackOwner,
-        facility:fallbackFacility,
+        facility:fallbackLocation,
         company_name:"MaintForge",
         equipment_json:[],
         fallback:true,
       } : null;
-      if(fallbackPortal) return <div style={{ minHeight:"100vh", background:T.bg, padding:16 }}><WorkOrderRequests state={{...INIT, settings:{ companyName:"MaintForge", locations:[fallbackFacility], facilityQrIds:{ [fallbackFacility]:token } }, equipment:[], workOrderRequests:[]}} dispatch={()=>{}} session={null} publicPortal={fallbackPortal} publicMode={true} /></div>;
+      if(fallbackPortal) return <div style={{ minHeight:"100vh", background:T.bg, padding:16 }}><WorkOrderRequests state={{...INIT, settings:{ companyName:"MaintForge", locations:[fallbackLocation], facilityQrIds:{ [fallbackLocation]:token } }, equipment:[], workOrderRequests:[]}} dispatch={()=>{}} session={null} publicPortal={fallbackPortal} publicMode={true} /></div>;
       return <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", padding:18, fontFamily:T.sans, background:T.bg, color:T.text }}><div style={{ maxWidth:520, background:T.card, border:`1px solid ${T.border}`, borderRadius:16, padding:20, textAlign:"center" }}><h2>Request link not active</h2><p>This QR code has not been activated by maintenance yet.</p></div></div>;
     }
     return <div style={{ minHeight:"100vh", background:T.bg, padding:16 }}><WorkOrderRequests state={{...INIT, settings:{ companyName:publicPortal.company_name || "MaintForge", locations:[publicPortal.facility], facilityQrIds:{ [publicPortal.facility]:getWORequestPortalToken() } }, equipment:publicPortal.equipment_json || [], workOrderRequests:[]}} dispatch={()=>{}} session={null} publicPortal={publicPortal} publicMode={true} /></div>;
@@ -11717,7 +10795,7 @@ export default function App() {
           )}
 
           {/* Email / existing username */}
-          <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#9ca3af", marginBottom:5 }}>{isSignup ? "Email" : "Email or Username"}</label>
+          <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#9ca3af", marginBottom:5 }}>Email</label>
           <input
             type="text"
             placeholder={isSignup ? "you@company.com" : "you@company.com"}
@@ -11899,7 +10977,7 @@ export default function App() {
             <div>
               <div style={{ fontWeight:900 }}>⚠ Owner workspace recovered — READ ONLY</div>
               <div style={{ fontSize:12, marginTop:3 }}>
-                Source: {ownerRecovery.source === "cloud" ? "historical cloud row" : "browser recovery copy"} · {ownerRecovery.counts?.equipment||0} equipment · {ownerRecovery.counts?.workOrders||0} work orders · {ownerRecovery.counts?.parts||0} parts · {ownerRecovery.counts?.facilities||0} facilities. Automatic cloud saving is OFF. Verify your records first.
+                Source: {ownerRecovery.source === "cloud" ? "historical cloud row" : "browser recovery copy"} · {ownerRecovery.counts?.equipment||0} equipment · {ownerRecovery.counts?.workOrders||0} work orders · {ownerRecovery.counts?.parts||0} parts · {ownerRecovery.counts?.facilities||0} locations. Automatic cloud saving is OFF. Verify your records first.
               </div>
             </div>
             <Btn onClick={restoreRecoveredOwnerWorkspace}>Restore This Workspace to Owner Account</Btn>
@@ -12229,7 +11307,7 @@ export default function App() {
           .mf-brand-title { min-width:0 !important; flex:1 1 auto !important; }
           .mf-brand-title > div:first-child { font-size:14px !important; white-space:nowrap !important; overflow:hidden !important; text-overflow:ellipsis !important; max-width:42vw !important; }
           .mf-brand-title > div:last-child { font-size:10px !important; white-space:nowrap !important; overflow:hidden !important; text-overflow:ellipsis !important; max-width:42vw !important; }
-          .mf-facility-switch { position:absolute !important; top:calc(62px + env(safe-area-inset-top)) !important; left:10px !important; right:10px !important; width:calc(100% - 20px) !important; height:42px !important; z-index:999 !important; border-radius:12px !important; }
+          
           .mf-header-actions { flex:0 0 auto !important; overflow:visible !important; gap:6px !important; padding:0 !important; }
           .mf-header-actions > button { display:none !important; }
           .mf-header-actions .mf-profile-button { display:flex !important; width:42px !important; min-width:42px !important; height:42px !important; padding:7px !important; border-radius:50% !important; }
@@ -12303,12 +11381,12 @@ export default function App() {
             <span style={{ display:"block", width:18, height:2, background:T.subtext, borderRadius:1 }}/>
           </button>
           <div style={{ width:1, height:28, background:T.border }} />
-          {resolveMaintForgeLogo(state, state.activeLocationId || "__all") && (
-            <img src={resolveMaintForgeLogo(state, state.activeLocationId || "__all")} alt="logo" style={{ height:36, maxWidth:80, objectFit:"contain", borderRadius:4 }} />
+          {resolveMaintForgeLogo(state) && (
+            <img src={resolveMaintForgeLogo(state)} alt="logo" style={{ height:36, maxWidth:80, objectFit:"contain", borderRadius:4 }} />
           )}
           <button className="mf-brand-title" onClick={()=>setTab("dashboard")} title="Go to dashboard" style={{ background:"none", border:"none", padding:0, textAlign:"left", cursor:"pointer" }}>
             <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, letterSpacing:-.3, lineHeight:1.2 }}>{companyName}</div>
-            <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, letterSpacing:.3 }}>{settings.siteName || "Main Facility"}</div>
+            <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, letterSpacing:.3 }}>{settings.location || settings.cityState || "Location"}</div>
           </button>
           <span className="mf-header-crumb" style={{ color:T.border, fontSize:18 }}>›</span>
           <span className="mf-header-page-title" style={{ fontFamily:T.sans, fontSize:13, color:T.subtext, fontWeight:500 }}>{PAGE_TITLES[tab] || "Dashboard"}</span>
