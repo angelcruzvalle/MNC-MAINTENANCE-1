@@ -145,6 +145,8 @@ const handleUnitSelectChange = (value, currentValue, setValue) => {
   setValue(value);
 };
 
+const WORK_ORDER_STATUS_OPTIONS = ["Open", "In Progress", "Completed"];
+
 const DEFAULT_PART_CATEGORIES = [
   "Spark Plug", "Belt", "Blade", "Filter", "Oil Filter", "Water Separator", "Fuel Filter",
   "Air Filter", "Hydraulic Filter", "Cabin Filter", "Battery", "Tire", "Tube", "Bearing",
