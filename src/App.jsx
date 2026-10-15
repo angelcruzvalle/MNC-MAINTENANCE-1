@@ -2364,6 +2364,27 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   ];
   const lowStock = parts.filter(p => p.lowStockAlert !== false && (+p.qty || 0) <= (+p.minQty || 0));
   const recentActivity = [...(state.notifications || [])].sort((a,b)=>String(b.createdAt||b.time||"").localeCompare(String(a.createdAt||a.time||""))).slice(0,5);
+  const fuelContainers = state.fuelContainers || [];
+  const [spendPeriod, setSpendPeriod] = useState("month");
+  const now = new Date();
+  const spendingStart = (() => {
+    if(spendPeriod === "year") return new Date(now.getFullYear(), 0, 1);
+    if(spendPeriod === "quarter") return new Date(now.getFullYear(), Math.floor(now.getMonth()/3)*3, 1);
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  })();
+  const spendingWOs = wos.filter(w => {
+    const raw = w.completed || w.completedDate || w.closedDate || w.created || w.createdAt;
+    if(!raw) return false;
+    const d = new Date(raw);
+    return !Number.isNaN(d.getTime()) && d >= spendingStart && d <= now;
+  });
+  const spendingBreakdown = spendingWOs.reduce((sum,w)=>{
+    const b=woCostBreakdown(w);
+    sum.parts += b.parts; sum.labor += b.labor; sum.services += b.outsideServices;
+    return sum;
+  },{parts:0,labor:0,services:0});
+  const spendingTotal = spendingBreakdown.parts + spendingBreakdown.labor + spendingBreakdown.services;
+  const spendingLabel = spendPeriod === "year" ? "This Year" : spendPeriod === "quarter" ? "This Quarter" : "This Month";
   const upcoming = [
     ...pmSchedules.map(x=>({...x,_kind:"PM"})),
     ...inspectionSchedules.map(x=>({...x,_kind:"Inspection"})),
@@ -2406,6 +2427,19 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     <div style={{fontSize:12,fontWeight:900,color:T.subtext,textTransform:"uppercase",letterSpacing:.8,margin:"0 0 8px"}}>Quick Actions</div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:9,marginBottom:24}}>
       {actions.map((a,i)=><button key={a.label} onClick={()=>actionClick(a)} style={{minHeight:48,padding:"10px 12px",border:`1px solid ${i<3 ? T.accent : T.border}`,borderRadius:10,background:i<3 ? T.accentLt : T.card,color:i<3 ? T.accent : T.text,fontWeight:800,fontSize:12,cursor:"pointer",boxShadow:i<3?"0 1px 3px rgba(0,82,204,.08)":"none"}}>{a.label}</button>)}
+    </div>
+
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:14,marginBottom:14}}>
+      <div style={{border:`1px solid ${T.border}`,borderRadius:14,background:T.card,padding:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:12}}><div><div style={{fontSize:15,fontWeight:900}}>Fuel Tanks</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Current fuel levels</div></div><button onClick={()=>go("fuel")} style={{border:0,background:"none",color:T.accent,fontSize:11,fontWeight:800,cursor:"pointer"}}>Fuel Tracking</button></div>
+        {!fuelContainers.length ? <div style={{padding:"18px 0",fontSize:12,color:T.muted}}>No fuel tanks have been created.</div> : <div style={{display:"grid",gap:9}}>{fuelContainers.map(c=>{ const r=latestFuelReading(state,c.id); const gallons=+(r?.gallons||0); const pct=r?fuelPercent(c,gallons):0; const levelColor=pct<=25?T.red:pct<75?T.amber:T.green; return <button key={c.id} onClick={()=>go("fuel")} style={{width:"100%",textAlign:"left",border:`1px solid ${levelColor}33`,borderRadius:10,background:T.card,padding:"10px 12px",cursor:"pointer"}}><div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"baseline"}}><div style={{fontSize:12,fontWeight:900,color:T.text}}>{c.name || c.fuelType || "Fuel Tank"}</div><div style={{fontSize:12,fontWeight:900,color:levelColor}}>{r?pct.toFixed(0)+"%":"No reading"}</div></div><div style={{display:"flex",justifyContent:"space-between",gap:10,marginTop:5,fontSize:11,color:T.subtext}}><span>{c.fuelType || "Fuel"}</span><span style={{fontWeight:800}}>{r?Math.round(gallons).toLocaleString()+" gal":"—"}{+c.capacity?` / ${(+c.capacity).toLocaleString()} gal`:""}</span></div><div style={{height:5,borderRadius:999,background:T.grayLt,overflow:"hidden",marginTop:8}}><div style={{height:"100%",width:`${Math.max(0,Math.min(100,pct))}%`,background:levelColor,borderRadius:999}} /></div></button>})}</div>}
+      </div>
+      <div style={{border:`1px solid ${T.border}`,borderRadius:14,background:T.card,padding:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,marginBottom:14,flexWrap:"wrap"}}><div><div style={{fontSize:15,fontWeight:900}}>Spending Snapshot</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Maintenance spending at a glance</div></div><div style={{display:"flex",gap:4,background:T.grayLt,padding:3,borderRadius:9}}>{[["month","Monthly"],["quarter","Quarterly"],["year","Yearly"]].map(([v,l])=><button key={v} onClick={()=>setSpendPeriod(v)} style={{border:0,borderRadius:7,padding:"6px 8px",background:spendPeriod===v?T.card:"transparent",color:spendPeriod===v?T.accent:T.subtext,fontSize:10,fontWeight:900,cursor:"pointer",boxShadow:spendPeriod===v?"0 1px 2px rgba(0,0,0,.08)":"none"}}>{l}</button>)}</div></div>
+        <div style={{fontSize:11,fontWeight:800,color:T.subtext}}>{spendingLabel}</div><div style={{fontSize:30,fontWeight:950,color:T.text,letterSpacing:-1,marginTop:3}}>{moneyFmt(spendingTotal)}</div><div style={{fontSize:10,color:T.muted,marginTop:2}}>{spendingWOs.length} work order{spendingWOs.length===1?"":"s"}</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginTop:14}}>{[["Parts",spendingBreakdown.parts,T.accent],["Labor",spendingBreakdown.labor,T.green],["Outside",spendingBreakdown.services,T.amber]].map(([label,value,color])=><div key={label} style={{padding:"9px 7px",borderRadius:9,background:T.grayLt,minWidth:0}}><div style={{fontSize:9,fontWeight:900,color,textTransform:"uppercase",letterSpacing:.4}}>{label}</div><div style={{fontSize:11,fontWeight:900,color:T.text,marginTop:4,overflow:"hidden",textOverflow:"ellipsis"}}>{moneyFmt(value)}</div></div>)}</div>
+        <button onClick={()=>go("spending")} style={{border:0,background:"none",color:T.accent,fontSize:11,fontWeight:800,cursor:"pointer",padding:0,marginTop:13}}>View Spending & Costs →</button>
+      </div>
     </div>
 
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:14}}>
