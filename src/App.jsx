@@ -11091,7 +11091,18 @@ export default function App() {
         // A newly-created company account is expected to have no workspace yet.
         // Only accounts explicitly marked at signup may initialize a fresh workspace here.
         // Established accounts still stop safely instead of silently replacing missing cloud data.
-        const isNewCompanyAccount = activeUser?.user_metadata?.winMaintenanceNewAccount === true;
+        // New-company detection must also survive Supabase email confirmation.
+        // Some confirmed accounts can return without our signup metadata marker on the
+        // first login. A genuinely new auth user with NO user_state row and no recovery
+        // candidate is safe to initialize. The age fallback is intentionally short so an
+        // established account with unexpectedly missing cloud data still hits Data Guard.
+        const signupMarker = activeUser?.user_metadata?.winMaintenanceNewAccount === true ||
+          activeUser?.user_metadata?.winMaintenanceNewAccount === "true";
+        const createdAtMs = Date.parse(activeUser?.created_at || "");
+        const accountAgeMs = Number.isFinite(createdAtMs) ? (Date.now() - createdAtMs) : Number.POSITIVE_INFINITY;
+        const recentlyCreatedAuthUser = accountAgeMs >= 0 && accountAgeMs <= (72 * 60 * 60 * 1000);
+        const hasOwnWorkspaceRow = !!ownRow;
+        const isNewCompanyAccount = signupMarker || (!hasOwnWorkspaceRow && recentlyCreatedAuthUser);
         if(isNewCompanyAccount) {
           setOwnerRecovery(null);
           setCloudWriteBlocked(false);
