@@ -1211,7 +1211,7 @@ function formatNotificationTime(notification) {
 
 
 const MAINTFORGE_SINGLE_SITE_ID = "morovis";
-const MAINTFORGE_SINGLE_SITE_NAME = "Morovis National Cemetery";
+const MAINTFORGE_SINGLE_SITE_NAME = "Main Facility";
 
 function normalizeMaintForgeSingleSite(input={}) {
   const state = { ...INIT, ...(input || {}) };
@@ -1219,7 +1219,7 @@ function normalizeMaintForgeSingleSite(input={}) {
   const site = {
     ...existing,
     id: existing.id || MAINTFORGE_SINGLE_SITE_ID,
-    name: MAINTFORGE_SINGLE_SITE_NAME,
+    name: state.settings?.siteName || state.settings?.companyName || existing.name || MAINTFORGE_SINGLE_SITE_NAME,
     active: true,
   };
   const siteId = site.id;
@@ -1227,7 +1227,7 @@ function normalizeMaintForgeSingleSite(input={}) {
     ...row,
     locationId: siteId,
     facilityId: siteId,
-    facilityName: MAINTFORGE_SINGLE_SITE_NAME,
+    facilityName: site.name,
   } : row);
   return {
     ...state,
@@ -2214,8 +2214,8 @@ function Header({ notifications, dispatch, currentPage, onMenuToggle }) {
           </button>
           <div className="mf-header-divider" style={{ width:1, height:28, background:T.border }} />
           <div>
-            <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, letterSpacing:-.3, lineHeight:1.2 }}>NCA Maintenance</div>
-            <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, letterSpacing:.3 }}>{state.activeLocationId === "__all" ? "Organization Dashboard" : activeLocationLabel}</div>
+            <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, letterSpacing:-.3, lineHeight:1.2 }}>MaintForge</div>
+            <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, letterSpacing:.3 }}>{settings.siteName || "Main Facility"}</div>
           </div>
           {currentPage && (
             <>
@@ -2368,7 +2368,7 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
             title={editMenu?"Finish menu editing first":"Click to open System Settings"}>
             <div style={{ width:34, height:34, background:T.accent, borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, flexShrink:0 }}>⚙</div>
             <div>
-              <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text, lineHeight:1.2 }}>{companyName||"NCA Maintenance"}</div>
+              <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text, lineHeight:1.2 }}>{companyName||"MaintForge"}</div>
               <div style={{ fontFamily:T.sans, fontSize:10, color:T.accent }}>{editMenu?"Menu reorder mode":"Tap to open Settings"}</div>
             </div>
           </button>
@@ -3136,11 +3136,21 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     }
     const prevWO = isEdit ? state.workOrders.find(w=>w.id===formWithLatestUsage.id) : null;
 
-    const newParts  = (formWithLatestUsage.partsUsed||[]);
+    const newParts = (formWithLatestUsage.partsUsed||[]).filter(p=>String(p?.name||"").trim()).map(raw=>{
+      const p = {...raw};
+      const nameKey = String(p.name||"").trim().toLowerCase();
+      let inv = p.partId ? (state.parts||[]).find(x=>x.id===p.partId) : (state.parts||[]).find(x=>String(x.name||"").trim().toLowerCase()===nameKey || (p.partNumber && String(x.partNumber||"").trim().toLowerCase()===String(p.partNumber).trim().toLowerCase()));
+      const receivedQty = Math.max(0, +(p.receivedQty||0));
+      const usedQty = Math.max(0, +(p.qty||0));
+      const unitCost = +(p.unitCost||0);
+      if(!inv){ inv = { id:genId("PT"), name:String(p.name||"").trim(), partNumber:p.partNumber||"", qty:receivedQty, unit:p.unit||"ea", unitCost, minQty:1, category:p.category||"", vendor:p.vendor||"" }; dispatch({type:"ADD_PART", payload:inv}); }
+      else if(receivedQty>0 && !p.receiptApplied) dispatch({type:"UPDATE_PART", payload:{...inv, qty:+(inv.qty||0)+receivedQty, unitCost:unitCost || +(inv.unitCost||0), unit:p.unit||inv.unit||"ea"}});
+      return {...p, partId:inv.id, partNumber:p.partNumber||inv.partNumber||"", unit:p.unit||inv.unit||"ea", unitCost:unitCost || +(inv.unitCost||0), qty:usedQty, receivedQty, receiptApplied:p.receiptApplied || receivedQty>0, availableQty:+(inv.qty||0)+((receivedQty>0&&!p.receiptApplied)?receivedQty:0)};
+    });
+    formWithLatestUsage.partsUsed = newParts;
     const partsTotal = newParts.reduce((s,p)=>s+lineItemTotal(p),0);
     const outsideServices = (formWithLatestUsage.outsideServices||[]).filter(svc=>String(svc?.description||svc?.name||"").trim() || +(svc?.unitCost||svc?.cost||0));
     const outsideServicesSubtotal = outsideServicesTotal(outsideServices);
-    if(promptMissingPartInventory()) return;
     const normalizedCreatedDate = String(formWithLatestUsage.created || formWithLatestUsage.date || today()).slice(0,10);
     const normalizedDueDate = formWithLatestUsage.due ? String(formWithLatestUsage.due).slice(0,10) : "";
     if(isEdit) {
@@ -3213,7 +3223,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const h = (value) => String(value ?? "").replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[ch]));
     const money = moneyFmt;
 
-    const companyName = gs.companyName || "Maintenance Department";
+    const companyName = gs.companyName || "MaintForge";
     const companyLogo = resolveWorkOrderBrandLogo(state, wo, eq || {});
     const printableFacilityName = (() => {
       const raw = recordLocationName(wo, state) || recordLocationName(eq || {}, state) || activeFacilitySettings(state)?.activeFacilityName || gs.siteName || gs.location || "";
@@ -3361,10 +3371,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           </div>
         </section>` : ""}
 
-        ${printOpt("showFaultDescription") ? `<section class="section"><div class="section-title">Description</div><div class="textBlock">${h(printableDescription)||"&nbsp;"}</div></section>` : ""}
-        ${printOpt("showDescription") ? `<section class="section"><div class="section-title">Work Description and Work Performed</div><div class="textBlock tall">${h(wo.description)||"&nbsp;"}</div></section>` : ""}
+        ${(printOpt("showFaultDescription") || printOpt("showDescription") || (wo.woType !== "Inspection" && printOpt("showMechanicNotes"))) ? `<section class="section"><div class="section-title">Work Details</div><div class="textBlock tall"><b>Problem Reported</b><br>${h(printableDescription)||"&nbsp;"}<br><br><b>Work Description</b><br>${h(wo.description)||"&nbsp;"}<br><br><b>Mechanic Notes / Work Performed</b><br>${h(wo.mechanicNotes)||"&nbsp;"}</div></section>` : ""}
         ${inspectionChecklistPrint}
-        ${wo.woType !== "Inspection" && printOpt("showMechanicNotes") ? `<section class="section"><div class="section-title">Mechanic Notes</div><div class="textBlock tall">${h(wo.mechanicNotes)||"&nbsp;"}</div></section>` : ""}
 
         ${(printOpt("showParts") || printOpt("showOutsideServices") || printOpt("showLaborHours") || printOpt("showLaborTotal") || printOpt("showGrandTotal") || printOpt("showCosts")) ? `<section class="section" data-print-item="Parts and Labor Summary">
           <div class="summaryTitle">Parts and Labor Summary</div>
@@ -3492,13 +3500,13 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:6 }}>If this equipment has no usage tracking selected, enter the reading here for the WO record, or select N/A when there is truly no hour/mileage value.</div>
         </div>
 
-        <Field label={form.woType==="Service" ? "Service Description / Work Performed" : "Work Description / Problem Reported"}>
-          <textarea style={{ ...inp, minHeight:110, resize:"vertical" }} value={form.description||""} onChange={e=>setForm(f=>({...f,description:e.target.value}))} />
-        </Field>
-
-        <Field label="Mechanic Notes">
-          <textarea style={{ ...inp, minHeight:110, resize:"vertical" }} value={form.mechanicNotes||""} onChange={e=>setForm(f=>({...f,mechanicNotes:e.target.value}))} placeholder="Mechanic observations, steps taken, findings..." />
-        </Field>
+        <div style={{ gridColumn:"span 2", border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.card, marginBottom:14 }}>
+          <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, textTransform:"uppercase", letterSpacing:.5, marginBottom:10 }}>Work Details</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+            <Field label="Work Description / Problem Reported"><textarea style={{ ...inp, minHeight:120, resize:"vertical" }} value={form.description||""} onChange={e=>setForm(f=>({...f,description:e.target.value}))} placeholder="Describe the problem reported and work requested..." /></Field>
+            <Field label="Mechanic Notes / Work Performed"><textarea style={{ ...inp, minHeight:120, resize:"vertical" }} value={form.mechanicNotes||""} onChange={e=>setForm(f=>({...f,mechanicNotes:e.target.value}))} placeholder="Diagnosis, work performed, findings, and mechanic notes..." /></Field>
+          </div>
+        </div>
 
         {form.woType === "Inspection" && (
           <div
@@ -3536,19 +3544,21 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:8 }}>Parts</label>
           {(form.partsUsed||[]).map((p,idx)=>(
             <div key={idx}>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 64px 96px 90px auto auto", gap:8, marginBottom:4, alignItems:"center" }}>
+              <div style={{ display:"grid", gridTemplateColumns:"minmax(180px,1fr) 82px 82px 96px 110px 110px auto", gap:8, marginBottom:4, alignItems:"center" }}>
                 <div style={{ position:"relative" }}>
                   <input style={inp} placeholder="Part name or pick from inventory..." value={p.name||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],name:e.target.value,partSearch:e.target.value,partId:undefined,availableQty:undefined,partNumber:undefined}; return {...f,partsUsed:arr}; })} />
                   {p.partId && <span style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", fontFamily:T.mono, fontSize:9, color:T.green }}>inv</span>}
                 </div>
-                <input style={{ ...inp, textAlign:"center" }} type="number" min="1" placeholder="Qty" value={p.qty||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],qty:e.target.value}; return {...f,partsUsed:arr}; })} />
+                <input style={{ ...inp, textAlign:"center" }} type="number" min="0" step="0.01" placeholder="Used" title="Quantity used on this work order" value={p.qty||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],qty:e.target.value}; return {...f,partsUsed:arr}; })} />
+                <input style={{ ...inp, textAlign:"center" }} type="number" min="0" step="0.01" placeholder="Received" title="Quantity purchased/received into inventory" value={p.receivedQty||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],receivedQty:e.target.value,receiptApplied:false}; return {...f,partsUsed:arr}; })} />
                 <select style={sel} value={p.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, p.unit||"ea", v=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],unit:v}; return {...f,partsUsed:arr}; }))}>
                   {getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}
                   <option value="__new_unit__">+ Add new...</option>
                 </select>
-                <input style={inp} {...decimalInputAttrs({ placeholder:"Unit $ (0.0000)" })} value={p.unitCost||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],unitCost:sanitizeDecimalInput(e.target.value)}; return {...f,partsUsed:arr}; })} />
+                <input style={inp} {...decimalInputAttrs({ placeholder:"Cost / each" })} title="Enter cost per each OR total purchase cost" value={p.unitCost||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; const unitCost=sanitizeDecimalInput(e.target.value); const rq=+(arr[idx]?.receivedQty||0); arr[idx]={...arr[idx],unitCost,totalPurchaseCost:rq&&unitCost!==""?String(rq*(+unitCost)):arr[idx]?.totalPurchaseCost||""}; return {...f,partsUsed:arr}; })} />
+                <input style={inp} {...decimalInputAttrs({ placeholder:"Total purchase $" })} title="Enter total purchase cost OR cost per each" value={p.totalPurchaseCost||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; const totalPurchaseCost=sanitizeDecimalInput(e.target.value); const rq=+(arr[idx]?.receivedQty||0); arr[idx]={...arr[idx],totalPurchaseCost,unitCost:rq&&totalPurchaseCost!==""?String((+totalPurchaseCost)/rq):arr[idx]?.unitCost||""}; return {...f,partsUsed:arr}; })} />
                 <button onClick={()=>setShowNewPart(showNewPart===idx?null:idx)} style={{ padding:"6px 8px", border:`1px solid ${T.border}`, borderRadius:6, background:T.grayLt, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.accent, whiteSpace:"nowrap" }}>
-                  {showNewPart===idx?"Close":"Inventory"}
+                  {showNewPart===idx?"Close":"Find"}
                 </button>
                 <button onClick={()=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr.splice(idx,1); return {...f,partsUsed:arr}; })} style={{ padding:"6px 10px", border:`1px solid ${T.red}`, borderRadius:6, background:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>
               </div>
@@ -3612,7 +3622,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
               )}
             </div>
           ))}
-          <button onClick={()=>setForm(f=>({...f,partsUsed:[...(f.partsUsed||[]),{name:"",qty:1,unit:"ea",unitCost:""}]}))} style={{ background:"none", border:`1px dashed ${T.borderHi}`, borderRadius:6, padding:"7px 16px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600, width:"100%" }}>
+          <button onClick={()=>setForm(f=>({...f,partsUsed:[...(f.partsUsed||[]),{name:"",qty:1,receivedQty:"",unit:"ea",unitCost:"",totalPurchaseCost:"",receiptApplied:false}]}))} style={{ background:"none", border:`1px dashed ${T.borderHi}`, borderRadius:6, padding:"7px 16px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600, width:"100%" }}>
             + Add Part
           </button>
         </div>
@@ -4310,7 +4320,7 @@ function Equipment({ state, dispatch }) {
       body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#111827;padding:24px;font-size:12px}h1{margin:0 0 4px;font-size:22px}p{margin:0 0 16px;color:#667085}.header{display:flex;align-items:flex-start;gap:14px;border-bottom:2px solid #111827;padding-bottom:14px;margin-bottom:16px}.logo{max-height:58px;max-width:120px;object-fit:contain}.titleBlock{flex:1}.eqNum{font-family:monospace;font-size:13px;font-weight:800;color:#334155}.subtitle{font-size:13px;color:#475467;margin-top:3px}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0 18px}.metric{border:1px solid #d0d5dd;background:#f9fafb;border-radius:10px;padding:12px}.metricValue{font-size:20px;font-weight:800;color:#111827}.metricLabel{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:#667085;margin-top:4px}.sectionTitle{background:#e5e7eb;padding:8px 10px;border-radius:8px;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.5px;margin:18px 0 8px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#111827;color:white;text-align:left;padding:7px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.4px}td{border-bottom:1px solid #e5e7eb;padding:7px 8px;vertical-align:top}.right{text-align:right}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px 20px}.field{border-bottom:1px solid #e5e7eb;padding:7px 0}.label{font-size:10px;text-transform:uppercase;color:#667085;font-weight:800}.value{font-size:13px;margin-top:2px}.actions{margin-top:18px;display:flex;gap:8px;justify-content:center}.actions button{padding:9px 18px;border:none;border-radius:8px;background:#111827;color:#fff;font-weight:800;cursor:pointer}@media print{.actions{display:none}.metric,.sectionTitle{break-inside:avoid}body{padding:18px}.metrics{grid-template-columns:repeat(4,1fr)}}@page{size:letter;margin:.35in}
     </style></head><body>`);
     const summaryLogo = resolveWorkOrderBrandLogo(state, {}, eq || {});
-    win.document.write(`<div class="header">${summaryLogo?`<img class="logo" src="${summaryLogo}" alt="Logo">`:""}<div class="titleBlock"><h1>${esc(settings.companyName || "Maintenance Department")}</h1><div class="eqNum">Equipment Summary — ${esc(eq.id||"—")}</div><div class="subtitle">${esc(eq.name || eq.nomenclature || "—")} · ${esc([eq.year,eq.make,eq.model].filter(Boolean).join(" ") || "—")}</div></div><div style="text-align:right;color:#667085;font-size:11px">Generated: ${new Date().toLocaleDateString()}</div></div>`);
+    win.document.write(`<div class="header">${summaryLogo?`<img class="logo" src="${summaryLogo}" alt="Logo">`:""}<div class="titleBlock"><h1>${esc(settings.companyName || "MaintForge")}</h1><div class="eqNum">Equipment Summary — ${esc(eq.id||"—")}</div><div class="subtitle">${esc(eq.name || eq.nomenclature || "—")} · ${esc([eq.year,eq.make,eq.model].filter(Boolean).join(" ") || "—")}</div></div><div style="text-align:right;color:#667085;font-size:11px">Generated: ${new Date().toLocaleDateString()}</div></div>`);
     win.document.write(`<div class="metrics">${metric("Current " + usage.label, usage.display ?? Number(usage.value||0).toLocaleString(undefined,{maximumFractionDigits:1}))}${metric("Lifetime Spent", moneyFmt(fin.lifetimeSpent))}${metric("FY Spent", moneyFmt(fin.fySpent))}${metric("Total WOs", fin.totalWOs)}${metric("Lifetime Labor", fin.lifetimeLaborHours.toFixed(1)+"h")}${metric("FY Labor", fin.fyLaborHours.toFixed(1)+"h")}${metric("Open WOs", fin.openWOs)}${metric("Completed WOs", fin.completedWOs)}</div>`);
     win.document.write(`<div class="sectionTitle">Equipment Information</div><div class="grid">${[["Equipment #",eq.id],["Nomenclature",eq.name||eq.nomenclature],["Year",eq.year],["Make",eq.make],["Model",eq.model],["Serial #",eq.serial],["EIL #",eq.eilNumber],["Facility",eq.location],["Area",eq.area],["Category",eq.category||eq.type],["Acquisition Date",eq.acquisitionDate],["Purchase Price",eq.acquisitionCost?moneyFmt(eq.acquisitionCost):""],["Status",eq.status||"Fully Operational"]].map(([k,v])=>`<div class="field"><div class="label">${esc(k)}</div><div class="value">${esc(v||"—")}</div></div>`).join("")}</div>`);
     win.document.write(`<div class="sectionTitle">Work Order Totals</div><table><tr><th>Type</th><th class="right">Count</th></tr><tr><td>Repair</td><td class="right">${fin.repairWOs}</td></tr><tr><td>Service / PM</td><td class="right">${fin.serviceWOs}</td></tr><tr><td>Inspection</td><td class="right">${fin.inspectionWOs}</td></tr></table>`);
@@ -4424,7 +4434,7 @@ function Equipment({ state, dispatch }) {
       <div class="page"><div class="outer">
         <header class="top">
           <div class="logoBox">${historyCompanyLogo ? `<img src="${historyCompanyLogo}" alt="Logo">` : `<div class="logoText">LOGO</div>`}</div>
-          <div class="companyBox"><div class="company" style="font-size:${workOrderBrandFontSize(gs.companyName || "Maintenance Department")}px">${h(gs.companyName || "Maintenance Department")}</div>${historyFacilityName ? `<div class="facilityName" style="font-size:${workOrderFacilityFontSize(historyFacilityName)}px">${h(historyFacilityName)}</div>` : ""}<div class="typePill">${h(type.toUpperCase())}</div></div>
+          <div class="companyBox"><div class="company" style="font-size:${workOrderBrandFontSize(gs.companyName || "MaintForge")}px">${h(gs.companyName || "MaintForge")}</div>${historyFacilityName ? `<div class="facilityName" style="font-size:${workOrderFacilityFontSize(historyFacilityName)}px">${h(historyFacilityName)}</div>` : ""}<div class="typePill">${h(type.toUpperCase())}</div></div>
           <div class="numberBox"><div class="woNumber"><div class="label">Work Order Number</div><div class="number">${h(wo.id || "")}</div></div><div class="status">${h(wo.status || "Open")}</div></div>
         </header>
         <div class="dateGrid">
@@ -4447,8 +4457,7 @@ function Equipment({ state, dispatch }) {
           </div>
         </section>
         <section class="section"><div class="section-title">Description</div><div class="textBlock">${h(desc)||"&nbsp;"}</div></section>
-        <section class="section"><div class="section-title">Work Description and Work Performed</div><div class="textBlock tall">${h(wo.description)||"&nbsp;"}</div></section>
-        ${!typeLower.includes("inspection") ? `<section class="section"><div class="section-title">Mechanic Notes</div><div class="textBlock tall">${h(wo.mechanicNotes)||"&nbsp;"}</div></section>` : ""}
+        <section class="section"><div class="section-title">Work Details</div><div class="textBlock tall"><b>Problem Reported / Work Description</b><br>${h(wo.description || wo.faultDescription)||"&nbsp;"}<br><br><b>Mechanic Notes / Work Performed</b><br>${h(wo.mechanicNotes)||"&nbsp;"}</div></section>
         ${typeLower.includes("inspection") && inspectionRowsForPrint.length ? `<section class="section"><div class="section-title">Inspection Checklist</div><table class="data-table"><thead><tr><th style="width:55%">Step</th><th style="width:15%">Pass / Fail</th><th style="width:30%">Comment</th></tr></thead><tbody>${inspectionRowsForPrint.map((r,i)=>`<tr><td>${i+1}. ${h(r.step)||"&nbsp;"}</td><td><b>${h(r.result)||"—"}</b></td><td>${h(r.comment)||"—"}</td></tr>`).join("")}</tbody></table></section>` : ""}
         <section class="section" data-print-item="Parts and Labor Summary">
           <div class="summaryTitle">Parts and Labor Summary</div>
@@ -5226,7 +5235,7 @@ function Equipment({ state, dispatch }) {
             const full = reportEqs.filter(e=>(e.status||"Fully Operational")==="Fully Operational");
             const other = reportEqs.filter(e=>!["Out of Service / Deadline","Operational with Deficiencies","Fully Operational",""] .includes(e.status||""));
             win.document.write(`<html><head><title>Equipment Status Report</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111;background:#fff}h1{font-size:22px;margin:0 0 4px}p{font-size:12px;color:#666;margin:0 0 18px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0 22px}.box{border:1px solid #e5e7eb;border-radius:12px;padding:12px;background:#f9fafb}.num{font-size:24px;font-weight:800}.label{font-size:11px;color:#667085;text-transform:uppercase;letter-spacing:.4px}.section{margin-bottom:26px}h2{font-size:14px;margin:0 0 8px;padding:8px 10px;border-radius:8px}.red{background:#fee2e2;color:#7f1d1d}.yellow{background:#fef3c7;color:#92400e}.green{background:#dcfce7;color:#14532d}.blue{background:#dbeafe;color:#1e3a8a}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#f3f4f6;padding:8px 10px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.4px}td{padding:8px 10px;border-bottom:1px solid #e5e7eb;vertical-align:top}small{color:#667085}@media print{button{display:none}.summary{break-inside:avoid}.section{break-inside:auto}}</style></head><body>`);
-            win.document.write(`<h1>Equipment Status Report</h1><p>Generated: ${new Date().toLocaleDateString()} — NCA Maintenance Manager</p>`);
+            win.document.write(`<h1>Equipment Status Report</h1><p>Generated: ${new Date().toLocaleDateString()} — MaintForge</p>`);
             win.document.write(`<div class="summary"><div class="box"><div class="num">${allEquipment.length}</div><div class="label">Total Equipment</div></div><div class="box"><div class="num" style="color:#7f1d1d">${oos.length}</div><div class="label">Out of Service / Deadline</div></div><div class="box"><div class="num" style="color:#92400e">${def.length}</div><div class="label">Operational w/ Deficiencies</div></div><div class="box"><div class="num" style="color:#14532d">${full.length}</div><div class="label">Fully Operational</div></div></div>`);
             win.document.write(section("🚨 Out of Service / Deadline", oos, "red"));
             win.document.write(section("⚠️ Operational with Deficiencies", def, "yellow"));
@@ -9381,10 +9390,8 @@ function SystemSettings({ state, dispatch, onClose, currentUser }) {
   };
   const adminSections = [
     { id:"admin-safety", label:"Data Safety", icon:"🛡️", sub:"Backups and restore" },
-    { id:"admin-organization", label:"Organization", icon:"🏢", sub:"Company info and logos" },
+    { id:"admin-organization", label:"Company", icon:"🏢", sub:"Company info and logo" },
     { id:"admin-preferences", label:"Work Order Defaults", icon:"🛠️", sub:"Theme, costs, priority" },
-    { id:"admin-facilities", label:"Facilities & Areas", icon:"🏭", sub:"Facility scope and areas" },
-    { id:"admin-users", label:"Users & Roles", icon:"👥", sub:"Access and user accounts" },
     { id:"admin-appearance", label:"Appearance", icon:"🎨", sub:"Accent color" },
     { id:"admin-danger", label:"Danger Zone", icon:"⚠️", sub:"Reset tools" },
   ];
@@ -9828,7 +9835,7 @@ ${payload.inviteUrl}`));
         </div>
 
         {/* Foundation */}
-        <div id="admin-facilities" style={{ marginBottom:16, padding:14, border:`1px solid ${T.border}`, borderRadius:14, background:T.card }}>
+        <div id="admin-facilities" style={{ display:"none", marginBottom:16, padding:14, border:`1px solid ${T.border}`, borderRadius:14, background:T.card }}>
           <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Foundation — Facilities & Areas</div>
           <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginBottom:10 }}>Create separate Facilities for independent shops/sites. Add Areas for buildings, departments, zones, or sections inside a Facility.</div>
           <div style={{ display:"flex", gap:8, marginBottom:10 }}>
@@ -9897,7 +9904,7 @@ ${payload.inviteUrl}`));
             )}
           </div>
 
-          <div id="admin-users" style={{ marginTop:14, padding:14, border:`1px solid ${T.border}`, borderRadius:14, background:T.grayLt }}>
+          <div id="admin-users" style={{ display:"none", marginTop:14, padding:14, border:`1px solid ${T.border}`, borderRadius:14, background:T.grayLt }}>
             <div style={{ display:"flex", justifyContent:"space-between", gap:10, alignItems:"flex-start", marginBottom:10 }}>
               <div>
                 <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:900, color:T.text }}>👥 Users & Roles</div>
@@ -10048,286 +10055,52 @@ ${payload.inviteUrl}`));
 function SetupWizard({ onComplete }) {
   const [step, setStep] = useState(1);
   const [data, setData] = useState({
-    /* Organization */
-    companyName: "",
-    department: "",
-    location: "",
-    phone: "",
-    email: "",
-    logo: "",
-    logoMode: "company",
-    /* Address */
-    siteName: "",
-    region: "",
-    address: "",
-    cityState: "",
-    /* Locations list */
-    locations: [],
-    _newLoc: "",
-    /* Categories */
-    categories: ["Mowers","Vehicles","Tractors","Irrigation","Tools","Trailers"],
-    _newCat: "",
-    /* User profile */
-    firstName: "",
-    lastName: "",
-    position: "Mechanic",
-    profilePhone: "",
-    profileEmail: "",
-    laborRate: 45,
-    /* Additional mechanics */
-    mechanics: [],
-    _newMechName: "",
-    _newMechRate: 45,
-    /* Preferences */
-    accentColor: "#0052cc",
-    defaultPriority: "Medium",
-    dateFormat: "MM/DD/YYYY",
-    currency: "USD",
-    showCostsOnWO: true,
-    includeLaborInSpending: true,
-    requireTech: false,
+    companyName:"", siteName:"", phone:"", email:"", address:"", cityState:"", logo:"",
+    firstName:"", lastName:"", position:"Mechanic", profilePhone:"", profileEmail:"", laborRate:45,
+    categories:["Mowers","Vehicles","Tractors","Irrigation","Tools","Trailers"],
+    accentColor:"#0052cc", defaultPriority:"Medium", dateFormat:"MM/DD/YYYY", currency:"USD"
   });
-
   const F = k => e => setData(d=>({...d,[k]:e.target.value}));
-
-  const handleLogo = e => {
-    const file = e.target.files[0]; if(!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => setData(d=>({...d, logo:ev.target.result}));
-    reader.readAsDataURL(file);
-  };
-
-  const addLocation = () => { if(data._newLoc.trim()) setData(d=>({...d,locations:[...d.locations,d._newLoc.trim()],_newLoc:""})); };
-  const removeLocation = i => setData(d=>({...d,locations:d.locations.filter((_,j)=>j!==i)}));
-  const addCategory = () => { if(data._newCat.trim()) setData(d=>({...d,categories:[...d.categories,d._newCat.trim()],_newCat:""})); };
-  const removeCategory = i => setData(d=>({...d,categories:d.categories.filter((_,j)=>j!==i)}));
-  const addMechanic = () => { if(data._newMechName.trim()) setData(d=>({...d,mechanics:[...d.mechanics,{name:d._newMechName.trim(),laborRate:+d._newMechRate||45}],_newMechName:"",_newMechRate:45})); };
-  const removeMechanic = i => setData(d=>({...d,mechanics:d.mechanics.filter((_,j)=>j!==i)}));
-
-  const totalSteps = 5;
+  const handleLogo = e => { const file=e.target.files?.[0]; if(!file) return; const r=new FileReader(); r.onload=ev=>setData(d=>({...d,logo:ev.target.result})); r.readAsDataURL(file); };
   const next = () => {
-    if(step===1 && !data.companyName.trim()) { alert("Company name is required."); return; }
-    if(step===4 && !data.firstName.trim()) { alert("Your first name is required."); return; }
-    if(step<totalSteps) setStep(s=>s+1);
-    else finish();
+    if(step===1 && !data.companyName.trim()) return alert("Enter your company name to continue.");
+    if(step===2 && !data.firstName.trim()) return alert("Enter your first name to continue.");
+    if(step<3) return setStep(v=>v+1);
+    const siteName=(data.siteName||"Main Facility").trim();
+    onComplete({
+      settings:{ companyName:data.companyName.trim(), department:"Maintenance", siteName, location:siteName, phone:data.phone, email:data.email, address:data.address, cityState:data.cityState, logo:data.logo, logoMode:"company", locations:[siteName], accentColor:data.accentColor, defaultPriority:data.defaultPriority, laborRateDefault:+data.laborRate||45, dateFormat:data.dateFormat, currency:data.currency, includeLaborInSpending:true, requireTech:false },
+      profile:{ firstName:data.firstName.trim(), lastName:data.lastName.trim(), position:data.position||"Mechanic", phone:data.profilePhone, email:data.profileEmail },
+      technicians:[{ id:"TECH-001", name:`${data.firstName} ${data.lastName}`.trim(), position:data.position||"Mechanic", laborRate:+data.laborRate||45 }],
+      categories:data.categories
+    });
   };
-  const back = () => step>1 && setStep(s=>s-1);
-
-  const finish = () => {
-    const settings = {
-      companyName: data.companyName,
-      department: data.department,
-      location: data.location,
-      phone: data.phone,
-      email: data.email,
-      logo: data.logo,
-      logoMode: data.logoMode || "company",
-      siteName: data.siteName,
-      region: data.region,
-      address: data.address,
-      cityState: data.cityState,
-      locations: data.locations,
-      accentColor: data.accentColor,
-      defaultPriority: data.defaultPriority,
-      laborRateDefault: data.laborRate,
-      dateFormat: data.dateFormat,
-      currency: data.currency,
-      showCostsOnWO: data.showCostsOnWO,
-      includeLaborInSpending: data.includeLaborInSpending !== false,
-      requireTech: data.requireTech,
-    };
-    const profile = {
-      firstName: data.firstName,
-      lastName: data.lastName,
-      position: data.position,
-      phone: data.profilePhone,
-      email: data.profileEmail,
-    };
-    const allMechanics = [
-      { id:"TECH-001", name:`${data.firstName} ${data.lastName}`.trim(), position:data.position, laborRate:+data.laborRate||45 },
-      ...data.mechanics.map((m,i)=>({ id:`TECH-${String(i+2).padStart(3,"0")}`, name:m.name, position:"Mechanic", laborRate:+m.laborRate||45 })),
-    ];
-    onComplete({ settings, profile, technicians:allMechanics, categories:data.categories });
-  };
-
-  const StepIndicator = () => (
-    <div style={{ display:"flex", gap:4, marginBottom:24, justifyContent:"center" }}>
-      {Array.from({length:totalSteps}).map((_,i)=>(
-        <div key={i} style={{ flex:1, maxWidth:60, height:4, borderRadius:2, background:i+1<=step?T.accent:T.border, transition:"background .3s" }}/>
-      ))}
-    </div>
-  );
-
   return (
-    <div style={{ position:"fixed", inset:0, background:"linear-gradient(135deg, #f8fafc 0%, #e0f2fe 100%)", zIndex:9999, overflow:"auto", padding:"24px 16px" }}>
-      <div style={{ maxWidth:680, margin:"40px auto", background:T.card, borderRadius:14, boxShadow:"0 10px 40px rgba(0,0,0,.12)", padding:"32px 36px" }}>
-        <StepIndicator />
-
-        {/* Step 1: Welcome + Company */}
-        {step===1 && (
-          <>
-            <div style={{ textAlign:"center", marginBottom:24 }}>
-              <div style={{ fontSize:48, marginBottom:8 }}>👋</div>
-              <h2 style={{ margin:0, fontFamily:T.sans, fontSize:24, fontWeight:800, color:T.text }}>Welcome to your Maintenance Manager</h2>
-              <p style={{ margin:"8px 0 0", fontFamily:T.sans, fontSize:14, color:T.muted }}>Let's set things up. This takes about 2 minutes.</p>
-            </div>
-            <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Step 1 of {totalSteps} — Your Organization</div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
-              <Field label="Company / Organization Name *"><input style={inp} value={data.companyName} onChange={F("companyName")} placeholder="e.g. ABC Facilities" autoFocus /></Field>
-              <Field label="Department" half><input style={inp} value={data.department} onChange={F("department")} placeholder="e.g. Maintenance Department" /></Field>
-              <Field label="Phone" half><input style={inp} value={data.phone} onChange={F("phone")} placeholder="(555) 000-0000" /></Field>
-              <Field label="Email"><input style={inp} type="email" value={data.email} onChange={F("email")} placeholder="maintenance@example.gov" /></Field>
-            </div>
-            <div style={{ marginBottom:14 }}>
-              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:6 }}>Organization Logo (optional)</label>
-              <div style={{ display:"flex", gap:12, alignItems:"center" }}>
-                {data.logo && <img src={data.logo} alt="logo" style={{ height:64, maxWidth:120, objectFit:"contain", border:`1px solid ${T.border}`, borderRadius:6, padding:4, background:T.surface }} />}
-                <label style={{ fontFamily:T.sans, fontSize:13, fontWeight:600, color:T.accent, cursor:"pointer", padding:"8px 16px", border:`2px solid ${T.accent}`, borderRadius:7 }}>
-                  {data.logo?"Change Logo":"Upload Logo"}
-                  <input type="file" accept="image/*" onChange={handleLogo} style={{ display:"none" }} />
-                </label>
-                {data.logo && <button onClick={()=>setData(d=>({...d,logo:""}))} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>Remove</button>}
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* Step 2: Site / Foundation */}
-        {step===2 && (
-          <>
-            <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Step 2 of {totalSteps} — Site Information</div>
-            <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.muted }}>Tell us about where {data.companyName||"your organization"} operates.</p>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
-              <Field label="Region / District" half><input style={inp} value={data.region} onChange={F("region")} placeholder="e.g. Southeast Region" /></Field>
-              <Field label="Address" half><input style={inp} value={data.address} onChange={F("address")} placeholder="Street address" /></Field>
-              <Field label="City, State"><input style={inp} value={data.cityState} onChange={F("cityState")} placeholder="Miami, FL" /></Field>
-            </div>
-            <div style={{ marginBottom:14 }}>
-              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Equipment Locations (optional)</label>
-              <p style={{ margin:"0 0 8px", fontFamily:T.sans, fontSize:12, color:T.muted }}>Add the locations where your equipment is stored (e.g. Main Shop, Maintenance Bay, Storage Yard). You can add more later.</p>
-              <div style={{ display:"flex", gap:8, marginBottom:8 }}>
-                <input style={{ ...inp, flex:1 }} placeholder="Location name..." value={data._newLoc} onChange={F("_newLoc")} onKeyDown={e=>e.key==="Enter"&&addLocation()} />
-                <Btn small onClick={addLocation}>Add</Btn>
-              </div>
-              {data.locations.length>0 && (
-                <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-                  {data.locations.map((loc,i)=>(
-                    <span key={i} style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 10px", background:T.accentLt, border:`1px solid ${T.accent}44`, borderRadius:6, fontFamily:T.sans, fontSize:12, color:T.accent }}>
-                      {loc} <button onClick={()=>removeLocation(i)} style={{ background:"none", border:"none", color:T.accent, cursor:"pointer", fontSize:14, lineHeight:1, padding:0 }}>×</button>
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {/* Step 3: Equipment Categories */}
-        {step===3 && (
-          <>
-            <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Step 3 of {totalSteps} — Equipment Categories</div>
-            <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.muted }}>What types of equipment will you manage? We've pre-loaded common categories — add or remove as needed.</p>
-            <div style={{ display:"flex", gap:8, marginBottom:12 }}>
-              <input style={{ ...inp, flex:1 }} placeholder="New category (e.g. Generators)..." value={data._newCat} onChange={F("_newCat")} onKeyDown={e=>e.key==="Enter"&&addCategory()} />
-              <Btn small onClick={addCategory}>Add</Btn>
-            </div>
-            <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-              {data.categories.map((cat,i)=>(
-                <span key={i} style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 12px", background:T.card, border:`1px solid ${T.border}`, borderRadius:7, fontFamily:T.sans, fontSize:13, color:T.text }}>
-                  {cat} <button onClick={()=>removeCategory(i)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:16, lineHeight:1, padding:0 }}>×</button>
-                </span>
-              ))}
-              {data.categories.length===0 && <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted, fontStyle:"italic" }}>No categories yet — add some above.</span>}
-            </div>
-          </>
-        )}
-
-        {/* Step 4: User Profile */}
-        {step===4 && (
-          <>
-            <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Step 4 of {totalSteps} — Your Profile</div>
-            <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.muted }}>Tell us about yourself. You'll be the first mechanic in the system.</p>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
-              <Field label="First Name *" half><input style={inp} value={data.firstName} onChange={F("firstName")} placeholder="John" autoFocus /></Field>
-              <Field label="Last Name" half><input style={inp} value={data.lastName} onChange={F("lastName")} placeholder="Smith" /></Field>
-              <Field label="Position" half><input style={inp} value={data.position} onChange={F("position")} placeholder="Mechanic, Supervisor..." /></Field>
-              <Field label="Labor Rate ($/hr)" half><input style={inp} {...decimalInputAttrs({ placeholder:"45" })} value={data.laborRate} onChange={e=>setData(d=>({...d,laborRate:sanitizeDecimalInput(e.target.value)}))} /></Field>
-              <Field label="Phone" half><input style={inp} value={data.profilePhone} onChange={F("profilePhone")} /></Field>
-              <Field label="Email" half><input style={inp} type="email" value={data.profileEmail} onChange={F("profileEmail")} /></Field>
-            </div>
-
-            <div style={{ marginTop:8 }}>
-              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Additional Mechanics (optional)</label>
-              <p style={{ margin:"0 0 8px", fontFamily:T.sans, fontSize:12, color:T.muted }}>Add other mechanics in your shop. You can add more later.</p>
-              <div style={{ display:"grid", gridTemplateColumns:"2fr 100px auto", gap:6, marginBottom:8 }}>
-                <input style={inp} placeholder="Full name" value={data._newMechName} onChange={F("_newMechName")} onKeyDown={e=>e.key==="Enter"&&addMechanic()} />
-                <input style={inp} {...decimalInputAttrs({ placeholder:"$/hr" })} value={data._newMechRate} onChange={e=>setData(d=>({...d,_newMechRate:sanitizeDecimalInput(e.target.value)}))} />
-                <Btn small onClick={addMechanic}>Add</Btn>
-              </div>
-              {data.mechanics.length>0 && (
-                <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-                  {data.mechanics.map((m,i)=>(
-                    <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"7px 12px", background:T.grayLt, borderRadius:6, border:`1px solid ${T.border}` }}>
-                      <span style={{ fontFamily:T.sans, fontSize:13 }}>{m.name} <span style={{ color:T.muted, fontSize:11, marginLeft:6 }}>${m.laborRate}/hr</span></span>
-                      <button onClick={()=>removeMechanic(i)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:16, lineHeight:1 }}>×</button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {/* Step 5: Preferences + Review */}
-        {step===5 && (
-          <>
-            <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.6, marginBottom:10, paddingBottom:6, borderBottom:`2px solid ${T.border}` }}>Step 5 of {totalSteps} — Preferences</div>
-            <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.muted }}>Final touches — these can all be changed later in Settings.</p>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
-              <Field label="Default Work Order Priority" half>
-                <select style={sel} value={data.defaultPriority} onChange={F("defaultPriority")}>{["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}</select>
-              </Field>
-              <Field label="Date Format" half>
-                <select style={sel} value={data.dateFormat} onChange={F("dateFormat")}>{["MM/DD/YYYY","DD/MM/YYYY","YYYY-MM-DD"].map(d=><option key={d}>{d}</option>)}</select>
-              </Field>
-              <Field label="Currency" half>
-                <select style={sel} value={data.currency} onChange={F("currency")}>{["USD","EUR","GBP","CAD"].map(c=><option key={c}>{c}</option>)}</select>
-              </Field>
-              <Field label="Accent Color" half>
-                <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-                  <input type="color" value={data.accentColor} onChange={F("accentColor")} style={{ width:44, height:36, border:`1px solid ${T.border}`, borderRadius:6, cursor:"pointer", padding:2 }} />
-                  <div style={{ flex:1, height:8, borderRadius:4, background:data.accentColor }}/>
-                </div>
-              </Field>
-            </div>
-
-            {/* Review summary */}
-            <div style={{ background:T.accentLt, border:`1px solid ${T.accent}44`, borderRadius:10, padding:"16px 18px", marginTop:8 }}>
-              <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.accent, marginBottom:10 }}>✓ Review Your Setup</div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"6px 16px", fontFamily:T.sans, fontSize:12 }}>
-                <div><span style={{ color:T.muted }}>Company:</span> <b style={{ color:T.text }}>{data.companyName||"—"}</b></div>
-                <div><span style={{ color:T.muted }}>Region:</span> <b style={{ color:T.text }}>{data.region||"—"}</b></div>
-                <div><span style={{ color:T.muted }}>Your Name:</span> <b style={{ color:T.text }}>{data.firstName} {data.lastName}</b></div>
-                <div><span style={{ color:T.muted }}>Mechanics:</span> <b style={{ color:T.text }}>{1+data.mechanics.length}</b></div>
-                <div><span style={{ color:T.muted }}>Locations:</span> <b style={{ color:T.text }}>{data.locations.length}</b></div>
-                <div><span style={{ color:T.muted }}>Categories:</span> <b style={{ color:T.text }}>{data.categories.length}</b></div>
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* Nav buttons */}
-        <div style={{ display:"flex", justifyContent:"space-between", marginTop:24, paddingTop:16, borderTop:`1px solid ${T.border}` }}>
-          {step>1 ? <Btn variant="secondary" onClick={back}>← Back</Btn> : <div/>}
-          <Btn onClick={next} style={{ minWidth:120, justifyContent:"center" }}>
-            {step===totalSteps ? "Finish Setup →" : "Next →"}
-          </Btn>
-        </div>
+    <div style={{ position:"fixed", inset:0, background:"linear-gradient(135deg,#f8fafc 0%,#e0f2fe 100%)", zIndex:9999, overflow:"auto", padding:"24px 16px" }}>
+      <div style={{ maxWidth:640, margin:"36px auto", background:T.card, borderRadius:16, boxShadow:"0 10px 40px rgba(0,0,0,.12)", padding:"30px 34px" }}>
+        <div style={{ display:"flex", gap:5, marginBottom:24 }}>{[1,2,3].map(n=><div key={n} style={{ flex:1, height:5, borderRadius:3, background:n<=step?T.accent:T.border }}/>)}</div>
+        {step===1 && <>
+          <div style={{ textAlign:"center", marginBottom:22 }}><div style={{ fontSize:44 }}>👋</div><h2 style={{ margin:"6px 0", fontFamily:T.sans, fontSize:25, color:T.text }}>Set up WIN Maintenance</h2><p style={{ margin:0, color:T.muted, fontSize:14 }}>Just the basics. You can be working in about a minute.</p></div>
+          <Field label="Company Name *"><input style={inp} value={data.companyName} onChange={F("companyName")} placeholder="e.g. ABC Equipment Services" autoFocus /></Field>
+          <Field label="Facility / Shop Name"><input style={inp} value={data.siteName} onChange={F("siteName")} placeholder="Main Facility" /></Field>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 14px" }}><Field label="Phone"><input style={inp} value={data.phone} onChange={F("phone")} /></Field><Field label="Email"><input style={inp} type="email" value={data.email} onChange={F("email")} /></Field></div>
+          <Field label="Address"><input style={inp} value={data.address} onChange={F("address")} placeholder="Street address" /></Field>
+          <Field label="City, State"><input style={inp} value={data.cityState} onChange={F("cityState")} placeholder="City, State" /></Field>
+          <div style={{ marginTop:6 }}><label style={{ fontSize:12, fontWeight:700, color:T.subtext }}>Company Logo <span style={{fontWeight:400}}>(optional)</span></label><div style={{display:"flex",gap:10,alignItems:"center",marginTop:7}}>{data.logo&&<img src={data.logo} alt="logo" style={{height:48,maxWidth:100,objectFit:"contain"}}/>}<label style={{padding:"8px 12px",border:`1px solid ${T.accent}`,borderRadius:7,color:T.accent,fontSize:12,fontWeight:700,cursor:"pointer"}}>Upload Logo<input type="file" accept="image/*" onChange={handleLogo} style={{display:"none"}}/></label></div></div>
+        </>}
+        {step===2 && <>
+          <div style={{marginBottom:20}}><h2 style={{margin:"0 0 6px",fontSize:22}}>Your profile</h2><p style={{margin:0,color:T.muted,fontSize:13}}>This creates your mechanic profile for work orders and labor entries.</p></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 14px"}}><Field label="First Name *"><input style={inp} value={data.firstName} onChange={F("firstName")} autoFocus /></Field><Field label="Last Name"><input style={inp} value={data.lastName} onChange={F("lastName")} /></Field><Field label="Job Title"><input style={inp} value={data.position} onChange={F("position")} placeholder="Mechanic" /></Field><Field label="Labor Rate ($/hr)"><input style={inp} {...decimalInputAttrs({placeholder:"45"})} value={data.laborRate} onChange={e=>setData(d=>({...d,laborRate:sanitizeDecimalInput(e.target.value)}))}/></Field></div>
+          <div style={{padding:12,border:`1px solid ${T.border}`,borderRadius:10,background:T.grayLt,fontSize:12,color:T.subtext}}>That’s it. No organizations, facility assignments, invite codes, or permission setup required.</div>
+        </>}
+        {step===3 && <>
+          <div style={{textAlign:"center",padding:"8px 0 16px"}}><div style={{fontSize:50}}>✓</div><h2 style={{margin:"4px 0 8px",fontSize:24}}>Ready to go</h2><p style={{margin:"0 auto",maxWidth:460,color:T.muted,lineHeight:1.5}}>WIN Maintenance will start with common equipment categories. Add your first piece of equipment, then create work orders, PM schedules, inspections, inventory, and fuel records as you need them.</p></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,padding:14,border:`1px solid ${T.border}`,borderRadius:12,background:T.grayLt,fontSize:12}}><div><span style={{color:T.muted}}>Company</span><br/><b>{data.companyName}</b></div><div><span style={{color:T.muted}}>Facility</span><br/><b>{data.siteName||"Main Facility"}</b></div><div><span style={{color:T.muted}}>User</span><br/><b>{data.firstName} {data.lastName}</b></div><div><span style={{color:T.muted}}>Role</span><br/><b>{data.position||"Mechanic"}</b></div></div>
+        </>}
+        <div style={{display:"flex",justifyContent:"space-between",marginTop:24,paddingTop:16,borderTop:`1px solid ${T.border}`}}>{step>1?<Btn variant="secondary" onClick={()=>setStep(v=>v-1)}>← Back</Btn>:<div/>}<Btn onClick={next}>{step===3?"Start Using MaintForge →":"Continue →"}</Btn></div>
       </div>
     </div>
   );
 }
-
 
 
 function fuelReportHTML(state={}, period="month") {
@@ -11315,11 +11088,31 @@ export default function App() {
           return;
         }
 
-        // Do NOT silently create/save a blank organization. This is a recovery stop.
+        // A newly-created company account is expected to have no workspace yet.
+        // Only accounts explicitly marked at signup may initialize a fresh workspace here.
+        // Established accounts still stop safely instead of silently replacing missing cloud data.
+        const isNewCompanyAccount = activeUser?.user_metadata?.winMaintenanceNewAccount === true;
+        if(isNewCompanyAccount) {
+          setOwnerRecovery(null);
+          setCloudWriteBlocked(false);
+          setShowOwnerSetup(true);
+          dispatch({ type:"REPLACE_STATE", payload:{
+            ...blankUserState(activeUser.id),
+            setupComplete:false,
+            inviteConnectionError:"",
+            ownerUserId:activeUser.id,
+            organizationOwnerId:activeUser.id,
+            ownerEmail:activeUser.email || "",
+            organizationOwnerEmail:activeUser.email || "",
+          } });
+          return;
+        }
+
+        // Existing account with unexpectedly missing data: protect it from an accidental blank overwrite.
         const diagnosticState = {
           ...blankUserState(activeUser.id),
           setupComplete:true,
-          inviteConnectionError:"MaintForge could not find substantive owner workspace data in this account, an owner-linked readable cloud row, or this browser cache. Cloud saving is stopped. Do not create a new workspace. Restore from a known MaintForge JSON backup or inspect the Supabase user_state table for the historical row.",
+          inviteConnectionError:"We couldn't safely load this account's existing company data. Saving is paused to protect your records. Please refresh and try again. If the problem continues, contact support before creating new data.",
         };
         setOwnerRecovery({ locked:true, status:"not_found", source:"none", counts:maintForgeWorkspaceCounts(ownData || {}) });
         dispatch({ type:"REPLACE_STATE", payload:diagnosticState });
@@ -11573,7 +11366,7 @@ export default function App() {
     const { error, data } = await supabase.auth.signUp({
       email: authEmail.trim(),
       password: authPassword,
-      options: manualInviteInfo?.token ? { data:{ inviteToken:manualInviteInfo.token, invitedEmail:normalizeEmail(authEmail), invitedOwnerUserId:manualInviteInfo.ownerUserId || "" } } : undefined,
+      options: { data:{ winMaintenanceNewAccount:true } },
     });
     setAuthBusy(false);
     if (error) {
@@ -11717,7 +11510,7 @@ export default function App() {
 
   const profile      = state.profile || {};
   const settings     = state.settings || {};
-  const companyName  = settings.companyName || "NCA Maintenance";
+  const companyName  = settings.companyName || "MaintForge";
   const maintLocations = normalizeMaintForgeLocations(state);
 
   useEffect(() => {
@@ -11854,18 +11647,13 @@ export default function App() {
             <div style={{ fontSize:36, marginBottom:6 }}>🔧</div>
             <h1 style={{ margin:0, fontSize:24, fontWeight:700 }}>WIN Maintenance</h1>
             <p style={{ opacity:.65, margin:"6px 0 0", fontSize:13 }}>
-              {isSignup ? "Create the owner/admin account only" : "Sign in with your username or email"}
+              {isSignup ? "Maintenance management made simple" : "Sign in to your company account"}
             </p>
           </div>
 
-          {manualInviteInfo && (
-            <div style={{ padding:"10px 12px", background:"#1e3a8a", border:"1px solid #60a5fa", borderRadius:8, marginBottom:14, fontSize:13, lineHeight:1.4 }}>
-              Old invite link detected, but invites are no longer used. Sign in with an assigned username/password or an admin email/password.
-            </div>
-          )}
           {isSignup && (
-            <div style={{ padding:"10px 12px", background:"#451a03", border:"1px solid #f59e0b", borderRadius:8, marginBottom:14, fontSize:13, lineHeight:1.4 }}>
-              Create Owner Account is only for the first company administrator. Mechanics, viewers, and facility users should use <b>Sign In</b> with the username/password created in Settings → Users & Roles.
+            <div style={{ padding:"10px 12px", background:"#111827", border:"1px solid #374151", borderRadius:8, marginBottom:14, fontSize:13, color:"#cbd5e1", lineHeight:1.45 }}>
+              Create your account, then add your company information and logo. Setup takes about a minute.
             </div>
           )}
 
@@ -11889,7 +11677,7 @@ export default function App() {
                 color: isSignup ? "white" : "#9ca3af",
                 fontWeight:600, fontSize:13, transition:"all .15s"
               }}>
-              Create Owner Account
+              Create Account
             </button>
           </div>
 
@@ -11905,13 +11693,11 @@ export default function App() {
             </div>
           )}
 
-          <div style={{ padding:"10px 12px", background:"#111827", border:"1px solid #374151", borderRadius:8, marginBottom:14, fontSize:12, color:"#9ca3af", lineHeight:1.4 }}>Admins use their email login. Created users use the username and password assigned in Settings → Users & Roles.</div>
-
-          {/* Username / Email */}
-          <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#9ca3af", marginBottom:5 }}>Username or Email</label>
+          {/* Email / existing username */}
+          <label style={{ display:"block", fontSize:12, fontWeight:600, color:"#9ca3af", marginBottom:5 }}>{isSignup ? "Email" : "Email or Username"}</label>
           <input
             type="text"
-            placeholder="username or you@example.com"
+            placeholder={isSignup ? "you@company.com" : "you@company.com"}
             value={authEmail}
             onChange={(e)=>{ setAuthEmail(e.target.value); setAuthError(""); }}
             onKeyDown={(e)=>{ if(e.key==="Enter") (isSignup?handleSignup:handleLogin)(); }}
@@ -11972,7 +11758,7 @@ export default function App() {
               color:"white", marginTop:6, fontFamily:T.sans,
               transition:"background .15s",
             }}>
-            {authBusy ? "Please wait..." : (isSignup ? "Create Owner Account" : "Sign In")}
+            {authBusy ? "Please wait..." : (isSignup ? "Create Account" : "Sign In")}
           </button>
 
           {/* Footer toggle hint */}
@@ -11984,9 +11770,9 @@ export default function App() {
                 </button>
               </>
             ) : (
-              <>Need to set up the owner/admin account?{" "}
+              <>New to WIN Maintenance?{" "}
                 <button onClick={()=>switchAuthMode("signup")} style={{ background:"none", border:"none", color:"#60a5fa", cursor:"pointer", fontWeight:600, padding:0, fontSize:13 }}>
-                  Create owner account
+                  Create account
                 </button>
               </>
             )}
@@ -12030,7 +11816,7 @@ export default function App() {
           <h1 style={{ margin:"0 0 8px", fontSize:22 }}>Account connection needed</h1>
           <p style={{ margin:"0 0 14px", color:T.subtext, lineHeight:1.5 }}>{state.inviteConnectionError}</p>
           <div style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:12, background:T.surface, color:T.subtext, fontSize:13, lineHeight:1.45, marginBottom:14 }}>
-            Invites are no longer used. Sign out, then sign in with the username/password assigned in Settings → Users & Roles.
+            Your existing records have not been replaced. Refresh once; if the message remains, sign out and sign back in.
           </div>
           <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
             <Btn onClick={async()=>{ clearPendingInviteInfo(); try { await supabase.auth.signOut(); } catch(e) {} setAppSession(null); setDataLoaded(false); setAuthMode("login"); setAuthPassword(""); setAuthConfirmPassword(""); dispatch({ type:"REPLACE_STATE", payload:blankUserState() }); }}>Sign Out / Go to Login</Btn>
@@ -12045,7 +11831,14 @@ export default function App() {
     if(showOwnerSetup) {
       return (
         <div style={{ minHeight:"100vh", background:T.bg }}>
-          <SetupWizard onComplete={(setupData)=>{ dispatch({type:"COMPLETE_SETUP",payload:setupData}); setShowOwnerSetup(false); }} />
+          <SetupWizard onComplete={async(setupData)=>{
+            dispatch({type:"COMPLETE_SETUP",payload:setupData});
+            setShowOwnerSetup(false);
+            try {
+              const currentMeta = activeUser?.user_metadata || {};
+              await supabase.auth.updateUser({ data:{ ...currentMeta, winMaintenanceNewAccount:false } });
+            } catch(e) { console.warn("Could not clear first-run account marker:", e); }
+          }} />
         </div>
       );
     }
@@ -12053,16 +11846,16 @@ export default function App() {
       <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:T.bg, color:T.text, fontFamily:T.sans, padding:20 }}>
         <div style={{ width:"100%", maxWidth:560, background:T.card, border:`1px solid ${T.border}`, borderRadius:18, boxShadow:T.shadow, padding:24 }}>
           <div style={{ fontSize:38, marginBottom:10 }}>🔐</div>
-          <h1 style={{ margin:"0 0 8px", fontSize:24 }}>Sign in required</h1>
+          <h1 style={{ margin:"0 0 8px", fontSize:24 }}>Welcome to MaintForge</h1>
           <p style={{ margin:"0 0 14px", color:T.subtext, lineHeight:1.5 }}>
-            This browser is signed into an account that does not have a completed MaintForge workspace. Assigned users should not create a new organization. Sign out, then use the username/password created in Settings → Users & Roles.
+            This account is ready for its first-time setup. Add your company details and you can start managing equipment and work orders right away.
           </p>
           <div style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:12, background:T.surface, color:T.subtext, fontSize:13, lineHeight:1.45, marginBottom:16 }}>
-            Create Owner Workspace is only for the first company administrator. It is not for mechanics, viewers, or facility-assigned users.
+            One account. One company. Simple setup. You can change these details later in Settings.
           </div>
           <div style={{ display:"flex", gap:10, flexWrap:"wrap" }}>
             <Btn onClick={async()=>{ try { await supabase.auth.signOut(); } catch(e) {} setAppSession(null); setDataLoaded(false); setAuthMode("login"); setAuthPassword(""); setAuthConfirmPassword(""); dispatch({ type:"REPLACE_STATE", payload:blankUserState() }); }}>Sign Out / Go to Login</Btn>
-            <Btn variant="secondary" onClick={()=>setShowOwnerSetup(true)}>Create Owner Workspace</Btn>
+            <Btn variant="secondary" onClick={()=>setShowOwnerSetup(true)}>Set Up MaintForge</Btn>
           </div>
         </div>
       </div>
@@ -12492,15 +12285,11 @@ export default function App() {
           )}
           <button className="mf-brand-title" onClick={()=>setTab("dashboard")} title="Go to dashboard" style={{ background:"none", border:"none", padding:0, textAlign:"left", cursor:"pointer" }}>
             <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, letterSpacing:-.3, lineHeight:1.2 }}>{companyName}</div>
-            <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, letterSpacing:.3 }}>{state.activeLocationId === "__all" ? "Organization Dashboard" : activeLocationLabel}</div>
+            <div style={{ fontFamily:T.sans, fontSize:10, color:T.muted, letterSpacing:.3 }}>{settings.siteName || "Main Facility"}</div>
           </button>
           <span className="mf-header-crumb" style={{ color:T.border, fontSize:18 }}>›</span>
           <span className="mf-header-page-title" style={{ fontFamily:T.sans, fontSize:13, color:T.subtext, fontWeight:500 }}>{PAGE_TITLES[tab] || "Dashboard"}</span>
-          <select className="mf-facility-switch" title="Switch facility" value={state.activeLocationId || "__all"} onChange={e=>dispatch({type:"SET_ACTIVE_LOCATION", payload:e.target.value})} style={{ ...sel, width:190, padding:"5px 9px", fontSize:12 }}>
-            {isOrganizationAdminRole(state.userRole) && <option value="__all">Organization Dashboard / All Facilities</option>}
-            {maintLocations.filter(l => isOrganizationAdminRole(state.userRole) || invitedUserFacilityIdsFrom({ facilityIds:state.userFacilityIds }).includes(String(l.id))).map(l=><option key={l.id} value={l.id}>{l.name}</option>)}
-          </select>
-          <span className="mf-facility-label" style={{ fontFamily:T.sans, fontSize:11, color:T.muted }}>Facility: {activeLocationLabel}</span>
+
         </div>
         <div className="mf-header-actions" style={{ display:"flex", alignItems:"center", gap:10 }}>
           <button className="mf-theme-button" onClick={cycleThemePreference} title={`Theme: ${selectedTheme === "system" ? "System Default" : selectedTheme === "dark" ? "Dark Mode" : "Light Mode"}`} style={{ padding:"6px 10px", border:`1px solid ${T.border}`, borderRadius:7, background:T.surface, color:T.text, cursor:"pointer", fontSize:13, fontFamily:T.sans }}>
