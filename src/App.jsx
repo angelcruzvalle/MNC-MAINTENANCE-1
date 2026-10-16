@@ -3625,8 +3625,23 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
         </div>
       </div>
 
-      {/* WO Table — click anywhere on row to edit */}
-      <Card style={{ padding:0, overflow:"hidden" }}>
+      {/* Mobile work-order summaries — no horizontal scrolling */}
+      <div className="mf-mobile-summary-list">
+        {filtered.map(wo=>{
+          const eq = state.equipment.find(e=>e.id===wo.equipment);
+          const eqLabel = eq?.name || wo.equipmentLabel || wo.equipment || "—";
+          return <button key={`mobile-${wo.id}`} className="mf-mobile-summary-card" onClick={()=>openEdit(wo)}>
+            <div className="mf-mobile-summary-top"><span className="mf-mobile-summary-id">{wo.id || "Work Order"}</span><Badge label={wo.status||"Open"} /></div>
+            <div className="mf-mobile-summary-title">{wo.equipment || "—"} · {eqLabel}</div>
+            <div className="mf-mobile-summary-text">{wo.faultDescription || wo.description || wo.title || "No description"}</div>
+            <div className="mf-mobile-summary-meta"><span>{wo.woType || "Repair"}</span><span>{wo.priority || "Medium"}</span>{wo.due&&<span>Due {wo.due}</span>}</div>
+          </button>;
+        })}
+        {!filtered.length && <div className="mf-mobile-empty">No work orders found.</div>}
+      </div>
+
+      {/* Desktop work-order table */}
+      <Card className="mf-desktop-list" style={{ padding:0, overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
@@ -4933,7 +4948,16 @@ function Equipment({ state, dispatch }) {
 
       </div>
 
-      <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+      <div className="mf-mobile-summary-list">
+        {filtered.map(eq=><button key={`mobile-eq-${eq.id}`} className="mf-mobile-summary-card mf-mobile-equipment-card" onClick={()=>setDetail(eq.id)}>
+          <div className="mf-mobile-equipment-number">{eq.id || "—"}</div>
+          <div className="mf-mobile-equipment-name">{eq.name || eq.nomenclature || "Unnamed equipment"}</div>
+          <span className="mf-mobile-card-chevron">›</span>
+        </button>)}
+        {!filtered.length && <div className="mf-mobile-empty">No equipment found.</div>}
+      </div>
+
+      <div className="mf-desktop-list" style={{ display:"flex", flexDirection:"column", gap:6 }}>
         {filtered.map(eq=>{
           const rs    = rowStyle(eq.status);
           const isOOS = eq.status==="Out of Service / Deadline";
@@ -10935,6 +10959,26 @@ export default function App() {
           .mf-modal-panel { display:flex !important; flex-direction:column !important; }
           .mf-modal-body { flex:1 1 auto !important; overflow-y:auto !important; -webkit-overflow-scrolling:touch !important; }
           .mf-admin-footer-actions { position:sticky !important; bottom:0 !important; background:${T.card} !important; padding-bottom:env(safe-area-inset-bottom) !important; }
+        }
+        .mf-mobile-summary-list { display:none; }
+        .mf-mobile-summary-card { font:inherit; }
+        @media (max-width: 760px) {
+          html, body, #root { max-width:100%; overflow-x:hidden !important; }
+          .mf-desktop-list { display:none !important; }
+          .mf-mobile-summary-list { display:flex !important; flex-direction:column; gap:9px; width:100%; min-width:0; }
+          .mf-mobile-summary-card { position:relative; width:100%; min-width:0; box-sizing:border-box; text-align:left; border:1px solid ${T.border}; background:${T.card}; color:${T.text}; border-radius:12px; padding:13px 14px; box-shadow:${T.shadow}; cursor:pointer; overflow:hidden; }
+          .mf-mobile-summary-card:active { transform:scale(.995); background:${T.grayLt}; }
+          .mf-mobile-summary-top { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:7px; }
+          .mf-mobile-summary-id { font-family:${T.mono}; font-size:12px; font-weight:800; color:${T.accent}; overflow-wrap:anywhere; }
+          .mf-mobile-summary-title { font-family:${T.sans}; font-size:14px; font-weight:800; color:${T.text}; line-height:1.3; overflow-wrap:anywhere; }
+          .mf-mobile-summary-text { margin-top:5px; font-family:${T.sans}; font-size:12px; color:${T.subtext}; line-height:1.35; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+          .mf-mobile-summary-meta { display:flex; flex-wrap:wrap; gap:5px 10px; margin-top:8px; font-family:${T.sans}; font-size:10px; font-weight:700; color:${T.muted}; }
+          .mf-mobile-empty { padding:24px 12px; text-align:center; color:${T.muted}; font-family:${T.sans}; font-size:13px; }
+          .mf-mobile-equipment-card { min-height:68px; padding:12px 42px 12px 14px; display:block; }
+          .mf-mobile-equipment-number { font-family:${T.mono}; font-size:12px; font-weight:800; color:${T.accent}; margin-bottom:4px; overflow-wrap:anywhere; }
+          .mf-mobile-equipment-name { font-family:${T.sans}; font-size:15px; line-height:1.25; font-weight:800; color:${T.text}; overflow-wrap:anywhere; }
+          .mf-mobile-card-chevron { position:absolute; right:15px; top:50%; transform:translateY(-50%); font-size:24px; color:${T.muted}; }
+          table { max-width:100%; }
         }
         .mf-mobile-bottom-nav { display:none; }
         .mf-mobile-filter-button { border:1px solid ${T.border}; background:${T.surface}; color:${T.text}; border-radius:12px; padding:0 14px; font:700 14px ${T.sans}; }
