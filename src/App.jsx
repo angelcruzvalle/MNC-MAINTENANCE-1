@@ -5027,13 +5027,17 @@ function Equipment({ state, dispatch }) {
                       <div style={{ fontFamily:T.mono, fontSize:12, color:T.subtext, marginTop:3 }}>{eq.eilNumber||"—"}</div>
                     </div>
 
-                    <div style={{ flexShrink:0, display:"flex", alignItems:"center", gap:8, marginLeft:"auto" }}>
-                          {/* Attachment toggle button */}
+                    {/* Dedicated attachment column: always reserves the same space so every row stays aligned. */}
+                    <div style={{ width:100, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"flex-start" }}>
                       {hasAttach && (
-                        <button onClick={e=>toggleAttachments(eq.id,e)} style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", borderRadius:6, border:`1px solid ${T.border}`, background:isExpanded?T.accentLt:"#fff", color:isExpanded?T.accent:T.subtext, fontFamily:T.sans, fontSize:11, fontWeight:600, cursor:"pointer" }}>
+                        <button onClick={e=>toggleAttachments(eq.id,e)} style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 8px", borderRadius:6, border:`1px solid ${T.border}`, background:isExpanded?T.accentLt:"#fff", color:isExpanded?T.accent:T.subtext, fontFamily:T.sans, fontSize:11, fontWeight:600, cursor:"pointer", whiteSpace:"nowrap" }}>
                           {isExpanded?"▲":"▼"} {attachments.length} Attach.
                         </button>
                       )}
+                    </div>
+
+                    {/* Fixed chevron column keeps the row-end arrow aligned too. */}
+                    <div style={{ width:18, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"flex-end" }}>
                       <span style={{ color:T.muted, fontSize:18, lineHeight:1 }}>›</span>
                     </div>
                   </div>
