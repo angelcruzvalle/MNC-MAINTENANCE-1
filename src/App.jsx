@@ -7339,8 +7339,9 @@ function UsageTracking({ state, dispatch }) {
         .some(v => String(v||"").toLowerCase().includes(q));
     })
     .sort((a,b) => {
-      const av = String(a.name || a.id || "").toLowerCase();
-      const bv = String(b.name || b.id || "").toLowerCase();
+      // Usage/Mileage alphabetical order is based on EQUIPMENT NUMBER, not nomenclature/name.
+      const av = String(a.id || "").trim().toLowerCase();
+      const bv = String(b.id || "").trim().toLowerCase();
       const cmp = av.localeCompare(bv, undefined, {numeric:true, sensitivity:"base"});
       return usageSort === "desc" ? -cmp : cmp;
     });
@@ -10700,6 +10701,25 @@ export default function App() {
         [data-theme="dark"] td { color:${T.text}; }
         [data-theme="dark"] tr:hover { background:${T.accentLt} !important; }
         [data-theme="dark"] a { color:${T.accent}; }
+
+        /* Desktop 100% browser-zoom fit: compact the application itself rather than
+           depending on users to zoom their browser out. Mobile keeps its dedicated rules. */
+        @media (min-width: 769px) {
+          .mf-main { padding:14px clamp(10px, 1.35vw, 20px) !important; overflow-x:hidden !important; }
+          .mf-main > div:first-child { margin-bottom:14px !important; }
+          .mf-main h1 { font-size:21px !important; }
+          .mf-card { padding:14px !important; border-radius:9px !important; }
+          .mf-section-heading { margin-bottom:10px !important; gap:8px !important; }
+          .mf-main table { width:100% !important; max-width:100% !important; }
+          .mf-main th, .mf-main td { padding:6px 8px !important; font-size:11.5px !important; }
+          .mf-main th { white-space:normal !important; line-height:1.2 !important; }
+          .mf-main td { line-height:1.3 !important; }
+          .mf-main input, .mf-main select, .mf-main textarea { font-size:12px !important; padding:7px 9px !important; }
+          .mf-main .mf-btn, .mf-main button { font-size:12px; }
+          .mf-main [style*="gap: 16"], .mf-main [style*="gap:16"] { gap:10px !important; }
+          .mf-main [style*="padding: 20"], .mf-main [style*="padding:20"] { padding:14px !important; }
+          .mf-main [style*="padding: 24"], .mf-main [style*="padding:24"] { padding:16px !important; }
+        }
 
         /* Dark mode deep cleanup: catch old hard-coded light panels that were left behind */
         [data-theme="dark"] [style*="background:#fff"],
