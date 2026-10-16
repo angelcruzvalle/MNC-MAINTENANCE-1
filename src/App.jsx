@@ -2034,58 +2034,78 @@ function HelpCenter({ state, onClose }) {
 function LegacyDataRepairBanner() { return null; }
 
 /* Reusable Document Uploader - handles attachments (PDF, images, etc.) stored as base64 */
-function DocUploader({ documents=[], onChange, label="Documents", category }) {
+function DocUploader({ documents=[], onChange, label="Documents", category, photoFriendly=false }) {
   const fileInput = useRef(null);
-  const handleUpload = (e) => {
-    const files = Array.from(e.target.files || []);
+  const cameraInput = useRef(null);
+  const photoInput = useRef(null);
+
+  const addFiles = (fileList) => {
+    const files = Array.from(fileList || []);
     if(files.length===0) return;
     Promise.all(files.map(f => new Promise((res,rej) => {
       const reader = new FileReader();
       reader.onload = () => res({
         id: `DOC${Date.now()}${Math.random().toString(36).substr(2,5)}`,
-        name: f.name,
-        type: f.type,
-        size: f.size,
+        name: f.name || `Photo-${new Date().toISOString().replace(/[:.]/g,"-")}.jpg`,
+        type: f.type || "application/octet-stream",
+        size: f.size || 0,
         data: reader.result,
         category: category||"General",
         uploaded: new Date().toISOString().split("T")[0],
       });
       reader.onerror = rej;
       reader.readAsDataURL(f);
-    }))).then(newDocs => {
-      onChange([...(documents||[]), ...newDocs]);
-      if(fileInput.current) fileInput.current.value = "";
-    });
+    }))).then(newDocs => onChange([...(documents||[]), ...newDocs]));
+  };
+  const handleUpload = (e) => {
+    addFiles(e.target.files);
+    e.target.value = "";
   };
   const removeDoc = (id) => onChange(documents.filter(d=>d.id!==id));
-  const openDoc = (doc) => { const w = window.open(); if(w) w.document.write(`<iframe src="${doc.data}" style="border:none;width:100%;height:100vh"></iframe>`); };
+  const openDoc = (doc) => {
+    if(!doc?.data) return;
+    const w = window.open(doc.data, "_blank");
+    if(!w) alert("Allow pop-ups to view this attachment.");
+  };
   const fmtSize = (b) => b<1024?`${b}B`:b<1024*1024?`${(b/1024).toFixed(1)}KB`:`${(b/1024/1024).toFixed(1)}MB`;
   return (
-    <div>
-      <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:8 }}>{label}</label>
+    <div className={photoFriendly?"mf-photo-uploader":""}>
+      <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.subtext, marginBottom:8 }}>{label}</label>
       <input ref={fileInput} type="file" multiple onChange={handleUpload} style={{ display:"none" }} accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx" />
-      <button type="button" onClick={()=>fileInput.current?.click()} style={{ background:T.grayLt, border:`1px dashed ${T.border}`, borderRadius:6, padding:"10px 16px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600, width:"100%", textAlign:"center" }}>
-        📎 Click to upload files (PDF, images, Office docs)
-      </button>
+      {photoFriendly && <input ref={cameraInput} type="file" onChange={handleUpload} style={{ display:"none" }} accept="image/*" capture="environment" />}
+      {photoFriendly && <input ref={photoInput} type="file" multiple onChange={handleUpload} style={{ display:"none" }} accept="image/*" />}
+
+      {photoFriendly ? (
+        <div className="mf-photo-actions" style={{ display:"grid", gridTemplateColumns:"repeat(3,minmax(0,1fr))", gap:8 }}>
+          <button type="button" onClick={()=>cameraInput.current?.click()} style={{ background:T.accent, border:`1px solid ${T.accent}`, borderRadius:9, padding:"11px 8px", color:"#fff", cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:800 }}>📷 Take Photo</button>
+          <button type="button" onClick={()=>photoInput.current?.click()} style={{ background:T.card, border:`1px solid ${T.borderHi}`, borderRadius:9, padding:"11px 8px", color:T.text, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:800 }}>🖼 Photo Library</button>
+          <button type="button" onClick={()=>fileInput.current?.click()} style={{ background:T.card, border:`1px solid ${T.borderHi}`, borderRadius:9, padding:"11px 8px", color:T.text, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:800 }}>📎 Files</button>
+        </div>
+      ) : (
+        <button type="button" onClick={()=>fileInput.current?.click()} style={{ background:T.grayLt, border:`1px dashed ${T.border}`, borderRadius:6, padding:"10px 16px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600, width:"100%", textAlign:"center" }}>
+          📎 Click to upload files (PDF, images, Office docs)
+        </button>
+      )}
+
       {(documents||[]).length > 0 && (
-        <div style={{ marginTop:10, display:"flex", flexDirection:"column", gap:6 }}>
-          {documents.map(doc=>(
-            <div key={doc.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"7px 12px", background:T.grayLt, borderRadius:6, border:`1px solid ${T.border}` }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, flex:1, minWidth:0 }}>
-                <span style={{ fontSize:18 }}>{doc.type?.startsWith("image")?"🖼️":doc.type?.includes("pdf")?"📄":"📎"}</span>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{doc.name}</div>
-                  <div style={{ fontFamily:T.mono, fontSize:10, color:T.muted }}>{doc.category} · {fmtSize(doc.size)} · {doc.uploaded}</div>
+        <div className="mf-attachment-grid" style={{ marginTop:10, display:"grid", gridTemplateColumns:photoFriendly?"repeat(auto-fill,minmax(150px,1fr))":"1fr", gap:8 }}>
+          {documents.map(doc=>{
+            const isImage = doc.type?.startsWith("image") && doc.data;
+            return <div key={doc.id} style={{ position:"relative", padding:isImage?6:"8px 10px", background:T.grayLt, borderRadius:9, border:`1px solid ${T.border}`, minWidth:0 }}>
+              {isImage && <button type="button" onClick={()=>openDoc(doc)} style={{ width:"100%", border:0, background:"transparent", padding:0, cursor:"pointer" }}><img src={doc.data} alt={doc.name||"Work order photo"} style={{ display:"block", width:"100%", height:120, objectFit:"cover", borderRadius:7 }} /></button>}
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:6, marginTop:isImage?6:0 }}>
+                <div style={{ minWidth:0, flex:1 }}>
+                  <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{isImage?"🖼️ ":"📎 "}{doc.name}</div>
+                  <div style={{ fontFamily:T.mono, fontSize:9, color:T.muted }}>{fmtSize(doc.size||0)} · {doc.uploaded||""}</div>
                 </div>
+                <button type="button" onClick={()=>openDoc(doc)} style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:6, padding:"4px 7px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:10, fontWeight:700 }}>View</button>
+                <button type="button" onClick={()=>removeDoc(doc.id)} aria-label={`Remove ${doc.name}`} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:20, lineHeight:1, padding:"2px 4px" }}>×</button>
               </div>
-              <div style={{ display:"flex", gap:4 }}>
-                <button type="button" onClick={()=>openDoc(doc)} style={{ background:"none", border:`1px solid ${T.border}`, borderRadius:5, padding:"3px 8px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:600 }}>View</button>
-                <button type="button" onClick={()=>removeDoc(doc.id)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:18, lineHeight:1, padding:"0 4px" }}>×</button>
-              </div>
-            </div>
-          ))}
+            </div>;
+          })}
         </div>
       )}
+      {photoFriendly && <div style={{ marginTop:7, fontFamily:T.sans, fontSize:10, color:T.muted }}>On a phone, Take Photo opens the rear camera. You can also choose existing pictures or attach documents.</div>}
     </div>
   );
 }
@@ -3270,6 +3290,13 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <button onClick={()=>setForm(f=>({...f,outsideServices:[...(f.outsideServices||[]),{description:"",qty:1,unitCost:""}]}))} style={{ background:"none", border:`1px dashed ${T.borderHi}`, borderRadius:6, padding:"7px 16px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600, width:"100%" }}>
             + Add Outside Service
           </button>
+        </div>
+
+        {/* Work order photos / attachments */}
+        <div className="mf-wo-attachments" style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:10, padding:12, background:T.card }}>
+          <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, textTransform:"uppercase", letterSpacing:.5, marginBottom:4 }}>Pictures & Attachments</div>
+          <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginBottom:10 }}>Add equipment damage photos, before/after pictures, receipts, vendor paperwork, or other work-order documents.</div>
+          <DocUploader photoFriendly label="Work Order Pictures & Files" category="Work Order" documents={form.documents||form.attachments||[]} onChange={docs=>setForm(f=>({...f,documents:docs,attachments:undefined}))} />
         </div>
 
         {/* Mechanic inline */}
@@ -10964,6 +10991,20 @@ export default function App() {
           html, body, #root { width:100% !important; max-width:100% !important; min-height:100% !important; height:auto !important; overflow-x:hidden !important; overflow-y:auto !important; }
           body { position:static !important; touch-action:pan-y !important; -webkit-overflow-scrolling:touch !important; }
           .mf-main, main { width:100% !important; max-width:100% !important; height:auto !important; min-height:calc(100dvh - 60px) !important; overflow-x:hidden !important; overflow-y:visible !important; padding:10px 10px calc(86px + env(safe-area-inset-bottom)) !important; }
+          .mf-main > div:first-child { margin-bottom:12px !important; }
+          .mf-main > div:first-child h1 { font-size:20px !important; }
+          .mf-main input, .mf-main select, .mf-main textarea, .mf-modal-body input, .mf-modal-body select, .mf-modal-body textarea { max-width:100% !important; min-width:0 !important; font-size:16px !important; }
+          .mf-modal-body button, .mf-main button { min-height:44px; }
+          .mf-photo-actions { grid-template-columns:1fr !important; }
+          .mf-photo-actions button { min-height:50px !important; font-size:13px !important; }
+          .mf-attachment-grid { grid-template-columns:repeat(2,minmax(0,1fr)) !important; }
+          .mf-wo-attachments { padding:10px !important; }
+          .mf-header { height:54px !important; padding:0 10px !important; }
+          .mf-header-brand { gap:8px !important; min-width:0 !important; }
+          .mf-header-brand > div[style*="width: 1px"], .mf-header-crumb, .mf-header-page-title, .mf-theme-button, .mf-help-button, .mf-logout-button { display:none !important; }
+          .mf-brand-title { min-width:0 !important; }
+          .mf-brand-title > div:first-child { max-width:150px !important; overflow:hidden !important; text-overflow:ellipsis !important; white-space:nowrap !important; }
+          .mf-header-actions { gap:6px !important; }
           .mf-main section, .mf-main article, .mf-main > div { max-width:100% !important; overflow-x:visible !important; overflow-y:visible !important; }
           .mobile-x-scroll { width:100% !important; max-width:100% !important; overflow-x:auto !important; overflow-y:hidden !important; -webkit-overflow-scrolling:touch !important; }
           .mf-modal-backdrop { position:fixed !important; inset:0 !important; padding:0 !important; overflow:hidden !important; align-items:stretch !important; }
