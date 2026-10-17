@@ -2921,10 +2921,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
       if (type.includes("service") || type.includes("prevent")) return "service";
       return "repair";
     })();
-    const defaultTypeColors = { repair:"blue", inspection:"mint", service:"yellow" };
-    const colorKey = ws[`${printTypeKey}PrintColor`] || defaultTypeColors[printTypeKey] || "blue";
+    const defaultTypeColors = { repair:"blue", inspection:"blue", service:"blue" };
+    const colorKey = "blue";
     const colorMap = {
-      blue:   { accent:"#dbeafe", border:"#1e3a8a", dark:"#1e3a8a", soft:"#eff6ff" },
+      blue:   { accent:"#dbeafe", border:"#2563eb", dark:"#1e3a8a", soft:"#eff6ff" },
       yellow: { accent:"#fef3c7", border:"#92400e", dark:"#78350f", soft:"#fffbeb" },
       mint:   { accent:"#dcfce7", border:"#166534", dark:"#14532d", soft:"#f0fdf4" },
       slate:  { accent:"#e2e8f0", border:"#334155", dark:"#1e293b", soft:"#f8fafc" }
@@ -2952,22 +2952,22 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
       body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#111827;font-size:11px;line-height:1.25}
       @page{size:Letter;margin:0}
       .page{width:8.5in;min-height:auto;margin:0 auto;padding:.24in .28in;display:flex;flex-direction:column;gap:4px}
-      .outer{border:1.5px solid #111827;border-radius:8px;overflow:hidden;background:white}
-      .top{display:grid;grid-template-columns:1.85in minmax(0,1fr) 1.85in;border-bottom:1.5px solid #111827;min-height:.95in}
-      .logoBox{display:flex;align-items:center;justify-content:center;border-right:1.5px solid #111827;padding:6px 8px;background:white;overflow:hidden;min-width:0}
+      .outer{border:1.5px solid ${C.border};border-radius:0;overflow:hidden;background:white}
+      .top{display:grid;grid-template-columns:1.85in minmax(0,1fr) 1.85in;border-bottom:1.5px solid ${C.border};min-height:.95in}
+      .logoBox{display:flex;align-items:center;justify-content:center;border-right:1.5px solid ${C.border};padding:6px 8px;background:white;overflow:hidden;min-width:0}
       .logoBox img{width:100%;max-width:1.65in;max-height:.82in;object-fit:contain;display:block}
       .logoText{font-weight:900;text-align:center;color:#111827;font-size:13px;line-height:1.2}
       .companyBox{display:flex;flex-direction:column;align-items:center;justify-content:center;background:${C.soft};padding:8px 14px;text-align:center;min-width:0}
       .company{font-weight:900;letter-spacing:.25px;text-transform:uppercase;color:#111827;line-height:1.02;white-space:normal;max-width:100%;overflow-wrap:anywhere;word-break:normal;text-align:center;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
       .facilityName{margin-top:3px;width:100%;font-weight:800;letter-spacing:.35px;color:#334155;text-transform:uppercase;line-height:1.08;text-align:center;white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-      .typePill{margin-top:4px;border:1.5px solid ${C.border};background:${C.accent};color:#111827;border-radius:999px;padding:4px 18px;font-size:12px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;display:inline-flex;gap:6px;align-items:center}
-      .numberBox{border-left:1.5px solid #111827;display:grid;grid-template-rows:1fr .32in;text-align:center;background:white;min-width:0}
+      .typePill{margin-top:4px;border:1.5px solid ${C.border};background:${C.accent};color:#111827;border-radius:0;padding:4px 18px;font-size:12px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;display:inline-flex;gap:6px;align-items:center}
+      .numberBox{border-left:1.5px solid ${C.border};display:grid;grid-template-rows:1fr .32in;text-align:center;background:white;min-width:0}
       .woNumber{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px}
       .woNumber .label{font-size:10px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#111827}
       .woNumber .number{font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:900;color:#111827;margin-top:4px;word-break:break-word}
-      .status{display:flex;align-items:center;justify-content:center;background:${C.border};color:white;font-size:11px;font-weight:900;letter-spacing:1.3px;text-transform:uppercase;border-top:1.5px solid #111827}
+      .status{display:flex;align-items:center;justify-content:center;background:${C.border};color:white;font-size:11px;font-weight:900;letter-spacing:1.3px;text-transform:uppercase;border-top:1.5px solid ${C.border}}
       .completed{background:${C.border}!important;color:white!important}
-      .dateGrid{display:grid;grid-template-columns:1fr 1fr 1fr;border-bottom:1.5px solid #111827}
+      .dateGrid{display:grid;grid-template-columns:1fr 1fr 1fr;border-bottom:1.5px solid ${C.border}}
       .infoGrid{display:grid;grid-template-columns:1fr 1fr 1fr}
       .cell{min-height:.28in;padding:4px 6px;border-right:1px solid #9ca3af;border-bottom:1px solid #cbd5e1;display:grid;grid-template-columns:.95fr 1.35fr;align-items:center;gap:8px;overflow:hidden}
       .cell:nth-child(3n){border-right:none}
@@ -2975,30 +2975,30 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
       .fieldLabel{font-size:8.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;color:#111827;line-height:1.1}
       .fieldValue{font-size:10.5px;font-weight:800;color:#111827;line-height:1.15;white-space:normal;overflow-wrap:anywhere}
       .mono{font-family:Arial,Helvetica,sans-serif}
-      .section{border-top:1.5px solid #111827;break-inside:auto;page-break-inside:auto}
+      .section{border-top:1.5px solid ${C.border};break-inside:auto;page-break-inside:auto}
       .section-title{background:${C.accent};color:#111827;border-bottom:1px solid #94a3b8;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
       .textBlock{padding:5px 7px;min-height:.28in;white-space:pre-wrap;overflow-wrap:anywhere;color:#111827;font-size:12px}
       .textBlock.tall{min-height:.45in}
       .summaryTitle{background:${C.accent};color:#111827;border-bottom:1px solid #94a3b8;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
       .miniTitle{padding:4px 7px 3px;font-weight:900;text-transform:uppercase;font-size:11px;color:#111827;background:#fff}
       .data-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:10.5px}
-      .data-table th{background:#e5e7eb;color:#111827;text-transform:uppercase;letter-spacing:.35px;font-size:8.5px;font-weight:900;padding:4px 5px;border-top:1px solid #9ca3af;border-bottom:1px solid #9ca3af;border-right:1px solid #cbd5e1;text-align:left}
+      .data-table th{background:${C.accent};color:#111827;text-transform:uppercase;letter-spacing:.35px;font-size:8.5px;font-weight:900;padding:4px 5px;border-top:1px solid #9ca3af;border-bottom:1px solid #9ca3af;border-right:1px solid #cbd5e1;text-align:left}
       .data-table td{padding:4px 5px;border-bottom:1px solid #cbd5e1;border-right:1px solid #e5e7eb;vertical-align:top;overflow-wrap:anywhere;color:#111827}
       .data-table th:last-child,.data-table td:last-child{border-right:none}
       .right{text-align:right}.center{text-align:center}
-      .subRow td{background:#f8fafc;font-weight:900;border-top:1.5px solid #111827}
-      .grandTotal{display:grid;grid-template-columns:1fr 1.5in;border-top:1.5px solid #111827;background:${C.accent};font-weight:900;font-size:13px;color:#111827}
-      .grandTotal div{padding:9px 12px}.grandTotal div:last-child{text-align:right;border-left:1.5px solid #111827}
-      .signatureGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;padding:8px 10px;border-top:1.5px solid #111827;min-height:.42in;align-items:end}
-      .sigLine{border-top:1.5px solid #111827;padding-top:5px;min-height:32px}
+      .subRow td{background:${C.soft};font-weight:900;border-top:1.5px solid ${C.border}}
+      .grandTotal{display:grid;grid-template-columns:1fr 1.5in;border-top:1.5px solid ${C.border};background:${C.accent};font-weight:900;font-size:13px;color:#111827}
+      .grandTotal div{padding:9px 12px}.grandTotal div:last-child{text-align:right;border-left:1.5px solid ${C.border}}
+      .signatureGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;padding:8px 10px;border-top:1.5px solid ${C.border};min-height:.42in;align-items:end}
+      .sigLine{border-top:1.5px solid ${C.border};padding-top:5px;min-height:32px}
       .sigValue{font-size:12px;font-weight:800;margin-bottom:4px;min-height:14px;overflow-wrap:anywhere;color:#111827}
       .sigLabel{font-size:9.5px;font-weight:900;text-transform:uppercase;letter-spacing:.6px;color:#111827}
       .pbtn{margin:14px auto 0;display:flex;gap:10px;justify-content:center}
-      .pbtn button,.pbtn a{padding:9px 24px;font-size:13px;font-weight:800;border-radius:6px;cursor:pointer;text-decoration:none;font-family:Arial,Helvetica,sans-serif}
+      .pbtn button,.pbtn a{padding:9px 24px;font-size:13px;font-weight:800;border-radius:0;cursor:pointer;text-decoration:none;font-family:Arial,Helvetica,sans-serif}
       .printBtn{background:${C.border};color:white;border:none}.fileBtn{background:#fff;color:#111827;border:1px solid #111827}
       @page{size:letter;margin:0}
       @media print{.pbtn,.print-customize{display:none!important}html,body{width:8.5in;margin:0!important;padding:0!important}.page{width:8.5in;padding:.18in .22in}.outer{break-inside:auto;page-break-inside:auto}body{font-size:10px}.section,.data-table tr{break-inside:auto;page-break-inside:auto}}
-    </style><style>${MAINTFORGE_PRINT_POLISH}</style></head><body>
+    </style></head><body>
     <div class="page">
       <div class="outer">
         <header class="top">
@@ -3846,37 +3846,6 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
   );
 }
 
-const MAINTFORGE_PRINT_POLISH = `
-  :root{color-scheme:light}
-  *{box-sizing:border-box}
-  html{background:#fff}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,Helvetica,sans-serif!important;color:#172033!important;background:#fff!important;line-height:1.35;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  h1{font-size:21px!important;line-height:1.15!important;letter-spacing:-.25px;margin-top:0!important;color:#101828!important}
-  h2{color:#101828} h3,h4{color:#1d2939}
-  p{line-height:1.45}
-  table{width:100%;border-collapse:separate!important;border-spacing:0!important;border:1px solid #d8dee8!important;border-radius:8px;overflow:hidden;background:#fff}
-  thead{display:table-header-group}
-  th{background:#25344a!important;color:#fff!important;font-size:10px!important;font-weight:700!important;letter-spacing:.45px!important;text-transform:uppercase;padding:8px 9px!important;border:0!important;text-align:left}
-  td{padding:8px 9px!important;border:0!important;border-bottom:1px solid #e7ebf0!important;vertical-align:top}
-  tbody tr:last-child td{border-bottom:0!important}
-  tbody tr:nth-child(even){background:#f8fafc}
-  .sectionTitle{background:#eef2f6!important;color:#25344a!important;border-left:4px solid #25344a!important;border-radius:4px!important;padding:7px 10px!important}
-  .metric,.box{border:1px solid #d8dee8!important;background:#f8fafc!important;border-radius:8px!important;box-shadow:none!important}
-  .metricValue,.num{color:#101828!important}
-  .metricLabel,.label,small{color:#667085}
-  button,.actions button,.printBtn{font-family:inherit}
-  @page{size:letter;margin:.42in}
-  @media print{
-    body{padding:0!important;margin:0!important;font-size:10.5px!important}
-    button,.actions,.pbtn,.print-customize,.no-print{display:none!important}
-    h1,h2,h3,h4,.metric,.box,.sectionTitle{break-after:avoid;page-break-after:avoid}
-    tr,img{break-inside:avoid;page-break-inside:avoid}
-    table{font-size:10px!important}
-    th,td{padding:6px 7px!important}
-    a{color:inherit!important;text-decoration:none!important}
-  }
-`;
-
 /* ATTACHMENTS CARD - used inside Equipment detail view */
 
 function AttachmentsCard({ eq, dispatch }) {
@@ -3916,7 +3885,7 @@ function AttachmentsCard({ eq, dispatch }) {
             Attachments / Implements
           </h4>
           <p style={{ margin:"3px 0 0", fontFamily:T.sans, fontSize:12, color:T.muted }}>
-            Equipment-mounted implements and accessories (e.g. buckets, loader attachments, trenchers, brooms, forks)
+            Tools and implements that belong to this equipment (e.g. broom, plow, forks)
           </p>
         </div>
         {!showForm && <Btn small onClick={openAdd}>+ Add Attachment</Btn>}
@@ -3931,7 +3900,7 @@ function AttachmentsCard({ eq, dispatch }) {
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
             <div style={{ marginBottom:12, gridColumn:"span 2" }}>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Attachment Name *</label>
-              <input style={inp} value={form.name||""} onChange={F("name")} placeholder="e.g. Bucket, Loader Attachment, Trencher, Sweeper Broom, Pallet Forks" />
+              <input style={inp} value={form.name||""} onChange={F("name")} placeholder="e.g. Sweeper Broom, Snow Plow, Pallet Forks" />
             </div>
             {[["EIL #","eilNumber","EE#"],["Make","make",""],["Model","model",""],["Serial Number","serial",""]].map(([label,key,ph])=>(
               <div key={key} style={{ marginBottom:12 }}>
@@ -4009,6 +3978,8 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
   const [modal, setModal]       = useState(null);
   const [detail, setDetail]     = useState(null);
   const [attachDetail, setAttachDetail] = useState(null);
+  const [attachEdit, setAttachEdit] = useState(false);
+  const [attachEditForm, setAttachEditForm] = useState({});
   const [historyWO, setHistoryWO] = useState(null);
   const [historyEdit, setHistoryEdit] = useState(false);
   const [historicalImportOpen, setHistoricalImportOpen] = useState(false);
@@ -4051,7 +4022,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
     const metric = (label, value) => `<div class="metric"><div class="metricValue">${esc(value)}</div><div class="metricLabel">${esc(label)}</div></div>`;
     win.document.write(`<!DOCTYPE html><html><head><title>Equipment Summary ${esc(eq.id||"")}</title><style>
       body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#111827;padding:24px;font-size:12px}h1{margin:0 0 4px;font-size:22px}p{margin:0 0 16px;color:#667085}.header{display:flex;align-items:flex-start;gap:14px;border-bottom:2px solid #111827;padding-bottom:14px;margin-bottom:16px}.logo{max-height:58px;max-width:120px;object-fit:contain}.titleBlock{flex:1}.eqNum{font-family:monospace;font-size:13px;font-weight:800;color:#334155}.subtitle{font-size:13px;color:#475467;margin-top:3px}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0 18px}.metric{border:1px solid #d0d5dd;background:#f9fafb;border-radius:10px;padding:12px}.metricValue{font-size:20px;font-weight:800;color:#111827}.metricLabel{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:#667085;margin-top:4px}.sectionTitle{background:#e5e7eb;padding:8px 10px;border-radius:8px;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.5px;margin:18px 0 8px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#111827;color:white;text-align:left;padding:7px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.4px}td{border-bottom:1px solid #e5e7eb;padding:7px 8px;vertical-align:top}.right{text-align:right}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px 20px}.field{border-bottom:1px solid #e5e7eb;padding:7px 0}.label{font-size:10px;text-transform:uppercase;color:#667085;font-weight:800}.value{font-size:13px;margin-top:2px}.actions{margin-top:18px;display:flex;gap:8px;justify-content:center}.actions button{padding:9px 18px;border:none;border-radius:8px;background:#111827;color:#fff;font-weight:800;cursor:pointer}@media print{.actions{display:none}.metric,.sectionTitle{break-inside:avoid}body{padding:18px}.metrics{grid-template-columns:repeat(4,1fr)}}@page{size:letter;margin:.35in}
-    </style><style>${MAINTFORGE_PRINT_POLISH}</style></head><body>`);
+    </style></head><body>`);
     const summaryLogo = resolveWorkOrderBrandLogo(state, {}, eq || {});
     win.document.write(`<div class="header">${summaryLogo?`<img class="logo" src="${summaryLogo}" alt="Logo">`:""}<div class="titleBlock"><h1>${esc(settings.companyName || "MaintForge")}</h1><div class="eqNum">Equipment Summary — ${esc(eq.id||"—")}</div><div class="subtitle">${esc(eq.name || eq.nomenclature || "—")} · ${esc([eq.year,eq.make,eq.model].filter(Boolean).join(" ") || "—")}</div></div><div style="text-align:right;color:#667085;font-size:11px">Generated: ${new Date().toLocaleDateString()}</div></div>`);
     win.document.write(`<div class="metrics">${metric("Current " + usage.label, usage.display ?? Number(usage.value||0).toLocaleString(undefined,{maximumFractionDigits:1}))}${metric("Lifetime Spent", moneyFmt(fin.lifetimeSpent))}${metric("FY Spent", moneyFmt(fin.fySpent))}${metric("Total WOs", fin.totalWOs)}${metric("Lifetime Labor", fin.lifetimeLaborHours.toFixed(1)+"h")}${metric("FY Labor", fin.fyLaborHours.toFixed(1)+"h")}${metric("Open WOs", fin.openWOs)}${metric("Completed WOs", fin.completedWOs)}</div>`);
@@ -4163,7 +4134,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
       .pbtn button{padding:9px 24px;font-size:13px;font-weight:800;border-radius:6px;cursor:pointer;background:${C.border};color:white;border:none}
       @page{size:letter;margin:0}
       @media print{.pbtn,.print-customize{display:none!important}html,body{width:8.5in;margin:0!important;padding:0!important}.page{width:8.5in;padding:.18in .22in}.outer{break-inside:auto;page-break-inside:auto}body{font-size:10px}.section,.data-table tr{break-inside:auto;page-break-inside:auto}}
-    </style><style>${MAINTFORGE_PRINT_POLISH}</style></head><body>
+    </style></head><body>
       <div class="page"><div class="outer">
         <header class="top">
           <div class="logoBox">${historyCompanyLogo ? `<img src="${historyCompanyLogo}" alt="Logo">` : `<div class="logoText">LOGO</div>`}</div>
@@ -4971,7 +4942,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
             const def = reportEqs.filter(e=>e.status==="Operational with Deficiencies");
             const full = reportEqs.filter(e=>(e.status||"Fully Operational")==="Fully Operational");
             const other = reportEqs.filter(e=>!["Out of Service / Deadline","Operational with Deficiencies","Fully Operational",""] .includes(e.status||""));
-            win.document.write(`<html><head><title>Equipment Status Report</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111;background:#fff}h1{font-size:22px;margin:0 0 4px}p{font-size:12px;color:#666;margin:0 0 18px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0 22px}.box{border:1px solid #e5e7eb;border-radius:12px;padding:12px;background:#f9fafb}.num{font-size:24px;font-weight:800}.label{font-size:11px;color:#667085;text-transform:uppercase;letter-spacing:.4px}.section{margin-bottom:26px}h2{font-size:14px;margin:0 0 8px;padding:8px 10px;border-radius:8px}.red{background:#fee2e2;color:#7f1d1d}.yellow{background:#fef3c7;color:#92400e}.green{background:#dcfce7;color:#14532d}.blue{background:#dbeafe;color:#1e3a8a}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#f3f4f6;padding:8px 10px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.4px}td{padding:8px 10px;border-bottom:1px solid #e5e7eb;vertical-align:top}small{color:#667085}@media print{button{display:none}.summary{break-inside:avoid}.section{break-inside:auto}}</style><style>${MAINTFORGE_PRINT_POLISH}</style></head><body>`);
+            win.document.write(`<html><head><title>Equipment Status Report</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111;background:#fff}h1{font-size:22px;margin:0 0 4px}p{font-size:12px;color:#666;margin:0 0 18px}.summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0 22px}.box{border:1px solid #e5e7eb;border-radius:12px;padding:12px;background:#f9fafb}.num{font-size:24px;font-weight:800}.label{font-size:11px;color:#667085;text-transform:uppercase;letter-spacing:.4px}.section{margin-bottom:26px}h2{font-size:14px;margin:0 0 8px;padding:8px 10px;border-radius:8px}.red{background:#fee2e2;color:#7f1d1d}.yellow{background:#fef3c7;color:#92400e}.green{background:#dcfce7;color:#14532d}.blue{background:#dbeafe;color:#1e3a8a}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#f3f4f6;padding:8px 10px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.4px}td{padding:8px 10px;border-bottom:1px solid #e5e7eb;vertical-align:top}small{color:#667085}@media print{button{display:none}.summary{break-inside:avoid}.section{break-inside:auto}}</style></head><body>`);
             win.document.write(`<h1>Equipment Status Report</h1><p>Generated: ${new Date().toLocaleDateString()} — MaintForge</p>`);
             win.document.write(`<div class="summary"><div class="box"><div class="num">${allEquipment.length}</div><div class="label">Total Equipment</div></div><div class="box"><div class="num" style="color:#7f1d1d">${oos.length}</div><div class="label">Out of Service / Deadline</div></div><div class="box"><div class="num" style="color:#92400e">${def.length}</div><div class="label">Operational w/ Deficiencies</div></div><div class="box"><div class="num" style="color:#14532d">${full.length}</div><div class="label">Fully Operational</div></div></div>`);
             win.document.write(section("🚨 Out of Service / Deadline", oos, "red"));
@@ -5187,43 +5158,70 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
         )}
       </div>
 
-      {/* ── Attachment Detail Modal ── */}
+      {/* ── Attachment Detail / Edit Modal ── */}
       {attachDetail && (
-        <Modal title={`Attachment — ${attachDetail.at.name}`} onClose={()=>setAttachDetail(null)}>
+        <Modal title={`${attachEdit ? "Edit Attachment" : "Attachment"} — ${attachDetail.at.name}`} onClose={()=>{setAttachDetail(null);setAttachEdit(false);setAttachEditForm({});}}>
           <div style={{ background:T.accentLt, border:`1px solid ${T.accent}44`, borderRadius:8, padding:"8px 14px", marginBottom:14 }}>
             <div style={{ fontFamily:T.sans, fontSize:11, color:T.accent, fontWeight:600 }}>
               🔗 Attached to: {attachDetail.eq.name} ({attachDetail.eq.id})
             </div>
           </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"10px 20px" }}>
-            {[
-              ["Attachment #",   attachDetail.at.id],
-              ["EIL #",          attachDetail.at.eilNumber],
-              ["Make",           attachDetail.at.make],
-              ["Model",          attachDetail.at.model],
-              ["Serial Number",  attachDetail.at.serial],
-              ["Acquisition Date", attachDetail.at.acquisitionDate],
-              ["Purchase Price", attachDetail.at.acquisitionCost ? moneyFmt(attachDetail.at.acquisitionCost) : "—"],
-            ].map(([k,v])=>(
-              <div key={k}>
-                <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div>
-                <div style={{ fontFamily:T.sans, fontSize:14, color:T.text, marginTop:4, fontWeight:500 }}>{v||"—"}</div>
+          {attachEdit ? (
+            <>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"12px 16px" }}>
+                {[
+                  ["Attachment Name","name"],["EIL #","eilNumber"],["Make","make"],["Model","model"],["Serial Number","serial"]
+                ].map(([label,key])=>(
+                  <div key={key} style={key==="name"?{gridColumn:"span 2"}:undefined}>
+                    <label style={{ display:"block", fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>{label}</label>
+                    <input style={inp} value={attachEditForm[key]||""} onChange={e=>setAttachEditForm(f=>({...f,[key]:e.target.value}))} />
+                  </div>
+                ))}
+                <div>
+                  <label style={{ display:"block", fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Acquisition Date</label>
+                  <input style={inp} type="date" value={attachEditForm.acquisitionDate||""} onChange={e=>setAttachEditForm(f=>({...f,acquisitionDate:e.target.value}))} />
+                </div>
+                <div>
+                  <label style={{ display:"block", fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Purchase Price ($)</label>
+                  <input style={inp} {...decimalInputAttrs({ placeholder:"0.00" })} value={attachEditForm.acquisitionCost||""} onChange={e=>setAttachEditForm(f=>({...f,acquisitionCost:sanitizeDecimalInput(e.target.value)}))} />
+                </div>
+                <div style={{gridColumn:"span 2"}}>
+                  <label style={{ display:"block", fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Notes</label>
+                  <textarea style={{...inp,minHeight:70,resize:"vertical"}} value={attachEditForm.notes||""} onChange={e=>setAttachEditForm(f=>({...f,notes:e.target.value}))} />
+                </div>
               </div>
-            ))}
-          </div>
-          {attachDetail.at.notes && (
-            <div style={{ marginTop:14, paddingTop:12, borderTop:`1px solid ${T.border}` }}>
-              <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Notes</div>
-              <div style={{ fontFamily:T.sans, fontSize:13, color:T.subtext }}>{attachDetail.at.notes}</div>
-            </div>
+              <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:16}}>
+                <Btn variant="secondary" onClick={()=>{setAttachEdit(false);setAttachEditForm({});}}>Cancel</Btn>
+                <Btn onClick={()=>{
+                  if(!String(attachEditForm.name||"").trim()) return alert("Attachment name is required.");
+                  const updatedAt={...attachDetail.at,...attachEditForm,id:attachDetail.at.id};
+                  const updatedEq={...attachDetail.eq,attachments:(attachDetail.eq.attachments||[]).map(a=>String(a.id)===String(attachDetail.at.id)?updatedAt:a)};
+                  dispatch({type:"UPDATE_EQ",payload:updatedEq});
+                  setAttachDetail({eq:updatedEq,at:updatedAt});
+                  setAttachEdit(false); setAttachEditForm({});
+                }}>Save Attachment Changes</Btn>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"10px 20px" }}>
+                {[
+                  ["Attachment #",attachDetail.at.id],["EIL #",attachDetail.at.eilNumber],["Make",attachDetail.at.make],["Model",attachDetail.at.model],["Serial Number",attachDetail.at.serial],["Acquisition Date",attachDetail.at.acquisitionDate],["Purchase Price",attachDetail.at.acquisitionCost ? moneyFmt(attachDetail.at.acquisitionCost) : "—"],
+                ].map(([k,v])=>(<div key={k}><div style={{fontFamily:T.sans,fontSize:11,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:.4}}>{k}</div><div style={{fontFamily:T.sans,fontSize:14,color:T.text,marginTop:4,fontWeight:500}}>{v||"—"}</div></div>))}
+              </div>
+              {attachDetail.at.notes && <div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${T.border}`}}><div style={{fontFamily:T.sans,fontSize:11,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:.4,marginBottom:5}}>Notes</div><div style={{fontFamily:T.sans,fontSize:13,color:T.subtext}}>{attachDetail.at.notes}</div></div>}
+              <div style={{display:"flex",justifyContent:"space-between",gap:8,marginTop:16,flexWrap:"wrap"}}>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  <Btn onClick={()=>onCreateAttachmentWO?.({requestId:Date.now(),woType:"Repair",equipment:attachDetail.at.id,parentId:attachDetail.eq.id})}>🛠 Create Repair WO</Btn>
+                  <Btn variant="secondary" onClick={()=>onCreateAttachmentWO?.({requestId:Date.now(),woType:"Service",equipment:attachDetail.at.id,parentId:attachDetail.eq.id})}>🧰 Create Service WO</Btn>
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <Btn onClick={()=>{setAttachEditForm({...attachDetail.at});setAttachEdit(true);}}>✎ Edit Attachment</Btn>
+                  <Btn variant="secondary" onClick={()=>setAttachDetail(null)}>Close</Btn>
+                </div>
+              </div>
+            </>
           )}
-          <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginTop:16, flexWrap:"wrap" }}>
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-              <Btn onClick={()=>onCreateAttachmentWO?.({ requestId:Date.now(), woType:"Repair", equipment:attachDetail.at.id, parentId:attachDetail.eq.id })}>🛠 Create Repair WO</Btn>
-              <Btn variant="secondary" onClick={()=>onCreateAttachmentWO?.({ requestId:Date.now(), woType:"Service", equipment:attachDetail.at.id, parentId:attachDetail.eq.id })}>🧰 Create Service WO</Btn>
-            </div>
-            <Btn variant="secondary" onClick={()=>setAttachDetail(null)}>Close</Btn>
-          </div>
         </Modal>
       )}
 
@@ -5306,7 +5304,7 @@ function Parts({ state, dispatch }) {
     if(!win) return;
     win.document.write(`<!DOCTYPE html><html><head><title>Parts Inventory Report</title>
       <style>body{font-family:Arial,sans-serif;padding:24px}h1{font-size:18px;margin-bottom:4px}p{font-size:12px;color:#666;margin:0 0 16px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:10px;text-transform:uppercase}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}.low{background:#fff5f5}.total-row{font-weight:700;background:#f3f4f6}@media print{button{display:none}}</style>
-      <style>${MAINTFORGE_PRINT_POLISH}</style></head><body>
+      </head><body>
       ${reportHeaderHTML(state, "Parts Inventory Report")}
       <p style="font-size:12px;color:#666;margin-bottom:12px">SKUs: ${parts.length} | Total Value: ${moneyFmt(totalVal)} | Low Stock: ${lowParts.length}</p>
       <table>
@@ -7864,7 +7862,7 @@ function ReportPartsInv({ state }) {
     if(!win) return;
     win.document.write(`<!DOCTYPE html><html><head><title>Parts Inventory Report</title>
       <style>body{font-family:Arial,sans-serif;padding:24px}h1{font-size:18px;margin-bottom:2px}p{font-size:12px;color:#666;margin:0 0 14px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.5px}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}.low{background:#fff5f5}.total-row td{font-weight:700;background:#f3f4f6;font-size:13px;border-top:2px solid #1a1a2e}@media print{button{display:none}}</style>
-      <style>${MAINTFORGE_PRINT_POLISH}</style></head><body>
+      </head><body>
       <h1>Parts Inventory Report</h1>
       <p>Generated: ${new Date().toLocaleDateString()} | Total SKUs: ${parts.length} | Total Value: ${moneyFmt(totalVal)} | Low Stock Items: ${lowParts.length}</p>
       <table>
@@ -7962,7 +7960,7 @@ function ReportUsage({ state }) {
       const field=primaryField(eq), label=primaryLabel(eq), st=statsFor(eq, field);
       return `<tr><td><b>${eq.id||"—"}</b></td><td><b>${eq.name||eq.nomenclature||""}</b><br><small>${eq.category||""}</small></td><td>${label}</td><td><b>${fmt(st.current)}</b></td><td><b>${fmt(st.month)}</b></td><td><b>${fmt(st.fy)}</b></td><td>${st.lastDate}</td><td>${st.entries}</td></tr>`;
     }).join("");
-    win.document.write(`<!DOCTYPE html><html><head><title>Usage Report</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111827}h1{margin:0 0 4px}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0}.box{border:1px solid #dbeafe;background:#eff6ff;border-radius:12px;padding:12px}.box small{color:#64748b;text-transform:uppercase;font-weight:700}.box div{font-size:22px;font-weight:800;color:#1d4ed8;margin-top:4px}table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}th{background:#1e3a8a;color:white;padding:8px 10px;text-align:left;font-size:11px;text-transform:uppercase}td{padding:9px 10px;border-bottom:1px solid #e5e7eb}tr:nth-child(even){background:#f8fafc}@media print{button{display:none}}</style><style>${MAINTFORGE_PRINT_POLISH}</style></head><body>${reportHeaderHTML(state,"Equipment Usage Report")}
+    win.document.write(`<!DOCTYPE html><html><head><title>Usage Report</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111827}h1{margin:0 0 4px}.summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0}.box{border:1px solid #dbeafe;background:#eff6ff;border-radius:12px;padding:12px}.box small{color:#64748b;text-transform:uppercase;font-weight:700}.box div{font-size:22px;font-weight:800;color:#1d4ed8;margin-top:4px}table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px}th{background:#1e3a8a;color:white;padding:8px 10px;text-align:left;font-size:11px;text-transform:uppercase}td{padding:9px 10px;border-bottom:1px solid #e5e7eb}tr:nth-child(even){background:#f8fafc}@media print{button{display:none}}</style></head><body>${reportHeaderHTML(state,"Equipment Usage Report")}
       <p style="color:#64748b;font-size:12px;margin-top:4px">Shows current reading, new usage this month, and usage this fiscal year for monthly and annual reporting.</p>
       <table><thead><tr><th>Equipment #</th><th>Nomenclature</th><th>Meter</th><th>Current</th><th>New This Month</th><th>This FY</th><th>Last Entry</th><th>Entries</th></tr></thead><tbody>${cards || `<tr><td colspan="8">No tracked equipment found.</td></tr>`}</tbody></table>${reportButtonsHtml(exportRows)}</body></html>`);
     win.document.close();
@@ -8031,7 +8029,7 @@ function ReportDeadline({ state }) {
     win.document.write(`<!DOCTYPE html><html><head><title>Deadline Report</title>
       <style>
         body{font-family:Arial,sans-serif;padding:24px;color:#111;background:white}h1{font-size:22px;margin:0 0 4px}.meta{font-size:12px;color:#64748b;margin:0 0 16px}.deadline-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px;margin-bottom:16px}.deadline-table th{background:#1a1a2e;color:#fff;padding:7px 8px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;vertical-align:middle}.deadline-table td{padding:8px;border-bottom:1px solid #d1d5db;vertical-align:top;line-height:1.25}.deadline-table .equip{font-weight:700;white-space:nowrap;font-family:monospace}.deadline-table .nomenclature{overflow-wrap:break-word}.deadline-table .faultDate{white-space:nowrap;font-family:monospace}.deadline-table .description,.deadline-table .workOrders{overflow-wrap:anywhere}small{color:#64748b}@media print{button{display:none}body{padding:0}.deadline-table{page-break-inside:auto}tr{page-break-inside:avoid;page-break-after:auto}}
-      </style><style>${MAINTFORGE_PRINT_POLISH}</style></head><body>
+      </style></head><body>
       ${reportHeaderHTML(state, "Deadline & Deficiency Report")}
       <p class="meta">Fault date and description are pulled from the equipment record first. If blank, the report uses the latest open work order for that equipment.</p>
       ${table(oos,"#fff5f5","Out of Service / Deadline","#dc2626")}
@@ -8092,7 +8090,7 @@ function ReportPM({ state }) {
     const pmRows = (list) => list.map(p=>`<tr><td><b>${p.equipment||"—"}</b></td><td>${eqName(p.equipment)}</td><td>${p.task}</td><td>${p.interval}</td><td>${p.lastDone||"—"}</td><td>${p.nextDue||"—"}</td><td>${p.status}</td></tr>`).join("");
     win.document.write(`<!DOCTYPE html><html><head><title>PM Report</title>
       <style>body{font-family:Arial,sans-serif;padding:24px}h2{font-size:14px;margin:16px 0 6px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px;text-transform:uppercase}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}@media print{button{display:none}}</style>
-      <style>${MAINTFORGE_PRINT_POLISH}</style></head><body>
+      </head><body>
       ${reportHeaderHTML(state, "Preventive Maintenance Report")}
       <p style="color:#666;font-size:12px">Look-ahead: ${lookAheadDays} days</p>
       ${overdue.length?`<h2 style="color:#dc2626">OVERDUE (${overdue.length})</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(overdue)}</table>`:""}
@@ -8175,7 +8173,7 @@ function ReportSpending({ state }) {
     if(!win) return;
     win.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
       <style>body{font-family:Arial,sans-serif;padding:24px}h1{font-size:18px;margin:0}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px;text-transform:uppercase}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}@media print{button{display:none}}</style>
-      <style>${MAINTFORGE_PRINT_POLISH}</style></head><body>${reportHeaderHTML(state, title)}
+      </head><body>${reportHeaderHTML(state, title)}
       ${(()=>{ const t=totalsFor(list); return `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:12px 0 14px"><div><b>Parts</b><br>${moneyFmt(t.parts)}</div><div><b>Outside Services</b><br>${moneyFmt(t.services)}</div><div><b>Labor</b><br>${moneyFmt(t.labor)} (${t.laborHours.toFixed(1)} hrs)</div><div><b>${spendingLabel}</b><br>${moneyFmt(t.total)}</div></div>`; })()}
       <table><tr><th>Equipment #</th><th>Nomenclature</th><th>WO #</th><th>Title</th><th>Mechanic</th><th>Date</th><th>Labor Hrs</th><th>Labor</th><th>Parts</th><th>Outside Services</th><th>${spendingLabel}</th></tr>
       ${list.map(w=>{ const b=woCostBreakdown(w); return `<tr><td><b>${w.equipment||"—"}</b></td><td>${state.equipment.find(e=>e.id===w.equipment)?.name||"—"}</td><td>${w.id}</td><td>${w.title}</td><td>${w.tech||"—"}</td><td>${w.completed||w.created||"—"}</td><td>${b.laborHours.toFixed(1)}</td><td>${moneyFmt(b.labor)}</td><td>${moneyFmt(b.parts)}</td><td>${moneyFmt(b.outsideServices)}</td><td><b>${moneyFmt(totalCost(w))}</b></td></tr>`; }).join("")}
@@ -8221,7 +8219,7 @@ function ReportCombined({ state }) {
 
     let body = `<!DOCTYPE html><html><head><title>Combined Report</title>
       <style>body{font-family:Arial,sans-serif;padding:24px}h2{font-size:14px;margin:20px 0 6px;color:#1a1a2e;border-bottom:1px solid #ddd;padding-bottom:4px}table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}@media print{button{display:none}}</style>
-      <style>${MAINTFORGE_PRINT_POLISH}</style></head><body>${reportHeaderHTML(state, 'Combined Maintenance Report')}`;
+      </head><body>${reportHeaderHTML(state, 'Combined Maintenance Report')}`;
 
     if(selected.deadline) {
       const bad = state.equipment.filter(e=>e.status==="Out of Service / Deadline"||e.status==="Operational with Deficiencies");
@@ -8782,7 +8780,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
     if(!win) { alert("Pop-up blocked. Allow pop-ups to print the QR code."); return; }
     win.document.write(`<html><head><title>Work Order Request QR</title><style>
       body{font-family:Arial,sans-serif;text-align:center;padding:28px;color:#111;background:#fff}.sheet{max-width:520px;margin:0 auto;border:2px solid #111;border-radius:16px;padding:26px}.brand{font-size:24px;font-weight:800;margin:0 0 4px}.facility{font-size:18px;font-weight:700;margin:0 0 18px}.instructions{font-size:16px;line-height:1.35;margin:0 0 18px}.qr{width:300px;height:300px;max-width:88vw;background:#fff}.footer{font-size:12px;margin-top:18px;color:#555}.note{font-size:12px;color:#555;margin-top:12px}button{margin-top:22px;padding:10px 18px;border:none;border-radius:8px;background:#111827;color:#fff;font-weight:700;cursor:pointer}@media print{button{display:none}body{padding:0}.sheet{border:2px solid #111;margin-top:20px}}
-    </style><style>${MAINTFORGE_PRINT_POLISH}</style></head><body><div class="sheet"><div class="brand">${htmlEscape(settings.companyName||"MaintForge")}</div><div class="facility">${htmlEscape(fac)}</div><p class="instructions">Scan this QR code to submit a maintenance work order request.</p><img class="qr" src="${qrUrlForText(url)}"/><div class="note">This QR code is permanent for this company location. Do not replace it unless intentionally regenerated.</div><div class="footer">MaintForge Work Order Requests</div></div><button onclick="window.print()">Print QR Code</button></body></html>`);
+    </style></head><body><div class="sheet"><div class="brand">${htmlEscape(settings.companyName||"MaintForge")}</div><div class="facility">${htmlEscape(fac)}</div><p class="instructions">Scan this QR code to submit a maintenance work order request.</p><img class="qr" src="${qrUrlForText(url)}"/><div class="note">This QR code is permanent for this company location. Do not replace it unless intentionally regenerated.</div><div class="footer">MaintForge Work Order Requests</div></div><button onclick="window.print()">Print QR Code</button></body></html>`);
     win.document.close();
   };
 
@@ -8991,7 +8989,7 @@ function fuelReportHTML(state={}, period="month") {
   const containers = state.fuelContainers || [];
   const total = containers.reduce((s,c)=>s+(+(latestFuelReading(state,c.id)?.gallons||0)),0);
   const periodLabel = period==="month" ? "This Month" : period==="quarter" ? "This Quarter" : period==="year" ? "This Year" : "This FY";
-  return `<!DOCTYPE html><html><head><title>Fuel Report</title><style>body{font-family:Arial,sans-serif;padding:22px;color:#111}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f3f4f6}.right{text-align:right}@media print{button{display:none}}</style><style>${MAINTFORGE_PRINT_POLISH}</style></head><body>${reportHeaderHTML(state,"Fuel Report")}<p>Total fuel on hand: <b>${Math.round(total).toLocaleString()} gallons</b></p><p>Usage period: <b>${periodLabel}</b></p><table><thead><tr><th>Container</th><th>Fuel</th><th>Capacity</th><th>Latest Inches</th><th>Gallons</th><th>% Full</th><th>Consumed</th><th>Refilled</th><th>Date</th></tr></thead><tbody>${containers.map(c=>{const r=latestFuelReading(state,c.id); const used=fuelConsumedForPeriod(state,c.id,period); const refill=fuelRefilledForPeriod(state,c.id,period); return `<tr><td>${htmlEscape(c.name||"")}</td><td>${htmlEscape(c.fuelType||"")}</td><td>${(+c.capacity||0).toLocaleString()}</td><td>${r?htmlEscape(r.inchesText ?? r.inches):""}</td><td>${r?Math.round(r.gallons).toLocaleString():""}</td><td>${r?fuelPercent(c,r.gallons).toFixed(1)+"%":""}</td><td>${Math.round(used).toLocaleString()}</td><td>${Math.round(refill).toLocaleString()}</td><td>${r?htmlEscape(r.date||""):""}</td></tr>`}).join("")}</tbody></table><br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button></body></html>`;
+  return `<!DOCTYPE html><html><head><title>Fuel Report</title><style>body{font-family:Arial,sans-serif;padding:22px;color:#111}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f3f4f6}.right{text-align:right}@media print{button{display:none}}</style></head><body>${reportHeaderHTML(state,"Fuel Report")}<p>Total fuel on hand: <b>${Math.round(total).toLocaleString()} gallons</b></p><p>Usage period: <b>${periodLabel}</b></p><table><thead><tr><th>Container</th><th>Fuel</th><th>Capacity</th><th>Latest Inches</th><th>Gallons</th><th>% Full</th><th>Consumed</th><th>Refilled</th><th>Date</th></tr></thead><tbody>${containers.map(c=>{const r=latestFuelReading(state,c.id); const used=fuelConsumedForPeriod(state,c.id,period); const refill=fuelRefilledForPeriod(state,c.id,period); return `<tr><td>${htmlEscape(c.name||"")}</td><td>${htmlEscape(c.fuelType||"")}</td><td>${(+c.capacity||0).toLocaleString()}</td><td>${r?htmlEscape(r.inchesText ?? r.inches):""}</td><td>${r?Math.round(r.gallons).toLocaleString():""}</td><td>${r?fuelPercent(c,r.gallons).toFixed(1)+"%":""}</td><td>${Math.round(used).toLocaleString()}</td><td>${Math.round(refill).toLocaleString()}</td><td>${r?htmlEscape(r.date||""):""}</td></tr>`}).join("")}</tbody></table><br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button></body></html>`;
 }
 
 function printFuelReportWindow(state={}, period="month") {
