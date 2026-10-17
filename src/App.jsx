@@ -3994,8 +3994,10 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
   const [historyWO, setHistoryWO] = useState(null);
   const [historyEdit, setHistoryEdit] = useState(false);
   const [historicalImportOpen, setHistoricalImportOpen] = useState(false);
-  const blankHistoricalImport = () => ({ title:"", woType:"Service", completed:today(), tech:"", laborHours:"", laborCost:"", notes:"", partsUsed:[], originalDocument:null });
+  const blankHistoricalImport = () => ({ title:"", woType:"Repair", created:"", completed:"", fault:"", tech:"", laborHours:"", laborCost:"", notes:"", partsUsed:[], originalDocument:null, aiReview:null });
   const [historicalImport, setHistoricalImport] = useState(blankHistoricalImport());
+  const [historicalAiBusy, setHistoricalAiBusy] = useState(false);
+  const [historicalAiError, setHistoricalAiError] = useState("");
   const historicalCameraRef = useRef(null);
   const historicalFileRef = useRef(null);
   const [expandedAt, setExpandedAt]     = useState({});
@@ -4421,17 +4423,39 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
     setHistoricalImport(f=>{ const existing=f.originalDocuments || (f.originalDocument?[f.originalDocument]:[]); const all=[...existing,...docs]; return {...f,originalDocuments:all,originalDocument:all[0]||null}; });
   };
   const removeHistoricalDocument = (id) => setHistoricalImport(f=>{ const docs=(f.originalDocuments || (f.originalDocument?[f.originalDocument]:[])).filter(d=>d.id!==id); return {...f,originalDocuments:docs,originalDocument:docs[0]||null}; });
+  const analyzeHistoricalWorkOrder = async () => {
+    const docs=(historicalImport.originalDocuments || (historicalImport.originalDocument?[historicalImport.originalDocument]:[])).filter(Boolean);
+    if(!docs.length) return alert("Scan or upload at least one page first.");
+    setHistoricalAiBusy(true); setHistoricalAiError("");
+    try {
+      const res=await fetch("/api/analyze-historical-wo",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({documents:docs.map(d=>({name:d.name,type:d.type,dataUrl:d.dataUrl}))})});
+      const body=await res.json().catch(()=>({}));
+      if(!res.ok) throw new Error(body?.error || `AI scan failed (${res.status})`);
+      const a=body?.data || body || {};
+      const parts=Array.isArray(a.partsUsed)?a.partsUsed.map(x=>({name:x?.name||"",partNumber:x?.partNumber||"",qty:x?.qty??1,unitCost:x?.unitCost??0})):[];
+      setHistoricalImport(f=>({...f,
+        title:a.title||f.title||"", woType:["Repair","Service","Inspection"].includes(a.woType)?a.woType:f.woType,
+        created:a.created||f.created||"", completed:a.completed||f.completed||"", fault:a.fault||f.fault||"", tech:a.tech||f.tech||"",
+        laborHours:a.laborHours??f.laborHours, laborCost:a.laborCost??f.laborCost, notes:a.workPerformed||a.notes||f.notes||"",
+        partsUsed:parts.length?parts:f.partsUsed, aiReview:{confidence:a.confidence||{},missing:Array.isArray(a.missing)?a.missing:[],scannedAt:new Date().toISOString()}
+      }));
+    } catch(err) { setHistoricalAiError(err?.message || "AI could not analyze this work order."); }
+    finally { setHistoricalAiBusy(false); }
+  };
   const saveHistoricalWorkOrder = (equipmentId) => {
     const f=historicalImport;
     if(!String(f.title||"").trim()) return alert("Enter a title or service description for the historical work order.");
     if(!(f.originalDocuments?.length || f.originalDocument?.dataUrl)) return alert("Scan or upload the original work order so the source document stays with the record.");
-    const completed = f.completed || today();
+    if(!String(f.created||"").trim()) return alert("Enter or confirm the Date Created. AI may leave this blank when it cannot read it reliably.");
+    if(!String(f.completed||"").trim()) return alert("Enter or confirm the Date Completed. AI may leave this blank when it cannot read it reliably.");
+    const created = f.created;
+    const completed = f.completed;
     const id = genNextWOId(state.workOrders || [], equipmentId, "HIST");
     const partsUsed=(f.partsUsed||[]).filter(p=>String(p.name||p.partNumber||"").trim()).map(p=>({...p,qty:+(p.qty||1),unitCost:+(p.unitCost||0)}));
     dispatch({type:"ADD_WO",payload:{
       id, equipment:equipmentId, woType:f.woType||"Service", title:String(f.title||"").trim(), status:"Completed",
-      created:completed, completed, completedDate:completed, closedDate:completed, tech:f.tech||"", laborHours:+(f.laborHours||0), laborCost:+(f.laborCost||0),
-      partsUsed, outsideServices:[], mechanicNotes:f.notes||"", description:f.notes||f.title||"", workPerformed:f.notes||"",
+      created, completed, completedDate:completed, closedDate:completed, tech:f.tech||"", laborHours:+(f.laborHours||0), laborCost:+(f.laborCost||0),
+      partsUsed, outsideServices:[], faultDescription:f.fault||"", mechanicNotes:f.notes||"", description:f.fault||f.title||"", workPerformed:f.notes||"",
       historicalImport:true, importedAt:new Date().toISOString(), originalDocument:(f.originalDocuments?.[0]||f.originalDocument), originalDocuments:(f.originalDocuments?.length?f.originalDocuments:(f.originalDocument?[f.originalDocument]:[])), source:"Historical Work Order Import",
       usageNA:true, equipmentStatus:"Fully Operational", priority:"Historical"
     }});
@@ -4546,11 +4570,13 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
             <div className="mf-mobile-form" style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:12}}>
               <Field label="Title / Service"><input style={inp} value={historicalImport.title} onChange={e=>setHistoricalImport(f=>({...f,title:e.target.value}))} placeholder="Example: Hydraulic hose replacement" /></Field>
               <Field label="Work Order Type"><select style={inp} value={historicalImport.woType} onChange={e=>setHistoricalImport(f=>({...f,woType:e.target.value}))}><option>Repair</option><option>Service</option><option>Inspection</option></select></Field>
-              <Field label="Completed Date"><input style={inp} type="date" value={historicalImport.completed} onChange={e=>setHistoricalImport(f=>({...f,completed:e.target.value}))}/></Field>
+              <Field label="Date Created / Opened"><input style={inp} type="date" value={historicalImport.created} onChange={e=>setHistoricalImport(f=>({...f,created:e.target.value}))}/></Field>
+              <Field label="Date Completed / Closed"><input style={inp} type="date" value={historicalImport.completed} onChange={e=>setHistoricalImport(f=>({...f,completed:e.target.value}))}/></Field>
+              <div style={{gridColumn:"1 / -1"}}><Field label="Fault / Complaint"><textarea style={{...inp,minHeight:78}} value={historicalImport.fault} onChange={e=>setHistoricalImport(f=>({...f,fault:e.target.value}))} placeholder="What was reported wrong?" /></Field></div>
               <Field label="Mechanic / Vendor"><input style={inp} value={historicalImport.tech} onChange={e=>setHistoricalImport(f=>({...f,tech:e.target.value}))}/></Field>
               <Field label="Labor Hours"><input style={inp} type="number" step="0.01" value={historicalImport.laborHours} onChange={e=>setHistoricalImport(f=>({...f,laborHours:e.target.value}))}/></Field>
               <Field label="Labor Cost"><input style={inp} type="number" step="0.01" value={historicalImport.laborCost} onChange={e=>setHistoricalImport(f=>({...f,laborCost:e.target.value}))}/></Field>
-              <div style={{gridColumn:"1 / -1"}}><Field label="Notes / Work Performed"><textarea style={{...inp,minHeight:100}} value={historicalImport.notes} onChange={e=>setHistoricalImport(f=>({...f,notes:e.target.value}))}/></Field></div>
+              <div style={{gridColumn:"1 / -1"}}><Field label="Work Performed / Corrective Action"><textarea style={{...inp,minHeight:100}} value={historicalImport.notes} onChange={e=>setHistoricalImport(f=>({...f,notes:e.target.value}))}/></Field></div>
               <div style={{gridColumn:"1 / -1",border:`1px solid ${T.border}`,borderRadius:12,padding:12}}>
                 <div style={{fontWeight:800,marginBottom:8}}>Parts</div>
                 {(historicalImport.partsUsed||[]).map((p,i)=><div key={i} className="mf-mobile-form" style={{display:"grid",gridTemplateColumns:"2fr 1.2fr .7fr 1fr auto",gap:7,marginBottom:7}}><input style={inp} placeholder="Part name" value={p.name||""} onChange={e=>updateHistoricalPart(i,{name:e.target.value})}/><input style={inp} placeholder="Part #" value={p.partNumber||""} onChange={e=>updateHistoricalPart(i,{partNumber:e.target.value})}/><input style={inp} type="number" step="0.01" placeholder="Qty" value={p.qty||""} onChange={e=>updateHistoricalPart(i,{qty:e.target.value})}/><input style={inp} type="number" step="0.01" placeholder="$ each" value={p.unitCost||""} onChange={e=>updateHistoricalPart(i,{unitCost:e.target.value})}/><Btn small variant="danger" onClick={()=>removeHistoricalPart(i)}>×</Btn></div>)}
@@ -4571,7 +4597,12 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
                   <Btn small variant="secondary" onClick={()=>historicalCameraRef.current?.click()}>+ Scan Another Page</Btn>
                 </div>}
               </div>
-              <div style={{gridColumn:"1 / -1",padding:10,borderRadius:10,background:T.amberLt,color:T.text,fontSize:12}}><b>Historical record review:</b> The photographed/scanned pages are permanently saved with the work order. Review the digital fields above before saving so dates, WO type, labor, parts, and notes match the paper original. Automatic scan-to-prefill requires the OCR/vision service layer; this screen is already structured for that workflow.</div>
+              <div style={{gridColumn:"1 / -1",border:`1px solid ${T.borderHi}`,padding:12,background:T.accentLt}}>
+                <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"center",flexWrap:"wrap"}}><div><div style={{fontWeight:900}}>AI Work Order Reader</div><div style={{fontSize:12,color:T.subtext,marginTop:3}}>Reads the scanned pages and prefills only information it can find. Missing information stays for you to enter.</div></div><Btn onClick={analyzeHistoricalWorkOrder} disabled={historicalAiBusy}>{historicalAiBusy?"Analyzing…":"✨ Analyze Scanned Work Order"}</Btn></div>
+                {historicalAiError && <div style={{marginTop:10,padding:9,border:"1px solid #991b1b",background:T.redLt,color:T.red,fontSize:12,fontWeight:700}}>{historicalAiError}</div>}
+                {historicalImport.aiReview && <div style={{marginTop:10,fontSize:12}}><b>AI review complete.</b> {historicalImport.aiReview.missing?.length?<>Still needs your input: <b>{historicalImport.aiReview.missing.join(", ")}</b>.</>:<>No basic fields were flagged as missing. Please verify the values before saving.</>}</div>}
+              </div>
+              <div style={{gridColumn:"1 / -1",padding:10,border:`1px solid ${T.borderHi}`,background:T.amberLt,color:T.text,fontSize:12}}><b>Review before saving:</b> AI can misread handwriting, dates, quantities, and prices. Confirm the digital fields against the photographed original. MaintForge will not invent a missing created or completed date; you must enter/confirm those before the historical work order can be saved.</div>
               <div style={{gridColumn:"1 / -1",display:"flex",justifyContent:"flex-end",gap:8,flexWrap:"wrap"}}><Btn variant="secondary" onClick={()=>setHistoricalImportOpen(false)}>Cancel</Btn><Btn onClick={()=>saveHistoricalWorkOrder(eq.id)}>Save Historical Work Order</Btn></div>
             </div>
           </Modal>
@@ -4964,7 +4995,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
             win.document.write(reportButtonsHtml(exportRows)+`</body></html>`);
             win.document.close();
           }}>🖨 Equipment Status Report</Btn>
-          <Btn variant={attachmentsOnly?"primary":"secondary"} onClick={()=>{ setAttachmentsOnly(v=>!v); setAttachDetail(null); }}>🔗 {attachmentsOnly?"All Equipment":"Attachments"}</Btn>
+          <Btn variant={attachmentsOnly?"primary":"secondary"} onClick={()=>{ setAttachmentsOnly(v=>!v); setAttachDetail(null); }}>🚜 {attachmentsOnly?"All Equipment":"Attachments / Implements"}</Btn>
           <Btn onClick={openAdd}>+ Add New Equipment</Btn>
           <button className="mf-mobile-filter-button" onClick={()=>setMobileFiltersOpen(v=>!v)} style={{ display:"none" }}>☰ Filters{(typeF!=="All"||locationF!=="All") ? " •" : ""}</button>
         </div>
