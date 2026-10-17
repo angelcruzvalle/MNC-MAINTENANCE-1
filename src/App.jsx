@@ -5939,7 +5939,7 @@ function Inspections({ state, dispatch }) {
       </Card>}
 
       <Card title="Inspection Schedule / Triggers" right={<span style={{ fontFamily:T.mono, color:T.muted }}>{filteredSchedules.length} inspections / {inspectionEquipmentRows.length} equipment</span>}>
-        <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"end", marginBottom:12 }}>
+        <div className="mf-inspection-filters" style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"end", marginBottom:12 }}>
           <Field label="Every"><select style={{...inp, minWidth:190}} value={inspectionEveryFilter} onChange={e=>setInspectionEveryFilter(e.target.value)}>{["All","Daily","Weekly","Monthly","Quarterly","Semi-Annual","Annual"].map(x=><option key={x} value={x}>{x}</option>)}</select></Field>
           <Field label="Next Due"><select style={{...inp, minWidth:210}} value={inspectionDueSort} onChange={e=>setInspectionDueSort(e.target.value)}><option value="asc">Next Due Ascending</option><option value="desc">Next Due Descending</option></select></Field>
         </div>
@@ -5950,15 +5950,15 @@ function Inspections({ state, dispatch }) {
             const isExpanded = !!expandedInspectionEquipment[row.equipmentId];
             return <div key={row.equipmentId} style={{ border:`1px solid ${T.border}`, borderRadius:14, overflow:"hidden", background:T.card }}>
               <button type="button" onClick={()=>toggleInspectionEquipment(row.equipmentId)} style={{ width:"100%", border:"none", background:isExpanded?T.grayLt:"transparent", cursor:"pointer", padding:0, textAlign:"left" }}>
-                <div style={{ display:"grid", gridTemplateColumns:"minmax(120px,.7fr) minmax(180px,1fr) 140px 140px 90px", gap:10, alignItems:"center", padding:"12px 14px", color:T.text }}>
-                  <div style={{ fontFamily:T.mono, fontWeight:900 }}>{row.eq?.id || row.equipmentId}</div>
-                  <div>
-                    <div style={{ fontWeight:800 }}>{equipmentTitle}</div>
-                    <div style={{ color:T.muted, fontSize:12 }}>{row.items.length} assigned inspection{row.items.length===1?"":"s"}{row.overdueCount ? ` • ${row.overdueCount} overdue` : ""}</div>
+                <div className="mf-inspection-equipment-row" style={{ display:"grid", gridTemplateColumns:"minmax(120px,.7fr) minmax(180px,1fr) 140px 140px 90px", gap:10, alignItems:"center", padding:"12px 14px", color:T.text }}>
+                  <div className="mf-inspection-equipment-id" style={{ fontFamily:T.mono, fontWeight:900 }}>{row.eq?.id || row.equipmentId}</div>
+                  <div className="mf-inspection-equipment-main">
+                    <div className="mf-inspection-equipment-name" style={{ fontWeight:800 }}>{equipmentTitle}</div>
+                    <div className="mf-inspection-equipment-count" style={{ color:T.muted, fontSize:12 }}>{row.items.length} assigned inspection{row.items.length===1?"":"s"}{row.overdueCount ? ` • ${row.overdueCount} overdue` : ""}</div>
                   </div>
-                  <div style={{ color:T.subtext, fontSize:12 }}><b style={{ color:T.text }}>Next Due:</b><br/><span style={{ fontFamily:T.mono }}>{row.nextDue || "—"}</span></div>
-                  <div style={{ color:T.subtext, fontSize:12 }}><b style={{ color:T.text }}>Soonest Task:</b><br/>{taskById(row.items[0]?.taskId)?.name || "—"}</div>
-                  <div style={{ justifySelf:"end", fontWeight:900, color:T.blue }}>{isExpanded ? "▲" : "▼"}</div>
+                  <div className="mf-inspection-equipment-due" style={{ color:T.subtext, fontSize:12 }}><b style={{ color:T.text }}>Next Due:</b><br/><span style={{ fontFamily:T.mono }}>{row.nextDue || "—"}</span></div>
+                  <div className="mf-inspection-equipment-task" style={{ color:T.subtext, fontSize:12 }}><b style={{ color:T.text }}>Soonest Task:</b><br/>{taskById(row.items[0]?.taskId)?.name || "—"}</div>
+                  <div className="mf-inspection-equipment-toggle" style={{ justifySelf:"end", fontWeight:900, color:T.blue }}>{isExpanded ? "▲" : "▼"}</div>
                 </div>
               </button>
               {isExpanded && <div style={{ padding:12, borderTop:`1px solid ${T.border}`, background:T.card }}>
@@ -11120,6 +11120,29 @@ export default function App() {
           .wo-request-mobile-meta { grid-template-columns:1fr !important; font-size:13px !important; }
           .mf-mobile-form { grid-template-columns:1fr !important; }
           .mf-mobile-form > * { grid-column:1 !important; min-width:0 !important; width:100% !important; }
+          /* Inspection schedule cards: true mobile reflow instead of a squeezed desktop row. */
+          .mf-inspection-equipment-row {
+            grid-template-columns:minmax(0,1fr) auto !important;
+            grid-template-areas:
+              "id toggle"
+              "main toggle"
+              "due task" !important;
+            gap:7px 12px !important;
+            padding:14px !important;
+            width:100% !important;
+            min-width:0 !important;
+            box-sizing:border-box !important;
+          }
+          .mf-inspection-equipment-id { grid-area:id; min-width:0 !important; white-space:normal !important; overflow-wrap:anywhere !important; font-size:13px !important; }
+          .mf-inspection-equipment-main { grid-area:main; min-width:0 !important; }
+          .mf-inspection-equipment-name { white-space:normal !important; overflow-wrap:anywhere !important; word-break:normal !important; line-height:1.25 !important; font-size:16px !important; }
+          .mf-inspection-equipment-count { white-space:normal !important; overflow-wrap:anywhere !important; line-height:1.3 !important; margin-top:3px !important; }
+          .mf-inspection-equipment-due { grid-area:due; min-width:0 !important; white-space:normal !important; line-height:1.35 !important; }
+          .mf-inspection-equipment-task { grid-area:task; min-width:0 !important; white-space:normal !important; overflow-wrap:anywhere !important; line-height:1.35 !important; }
+          .mf-inspection-equipment-toggle { grid-area:toggle; align-self:center !important; justify-self:end !important; min-width:28px !important; text-align:center !important; }
+          .mf-inspection-filters { display:grid !important; grid-template-columns:1fr !important; width:100% !important; }
+          .mf-inspection-filters > * { min-width:0 !important; width:100% !important; }
+          .mf-inspection-filters select { min-width:0 !important; width:100% !important; }
           .mf-main > div { width:100% !important; max-width:100% !important; }
           input, select, textarea { max-width:100% !important; width:100%; box-sizing:border-box; }
           button { max-width:100%; }
