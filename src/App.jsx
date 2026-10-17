@@ -2921,12 +2921,12 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
       if (type.includes("service") || type.includes("prevent")) return "service";
       return "repair";
     })();
-    const defaultTypeColors = { repair:"blue", inspection:"blue", service:"blue" };
-    const colorKey = "blue";
+    const defaultTypeColors = { repair:"blue", inspection:"mint", service:"yellow" };
+    const colorKey = defaultTypeColors[printTypeKey];
     const colorMap = {
-      blue:   { accent:"#dbeafe", border:"#2563eb", dark:"#1e3a8a", soft:"#eff6ff" },
-      yellow: { accent:"#fef3c7", border:"#92400e", dark:"#78350f", soft:"#fffbeb" },
-      mint:   { accent:"#dcfce7", border:"#166534", dark:"#14532d", soft:"#f0fdf4" },
+      blue:   { accent:"#dbeafe", border:"#111111", dark:"#111111", soft:"#eff6ff" },
+      yellow: { accent:"#fef3c7", border:"#111111", dark:"#111111", soft:"#fffbeb" },
+      mint:   { accent:"#dcfce7", border:"#111111", dark:"#111111", soft:"#f0fdf4" },
       slate:  { accent:"#e2e8f0", border:"#334155", dark:"#1e293b", soft:"#f8fafc" }
     };
     const C = colorMap[colorKey] || colorMap[defaultTypeColors[printTypeKey]] || colorMap.blue;
@@ -2965,25 +2965,25 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
       .woNumber{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px}
       .woNumber .label{font-size:10px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#111827}
       .woNumber .number{font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:900;color:#111827;margin-top:4px;word-break:break-word}
-      .status{display:flex;align-items:center;justify-content:center;background:${C.border};color:white;font-size:11px;font-weight:900;letter-spacing:1.3px;text-transform:uppercase;border-top:1.5px solid ${C.border}}
-      .completed{background:${C.border}!important;color:white!important}
+      .status{display:flex;align-items:center;justify-content:center;background:${C.accent};color:#111;font-size:11px;font-weight:900;letter-spacing:1.3px;text-transform:uppercase;border-top:1.5px solid #111}
+      .completed{background:${C.accent}!important;color:#111!important}
       .dateGrid{display:grid;grid-template-columns:1fr 1fr 1fr;border-bottom:1.5px solid ${C.border}}
       .infoGrid{display:grid;grid-template-columns:1fr 1fr 1fr}
-      .cell{min-height:.28in;padding:4px 6px;border-right:1px solid #9ca3af;border-bottom:1px solid #cbd5e1;display:grid;grid-template-columns:.95fr 1.35fr;align-items:center;gap:8px;overflow:hidden}
+      .cell{min-height:.28in;padding:4px 6px;border-right:1px solid #111;border-bottom:1px solid #111;display:grid;grid-template-columns:.95fr 1.35fr;align-items:center;gap:8px;overflow:hidden}
       .cell:nth-child(3n){border-right:none}
       .dateGrid .cell{border-bottom:none;grid-template-columns:1fr 1fr;min-height:.26in}
       .fieldLabel{font-size:8.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;color:#111827;line-height:1.1}
       .fieldValue{font-size:10.5px;font-weight:800;color:#111827;line-height:1.15;white-space:normal;overflow-wrap:anywhere}
       .mono{font-family:Arial,Helvetica,sans-serif}
       .section{border-top:1.5px solid ${C.border};break-inside:auto;page-break-inside:auto}
-      .section-title{background:${C.accent};color:#111827;border-bottom:1px solid #94a3b8;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
+      .section-title{background:${C.accent};color:#111827;border-bottom:1px solid #111;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
       .textBlock{padding:5px 7px;min-height:.28in;white-space:pre-wrap;overflow-wrap:anywhere;color:#111827;font-size:12px}
       .textBlock.tall{min-height:.45in}
-      .summaryTitle{background:${C.accent};color:#111827;border-bottom:1px solid #94a3b8;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
+      .summaryTitle{background:${C.accent};color:#111827;border-bottom:1px solid #111;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
       .miniTitle{padding:4px 7px 3px;font-weight:900;text-transform:uppercase;font-size:11px;color:#111827;background:#fff}
       .data-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:10.5px}
-      .data-table th{background:${C.accent};color:#111827;text-transform:uppercase;letter-spacing:.35px;font-size:8.5px;font-weight:900;padding:4px 5px;border-top:1px solid #9ca3af;border-bottom:1px solid #9ca3af;border-right:1px solid #cbd5e1;text-align:left}
-      .data-table td{padding:4px 5px;border-bottom:1px solid #cbd5e1;border-right:1px solid #e5e7eb;vertical-align:top;overflow-wrap:anywhere;color:#111827}
+      .data-table th{background:${C.accent};color:#111827;text-transform:uppercase;letter-spacing:.35px;font-size:8.5px;font-weight:900;padding:4px 5px;border-top:1px solid #111;border-bottom:1px solid #111;border-right:1px solid #111;text-align:left}
+      .data-table td{padding:4px 5px;border-bottom:1px solid #111;border-right:1px solid #111;vertical-align:top;overflow-wrap:anywhere;color:#111827}
       .data-table th:last-child,.data-table td:last-child{border-right:none}
       .right{text-align:right}.center{text-align:center}
       .subRow td{background:${C.soft};font-weight:900;border-top:1.5px solid ${C.border}}
@@ -3856,7 +3856,7 @@ function AttachmentsCard({ eq, dispatch }) {
 
   const attachments = eq.attachments || [];
 
-  const blankForm = () => ({ name:"", make:"", model:"", serial:"", eilNumber:"", acquisitionDate:"", acquisitionCost:"", notes:"" });
+  const blankForm = () => ({ id:"", name:"", make:"", model:"", serial:"", eilNumber:"", acquisitionDate:"", acquisitionCost:"", notes:"" });
 
   const openAdd = () => { setForm(blankForm()); setEditId(null); setShowForm(true); };
   const openEdit = (at) => { setForm({...at}); setEditId(at.id); setShowForm(true); };
@@ -3864,10 +3864,17 @@ function AttachmentsCard({ eq, dispatch }) {
 
   const save = () => {
     if(!form.name) return alert("Attachment nomenclature is required.");
+    const requestedId = String(form.id || "").trim();
+    const nextId = editId ? (requestedId || editId) : (requestedId || `AT-${String(Date.now()).slice(-5)}`);
+    if(attachments.some(a => String(a.id)===String(nextId) && String(a.id)!==String(editId||""))) return alert("That Attachment # is already in use on this equipment.");
+    const updatedRecord = { ...form, id:nextId };
     const updated = editId
-      ? attachments.map(a => a.id===editId ? {...form, id:editId} : a)
-      : [...attachments, { ...form, id:`AT-${String(Date.now()).slice(-5)}` }];
+      ? attachments.map(a => String(a.id)===String(editId) ? updatedRecord : a)
+      : [...attachments, updatedRecord];
     dispatch({ type:"UPDATE_EQ", payload:{ ...eq, attachments:updated } });
+    if(editId && String(nextId)!==String(editId)) {
+      (state.workOrders||[]).filter(w=>String(w.equipment)===String(editId)).forEach(w=>dispatch({type:"UPDATE_WO",payload:{...w,equipment:nextId}}));
+    }
     cancel();
   };
 
@@ -3898,7 +3905,11 @@ function AttachmentsCard({ eq, dispatch }) {
             {editId ? "Edit Attachment" : "New Attachment"}
           </h5>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
-            <div style={{ marginBottom:12, gridColumn:"span 2" }}>
+            <div style={{ marginBottom:12 }}>
+              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Attachment #</label>
+              <input style={inp} value={form.id||""} onChange={F("id")} placeholder={editId ? "Attachment number" : "Leave blank to auto-generate"} />
+            </div>
+            <div style={{ marginBottom:12 }}>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Attachment Name *</label>
               <input style={inp} value={form.name||""} onChange={F("name")} placeholder="e.g. Sweeper Broom, Snow Plow, Pallet Forks" />
             </div>
@@ -4109,18 +4120,18 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
       .woNumber .number{font-size:18px;font-weight:900;color:#111827;margin-top:4px;word-break:break-word}
       .status{display:flex;align-items:center;justify-content:center;background:${C.border};color:white;font-size:11px;font-weight:900;letter-spacing:1.3px;text-transform:uppercase;border-top:1.5px solid #111827}
       .dateGrid,.infoGrid{display:grid;grid-template-columns:1fr 1fr 1fr;border-bottom:1.5px solid #111827}
-      .cell{min-height:.28in;padding:4px 6px;border-right:1px solid #9ca3af;border-bottom:1px solid #cbd5e1;display:grid;grid-template-columns:.95fr 1.35fr;align-items:center;gap:8px;overflow:hidden}
+      .cell{min-height:.28in;padding:4px 6px;border-right:1px solid #111;border-bottom:1px solid #111;display:grid;grid-template-columns:.95fr 1.35fr;align-items:center;gap:8px;overflow:hidden}
       .cell:nth-child(3n){border-right:none}
       .fieldLabel{font-size:8.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;color:#111827;line-height:1.1}
       .fieldValue{font-size:10.5px;font-weight:800;color:#111827;line-height:1.15;white-space:normal;overflow-wrap:anywhere}
       .section{border-top:1.5px solid #111827;break-inside:auto;page-break-inside:auto}
-      .section-title,.summaryTitle{background:${C.accent};color:#111827;border-bottom:1px solid #94a3b8;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
+      .section-title,.summaryTitle{background:${C.accent};color:#111827;border-bottom:1px solid #111;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
       .textBlock{padding:5px 7px;min-height:.28in;white-space:pre-wrap;overflow-wrap:anywhere;color:#111827;font-size:12px}
       .textBlock.tall{min-height:.45in}
       .miniTitle{padding:4px 7px 3px;font-weight:900;text-transform:uppercase;font-size:11px;color:#111827;background:#fff}
       .data-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:10.5px}
-      .data-table th{background:#e5e7eb;color:#111827;text-transform:uppercase;letter-spacing:.35px;font-size:8.5px;font-weight:900;padding:4px 5px;border-top:1px solid #9ca3af;border-bottom:1px solid #9ca3af;border-right:1px solid #cbd5e1;text-align:left}
-      .data-table td{padding:4px 5px;border-bottom:1px solid #cbd5e1;border-right:1px solid #e5e7eb;vertical-align:top;overflow-wrap:anywhere;color:#111827}
+      .data-table th{background:#e5e7eb;color:#111827;text-transform:uppercase;letter-spacing:.35px;font-size:8.5px;font-weight:900;padding:4px 5px;border-top:1px solid #111;border-bottom:1px solid #111;border-right:1px solid #111;text-align:left}
+      .data-table td{padding:4px 5px;border-bottom:1px solid #111;border-right:1px solid #111;vertical-align:top;overflow-wrap:anywhere;color:#111827}
       .data-table th:last-child,.data-table td:last-child{border-right:none}
       .right{text-align:right}.center{text-align:center}
       .subRow td{background:#f8fafc;font-weight:900;border-top:1.5px solid #111827}
@@ -5170,9 +5181,9 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
             <>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"12px 16px" }}>
                 {[
-                  ["Attachment Name","name"],["EIL #","eilNumber"],["Make","make"],["Model","model"],["Serial Number","serial"]
+                  ["Attachment #","id"],["Attachment Name","name"],["EIL #","eilNumber"],["Make","make"],["Model","model"],["Serial Number","serial"]
                 ].map(([label,key])=>(
-                  <div key={key} style={key==="name"?{gridColumn:"span 2"}:undefined}>
+                  <div key={key}>
                     <label style={{ display:"block", fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>{label}</label>
                     <input style={inp} value={attachEditForm[key]||""} onChange={e=>setAttachEditForm(f=>({...f,[key]:e.target.value}))} />
                   </div>
@@ -5194,9 +5205,16 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
                 <Btn variant="secondary" onClick={()=>{setAttachEdit(false);setAttachEditForm({});}}>Cancel</Btn>
                 <Btn onClick={()=>{
                   if(!String(attachEditForm.name||"").trim()) return alert("Attachment name is required.");
-                  const updatedAt={...attachDetail.at,...attachEditForm,id:attachDetail.at.id};
-                  const updatedEq={...attachDetail.eq,attachments:(attachDetail.eq.attachments||[]).map(a=>String(a.id)===String(attachDetail.at.id)?updatedAt:a)};
+                  const oldAttachmentId=String(attachDetail.at.id||"");
+                  const nextAttachmentId=String(attachEditForm.id||oldAttachmentId).trim() || oldAttachmentId;
+                  const duplicate=(attachDetail.eq.attachments||[]).some(a=>String(a.id)===nextAttachmentId && String(a.id)!==oldAttachmentId);
+                  if(duplicate) return alert("That Attachment # is already in use on this equipment.");
+                  const updatedAt={...attachDetail.at,...attachEditForm,id:nextAttachmentId};
+                  const updatedEq={...attachDetail.eq,attachments:(attachDetail.eq.attachments||[]).map(a=>String(a.id)===oldAttachmentId?updatedAt:a)};
                   dispatch({type:"UPDATE_EQ",payload:updatedEq});
+                  if(nextAttachmentId!==oldAttachmentId) {
+                    (state.workOrders||[]).filter(w=>String(w.equipment)===oldAttachmentId).forEach(w=>dispatch({type:"UPDATE_WO",payload:{...w,equipment:nextAttachmentId}}));
+                  }
                   setAttachDetail({eq:updatedEq,at:updatedAt});
                   setAttachEdit(false); setAttachEditForm({});
                 }}>Save Attachment Changes</Btn>
