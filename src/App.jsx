@@ -2200,6 +2200,7 @@ const NAV = [
   { id:"usage",      icon:"📊", label:"Usage Tracking" },
   { id:"fuel",       icon:"⛽", label:"Fuel Tracking" },
   { id:"spending",   icon:"💰", label:"Spending & Costs" },
+  { id:"performance",icon:"📈", label:"Performance" },
 ];
 
 const NAV_REPORTS = [
@@ -9306,6 +9307,80 @@ function ReportFuel({ state }) {
   </div>;
 }
 
+
+/* PERFORMANCE & ACTIVITY --------------------------------------------------- */
+function PerformanceActivity({ state }) {
+  const now = new Date();
+  const currentFY = now.getMonth() >= 9 ? now.getFullYear()+1 : now.getFullYear();
+  const [periodMode,setPeriodMode] = useState("fy");
+  const [fy,setFy] = useState(currentFY);
+  const [month,setMonth] = useState(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`);
+  const fiscalQuarter = Math.floor(((now.getMonth()+3)%12)/3)+1;
+  const [quarter,setQuarter] = useState(fiscalQuarter);
+  const [customStart,setCustomStart] = useState(`${now.getFullYear()}-01-01`);
+  const [customEnd,setCustomEnd] = useState(`${now.getFullYear()}-12-31`);
+  const [facility,setFacility] = useState("all");
+  const includeLabor = spendingIncludesLabor(state.settings);
+
+  const bounds = (()=>{
+    if(periodMode==="month") {
+      const [y,m]=month.split("-").map(Number); return [new Date(y,m-1,1),new Date(y,m,1)];
+    }
+    if(periodMode==="quarter") {
+      const startMonth=[9,0,3,6][Math.max(0,Math.min(3,quarter-1))];
+      const startYear=quarter===1?fy-1:fy;
+      return [new Date(startYear,startMonth,1),new Date(startYear,startMonth+3,1)];
+    }
+    if(periodMode==="custom") return [new Date(customStart+"T00:00:00"),new Date(new Date(customEnd+"T00:00:00").getTime()+86400000)];
+    return [new Date(fy-1,9,1),new Date(fy,9,1)];
+  })();
+  const [start,end]=bounds;
+  const inRange=(v)=>{ if(!v)return false; const d=new Date(String(v).length<=10?`${v}T12:00:00`:v); return !Number.isNaN(d.getTime())&&d>=start&&d<end; };
+  const eqById=Object.fromEntries((state.equipment||[]).map(e=>[e.id,e]));
+  const locationIdForWO=(w)=>w.locationId||w.facilityId||eqById[w.equipment]?.locationId||eqById[w.equipment]?.facilityId||"";
+  const matchesFacility=(w)=>facility==="all"||locationIdForWO(w)===facility;
+  const completed=(state.workOrders||[]).filter(w=>String(w.status||"").toLowerCase()==="completed"&&inRange(w.completed||w.completedDate||w.closedDate||w.created)&&matchesFacility(w));
+  const normType=(w)=>String(w.woType||w.type||"").toLowerCase();
+  const repairs=completed.filter(w=>normType(w).includes("repair"));
+  const services=completed.filter(w=>normType(w).includes("service")||normType(w).includes("prevent"));
+  const inspections=completed.filter(w=>normType(w).includes("inspect"));
+  const laborHours=completed.reduce((n,w)=>n+(+w.laborHours||0),0);
+  const maintenanceSpend=completed.reduce((n,w)=>n+woSpendingTotal(w,includeLabor),0);
+  const partLines=completed.flatMap(w=>(w.partsUsed||[]).map(p=>({w,p})));
+  const partsConsumed=partLines.reduce((n,x)=>n+(+x.p.qty||0),0);
+  const partsConsumedValue=partLines.reduce((n,x)=>n+lineItemTotal(x.p),0);
+  const purchaseLines=partLines.filter(x=>(+x.p.receivedQty||0)>0);
+  const purchases=purchaseLines.length;
+  const purchaseQty=purchaseLines.reduce((n,x)=>n+(+x.p.receivedQty||0),0);
+  const purchaseSpend=purchaseLines.reduce((n,x)=>n+((+x.p.receivedQty||0)*(+x.p.unitCost||+x.p.cost||0)),0);
+  const label=periodMode==="month"?new Date(month+"-01T12:00:00").toLocaleDateString(undefined,{month:"long",year:"numeric"}):periodMode==="quarter"?`FY ${fy} · Q${quarter}`:periodMode==="custom"?`${customStart} – ${customEnd}`:`Fiscal Year ${fy}`;
+  const locName=(id)=>state.locations?.find(l=>l.id===id)?.name||"All Facilities";
+  const facilityLabel=facility==="all"?"All Facilities":locName(facility);
+  const cards=[
+    ["Repairs Completed",repairs.length,"🔧"],["Services / PM",services.length,"🛢️"],["Inspections",inspections.length,"📋"],["Total WOs",completed.length,"✓"],
+    ["Labor Hours",laborHours.toFixed(1),"⏱"],["Purchases",purchases,"🛒"],["Parts Consumed",partsConsumed.toLocaleString(),"📦"],["Maintenance Spending",moneyFmt(maintenanceSpend),"💵"]
+  ];
+  const printReport=()=>{
+    const win=window.open("","_blank","width=1000,height=760"); if(!win)return;
+    const row=(a,b)=>`<tr><td>${a}</td><td style="text-align:right;font-weight:700">${b}</td></tr>`;
+    win.document.write(`<!doctype html><html><head><title>Performance & Activity Report</title><style>body{font-family:Arial,sans-serif;padding:28px;color:#111}*{box-sizing:border-box}.head{border:2px solid #000;background:#dbeafe;padding:14px 16px}h1{margin:0;font-size:22px}.meta{margin-top:6px;font-size:12px}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #000;padding:8px 10px;font-size:12px}th{background:#dbeafe;text-align:left}.note{font-size:10px;margin-top:12px;color:#333}@media print{button{display:none}}</style></head><body><div class="head"><h1>MaintForge — Maintenance Performance & Activity Report</h1><div class="meta">${label} · ${facilityLabel}</div></div><table><tr><th>Activity</th><th style="text-align:right">Period Total</th></tr>${row("Repairs Completed",repairs.length)}${row("Services / Preventive Maintenance",services.length)}${row("Inspections Completed",inspections.length)}${row("Total Work Orders Completed",completed.length)}${row("Labor Hours",laborHours.toFixed(1)+" hrs")}${row("Purchases Recorded",purchases)}${row("Purchased Quantity",purchaseQty.toLocaleString())}${row("Purchase Spending",moneyFmt(purchaseSpend))}${row("Parts Consumed",partsConsumed.toLocaleString())}${row("Parts Consumed Value",moneyFmt(partsConsumedValue))}${row("Maintenance Spending",moneyFmt(maintenanceSpend))}</table><div class="note">Maintenance Spending follows MaintForge Work Order spending settings. Purchase spending is shown separately and is not added again to Maintenance Spending, avoiding double-counting parts that were purchased and later consumed.</div><button onclick="window.print()" style="margin-top:18px;padding:9px 16px">Print / Save PDF</button></body></html>`); win.document.close();
+  };
+  const topEq=Object.entries(completed.reduce((a,w)=>{const id=w.equipment||"Unknown";a[id]=(a[id]||0)+1;return a;},{})).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"flex-start",flexWrap:"wrap",marginBottom:16}}><div><div style={{fontSize:20,fontWeight:800}}>Performance & Activity</div><div style={{fontSize:12,color:T.muted,marginTop:4}}>Evaluation-ready maintenance workload and spending for {facilityLabel}.</div></div><Btn onClick={printReport}>Print / PDF</Btn></div>
+    <Card style={{padding:14,marginBottom:16}}><div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"end"}}>
+      <label style={{fontSize:11,fontWeight:700}}>PERIOD<select style={{...sel,display:"block",marginTop:4,minWidth:150}} value={periodMode} onChange={e=>setPeriodMode(e.target.value)}><option value="month">Month</option><option value="quarter">Quarter</option><option value="fy">Fiscal Year</option><option value="custom">Custom</option></select></label>
+      {periodMode==="month"&&<label style={{fontSize:11,fontWeight:700}}>MONTH<input style={{...inp,display:"block",marginTop:4}} type="month" value={month} onChange={e=>setMonth(e.target.value)}/></label>}
+      {(periodMode==="fy"||periodMode==="quarter")&&<label style={{fontSize:11,fontWeight:700}}>FISCAL YEAR<input style={{...inp,display:"block",marginTop:4,width:110}} type="number" value={fy} onChange={e=>setFy(+e.target.value||currentFY)}/></label>}
+      {periodMode==="quarter"&&<label style={{fontSize:11,fontWeight:700}}>QUARTER<select style={{...sel,display:"block",marginTop:4}} value={quarter} onChange={e=>setQuarter(+e.target.value)}>{[1,2,3,4].map(q=><option key={q} value={q}>Q{q}</option>)}</select></label>}
+      {periodMode==="custom"&&<><label style={{fontSize:11,fontWeight:700}}>FROM<input style={{...inp,display:"block",marginTop:4}} type="date" value={customStart} onChange={e=>setCustomStart(e.target.value)}/></label><label style={{fontSize:11,fontWeight:700}}>TO<input style={{...inp,display:"block",marginTop:4}} type="date" value={customEnd} onChange={e=>setCustomEnd(e.target.value)}/></label></>}
+      <label style={{fontSize:11,fontWeight:700}}>FACILITY<select style={{...sel,display:"block",marginTop:4,minWidth:190}} value={facility} onChange={e=>setFacility(e.target.value)}><option value="all">All Facilities</option>{(state.locations||[]).map(l=><option key={l.id} value={l.id}>{l.name||l.id}</option>)}</select></label>
+    </div><div style={{fontSize:12,color:T.subtext,marginTop:10,fontWeight:700}}>{label}</div></Card>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(165px,1fr))",gap:12,marginBottom:16}}>{cards.map(([k,v,i])=><Card key={k} style={{padding:"15px 16px"}}><div style={{fontSize:18}}>{i}</div><div style={{fontSize:24,fontWeight:800,marginTop:4}}>{v}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{k}</div></Card>)}</div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:16}}><Card><div style={{fontWeight:800,marginBottom:12}}>Spending & Parts</div>{[["Maintenance spending",moneyFmt(maintenanceSpend)],["Purchase spending",moneyFmt(purchaseSpend)],["Parts consumed value",moneyFmt(partsConsumedValue)],["Purchase transactions",purchases],["Purchased quantity",purchaseQty.toLocaleString()]].map(([a,b])=><div key={a} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}><span>{a}</span><b>{b}</b></div>)}<div style={{fontSize:10,color:T.muted,marginTop:10,lineHeight:1.4}}>Purchase spending is reported separately so purchased inventory is not counted twice when it is later consumed on a work order.</div></Card><Card><div style={{fontWeight:800,marginBottom:12}}>Most Active Equipment</div>{topEq.length?topEq.map(([id,count])=><div key={id} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}><span><b>{id}</b> · {eqById[id]?.name||"Equipment"}</span><b>{count} WO{count===1?"":"s"}</b></div>):<div style={{fontSize:12,color:T.muted}}>No completed work orders in this period.</div>}</Card></div>
+  </div>;
+}
+
 const PAGE_TITLES = {
   dashboard:        "Dashboard",
   workorders:       "Work Orders",
@@ -9315,6 +9390,7 @@ const PAGE_TITLES = {
   usage:            "Usage Tracking",
   fuel:             "Fuel Tracking",
   spending:         "Spending & Costs",
+  performance:      "Performance & Activity",
   inventory:        "Equipment Inventory List",
   reports_deadline: "Deadline Equipment Report",
   reports_parts_inv:"Parts Inventory Report",
@@ -10476,6 +10552,7 @@ export default function App() {
     usage:            <UsageTracking    state={visibleState} dispatch={dispatch} />,
     fuel:             <FuelTracking     state={visibleState} dispatch={dispatch} />,
     spending:         <Spending         state={visibleState} />,
+    performance:      <PerformanceActivity state={state} />,
     inventory:        <EquipmentInventory state={visibleState} dispatch={dispatch} />,
     reports_deadline: <ReportDeadline   state={visibleState} />,
     reports_parts_inv:<ReportPartsInv   state={visibleState} />,
