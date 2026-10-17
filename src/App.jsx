@@ -1966,7 +1966,7 @@ const Btn = ({ children, onClick, variant="primary", small, style={}, type="butt
 };
 
 const Field = ({ label, children, half }) => (
-  <div style={{ marginBottom:14, gridColumn:half?"span 1":"span 2" }}>
+  <div className="mf-field" style={{ marginBottom:14, gridColumn:half?"span 1":"span 2", minWidth:0 }}>
     <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>{label}</label>
     {children}
   </div>
@@ -2213,7 +2213,7 @@ const NAV_REPORTS = [
   { id:"reports_combined",    icon:"📑", label:"Combined Report" },
 ];
 
-function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profile, showEquipmentInventory=true }) {
+function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profile }) {
   const defaultMenuGroups = [
     { key:"main", title:"Main Menu", items:NAV },
     { key:"reports", title:"Reports", items:NAV_REPORTS },
@@ -2241,7 +2241,7 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
   }, []);
 
   const itemByKey = Object.fromEntries(defaultMenuGroups.flatMap(g=>g.items.map(item=>[`${g.key}:${item.id}`, { ...item, group:g.key, groupTitle:g.title }])));
-  const orderedItems = menuOrder.map(k=>itemByKey[k]).filter(Boolean).filter(n=>showEquipmentInventory || n.id!=="inventory");
+  const orderedItems = menuOrder.map(k=>itemByKey[k]).filter(Boolean);
 
   const saveOrder = (next) => {
     setMenuOrder(next);
@@ -3104,9 +3104,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
       </div>
     );
     return (
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
+      <div className="mf-wo-form-grid" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
 
-        <div style={{ gridColumn:"span 2", marginBottom:10, padding:"10px 12px", border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt, fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text }}>Work Order Type: {typeInfo?.label || `${form.woType||"Repair"} Work Order`}</div>
+        <div className="mf-wo-full" style={{ gridColumn:"span 2", marginBottom:10, padding:"10px 12px", border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt, fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text }}>Work Order Type: {typeInfo?.label || `${form.woType||"Repair"} Work Order`}</div>
 
         <Field label="Equipment Status" half>
           <select style={{...sel, minWidth:260, width:"100%"}} value={form.equipmentStatus||"Fully Operational"} onChange={e=>setForm(f=>({...f,equipmentStatus:e.target.value}))}>
@@ -3659,12 +3659,17 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
         {filtered.map(wo=>{
           const eq = state.equipment.find(e=>e.id===wo.equipment);
           const eqLabel = eq?.name || wo.equipmentLabel || wo.equipment || "—";
-          return <button key={`mobile-${wo.id}`} className="mf-mobile-summary-card" onClick={()=>openEdit(wo)}>
+          return <div key={`mobile-${wo.id}`} className="mf-mobile-summary-card mf-mobile-wo-card" onClick={()=>openEdit(wo)} role="button" tabIndex={0}>
             <div className="mf-mobile-summary-top"><span className="mf-mobile-summary-id">{wo.id || "Work Order"}</span><Badge label={wo.status||"Open"} /></div>
             <div className="mf-mobile-summary-title">{wo.equipment || "—"} · {eqLabel}</div>
             <div className="mf-mobile-summary-text">{wo.faultDescription || wo.description || wo.title || "No description"}</div>
-            <div className="mf-mobile-summary-meta"><span>{wo.woType || "Repair"}</span><span>{wo.priority || "Medium"}</span>{wo.due&&<span>Due {wo.due}</span>}</div>
-          </button>;
+            <div className="mf-mobile-summary-meta"><span>{wo.woType || "Repair"}</span><span>{wo.priority || "Medium"}</span>{wo.created&&<span>Created {wo.created}</span>}{wo.due&&<span>Due {wo.due}</span>}</div>
+            <div className="mf-mobile-wo-actions" onClick={e=>e.stopPropagation()}>
+              <Btn small variant="secondary" onClick={()=>openEdit(wo)}>✏️ Edit</Btn>
+              <Btn small variant="secondary" onClick={()=>printWO(wo)}>🖨 Print</Btn>
+              <Btn small variant="danger" onClick={()=>del(wo.id)}>🗑 Delete</Btn>
+            </div>
+          </div>;
         })}
         {!filtered.length && <div className="mf-mobile-empty">No work orders found.</div>}
       </div>
@@ -4996,8 +5001,8 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
             win.document.write(reportButtonsHtml(exportRows)+`</body></html>`);
             win.document.close();
           }}>🖨 Equipment Status Report</Btn>
-          <Btn variant={attachmentsOnly?"primary":"secondary"} onClick={()=>{ setAttachmentsOnly(v=>!v); setAttachDetail(null); }}>🚜 {attachmentsOnly?"All Equipment":"Attachments / Implements"}</Btn>
-          <Btn onClick={openAdd}>+ Add New Equipment</Btn>
+          <Btn style={{}} variant={attachmentsOnly?"primary":"secondary"} onClick={()=>{ setAttachmentsOnly(v=>!v); setAttachDetail(null); }}>🚜 {attachmentsOnly?"All Equipment":"Attachments / Implements"}</Btn>
+          <Btn style={{ width:"auto" }} onClick={openAdd}>+ Add New Equipment</Btn>
           <button className="mf-mobile-filter-button" onClick={()=>setMobileFiltersOpen(v=>!v)} style={{ display:"none" }}>☰ Filters{(typeF!=="All"||locationF!=="All") ? " •" : ""}</button>
         </div>
         <div className={`mf-equipment-filters ${mobileFiltersOpen ? "is-open" : ""}`} style={{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"flex-end" }}>
@@ -5894,8 +5899,8 @@ function Inspections({ state, dispatch }) {
       </div>
 
       {showInspectionLibrary && <Card title="Inspection Tasks Library" right={<span style={{ fontFamily:T.mono, color:T.muted }}>{tasks.length} tasks</span>}>
-        <div className="mf-inspection-library-desktop">
-          <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:13 }}> 
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:13 }}>
             <thead><tr style={{ background:T.grayLt }}>
               {['Task Name','Frequency','Steps','Attachments','Notes','Actions'].map(h=><th key={h} style={{ textAlign:"left", padding:"10px", borderBottom:`1px solid ${T.border}`, color:T.subtext }}>{h}</th>)}
             </tr></thead>
@@ -5914,14 +5919,6 @@ function Inspections({ state, dispatch }) {
               })}
             </tbody>
           </table>
-        </div>
-        <div className="mf-inspection-library-mobile">
-          {tasks.length===0 && <div className="mf-mobile-empty">No inspection tasks yet.</div>}
-          {tasks.map(t=><div key={`mobile-task-${t.id}`} className="mf-mobile-data-card">
-            <div className="mf-mobile-data-title">{t.name}</div>
-            <div className="mf-mobile-data-grid"><div><b>Frequency</b><span>{t.frequency||"—"}</span></div><div><b>Steps</b><span>{stepLines(t.steps).length}</span></div><div><b>Attachments</b><span>{(t.attachments||[]).length}</span></div><div><b>Notes</b><span>{t.notes||"—"}</span></div></div>
-            <div className="mf-mobile-card-actions"><Btn variant="secondary" onClick={()=>openTask(t)}>Edit</Btn><Btn variant="secondary" onClick={()=>copyInspectionTask(t)}>Copy</Btn></div>
-          </div>)}
         </div>
         {selectedTask && <div style={{ marginTop:14, border:`1px solid ${T.border}`, borderRadius:14, padding:14, background:T.card }}>
           <div style={{ display:"flex", justifyContent:"space-between", gap:10, flexWrap:"wrap", alignItems:"center" }}>
@@ -6636,7 +6633,7 @@ function PM({ state, dispatch }) {
         </div>
       )}
 
-      <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginBottom:16 }}>
+      <div className="mf-pm-actions" style={{ display:"flex", gap:8, justifyContent:"flex-end", marginBottom:16 }}>
         <Btn variant="secondary" onClick={()=>{ setSelectedTaskId(pmTasks[0]?.id||null); setShowTaskLib(true); }}>
           Tasks Library ({pmTasks.length})
         </Btn>
@@ -6660,7 +6657,15 @@ function PM({ state, dispatch }) {
             No PM tasks assigned yet. Use <b>Task-to-Equipment</b> to link a PM task to a piece of equipment.
           </div>
         ) : (
-          <div style={{ overflow:"auto" }}>
+          <>
+          <div className="mf-pm-assigned-mobile">
+            {assignedPMEquipmentRows.map(group=><div key={`pm-mobile-${group.equipmentId}`} className="mf-pm-mobile-card">
+              <div className="mf-pm-mobile-head"><div><div className="mf-mobile-summary-id">{group.equipmentId}</div><div className="mf-mobile-summary-title">{group.eqName}</div></div><span style={{ borderRadius:999, padding:"4px 9px", fontFamily:T.sans, fontSize:11, fontWeight:800, color:group.status==="Overdue"?T.red:group.status==="Due Soon"?T.amber:T.green, background:group.status==="Overdue"?"#fee2e2":group.status==="Due Soon"?"#fef3c7":"#dcfce7" }}>{group.status}</span></div>
+              <div className="mf-pm-mobile-meta"><span><b>Tasks</b> {group.rows.length}</span><span><b>Usage</b> {group.currentHours} hrs • {group.currentMileage} mi</span></div>
+              <div className="mf-pm-mobile-tasks">{group.rows.map(r=><div key={r.id} className="mf-pm-mobile-task"><div><b>{r.taskName}</b><div>{r.triggerText}</div><div>{r.nextDueText}</div></div><div className="mf-pm-mobile-task-actions"><Btn small onClick={()=>createPMWorkOrderFromSchedule(r, true)}>Create WO</Btn><Btn small variant="secondary" onClick={()=>{ setSchForm({...r, equipmentIds:[r.equipmentId].filter(Boolean), taskIds:[r.taskId].filter(Boolean)}); setModal("schedule"); }}>Edit</Btn><Btn small variant="danger" onClick={()=>delSchedule(r.id)}>Delete</Btn></div></div>)}</div>
+            </div>)}
+          </div>
+          <div className="mf-pm-assigned-desktop" style={{ overflow:"auto" }}>
             <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:12, minWidth:900 }}>
               <thead>
                 <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
@@ -6723,6 +6728,7 @@ function PM({ state, dispatch }) {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
 
@@ -7766,7 +7772,7 @@ function EquipmentInventory({ state, dispatch }) {
       </div>
 
       {/* Inventory Table */}
-      <div className="mf-inventory-desktop"><Card style={{ padding:0, overflow:"hidden" }}>
+      <Card style={{ padding:0, overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
@@ -7806,16 +7812,7 @@ function EquipmentInventory({ state, dispatch }) {
           </tbody>
         </table>
         {filtered.length===0 && <div style={{ padding:40, textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13 }}>{tab==="active"?"No active inventory items.":"No turned-in equipment."}</div>}
-      </Card></div>
-      <div className="mf-inventory-mobile">
-        {filtered.length===0 && <div className="mf-mobile-empty">{tab==="active"?"No active inventory items.":"No turned-in equipment."}</div>}
-        {filtered.map(item=><div key={`mobile-inv-${item.id}`} className="mf-mobile-data-card" onClick={()=>openItem(item)}>
-          <div className="mf-mobile-data-title">{item.name || "Unnamed equipment"}</div>
-          {item._source==="attachment" && <div style={{fontSize:11,color:T.accent,fontWeight:800,marginTop:3}}>Attachment on {item.parentEquipmentName||item.parentEquipmentId}</div>}
-          <div className="mf-mobile-data-grid"><div><b>EE / EIL #</b><span>{item.eilNumber||"No EE"}</span></div><div><b>Category</b><span>{item.category||"—"}</span></div><div><b>Serial #</b><span>{item.serial||"—"}</span></div><div><b>Location</b><span>{item.location||"—"}</span></div><div><b>Condition</b><span>{item.condition||"—"}</span></div><div><b>Status</b><span>{item.turnInStatus||"Active"}</span></div><div><b>Value</b><span>{moneyFmt(item.acquisitionCost)}</span></div></div>
-          <div className="mf-mobile-card-actions" onClick={e=>e.stopPropagation()}>{tab==="active" && item._source==="equipment" && <Btn small variant="secondary" onClick={()=>openTransfer(item)}>Transfer</Btn>}<Btn small variant="danger" onClick={()=>del(item.id)}>Delete</Btn></div>
-        </div>)}
-      </div>
+      </Card>
 
       {/* Add / Edit Item modal */}
       {(modal==="add"||typeof modal==="object"&&modal?.id)&&(
@@ -8992,7 +8989,7 @@ function SystemSettings({ state, dispatch, onClose }) {
       <div style={{padding:16,border:`1px solid ${T.border}`,borderRadius:14,background:T.surface,marginBottom:16}}>
         <div style={{fontSize:15,fontWeight:900,marginBottom:8}}>Equipment Fields</div>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:16}}>
-          <div><div style={{fontSize:13,fontWeight:800}}>EIL Number / Inventory Number</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>Turn Equipment Inventory on or off. When off, the Equipment Inventory tab is hidden; existing inventory data is kept and can be restored by turning it back on.</div></div>
+          <div><div style={{fontSize:13,fontWeight:800}}>EIL Number / Inventory Number</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>Show this optional identification field on equipment and related records.</div></div>
           <button type="button" onClick={()=>setForm(f=>({...f,showEilInventoryNumber:!f.showEilInventoryNumber}))} style={{width:46,height:26,borderRadius:13,border:"none",background:form.showEilInventoryNumber?T.accent:"#d1d5db",cursor:"pointer",position:"relative",flex:"0 0 auto"}}><span style={{position:"absolute",top:3,left:form.showEilInventoryNumber?23:3,width:20,height:20,borderRadius:"50%",background:T.card,transition:"left .2s"}}/></button>
         </div>
       </div>
@@ -9039,7 +9036,7 @@ defaultPriority:"Medium", dateFormat:"MM/DD/YYYY", currency:"USD", showEilInvent
           <Field label="Address"><input style={inp} value={data.address} onChange={F("address")} placeholder="Street address" /></Field>
           <Field label="City, State"><input style={inp} value={data.cityState} onChange={F("cityState")} placeholder="City, State" /></Field>
           <div style={{ marginTop:6 }}><label style={{ fontSize:12, fontWeight:700, color:T.subtext }}>Company Logo <span style={{fontWeight:400}}>(optional)</span></label><div style={{display:"flex",gap:10,alignItems:"center",marginTop:7}}>{<img src={data.logo || MAINTFORGE_DEFAULT_LOGO} alt="logo" style={{height:48,maxWidth:100,objectFit:"contain"}}/>}<label style={{padding:"8px 12px",border:`1px solid ${T.accent}`,borderRadius:7,color:T.accent,fontSize:12,fontWeight:700,cursor:"pointer"}}>Upload Logo<input type="file" accept="image/*" onChange={handleLogo} style={{display:"none"}}/></label></div></div>
-          <div style={{marginTop:18,padding:14,border:`1px solid ${T.border}`,borderRadius:12,background:T.grayLt}}><div style={{fontSize:14,fontWeight:900}}>Does your organization use an EE / Equipment Inventory number?</div><div style={{fontSize:12,color:T.muted,marginTop:5,lineHeight:1.45}}>An EE (Equipment Inventory) number is a unique property or asset number used to identify and account for equipment. Some organizations call it an EIL, inventory number, or property number.</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:12}}><button type="button" onClick={()=>setData(d=>({...d,showEilInventoryNumber:true}))} style={{padding:"11px 12px",borderRadius:10,border:`2px solid ${data.showEilInventoryNumber?T.accent:T.border}`,background:data.showEilInventoryNumber?T.accentLt:T.card,color:data.showEilInventoryNumber?T.accent:T.text,fontWeight:800,cursor:"pointer"}}>Yes — Use EE Inventory</button><button type="button" onClick={()=>setData(d=>({...d,showEilInventoryNumber:false}))} style={{padding:"11px 12px",borderRadius:10,border:`2px solid ${!data.showEilInventoryNumber?T.accent:T.border}`,background:!data.showEilInventoryNumber?T.accentLt:T.card,color:!data.showEilInventoryNumber?T.accent:T.text,fontWeight:800,cursor:"pointer"}}>No — Hide EE Inventory</button></div></div>
+          <div style={{marginTop:18,padding:13,border:`1px solid ${T.border}`,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"space-between",gap:14}}><div><div style={{fontSize:13,fontWeight:800}}>EIL Number / Inventory Number</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>Turn this on if your company uses an EIL or inventory identification number for equipment.</div></div><button type="button" onClick={()=>setData(d=>({...d,showEilInventoryNumber:!d.showEilInventoryNumber}))} style={{width:46,height:26,borderRadius:13,border:"none",background:data.showEilInventoryNumber?T.accent:"#d1d5db",cursor:"pointer",position:"relative",flex:"0 0 auto"}}><span style={{position:"absolute",top:3,left:data.showEilInventoryNumber?23:3,width:20,height:20,borderRadius:"50%",background:T.card}}/></button></div>
         </>}
         {step===2 && <>
           <div style={{textAlign:"center",padding:"8px 0 16px"}}><div style={{fontSize:50}}>✓</div><h2 style={{margin:"4px 0 8px",fontSize:24}}>Ready to go</h2><p style={{margin:"0 auto",maxWidth:460,color:T.muted,lineHeight:1.5}}>MaintForge will start with common equipment categories. Add your first piece of equipment, then create work orders, PM schedules, inspections, inventory, and fuel records as you need them.</p></div>
@@ -10209,19 +10206,41 @@ export default function App() {
           const cloudState = prepareSharedOrganizationStateForCloudSave(pendingState, pendingUser);
           let error = null;
 
-          if(pendingAppSession?.maintForgeAppLogin) {
-            const rpcSave = await supabase.rpc("maintforge_username_save", {
-              login_username:pendingAppSession.username || pendingUser.username,
-              login_password:pendingAppSession.password || "",
-              organization_state:cloudState,
-            });
-            error = rpcSave.error || null;
-            if(error) console.error("Username save RPC error:", error);
-          } else {
+          // Mobile Safari can briefly change connection/visibility state while a large
+          // MaintForge workspace is being sent. Keep the exact same database write, but
+          // give mobile saves a quiet retry window when PostgreSQL returns 57014
+          // (statement timeout). This does NOT report success until Supabase confirms it.
+          const isMobileSave = typeof window !== "undefined" && (
+            window.matchMedia?.("(max-width: 760px)")?.matches ||
+            /iPhone|iPad|iPod|Android/i.test(navigator?.userAgent || "")
+          );
+          const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+          const performCloudWrite = async () => {
+            if(pendingAppSession?.maintForgeAppLogin) {
+              const rpcSave = await supabase.rpc("maintforge_username_save", {
+                login_username:pendingAppSession.username || pendingUser.username,
+                login_password:pendingAppSession.password || "",
+                organization_state:cloudState,
+              });
+              if(rpcSave.error) console.error("Username save RPC error:", rpcSave.error);
+              return rpcSave.error || null;
+            }
             const saveResult = await supabase
               .from("user_state")
               .upsert({ user_id:cloudOwnerId, data:cloudState, updated_at:new Date().toISOString() }, { onConflict:"user_id" });
-            error = saveResult.error;
+            return saveResult.error || null;
+          };
+
+          error = await performCloudWrite();
+          if(isMobileSave && String(error?.code || "") === "57014") {
+            console.warn("MaintForge mobile save timed out; retrying once after connection settles.");
+            await sleep(4500);
+            if(typeof navigator === "undefined" || navigator.onLine !== false) error = await performCloudWrite();
+          }
+          if(isMobileSave && String(error?.code || "") === "57014") {
+            console.warn("MaintForge mobile save retry timed out; making one final delayed attempt.");
+            await sleep(10000);
+            if(typeof navigator === "undefined" || navigator.onLine !== false) error = await performCloudWrite();
           }
 
           if(error) {
@@ -10284,9 +10303,14 @@ export default function App() {
       }
     };
 
-    // A slightly longer debounce is intentional for the 8+ MB workspace. UI/local
-    // persistence is immediate; cloud persistence waits for the burst to settle.
-    cloudSaveTimerRef.current = setTimeout(flushCloudSaveQueue, 2000);
+    // Mobile gets a longer quiet period. Touch/form interactions often dispatch several
+    // state updates in a burst; waiting avoids repeatedly sending the full multi-MB
+    // workspace while the user is still editing. Desktop keeps the faster delay.
+    const mobileSaveDelay = typeof window !== "undefined" && (
+      window.matchMedia?.("(max-width: 760px)")?.matches ||
+      /iPhone|iPad|iPod|Android/i.test(navigator?.userAgent || "")
+    ) ? 6500 : 2000;
+    cloudSaveTimerRef.current = setTimeout(flushCloudSaveQueue, mobileSaveDelay);
 
     return () => {
       if(cloudSaveTimerRef.current) {
@@ -10581,8 +10605,8 @@ export default function App() {
   };
 
   useEffect(() => {
-    if(!pages[tab] || (tab==="inventory" && state.settings?.showEilInventoryNumber === false)) setTab("dashboard");
-  }, [tab, state.settings?.showEilInventoryNumber]);
+    if(!pages[tab]) setTab("dashboard");
+  }, [tab]);
 
   const selectedTheme = state.settings?.theme || "light";
   const effectiveTheme = getEffectiveThemeMode(selectedTheme);
@@ -11352,30 +11376,49 @@ export default function App() {
           .mf-mobile-bottom-nav { z-index:1100 !important; }
           .mf-wo-phone-detail ~ * { min-width:0 !important; }
         }
-        /* v7 mobile-first: no horizontal/sliding columns. Mobile uses cards or wrapped full-width content. */
-        .mf-inspection-library-mobile, .mf-inventory-mobile { display:none; }
-        @media (max-width: 768px) {
-          main, main > div, main section, main article { overflow-x:hidden !important; max-width:100% !important; }
-          main div[style*="overflowX"], main div[style*="overflow-x"], .mobile-x-scroll { overflow-x:hidden !important; max-width:100% !important; }
-          main table { width:100% !important; min-width:0 !important; max-width:100% !important; table-layout:fixed !important; overflow:hidden !important; }
-          main th, main td { min-width:0 !important; max-width:none !important; white-space:normal !important; overflow-wrap:anywhere !important; word-break:normal !important; }
-          main th:first-child, main td:first-child { position:static !important; min-width:0 !important; max-width:none !important; box-shadow:none !important; }
-          .mf-inspection-library-desktop, .mf-inventory-desktop { display:none !important; }
-          .mf-inspection-library-mobile, .mf-inventory-mobile { display:flex !important; flex-direction:column; gap:10px; width:100%; }
-          .mf-mobile-data-card { width:100%; min-width:0; border:1px solid ${T.border}; border-radius:14px; padding:14px; background:${T.card}; box-shadow:${T.shadowSm}; }
-          .mf-mobile-data-title { font-size:17px; font-weight:900; color:${T.text}; line-height:1.25; overflow-wrap:anywhere; }
-          .mf-mobile-data-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; }
-          .mf-mobile-data-grid > div { min-width:0; }
-          .mf-mobile-data-grid b { display:block; font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:${T.muted}; margin-bottom:3px; }
-          .mf-mobile-data-grid span { display:block; font-size:13px; color:${T.text}; overflow-wrap:anywhere; }
-          .mf-mobile-card-actions { display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:12px; }
-          .mf-mobile-card-actions button { width:100% !important; min-width:0 !important; white-space:normal !important; }
-          .mf-section-heading > div:last-child { width:100%; display:grid !important; grid-template-columns:1fr !important; }
-          .mf-section-heading button { width:100% !important; }
-        }
+
+          /* v9 mobile audit: no sideways/sliding columns; reflow controls and dense pages for phones. */
+          .mf-field { min-width:0 !important; }
+          .mf-pm-assigned-mobile { display:none; }
+          @media (max-width: 768px) {
+            .mf-main, main, .mf-main section, .mf-main article, .mf-main > div { overflow-x:hidden !important; }
+            .mf-main table, main table { display:table !important; width:100% !important; min-width:0 !important; max-width:100% !important; table-layout:fixed !important; overflow:visible !important; border-collapse:collapse !important; }
+            .mf-main thead, .mf-main tbody, .mf-main tr, main thead, main tbody, main tr { width:100% !important; }
+            .mf-main th, .mf-main td, main th, main td { min-width:0 !important; max-width:none !important; white-space:normal !important; overflow-wrap:anywhere !important; word-break:normal !important; position:static !important; box-shadow:none !important; }
+            .mf-main th:first-child, .mf-main td:first-child, main th:first-child, main td:first-child { position:static !important; min-width:0 !important; max-width:none !important; box-shadow:none !important; }
+            .mobile-x-scroll, .mf-main div[style*="overflowX"], .mf-main div[style*="overflow-x"] { overflow-x:hidden !important; max-width:100% !important; }
+            .mf-btn { white-space:normal !important; overflow-wrap:normal !important; word-break:normal !important; line-height:1.2 !important; }
+            .mf-wo-form-grid { grid-template-columns:minmax(0,1fr) !important; gap:0 !important; }
+            .mf-wo-form-grid > *, .mf-wo-form-grid .mf-field, .mf-wo-full { grid-column:1 / -1 !important; min-width:0 !important; width:100% !important; box-sizing:border-box !important; }
+            .mf-wo-form-grid input, .mf-wo-form-grid select, .mf-wo-form-grid textarea { width:100% !important; min-width:0 !important; }
+            .mf-mobile-wo-actions { display:grid !important; grid-template-columns:repeat(3,minmax(0,1fr)) !important; gap:7px !important; margin-top:11px !important; }
+            .mf-mobile-wo-actions .mf-btn { width:100% !important; padding:8px 5px !important; font-size:12px !important; }
+            .mf-equipment-primary-actions { grid-template-columns:1fr !important; }
+            .mf-equipment-primary-actions > input, .mf-equipment-primary-actions > button { grid-column:1 !important; width:100% !important; min-width:0 !important; }
+            .mf-equipment-primary-actions > button:nth-of-type(1) { display:none !important; }
+            .mf-mobile-filter-button { grid-column:1 !important; width:100% !important; font-size:14px !important; }
+            .mf-mobile-filter-button::before { content:"☰ Filters" !important; font-size:14px !important; }
+            .mf-pm-actions { display:grid !important; grid-template-columns:1fr 1fr !important; gap:8px !important; }
+            .mf-pm-actions > *, .mf-pm-actions > div { min-width:0 !important; width:100% !important; }
+            .mf-pm-actions > div { display:contents !important; }
+            .mf-pm-actions .mf-btn { width:100% !important; min-height:52px !important; padding:10px !important; }
+            .mf-pm-assigned-desktop { display:none !important; }
+            .mf-pm-assigned-mobile { display:flex !important; flex-direction:column; gap:10px; padding:10px; }
+            .mf-pm-mobile-card { border:1px solid ${T.border}; border-radius:14px; background:${T.card}; padding:13px; min-width:0; }
+            .mf-pm-mobile-head { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; min-width:0; }
+            .mf-pm-mobile-meta { display:flex; flex-direction:column; gap:4px; margin-top:9px; font:12px ${T.sans}; color:${T.subtext}; }
+            .mf-pm-mobile-tasks { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+            .mf-pm-mobile-task { border-top:1px solid ${T.border}; padding-top:10px; font:12px ${T.sans}; color:${T.subtext}; line-height:1.35; }
+            .mf-pm-mobile-task b { color:${T.text}; font-size:13px; }
+            .mf-pm-mobile-task-actions { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-top:8px; }
+            .mf-pm-mobile-task-actions .mf-btn { width:100%; padding:7px 4px !important; font-size:11px !important; }
+            .mf-brand-title > div:first-child { max-width:calc(100vw - 125px) !important; white-space:normal !important; overflow:visible !important; text-overflow:clip !important; display:-webkit-box !important; -webkit-line-clamp:2 !important; -webkit-box-orient:vertical !important; line-height:1.05 !important; font-size:12px !important; }
+            .mf-brand-title > div:last-child { display:none !important; }
+            .mf-header { min-height:62px !important; height:auto !important; }
+          }
       `}</style>
 
-      <SlideMenu tab={tab} setTab={setTab} open={menuOpen} onClose={()=>setMenuOpen(false)} onSettings={()=>setShowSettings(true)} companyName={companyName} profile={profile} showEquipmentInventory={state.settings?.showEilInventoryNumber !== false} />
+      <SlideMenu tab={tab} setTab={setTab} open={menuOpen} onClose={()=>setMenuOpen(false)} onSettings={()=>setShowSettings(true)} companyName={companyName} profile={profile} />
 
       {/* Custom header with profile button */}
       <header className="no-print mf-header" style={{ position:"sticky", top:0, zIndex:1000, background:T.surface, borderBottom:`1px solid ${T.border}`, padding:"0 20px", height:56, display:"flex", alignItems:"center", justifyContent:"space-between", boxShadow:`0 1px 0 ${T.border}` }}>
