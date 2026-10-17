@@ -2468,7 +2468,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   </div>;
 }
 
-function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
+function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWORequest, onConsumeWORequest }) {
   const [modal, setModal]     = useState(null); // null|"type"|"pick"|"form"|"detail"|"edit"
   const [form, setForm]       = useState({});
   const [filter, setFilter]     = useState("Active"); // "Active" = Open+InProgress default
@@ -2609,7 +2609,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   /* Equipment picker list */
   const allPickable = [
     ...state.equipment.map(eq=>({ id:eq.id, label:eq.name, sub:`${eq.id} | ${eq.make||""} ${eq.model||""} | Serial: ${eq.serial||"—"} | EIL: ${eq.eilNumber||"—"}`, type:"Equipment", typeColor:"#1e40af", typeBg:"#eff6ff", parentName:null, parentId:null })),
-    ...state.equipment.flatMap(eq=>(eq.attachments||[]).map(at=>({ id:at.id, label:at.name, sub:`${at.id} | ${at.make||""} ${at.model||""} | Serial: ${at.serial||"—"} | EIL: ${at.eilNumber||"—"} | on: ${eq.name} (${eq.id})`, type:"Attachment", typeColor:"#065f46", typeBg:"#ecfdf5", parentNomenclature:eq.name, parentId:eq.id }))),
+    ...state.equipment.flatMap(eq=>(eq.attachments||[]).map(at=>({ id:at.id, label:at.name, sub:`${at.id} | ${at.make||""} ${at.model||""} | Serial: ${at.serial||"—"} | EIL: ${at.eilNumber||"—"} | on: ${eq.name} (${eq.id})`, type:"Attachment", typeColor:"#065f46", typeBg:"#ecfdf5", parentName:eq.name, parentNomenclature:eq.name, parentId:eq.id }))),
   ];
   const filteredPickable = allPickable.filter(i=>`${i.label} ${i.sub}`.toLowerCase().includes(eqSearch.toLowerCase()));
 
@@ -2661,16 +2661,36 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
 
   const pickEquipment = (item) => {
     const eq = state.equipment.find(e=>e.id===item.id);
-    const latestUsage = latestUsageForEquipment(item.id);
-    setForm(f=>({...f, woType:f.woType||"Repair", equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||null, parentId:item.parentId||null, equipmentStatus:eq?.status||"Fully Operational", usageType:eq?.usageType||"hours", usageNA: eq?.trackUsage ? false : (f.usageNA||false), usageHours:latestUsage.hours, usageMileage:latestUsage.mileage}));
+    const parentEq = item.parentId ? state.equipment.find(e=>e.id===item.parentId) : null;
+    const latestUsage = latestUsageForEquipment(item.parentId || item.id);
+    const isAttachment = item.type === "Attachment";
+    setForm(f=>({...f, woType:f.woType||"Repair", equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||item.parentNomenclature||null, parentId:item.parentId||null, equipmentStatus:(parentEq||eq)?.status||"Fully Operational", usageType:(parentEq||eq)?.usageType||"hours", usageNA:isAttachment ? true : (eq?.trackUsage ? false : (f.usageNA||false)), usageHours:isAttachment ? "" : latestUsage.hours, usageMileage:isAttachment ? "" : latestUsage.mileage}));
     setModal("form");
   };
+
+  useEffect(() => {
+    if(!initialWORequest?.equipment) return;
+    const item = allPickable.find(i=>String(i.id)===String(initialWORequest.equipment));
+    if(!item) { onConsumeWORequest?.(); return; }
+    const parentEq = item.parentId ? state.equipment.find(e=>e.id===item.parentId) : null;
+    setEqSearch("");
+    setForm(applyDefaultMechanic({
+      woType:initialWORequest.woType||"Repair", title:buildTitle(initialWORequest.woType||"Repair", ""), status:"Open",
+      equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||item.parentNomenclature||null, parentId:item.parentId||null,
+      equipmentStatus:parentEq?.status||"Fully Operational", priority:"Medium", created:today(), due:"", tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], outsideServices:[], mechanicNotes:"", faultEnabled:true, faultDescription:"", usageType:parentEq?.usageType||"hours", usageHours:"", usageMileage:"", usageNA:true, repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"", inspectionStepResults:[]
+    }));
+    setModal("form");
+    onConsumeWORequest?.();
+  }, [initialWORequest?.requestId]);
 
   /* Click row to open the editable Work Order form */
   const openEdit = (wo) => {
     setDetailWO(null);
     setEditMode(false);
-    const eq = state.equipment.find(e=>e.id===wo.equipment);
+    const directEq = state.equipment.find(e=>e.id===wo.equipment);
+    const attachmentParent = !directEq ? state.equipment.find(e=>(e.attachments||[]).some(a=>String(a.id)===String(wo.equipment))) : null;
+    const attachment = attachmentParent ? (attachmentParent.attachments||[]).find(a=>String(a.id)===String(wo.equipment)) : null;
+    const eq = directEq || attachmentParent;
     const hasAnyUsageReading = !!String(wo.usageHours||"").trim() || !!String(wo.usageMileage||"").trim();
     const needsManualUsagePrompt = (wo.woType === "Inspection") && eq && !eq.trackUsage && !hasAnyUsageReading && !wo.usageNA;
     setForm({
@@ -2852,7 +2872,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
     const ws = woSettings || {};
     const printOpt = () => true;
     const gs = state.settings || {};
-    const eq = state.equipment.find(e=>e.id===wo.equipment);
+    const directEq = state.equipment.find(e=>e.id===wo.equipment);
+    const attachmentParent = !directEq ? state.equipment.find(e=>(e.attachments||[]).some(a=>String(a.id)===String(wo.equipment))) : null;
+    const attachment = attachmentParent ? (attachmentParent.attachments||[]).find(a=>String(a.id)===String(wo.equipment)) : null;
+    const eq = directEq || attachmentParent;
 
     const h = (value) => String(value ?? "").replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[ch]));
     const money = moneyFmt;
@@ -2994,18 +3017,23 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
           <div class="section-title">Work Order Type and Equipment Information</div>
           <div class="infoGrid">
             <div class="cell"><div class="fieldLabel">Work Order Type</div><div class="fieldValue">${h(workType)}</div></div>
-            <div class="cell"><div class="fieldLabel">Equipment Number</div><div class="fieldValue mono">${h(wo.equipment)||"&nbsp;"}</div></div>
-            <div class="cell"><div class="fieldLabel">Equipment Name</div><div class="fieldValue">${h(eq?.name || wo.equipmentLabel)||"&nbsp;"}</div></div>
-            <div class="cell"><div class="fieldLabel">Make and Model</div><div class="fieldValue">${h(eq ? `${eq.make||""} ${eq.model||""}`.trim() : "")||"&nbsp;"}</div></div>
-            <div class="cell"><div class="fieldLabel">Serial Number</div><div class="fieldValue mono">${h(eq?.serial)||"&nbsp;"}</div></div>
+            <div class="cell"><div class="fieldLabel">${attachment ? "Parent Equipment #" : "Equipment Number"}</div><div class="fieldValue mono">${h(attachment ? eq?.id : wo.equipment)||"&nbsp;"}</div></div>
+            <div class="cell"><div class="fieldLabel">${attachment ? "Parent Equipment" : "Equipment Name"}</div><div class="fieldValue">${h(eq?.name || wo.equipmentLabel)||"&nbsp;"}</div></div>
+            ${attachment ? `<div class="cell"><div class="fieldLabel">Attachment #</div><div class="fieldValue mono">${h(attachment.id)||"&nbsp;"}</div></div><div class="cell"><div class="fieldLabel">Attachment / Implement</div><div class="fieldValue">${h(attachment.name)||"&nbsp;"}</div></div>` : ""}
+            <div class="cell"><div class="fieldLabel">Make and Model</div><div class="fieldValue">${h(attachment ? `${attachment.make||""} ${attachment.model||""}`.trim() : (eq ? `${eq.make||""} ${eq.model||""}`.trim() : ""))||"&nbsp;"}</div></div>
+            <div class="cell"><div class="fieldLabel">Serial Number</div><div class="fieldValue mono">${h(attachment?.serial || eq?.serial)||"&nbsp;"}</div></div>
             <div class="cell"><div class="fieldLabel">${h(usageDisplayLabel)}</div><div class="fieldValue mono">${h(usageDisplayValue)||"&nbsp;"}</div></div>
-            <div class="cell"><div class="fieldLabel">EIL #</div><div class="fieldValue mono">${h(eq?.eilNumber)||"&nbsp;"}</div></div>
+            <div class="cell"><div class="fieldLabel">EIL #</div><div class="fieldValue mono">${h(attachment?.eilNumber || eq?.eilNumber)||"&nbsp;"}</div></div>
             <div class="cell"><div class="fieldLabel">Priority</div><div class="fieldValue">${h(wo.priority)||"&nbsp;"}</div></div>
             <div class="cell"><div class="fieldLabel">Mechanic</div><div class="fieldValue">${h(wo.tech)||"&nbsp;"}</div></div>
           </div>
         </section>` : ""}
 
-        ${(printOpt("showFaultDescription") || printOpt("showDescription") || (wo.woType !== "Inspection" && printOpt("showMechanicNotes"))) ? `<section class="section"><div class="section-title">Work Details</div><div class="textBlock tall"><b>Problem Reported</b><br>${h(printableDescription)||"&nbsp;"}<br><br><b>Work Description</b><br>${h(wo.description)||"&nbsp;"}<br><br><b>Mechanic Notes / Work Performed</b><br>${h(wo.mechanicNotes)||"&nbsp;"}</div></section>` : ""}
+        ${(printOpt("showFaultDescription") || printOpt("showDescription") || (wo.woType !== "Inspection" && printOpt("showMechanicNotes"))) ? `<section class="section"><div class="section-title">Work Details</div>
+          <div class="textBlock"><div class="fieldLabel">Problem Reported / Requested Service</div><div style="margin-top:5px;white-space:pre-wrap">${h(printableDescription)||"&nbsp;"}</div></div>
+          <div class="textBlock"><div class="fieldLabel">Work Description</div><div style="margin-top:5px;white-space:pre-wrap">${h(wo.description)||"&nbsp;"}</div></div>
+          <div class="textBlock tall"><div class="fieldLabel">Mechanic Notes / Work Performed</div><div style="margin-top:5px;white-space:pre-wrap">${h(wo.mechanicNotes)||"&nbsp;"}</div></div>
+        </section>` : ""}
         ${inspectionChecklistPrint}
 
         ${(printOpt("showParts") || printOpt("showOutsideServices") || printOpt("showLaborHours") || printOpt("showLaborTotal") || printOpt("showGrandTotal") || printOpt("showCosts")) ? `<section class="section" data-print-item="Parts and Labor Summary">
@@ -3946,7 +3974,7 @@ function AttachmentsCard({ eq, dispatch }) {
 
 /* EQUIPMENT */
 
-function Equipment({ state, dispatch }) {
+function Equipment({ state, dispatch, onCreateAttachmentWO }) {
   const [modal, setModal]       = useState(null);
   const [detail, setDetail]     = useState(null);
   const [attachDetail, setAttachDetail] = useState(null);
@@ -3965,6 +3993,7 @@ function Equipment({ state, dispatch }) {
   const [locationF, setLocationF] = useState("All");
   const [equipSort, setEquipSort] = useState("equipAsc");
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [attachmentsOnly, setAttachmentsOnly] = useState(false);
   const [showNewCat, setShowNewCat] = useState(false);
   const [newCat, setNewCat]     = useState("");
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
@@ -4197,6 +4226,13 @@ function Equipment({ state, dispatch }) {
     if(equipSort==="equipDesc") return String(b.id||"").localeCompare(String(a.id||""), undefined, { numeric:true, sensitivity:"base" });
     return String(a.id||"").localeCompare(String(b.id||""), undefined, { numeric:true, sensitivity:"base" });
   });
+
+  const allEquipmentAttachments = state.equipment.flatMap(eq=>(eq.attachments||[]).map(at=>({ eq, at }))).filter(({eq})=>!["Turned-in","Disposed"].includes(eq.turnInStatus));
+  const filteredAttachments = allEquipmentAttachments.filter(({eq,at})=>{
+    const q=String(search||"").trim().toLowerCase();
+    if(!q) return true;
+    return `${at.id||""} ${at.name||""} ${at.make||""} ${at.model||""} ${at.serial||""} ${at.eilNumber||""} ${eq.id||""} ${eq.name||""}`.toLowerCase().includes(q);
+  }).sort((a,b)=>String(a.at.id||a.at.name||"").localeCompare(String(b.at.id||b.at.name||""),undefined,{numeric:true,sensitivity:"base"}));
 
   const woForEq  = eq => state.workOrders.filter(w=>String(workOrderEquipmentId(w) || w.equipment || "")===String(eq.id||""));
   const openAdd  = () => { setForm({ status:"Fully Operational" }); setModal("add"); };
@@ -4915,6 +4951,7 @@ function Equipment({ state, dispatch }) {
             win.document.write(reportButtonsHtml(exportRows)+`</body></html>`);
             win.document.close();
           }}>🖨 Equipment Status Report</Btn>
+          <Btn variant={attachmentsOnly?"primary":"secondary"} onClick={()=>{ setAttachmentsOnly(v=>!v); setAttachDetail(null); }}>🔗 {attachmentsOnly?"All Equipment":"Attachments"}</Btn>
           <Btn onClick={openAdd}>+ Add New Equipment</Btn>
           <button className="mf-mobile-filter-button" onClick={()=>setMobileFiltersOpen(v=>!v)} style={{ display:"none" }}>☰ Filters{(typeF!=="All"||locationF!=="All") ? " •" : ""}</button>
         </div>
@@ -4949,22 +4986,34 @@ function Equipment({ state, dispatch }) {
 
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 }}>
         <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>
-          Showing <strong style={{ color:T.text }}>{filtered.length}</strong> of <strong style={{ color:T.text }}>{state.equipment.length}</strong> equipment
+          Showing <strong style={{ color:T.text }}>{attachmentsOnly?filteredAttachments.length:filtered.length}</strong> of <strong style={{ color:T.text }}>{attachmentsOnly?allEquipmentAttachments.length:state.equipment.length}</strong> {attachmentsOnly?"attachments":"equipment"}
         </div>
 
       </div>
 
       <div className="mf-mobile-summary-list">
-        {filtered.map(eq=><button key={`mobile-eq-${eq.id}`} className="mf-mobile-summary-card mf-mobile-equipment-card" onClick={()=>setDetail(eq.id)}>
+        {(attachmentsOnly ? filteredAttachments.map(({eq,at})=>({ ...at, _parent:eq })) : filtered).map(eq=><button key={`mobile-eq-${eq._parent?`att-${eq.id}`:eq.id}`} className="mf-mobile-summary-card mf-mobile-equipment-card" onClick={()=>eq._parent?setAttachDetail({eq:eq._parent,at:eq}):setDetail(eq.id)}>
           <div className="mf-mobile-equipment-number">{eq.id || "—"}</div>
-          <div className="mf-mobile-equipment-name">{eq.name || eq.nomenclature || "Unnamed equipment"}</div>
+          <div className="mf-mobile-equipment-name">{eq.name || eq.nomenclature || "Unnamed equipment"}{eq._parent?` • on ${eq._parent.id}`:""}</div>
           <span className="mf-mobile-card-chevron">›</span>
         </button>)}
-        {!filtered.length && <div className="mf-mobile-empty">No equipment found.</div>}
+        {!(attachmentsOnly?filteredAttachments.length:filtered.length) && <div className="mf-mobile-empty">No {attachmentsOnly?"attachments":"equipment"} found.</div>}
       </div>
 
       <div className="mf-desktop-list" style={{ display:"flex", flexDirection:"column", gap:6 }}>
-        {filtered.map(eq=>{
+        {attachmentsOnly && filteredAttachments.map(({eq,at})=>(
+          <div key={`attachment-only-${eq.id}-${at.id}`} onClick={()=>setAttachDetail({eq,at})} style={{ display:"grid", gridTemplateColumns:"110px minmax(180px,1fr) 150px 130px 130px 160px 110px 24px", alignItems:"center", gap:16, padding:"13px 18px", background:T.card, border:`1px solid ${T.border}`, borderRadius:8, boxShadow:T.shadow, cursor:"pointer", minWidth:900 }}>
+            <div><div style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase"}}>Attach #</div><div style={{fontFamily:T.mono,fontSize:12,marginTop:3}}>{at.id||"—"}</div></div>
+            <div><div style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase"}}>Attachment / Implement</div><div style={{fontSize:14,fontWeight:700,marginTop:3}}>{at.name||"Unnamed"}</div></div>
+            <div><div style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase"}}>Parent Equipment</div><div style={{fontSize:12,fontWeight:700,marginTop:3}}>{eq.id} — {eq.name}</div></div>
+            <div><div style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase"}}>Make</div><div style={{fontSize:12,marginTop:3}}>{at.make||"—"}</div></div>
+            <div><div style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase"}}>Model</div><div style={{fontSize:12,marginTop:3}}>{at.model||"—"}</div></div>
+            <div><div style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase"}}>Serial #</div><div style={{fontFamily:T.mono,fontSize:11,marginTop:3}}>{at.serial||"—"}</div></div>
+            <div><div style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase"}}>EIL #</div><div style={{fontFamily:T.mono,fontSize:11,marginTop:3}}>{at.eilNumber||"—"}</div></div>
+            <span style={{color:T.accent,fontSize:18}}>›</span>
+          </div>
+        ))}
+        {!attachmentsOnly && filtered.map(eq=>{
           const rs    = rowStyle(eq.status);
           const isOOS = eq.status==="Out of Service / Deadline";
           const isDef = eq.status==="Operational with Deficiencies";
@@ -5100,9 +5149,9 @@ function Equipment({ state, dispatch }) {
             </div>
           );
         })}
-        {filtered.length===0 && (
+        {(attachmentsOnly?filteredAttachments.length===0:filtered.length===0) && (
           <div style={{ padding:48, textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13, background:T.card, borderRadius:8, border:`1px solid ${T.border}` }}>
-            No equipment matches your filters.
+            No {attachmentsOnly?"attachments":"equipment"} match your filters.
           </div>
         )}
       </div>
@@ -5137,7 +5186,11 @@ function Equipment({ state, dispatch }) {
               <div style={{ fontFamily:T.sans, fontSize:13, color:T.subtext }}>{attachDetail.at.notes}</div>
             </div>
           )}
-          <div style={{ display:"flex", justifyContent:"flex-end", marginTop:16 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginTop:16, flexWrap:"wrap" }}>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+              <Btn onClick={()=>onCreateAttachmentWO?.({ requestId:Date.now(), woType:"Repair", equipment:attachDetail.at.id, parentId:attachDetail.eq.id })}>🛠 Create Repair WO</Btn>
+              <Btn variant="secondary" onClick={()=>onCreateAttachmentWO?.({ requestId:Date.now(), woType:"Service", equipment:attachDetail.at.id, parentId:attachDetail.eq.id })}>🧰 Create Service WO</Btn>
+            </div>
             <Btn variant="secondary" onClick={()=>setAttachDetail(null)}>Close</Btn>
           </div>
         </Modal>
@@ -10269,6 +10322,7 @@ export default function App() {
   const [showWOSettings, setShowWOSettings] = useState(false);
   const [showSettings, setShowSettings]   = useState(false);
   const [showHelp, setShowHelp]           = useState(false);
+  const [pendingWORequest, setPendingWORequest] = useState(null);
 
   useEffect(() => {
     try {
@@ -10336,9 +10390,9 @@ export default function App() {
 
   const pages = {
     dashboard:        <Dashboard        state={visibleState} dispatch={dispatch} setTab={setTab} onSettings={()=>setShowSettings(true)} />,
-    workorders:       <WorkOrders       state={visibleState} dispatch={dispatch} woSettings={state.woSettings} onWOSettings={()=>setShowWOSettings(true)} />,
+    workorders:       <WorkOrders       state={visibleState} dispatch={dispatch} woSettings={state.woSettings} onWOSettings={()=>setShowWOSettings(true)} initialWORequest={pendingWORequest} onConsumeWORequest={()=>setPendingWORequest(null)} />,
     inspections:      <Inspections      state={visibleState} dispatch={dispatch} />,
-    equipment:        <Equipment        state={visibleState} dispatch={dispatch} />,
+    equipment:        <Equipment        state={visibleState} dispatch={dispatch} onCreateAttachmentWO={(request)=>{ setPendingWORequest(request); setTab("workorders"); }} />,
     parts:            <Parts            state={visibleState} dispatch={dispatch} />,
     pm:               <PM               state={visibleState} dispatch={dispatch} />,
     usage:            <UsageTracking    state={visibleState} dispatch={dispatch} />,
