@@ -2213,7 +2213,7 @@ const NAV_REPORTS = [
   { id:"reports_combined",    icon:"📑", label:"Combined Report" },
 ];
 
-function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profile }) {
+function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profile, showEquipmentInventory=true }) {
   const defaultMenuGroups = [
     { key:"main", title:"Main Menu", items:NAV },
     { key:"reports", title:"Reports", items:NAV_REPORTS },
@@ -2241,7 +2241,7 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
   }, []);
 
   const itemByKey = Object.fromEntries(defaultMenuGroups.flatMap(g=>g.items.map(item=>[`${g.key}:${item.id}`, { ...item, group:g.key, groupTitle:g.title }])));
-  const orderedItems = menuOrder.map(k=>itemByKey[k]).filter(Boolean);
+  const orderedItems = menuOrder.map(k=>itemByKey[k]).filter(Boolean).filter(n=>showEquipmentInventory || n.id!=="inventory");
 
   const saveOrder = (next) => {
     setMenuOrder(next);
@@ -5894,8 +5894,8 @@ function Inspections({ state, dispatch }) {
       </div>
 
       {showInspectionLibrary && <Card title="Inspection Tasks Library" right={<span style={{ fontFamily:T.mono, color:T.muted }}>{tasks.length} tasks</span>}>
-        <div style={{ overflowX:"auto" }}>
-          <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:13 }}>
+        <div className="mf-inspection-library-desktop">
+          <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:13 }}> 
             <thead><tr style={{ background:T.grayLt }}>
               {['Task Name','Frequency','Steps','Attachments','Notes','Actions'].map(h=><th key={h} style={{ textAlign:"left", padding:"10px", borderBottom:`1px solid ${T.border}`, color:T.subtext }}>{h}</th>)}
             </tr></thead>
@@ -5914,6 +5914,14 @@ function Inspections({ state, dispatch }) {
               })}
             </tbody>
           </table>
+        </div>
+        <div className="mf-inspection-library-mobile">
+          {tasks.length===0 && <div className="mf-mobile-empty">No inspection tasks yet.</div>}
+          {tasks.map(t=><div key={`mobile-task-${t.id}`} className="mf-mobile-data-card">
+            <div className="mf-mobile-data-title">{t.name}</div>
+            <div className="mf-mobile-data-grid"><div><b>Frequency</b><span>{t.frequency||"—"}</span></div><div><b>Steps</b><span>{stepLines(t.steps).length}</span></div><div><b>Attachments</b><span>{(t.attachments||[]).length}</span></div><div><b>Notes</b><span>{t.notes||"—"}</span></div></div>
+            <div className="mf-mobile-card-actions"><Btn variant="secondary" onClick={()=>openTask(t)}>Edit</Btn><Btn variant="secondary" onClick={()=>copyInspectionTask(t)}>Copy</Btn></div>
+          </div>)}
         </div>
         {selectedTask && <div style={{ marginTop:14, border:`1px solid ${T.border}`, borderRadius:14, padding:14, background:T.card }}>
           <div style={{ display:"flex", justifyContent:"space-between", gap:10, flexWrap:"wrap", alignItems:"center" }}>
@@ -7758,7 +7766,7 @@ function EquipmentInventory({ state, dispatch }) {
       </div>
 
       {/* Inventory Table */}
-      <Card style={{ padding:0, overflow:"hidden" }}>
+      <div className="mf-inventory-desktop"><Card style={{ padding:0, overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
@@ -7798,7 +7806,16 @@ function EquipmentInventory({ state, dispatch }) {
           </tbody>
         </table>
         {filtered.length===0 && <div style={{ padding:40, textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13 }}>{tab==="active"?"No active inventory items.":"No turned-in equipment."}</div>}
-      </Card>
+      </Card></div>
+      <div className="mf-inventory-mobile">
+        {filtered.length===0 && <div className="mf-mobile-empty">{tab==="active"?"No active inventory items.":"No turned-in equipment."}</div>}
+        {filtered.map(item=><div key={`mobile-inv-${item.id}`} className="mf-mobile-data-card" onClick={()=>openItem(item)}>
+          <div className="mf-mobile-data-title">{item.name || "Unnamed equipment"}</div>
+          {item._source==="attachment" && <div style={{fontSize:11,color:T.accent,fontWeight:800,marginTop:3}}>Attachment on {item.parentEquipmentName||item.parentEquipmentId}</div>}
+          <div className="mf-mobile-data-grid"><div><b>EE / EIL #</b><span>{item.eilNumber||"No EE"}</span></div><div><b>Category</b><span>{item.category||"—"}</span></div><div><b>Serial #</b><span>{item.serial||"—"}</span></div><div><b>Location</b><span>{item.location||"—"}</span></div><div><b>Condition</b><span>{item.condition||"—"}</span></div><div><b>Status</b><span>{item.turnInStatus||"Active"}</span></div><div><b>Value</b><span>{moneyFmt(item.acquisitionCost)}</span></div></div>
+          <div className="mf-mobile-card-actions" onClick={e=>e.stopPropagation()}>{tab==="active" && item._source==="equipment" && <Btn small variant="secondary" onClick={()=>openTransfer(item)}>Transfer</Btn>}<Btn small variant="danger" onClick={()=>del(item.id)}>Delete</Btn></div>
+        </div>)}
+      </div>
 
       {/* Add / Edit Item modal */}
       {(modal==="add"||typeof modal==="object"&&modal?.id)&&(
@@ -8975,7 +8992,7 @@ function SystemSettings({ state, dispatch, onClose }) {
       <div style={{padding:16,border:`1px solid ${T.border}`,borderRadius:14,background:T.surface,marginBottom:16}}>
         <div style={{fontSize:15,fontWeight:900,marginBottom:8}}>Equipment Fields</div>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:16}}>
-          <div><div style={{fontSize:13,fontWeight:800}}>EIL Number / Inventory Number</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>Show this optional identification field on equipment and related records.</div></div>
+          <div><div style={{fontSize:13,fontWeight:800}}>EIL Number / Inventory Number</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>Turn Equipment Inventory on or off. When off, the Equipment Inventory tab is hidden; existing inventory data is kept and can be restored by turning it back on.</div></div>
           <button type="button" onClick={()=>setForm(f=>({...f,showEilInventoryNumber:!f.showEilInventoryNumber}))} style={{width:46,height:26,borderRadius:13,border:"none",background:form.showEilInventoryNumber?T.accent:"#d1d5db",cursor:"pointer",position:"relative",flex:"0 0 auto"}}><span style={{position:"absolute",top:3,left:form.showEilInventoryNumber?23:3,width:20,height:20,borderRadius:"50%",background:T.card,transition:"left .2s"}}/></button>
         </div>
       </div>
@@ -9022,7 +9039,7 @@ defaultPriority:"Medium", dateFormat:"MM/DD/YYYY", currency:"USD", showEilInvent
           <Field label="Address"><input style={inp} value={data.address} onChange={F("address")} placeholder="Street address" /></Field>
           <Field label="City, State"><input style={inp} value={data.cityState} onChange={F("cityState")} placeholder="City, State" /></Field>
           <div style={{ marginTop:6 }}><label style={{ fontSize:12, fontWeight:700, color:T.subtext }}>Company Logo <span style={{fontWeight:400}}>(optional)</span></label><div style={{display:"flex",gap:10,alignItems:"center",marginTop:7}}>{<img src={data.logo || MAINTFORGE_DEFAULT_LOGO} alt="logo" style={{height:48,maxWidth:100,objectFit:"contain"}}/>}<label style={{padding:"8px 12px",border:`1px solid ${T.accent}`,borderRadius:7,color:T.accent,fontSize:12,fontWeight:700,cursor:"pointer"}}>Upload Logo<input type="file" accept="image/*" onChange={handleLogo} style={{display:"none"}}/></label></div></div>
-          <div style={{marginTop:18,padding:13,border:`1px solid ${T.border}`,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"space-between",gap:14}}><div><div style={{fontSize:13,fontWeight:800}}>EIL Number / Inventory Number</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>Turn this on if your company uses an EIL or inventory identification number for equipment.</div></div><button type="button" onClick={()=>setData(d=>({...d,showEilInventoryNumber:!d.showEilInventoryNumber}))} style={{width:46,height:26,borderRadius:13,border:"none",background:data.showEilInventoryNumber?T.accent:"#d1d5db",cursor:"pointer",position:"relative",flex:"0 0 auto"}}><span style={{position:"absolute",top:3,left:data.showEilInventoryNumber?23:3,width:20,height:20,borderRadius:"50%",background:T.card}}/></button></div>
+          <div style={{marginTop:18,padding:14,border:`1px solid ${T.border}`,borderRadius:12,background:T.grayLt}}><div style={{fontSize:14,fontWeight:900}}>Does your organization use an EE / Equipment Inventory number?</div><div style={{fontSize:12,color:T.muted,marginTop:5,lineHeight:1.45}}>An EE (Equipment Inventory) number is a unique property or asset number used to identify and account for equipment. Some organizations call it an EIL, inventory number, or property number.</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:12}}><button type="button" onClick={()=>setData(d=>({...d,showEilInventoryNumber:true}))} style={{padding:"11px 12px",borderRadius:10,border:`2px solid ${data.showEilInventoryNumber?T.accent:T.border}`,background:data.showEilInventoryNumber?T.accentLt:T.card,color:data.showEilInventoryNumber?T.accent:T.text,fontWeight:800,cursor:"pointer"}}>Yes — Use EE Inventory</button><button type="button" onClick={()=>setData(d=>({...d,showEilInventoryNumber:false}))} style={{padding:"11px 12px",borderRadius:10,border:`2px solid ${!data.showEilInventoryNumber?T.accent:T.border}`,background:!data.showEilInventoryNumber?T.accentLt:T.card,color:!data.showEilInventoryNumber?T.accent:T.text,fontWeight:800,cursor:"pointer"}}>No — Hide EE Inventory</button></div></div>
         </>}
         {step===2 && <>
           <div style={{textAlign:"center",padding:"8px 0 16px"}}><div style={{fontSize:50}}>✓</div><h2 style={{margin:"4px 0 8px",fontSize:24}}>Ready to go</h2><p style={{margin:"0 auto",maxWidth:460,color:T.muted,lineHeight:1.5}}>MaintForge will start with common equipment categories. Add your first piece of equipment, then create work orders, PM schedules, inspections, inventory, and fuel records as you need them.</p></div>
@@ -10564,8 +10581,8 @@ export default function App() {
   };
 
   useEffect(() => {
-    if(!pages[tab]) setTab("dashboard");
-  }, [tab]);
+    if(!pages[tab] || (tab==="inventory" && state.settings?.showEilInventoryNumber === false)) setTab("dashboard");
+  }, [tab, state.settings?.showEilInventoryNumber]);
 
   const selectedTheme = state.settings?.theme || "light";
   const effectiveTheme = getEffectiveThemeMode(selectedTheme);
@@ -11335,9 +11352,30 @@ export default function App() {
           .mf-mobile-bottom-nav { z-index:1100 !important; }
           .mf-wo-phone-detail ~ * { min-width:0 !important; }
         }
+        /* v7 mobile-first: no horizontal/sliding columns. Mobile uses cards or wrapped full-width content. */
+        .mf-inspection-library-mobile, .mf-inventory-mobile { display:none; }
+        @media (max-width: 768px) {
+          main, main > div, main section, main article { overflow-x:hidden !important; max-width:100% !important; }
+          main div[style*="overflowX"], main div[style*="overflow-x"], .mobile-x-scroll { overflow-x:hidden !important; max-width:100% !important; }
+          main table { width:100% !important; min-width:0 !important; max-width:100% !important; table-layout:fixed !important; overflow:hidden !important; }
+          main th, main td { min-width:0 !important; max-width:none !important; white-space:normal !important; overflow-wrap:anywhere !important; word-break:normal !important; }
+          main th:first-child, main td:first-child { position:static !important; min-width:0 !important; max-width:none !important; box-shadow:none !important; }
+          .mf-inspection-library-desktop, .mf-inventory-desktop { display:none !important; }
+          .mf-inspection-library-mobile, .mf-inventory-mobile { display:flex !important; flex-direction:column; gap:10px; width:100%; }
+          .mf-mobile-data-card { width:100%; min-width:0; border:1px solid ${T.border}; border-radius:14px; padding:14px; background:${T.card}; box-shadow:${T.shadowSm}; }
+          .mf-mobile-data-title { font-size:17px; font-weight:900; color:${T.text}; line-height:1.25; overflow-wrap:anywhere; }
+          .mf-mobile-data-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; }
+          .mf-mobile-data-grid > div { min-width:0; }
+          .mf-mobile-data-grid b { display:block; font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:${T.muted}; margin-bottom:3px; }
+          .mf-mobile-data-grid span { display:block; font-size:13px; color:${T.text}; overflow-wrap:anywhere; }
+          .mf-mobile-card-actions { display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:12px; }
+          .mf-mobile-card-actions button { width:100% !important; min-width:0 !important; white-space:normal !important; }
+          .mf-section-heading > div:last-child { width:100%; display:grid !important; grid-template-columns:1fr !important; }
+          .mf-section-heading button { width:100% !important; }
+        }
       `}</style>
 
-      <SlideMenu tab={tab} setTab={setTab} open={menuOpen} onClose={()=>setMenuOpen(false)} onSettings={()=>setShowSettings(true)} companyName={companyName} profile={profile} />
+      <SlideMenu tab={tab} setTab={setTab} open={menuOpen} onClose={()=>setMenuOpen(false)} onSettings={()=>setShowSettings(true)} companyName={companyName} profile={profile} showEquipmentInventory={state.settings?.showEilInventoryNumber !== false} />
 
       {/* Custom header with profile button */}
       <header className="no-print mf-header" style={{ position:"sticky", top:0, zIndex:1000, background:T.surface, borderBottom:`1px solid ${T.border}`, padding:"0 20px", height:56, display:"flex", alignItems:"center", justifyContent:"space-between", boxShadow:`0 1px 0 ${T.border}` }}>
