@@ -4437,6 +4437,18 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
         )}
       </div>
 
+      <div style={{ gridColumn:"span 2", marginBottom:14, background:T.grayLt, borderRadius:8, padding:"12px 14px", border:`1px solid ${T.border}` }}>
+        <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:800, color:T.text }}>Preventive Maintenance Baseline</div>
+        <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, margin:"3px 0 10px" }}>Use the equipment’s real last-service information so new PM assignments calculate from its maintenance history instead of from zero or the date it was added to MaintForge.</div>
+        <div className="mf-mobile-form" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 12px" }}>
+          <Field label="Last Service Date"><input style={inp} type="date" value={form.pmBaselineDate||""} onChange={e=>setForm(f=>({...f,pmBaselineDate:e.target.value}))} /></Field>
+          {form.trackUsage && <Field label={form.usageType==="mileage"?"Usage at Last Service (Miles)":form.usageType==="both"?"Usage at Last Service":"Usage at Last Service (Hours)"}>
+            <input style={inp} {...decimalInputAttrs({placeholder:form.usageType==="mileage"?"e.g. 40000":"e.g. 1250"})} value={form.pmBaselineUsage||""} onChange={e=>setForm(f=>({...f,pmBaselineUsage:sanitizeDecimalInput(e.target.value)}))} />
+          </Field>}
+          <div style={{gridColumn:"1 / -1"}}><Field label="Last Service / PM Notes"><input style={inp} value={form.pmBaselineNotes||""} onChange={e=>setForm(f=>({...f,pmBaselineNotes:e.target.value}))} placeholder="Optional — oil service, annual service, source record, etc." /></Field></div>
+        </div>
+      </div>
+
       <Field label="Notes">
         <textarea style={{ ...inp, minHeight:60, resize:"vertical" }} value={form.notes||""} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} />
       </Field>
@@ -4909,7 +4921,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
           <Card>
             <h4 style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Equipment Details</h4>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"12px 20px" }}>
-              {[["Type",eq.type],["Location",eq.location],["Area",eq.area],["Serial Number",eq.serial],["EIL #",eq.eilNumber],["Year",eq.year],["Make",eq.make],["Model",eq.model],["Acquisition Date",eq.acquisitionDate],["Purchase Price",eq.acquisitionCost?moneyFmt(eq.acquisitionCost):"—"],["Warranty Start",eq.warrantyStart],["Warranty End",eq.warrantyEnd]].map(([k,v])=>(
+              {[["Category",eq.category||eq.type],["Location",eq.location],["Area",eq.area],["Last Service",eq.pmBaselineDate],["Usage at Last Service",eq.pmBaselineUsage],["Serial Number",eq.serial],["EIL #",eq.eilNumber],["Year",eq.year],["Make",eq.make],["Model",eq.model],["Acquisition Date",eq.acquisitionDate],["Purchase Price",eq.acquisitionCost?moneyFmt(eq.acquisitionCost):"—"],["Warranty Start",eq.warrantyStart],["Warranty End",eq.warrantyEnd]].map(([k,v])=>(
                 <div key={k}>
                   <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div>
                   <div style={{ fontFamily:T.sans, fontSize:13, color:T.text, marginTop:3 }}>{v||"—"}</div>
@@ -5486,7 +5498,15 @@ function Parts({ state, dispatch }) {
         </Card>
       )}
 
-      <Card style={{ padding:0, overflow:"hidden" }}>
+      <div className="mf-parts-mobile-list">
+        {filtered.map(p=>{ const linkedEq=p.equipmentId?state.equipment.find(e=>e.id===p.equipmentId):null; const stockStatus=getPartStockStatus(p); return <Card key={p.id} style={{padding:12,marginBottom:10}}>
+          <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}><div style={{minWidth:0}}><div style={{fontFamily:T.mono,fontSize:11,color:T.accent}}>{p.partNumber||"—"}</div><div style={{fontWeight:800,fontSize:15,overflowWrap:"anywhere"}}>{p.name}</div>{linkedEq&&<div style={{fontSize:11,color:T.accent,marginTop:2}}>For: {linkedEq.name} ({linkedEq.id})</div>}</div><div style={{fontWeight:800,color:stockStatus==="Out of Stock"?T.red:stockStatus==="Low Stock"?T.amber:T.green,textAlign:"right"}}>{p.qty} {p.unit||"ea"}<div style={{fontSize:10}}>{stockStatus}</div></div></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:10,fontSize:12}}><div><span style={{color:T.muted}}>Category</span><br/><b>{p.category||"—"}</b></div><div><span style={{color:T.muted}}>Unit Cost</span><br/><b>{moneyFmt(p.unitCost)}</b></div><div><span style={{color:T.muted}}>Location</span><br/><b>{p.location||"—"}</b></div><div><span style={{color:T.muted}}>Total Value</span><br/><b>{moneyFmt((+p.qty||0)*(+p.unitCost||0))}</b></div></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:12}}><Btn small variant="secondary" onClick={()=>openEdit(p)}>Edit</Btn><Btn small variant="danger" onClick={()=>del(p.id)}>Delete</Btn></div>
+        </Card>})}
+        {!filtered.length&&<div style={{padding:24,textAlign:"center",color:T.muted}}>No parts found.</div>}
+      </div>
+      <Card className="mf-parts-desktop-table" style={{ padding:0, overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
@@ -6217,9 +6237,12 @@ function PM({ state, dispatch }) {
   };
 
   const currentUsageFor = (equipmentId, type="hours") => {
-    const logs = (state.usageLogs||[]).filter(l=>l.equipmentId===equipmentId);
+    const logs = (state.usageLogs||[]).filter(l=>String(l.equipmentId)===String(equipmentId));
+    const eq = (state.equipment||[]).find(e=>String(e.id)===String(equipmentId)) || {};
     const key = type === "mileage" ? "mileage" : "hours";
-    return Math.max(...logs.map(l=>+(l[key]||0)), 0);
+    const equipmentCurrent = type === "mileage" ? +(eq.currentMileage||eq.mileage||0) : +(eq.currentHours||eq.hours||0);
+    const baseline = +(eq.pmBaselineUsage||0);
+    return Math.max(...logs.map(l=>+(l[key]||0)), equipmentCurrent, baseline, 0);
   };
 
   const buildScheduleTriggers = (triggers, lastDate, lastUsage) => normalizeTaskTriggers({triggers}).map(t=>{
@@ -6338,13 +6361,18 @@ function PM({ state, dispatch }) {
       if(!selectedTask) return null;
       const trig = getTaskTriggerSettings(selectedTask);
       const schedulePayload = { ...schForm, equipmentId, taskId, equipmentIds:undefined, taskIds:undefined, task:selectedTask.name, ...trig };
-      const nextTriggers = buildScheduleTriggers(schedulePayload.triggers, schedulePayload.lastDoneDate, schedulePayload.lastDoneUsage);
+      const baselineEq = (state.equipment||[]).find(e=>String(e.id)===String(equipmentId)) || {};
+      const baselineDate = schedulePayload.lastDoneDate || baselineEq.pmBaselineDate || schedulePayload.created || today();
+      const baselineUsage = schedulePayload.lastDoneUsage !== undefined && schedulePayload.lastDoneUsage !== "" ? schedulePayload.lastDoneUsage : (baselineEq.pmBaselineUsage || 0);
+      const nextTriggers = buildScheduleTriggers(schedulePayload.triggers, baselineDate, baselineUsage);
       const nextDate  = nextTriggers.find(t=>t.type==="time")?.nextDueDate || "";
       const nextUsage = nextTriggers.find(t=>t.type==="hours"||t.type==="mileage")?.nextDueUsage || "";
       return {
         ...schedulePayload,
         id:existingId || genId("SCH"),
         triggers:nextTriggers,
+        lastDoneDate:schedulePayload.lastDoneDate || baselineEq.pmBaselineDate || "",
+        lastDoneUsage:schedulePayload.lastDoneUsage !== undefined && schedulePayload.lastDoneUsage !== "" ? schedulePayload.lastDoneUsage : (baselineEq.pmBaselineUsage || ""),
         nextDueDate:nextDate,
         nextDueUsage:nextUsage,
         created:schForm.created || today(),
@@ -6667,7 +6695,7 @@ function PM({ state, dispatch }) {
         <div style={{ background:T.redLt, border:`1px solid ${T.red}`, borderRadius:8, padding:"12px 16px", marginBottom:16, display:"flex", gap:10, alignItems:"center" }}>
           <span style={{ fontSize:20 }}>🚨</span>
           <div style={{ fontFamily:T.sans, fontSize:13, color:T.red, fontWeight:600 }}>
-            {triggered.length} PM schedule{triggered.length>1?"s":""} triggered — work orders auto-generated.
+            {triggered.length} PM schedule{triggered.length>1?"s":""} due — review the assignment below and use Create WO when you are ready.
           </div>
         </div>
       )}
@@ -7421,6 +7449,10 @@ function UsageTracking({ state, dispatch }) {
       notes: String(e.notes ?? "").trim(),
     };
     if(!cleaned.hours && !cleaned.mileage && !cleaned.fuel) { alert("Enter at least one value."); return; }
+    const warnings=[];
+    if(cleaned.hours!=="" && +cleaned.hours < currentOf(eq.id,"hours")) warnings.push(`Hours entered (${cleaned.hours}) are lower than the current recorded hours (${currentOf(eq.id,"hours")}).`);
+    if(cleaned.mileage!=="" && +cleaned.mileage < currentOf(eq.id,"mileage")) warnings.push(`Mileage entered (${cleaned.mileage}) is lower than the current recorded mileage (${currentOf(eq.id,"mileage")}).`);
+    if(warnings.length && !confirm(`${warnings.join("\n")}\n\nDo you want to proceed and save this lower reading?`)) return;
     dispatch({ type:"ADD_USAGE_LOG", payload:{ ...cleaned, equipmentId:eq.id, id:genId("UL"), createdAt:new Date().toISOString() }});
     setEntry(prev=>({...prev,[String(eq.id)]:{ date:today(), hours:"", mileage:"", fuel:"", notes:"" }}));
   };
@@ -7441,6 +7473,12 @@ function UsageTracking({ state, dispatch }) {
       alert("Enter at least one value, or delete the log instead.");
       return;
     }
+    const otherLogs=(state.usageLogs||[]).filter(l=>String(l.equipmentId)===String(editLog.equipmentId) && String(l.id)!==String(editLog.id));
+    const maxOther=(field)=>Math.max(0,...otherLogs.map(l=>+(l[field]||0)).filter(Number.isFinite));
+    const warnings=[];
+    if(String(editLog.hours||"").trim() && +editLog.hours < maxOther("hours")) warnings.push(`Hours entered (${editLog.hours}) are lower than another recorded reading (${maxOther("hours")}).`);
+    if(String(editLog.mileage||"").trim() && +editLog.mileage < maxOther("mileage")) warnings.push(`Mileage entered (${editLog.mileage}) is lower than another recorded reading (${maxOther("mileage")}).`);
+    if(warnings.length && !confirm(`${warnings.join("\n")}\n\nDo you want to proceed and save this lower reading?`)) return;
     dispatch({ type:"UPDATE_USAGE_LOG", payload:editLog });
     setEditLog(null);
   };
@@ -9287,7 +9325,13 @@ function FuelTracking({ state, dispatch }) {
         </select>
         <Btn variant="secondary" onClick={openAdd}>+ Add More Containers</Btn>
       </div>
-      <div className="mobile-x-scroll"><table style={{ borderCollapse:"collapse", width:"100%" }}><thead><tr>{["Container","Fuel","Latest Level","Gallons","Consumed","Refilled","Enter Inches","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, fontSize:12, color:T.muted }}>{h}</th>)}</tr></thead><tbody>
+      <div className="mf-fuel-mobile-list">{containers.map(c=>{ const last=latestFuelReading(state,c.id); const pct=fuelPercent(c,last?.gallons||0); const le=levelEntry[c.id]||{date:today(),inches:"",notes:""}; const preview=le.inches!==""?calculateFuelGallons(c,le.inches):null; return <Card key={c.id} style={{padding:12,marginBottom:10}}>
+        <div style={{display:"flex",justifyContent:"space-between",gap:8}}><div><b>{c.name}</b><div style={{fontSize:11,color:T.muted}}>{c.fuelType}</div></div><div style={{textAlign:"right",fontWeight:800}}>{last?`${Math.round(last.gallons).toLocaleString()} gal`:"—"}<div style={{fontSize:11,color:T.muted}}>{last?`${pct.toFixed(1)}% full`:"No reading"}</div></div></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:10,fontSize:12}}><div>Consumed<br/><b>{Math.round(fuelConsumedForPeriod(state,c.id,period)).toLocaleString()} gal</b></div><div>Refilled<br/><b>{Math.round(fuelRefilledForPeriod(state,c.id,period)).toLocaleString()} gal</b></div></div>
+        <div style={{marginTop:10}}><div style={{fontSize:11,fontWeight:800,marginBottom:4}}>Enter tank level (inches)</div><div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8}}><input style={{...inp,minWidth:0}} type="text" placeholder="30 7/8" value={le.inches||""} onChange={e=>setLevel(c.id,"inches",e.target.value)}/><Btn small onClick={()=>saveLevel(c)}>Log</Btn></div>{preview!==null&&<div style={{fontSize:11,color:T.muted,marginTop:4}}>≈ {Math.round(preview).toLocaleString()} gal</div>}<input style={{...inp,width:"100%",marginTop:6}} type="date" value={le.date||today()} onChange={e=>setLevel(c.id,"date",e.target.value)}/></div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6,marginTop:10}}><Btn small variant="secondary" onClick={()=>openRefill(c)}>Refill</Btn><Btn small variant="secondary" onClick={()=>openEdit(c)}>Edit</Btn><Btn small variant="danger" onClick={()=>confirm("Delete this fuel container and its history?")&&dispatch({type:"DELETE_FUEL_CONTAINER",payload:c.id})}>Delete</Btn></div>
+      </Card>})}</div>
+      <div className="mobile-x-scroll mf-fuel-desktop-table"><table style={{ borderCollapse:"collapse", width:"100%" }}><thead><tr>{["Container","Fuel","Latest Level","Gallons","Consumed","Refilled","Enter Inches","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, fontSize:12, color:T.muted }}>{h}</th>)}</tr></thead><tbody>
         {containers.map(c=>{ const last=latestFuelReading(state,c.id); const pct=fuelPercent(c,last?.gallons||0); const le=levelEntry[c.id] || { date:today(), inches:"", notes:"" }; const preview = le.inches!=="" ? calculateFuelGallons(c, le.inches) : null; return <tr key={c.id}>
           <td style={{ ...fuelCell, fontWeight:800 }}>{c.name}</td>
           <td style={fuelCell}>{c.fuelType}</td>
@@ -11423,6 +11467,12 @@ export default function App() {
           .mf-wo-phone-detail ~ * { min-width:0 !important; }
         }
 
+
+          .mf-parts-mobile-list, .mf-fuel-mobile-list { display:none; }
+          @media (max-width: 768px) {
+            .mf-parts-desktop-table, .mf-fuel-desktop-table { display:none !important; }
+            .mf-parts-mobile-list, .mf-fuel-mobile-list { display:block !important; }
+          }
           /* v9 mobile audit: no sideways/sliding columns; reflow controls and dense pages for phones. */
           .mf-field { min-width:0 !important; }
           .mf-pm-assigned-mobile { display:none; }
@@ -11443,7 +11493,7 @@ export default function App() {
             .mf-equipment-primary-actions > input, .mf-equipment-primary-actions > button { grid-column:1 !important; width:100% !important; min-width:0 !important; }
             .mf-equipment-primary-actions > button:nth-of-type(1) { display:none !important; }
             .mf-mobile-filter-button { grid-column:1 !important; width:100% !important; font-size:14px !important; }
-            .mf-mobile-filter-button::before { content:"☰ Filters" !important; font-size:14px !important; }
+            .mf-mobile-filter-button::before { content:"" !important; display:none !important; }
             .mf-pm-actions { display:grid !important; grid-template-columns:1fr 1fr !important; gap:8px !important; }
             .mf-pm-actions > *, .mf-pm-actions > div { min-width:0 !important; width:100% !important; }
             .mf-pm-actions > div { display:contents !important; }
