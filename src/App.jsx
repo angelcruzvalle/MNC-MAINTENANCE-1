@@ -327,6 +327,7 @@ const INIT = {
   equipment: [],
   preventiveMaintenance: [],
   parts: [],
+  lubricants: [],
   pmSchedules: [],
   pmTasks: [],
   inspectionTasks: [],
@@ -610,6 +611,7 @@ function blankUserState(ownerUserId="") {
     equipment: [],
     preventiveMaintenance: [],
     parts: [],
+    lubricants: [],
     pmSchedules: [],
     pmTasks: [],
     inspectionTasks: [],
@@ -796,6 +798,7 @@ function countLegacyUnassignedRecords(state={}) {
     equipment: state.equipment || [],
     workOrders: state.workOrders || [],
     parts: state.parts || [],
+    lubricants: state.lubricants || [],
     inventoryItems: state.inventoryItems || [],
     technicians: state.technicians || [],
     usageLogs: state.usageLogs || [],
@@ -894,6 +897,7 @@ function migrateLegacyDataToSingleLocation(state={}) {
     equipment: stamp(state.equipment),
     workOrders: stamp(state.workOrders),
     parts: stamp(state.parts),
+    lubricants: stamp(state.lubricants),
     inventoryItems: stamp(state.inventoryItems),
     technicians: stamp(state.technicians),
     usageLogs: stamp(state.usageLogs),
@@ -926,6 +930,7 @@ function autoAssignLegacyDataToDefaultLocation(state={}) {
     equipment: stamp(state.equipment),
     workOrders: stamp(state.workOrders),
     parts: stamp(state.parts),
+    lubricants: stamp(state.lubricants),
     inventoryItems: stamp(state.inventoryItems),
     technicians: stamp(state.technicians),
     usageLogs: stamp(state.usageLogs),
@@ -982,6 +987,16 @@ function adjustInventoryForWO(parts=[], partsUsed=[], direction=-1) {
     const qty = +(item.qty||0);
     if(!qty) return;
     next = next.map(p => p.id===item.partId ? { ...p, qty:Math.max(0, +(p.qty||0) + (direction * qty)) } : p);
+  });
+  return next;
+}
+
+function adjustLubricantsForWO(lubricants=[], partsUsed=[], direction=-1) {
+  let next=[...(lubricants||[])];
+  (partsUsed||[]).filter(x=>x?.kind==="lubricant"&&x.lubricantId).forEach(item=>{
+    const gallons=+(item.gallons||0);
+    if(!gallons) return;
+    next=next.map(l=>l.id===item.lubricantId?{...l,onHand:Math.max(0,+(l.onHand||0)+(direction*gallons))}:l);
   });
   return next;
 }
@@ -1185,6 +1200,7 @@ function normalizeMaintForgeSingleSite(input={}) {
     workOrders:stamp(state.workOrders),
     workOrderRequests:stamp(state.workOrderRequests),
     parts:stamp(state.parts),
+    lubricants:stamp(state.lubricants),
     preventiveMaintenance:stamp(state.preventiveMaintenance),
     pmTasks:stamp(state.pmTasks),
     pmSchedules:stamp(state.pmSchedules),
@@ -1218,13 +1234,15 @@ function reducer(state, { type, payload }) {
         ? state.equipment.map(e => e.id===savedWO.equipment ? { ...e, status:equipmentStatus } : e)
         : state.equipment;
       const parts = shouldConsume ? adjustInventoryForWO(state.parts, savedWO.partsUsed, -1) : state.parts;
-      return { ...state, parts, equipment, workOrders: [savedWO,...state.workOrders], notifications:[makeNotification({id:`N${Date.now()}`,type:"wo",msg:`Work Order ${savedWO.id} created`,read:false}),...state.notifications] };
+      const lubricants = shouldConsume ? adjustLubricantsForWO(state.lubricants, savedWO.partsUsed, -1) : (state.lubricants||[]);
+      return { ...state, parts, lubricants, equipment, workOrders: [savedWO,...state.workOrders], notifications:[makeNotification({id:`N${Date.now()}`,type:"wo",msg:`Work Order ${savedWO.id} created`,read:false}),...state.notifications] };
     }
     case "UPDATE_WO": {
       const prevWO = (state.workOrders||[]).find(w => w.id === payload.id);
       const wasConsumed = !!prevWO?.inventoryConsumed;
       const willBeCompleted = payload.status === "Completed";
       let parts = state.parts;
+      let lubricants = state.lubricants||[];
       let payloadWithStatus = payload;
 
       // Inventory is consumed only when the WO closes/completes.
@@ -1232,14 +1250,18 @@ function reducer(state, { type, payload }) {
       if(prevWO) {
         if(!wasConsumed && willBeCompleted) {
           parts = adjustInventoryForWO(parts, payload.partsUsed, -1);
+          lubricants = adjustLubricantsForWO(lubricants, payload.partsUsed, -1);
           payloadWithStatus = { ...payloadWithStatus, inventoryConsumed:true };
         } else if(wasConsumed && !willBeCompleted) {
           parts = adjustInventoryForWO(parts, prevWO.partsUsed, +1);
+          lubricants = adjustLubricantsForWO(lubricants, prevWO.partsUsed, +1);
           payloadWithStatus = { ...payloadWithStatus, inventoryConsumed:false };
         } else if(wasConsumed && willBeCompleted) {
           // If a closed WO is edited while still completed, restore old parts then consume the updated list.
           parts = adjustInventoryForWO(parts, prevWO.partsUsed, +1);
           parts = adjustInventoryForWO(parts, payload.partsUsed, -1);
+          lubricants = adjustLubricantsForWO(lubricants, prevWO.partsUsed, +1);
+          lubricants = adjustLubricantsForWO(lubricants, payload.partsUsed, -1);
           payloadWithStatus = { ...payloadWithStatus, inventoryConsumed:true };
         }
       }
@@ -1274,7 +1296,7 @@ function reducer(state, { type, payload }) {
             nextDueDate: advancedTriggers.find(t=>(t.type||"time")==="time")?.nextDueDate || "",
             nextDueUsage: advancedTriggers.find(t=>t.type==="hours"||t.type==="mileage")?.nextDueUsage || "",
           };
-          return { ...state, parts, equipment, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
+          return { ...state, lubricants, parts, equipment, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
         }
       }
       /* Inspection completion is a single durable transaction. Resolve legacy WOs even if linkage fields are missing. */
@@ -1321,10 +1343,10 @@ function reducer(state, { type, payload }) {
               ? { ...w, status:"Completed", completed:doneDate, completedDate:doneDate, equipmentStatus:"Fully Operational", duplicateInspectionOccurrence:true, duplicateOfInspectionWO:payload.id }
               : w;
           });
-          return { ...state, parts, equipment, workOrders:finalWOs, inspectionSchedules:(state.inspectionSchedules||[]).map(s=>String(s.id)===String(schedule.id)?advanced:s) };
+          return { ...state, lubricants, parts, equipment, workOrders:finalWOs, inspectionSchedules:(state.inspectionSchedules||[]).map(s=>String(s.id)===String(schedule.id)?advanced:s) };
         }
       }
-      return { ...state, parts, equipment, workOrders: updated };
+      return { ...state, lubricants, parts, equipment, workOrders: updated };
     }
     case "DELETE_WO": {
       const doomed = (state.workOrders||[]).find(w => String(w.id)===String(payload));
@@ -1427,6 +1449,9 @@ function reducer(state, { type, payload }) {
     case "ADD_PART":      return { ...state, parts: [payload,...state.parts] };
     case "UPDATE_PART":   return { ...state, parts: state.parts.map(p => p.id===payload.id ? payload : p) };
     case "DELETE_PART":   return { ...state, parts: state.parts.filter(p => p.id!==payload) };
+    case "ADD_LUBRICANT": return { ...state, lubricants:[payload,...(state.lubricants||[])] };
+    case "UPDATE_LUBRICANT": return { ...state, lubricants:(state.lubricants||[]).map(l=>l.id===payload.id?payload:l) };
+    case "DELETE_LUBRICANT": return { ...state, lubricants:(state.lubricants||[]).filter(l=>l.id!==payload) };
     case "CONSUME_PARTS": {
       let parts = [...state.parts];
       (payload||[]).forEach(({partId,qty})=>{ parts = parts.map(p => p.id===partId ? {...p,qty:Math.max(0,(p.qty||0)-(+qty||0))} : p); });
@@ -1477,6 +1502,7 @@ function reducer(state, { type, payload }) {
         equipment: stamp(state.equipment),
         workOrders: stamp(state.workOrders),
         parts: stamp(state.parts),
+    lubricants: stamp(state.lubricants),
         inventoryItems: stamp(state.inventoryItems),
         technicians: stamp(state.technicians),
         usageLogs: stamp(state.usageLogs),
@@ -2471,6 +2497,22 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
 }
 
 function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWORequest }) {
+  const [showLubricantPicker,setShowLubricantPicker]=useState(false);
+  const [lubricantPick,setLubricantPick]=useState({id:"",qty:"",unit:"qt"});
+  const lubricantToGallons=(qty,unit)=>{const n=+qty||0;return unit==="gal"?n:unit==="qt"?n/4:unit==="L"?n/3.785411784:n;};
+  const lubricantCostPerGal=(l)=>{const n=+l.containerQty||0;const g=l.containerUnit==="gal"?n:l.containerUnit==="qt"?n/4:l.containerUnit==="L"?n/3.785411784:l.containerUnit==="drum"?n*55:n;return g>0?(+l.totalPrice||0)/g:0;};
+  const addLubricantLine=()=>{
+    const l=(state.lubricants||[]).find(x=>String(x.id)===String(lubricantPick.id));
+    if(!l)return alert("Select a lubricant or fluid.");
+    const gallons=lubricantToGallons(lubricantPick.qty,lubricantPick.unit);
+    if(gallons<=0)return alert("Enter a valid quantity.");
+    if(gallons>(+l.onHand||0))return alert(`Only ${(+l.onHand||0).toFixed(2)} gal available.`);
+    const qty=+lubricantPick.qty; const cost=gallons*lubricantCostPerGal(l);
+    const line={kind:"lubricant",lubricantId:l.id,name:l.name,partNumber:l.grade||"",qty,unit:lubricantPick.unit,unitCost:qty>0?cost/qty:0,gallons,fluidCost:cost,availableGallons:+l.onHand||0};
+    setForm(f=>({...f,partsUsed:[...(f.partsUsed||[]),line]}));
+    setLubricantPick({id:"",qty:"",unit:"qt"}); setShowLubricantPicker(false);
+  };
+
   const [modal, setModal]     = useState(null); // null|"type"|"pick"|"form"|"detail"|"edit"
   const [form, setForm]       = useState({});
   const [filter, setFilter]     = useState("Active"); // "Active" = Open+InProgress default
@@ -2858,9 +2900,23 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
       if(!confirm(`Mileage Warning\n\nCurrent equipment mileage: ${currentMileage.toLocaleString()} mi\nYou entered: ${enteredMileage.toLocaleString()} mi\n\nThis reading is lower than the current recorded mileage. It will be saved on this work order but will NOT lower the equipment's current mileage.\n\nDo you want to proceed?`)) return;
     }
 
+    for(const item of (formWithLatestUsage.partsUsed||[]).filter(x=>x?.kind==="lubricant")){
+      const l=(state.lubricants||[]).find(x=>String(x.id)===String(item.lubricantId));
+      if(!l) continue;
+      const gallons=lubricantToGallons(item.qty,item.unit);
+      const previousGallons=prevWO?.inventoryConsumed ? +((prevWO.partsUsed||[]).find(x=>x.kind==="lubricant"&&x.lubricantId===item.lubricantId)?.gallons||0) : 0;
+      if(gallons>(+l.onHand||0)+previousGallons) return alert(`Not enough ${l.name} in fluid inventory. Available: ${((+l.onHand||0)+previousGallons).toFixed(2)} gal.`);
+    }
     const newParts = (formWithLatestUsage.partsUsed||[]).filter(p=>String(p?.name||"").trim()).map(raw=>{
       const p = {...raw};
       const nameKey = String(p.name||"").trim().toLowerCase();
+      if(p.kind==="lubricant" && p.lubricantId) {
+        const l=(state.lubricants||[]).find(x=>String(x.id)===String(p.lubricantId));
+        if(!l) return p;
+        const gallons=lubricantToGallons(p.qty,p.unit);
+        const cost=gallons*lubricantCostPerGal(l);
+        return {...p,name:l.name,partNumber:l.grade||p.partNumber||"",gallons,unitCost:(+p.qty||0)>0?cost/(+p.qty):0,fluidCost:cost,availableGallons:+l.onHand||0};
+      }
       let inv = p.partId ? (state.parts||[]).find(x=>x.id===p.partId) : (state.parts||[]).find(x=>String(x.name||"").trim().toLowerCase()===nameKey || (p.partNumber && String(x.partNumber||"").trim().toLowerCase()===String(p.partNumber).trim().toLowerCase()));
       const receivedQty = Math.max(0, +(p.receivedQty||0));
       const usedQty = Math.max(0, +(p.qty||0));
@@ -3412,12 +3468,23 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:8 }}>
                 <button type="button" onClick={()=>{ const idx=(form.partsUsed||[]).length; setForm(f=>({...f,partsUsed:[...(f.partsUsed||[]),{name:"",qty:1,receivedQty:"",unit:"ea",unitCost:"",totalPurchaseCost:"",receiptApplied:false}]})); setShowNewPart(idx); setShowPartAddChoice(false); }} style={{ ...inp, padding:"12px", cursor:"pointer", textAlign:"left", fontWeight:700, color:T.accent, background:T.grayLt }}>🔎 Use Part From Inventory<div style={{ marginTop:4, fontSize:10, fontWeight:400, color:T.muted }}>Search existing stock and enter quantity used.</div></button>
                 <button type="button" onClick={()=>{ setForm(f=>({...f,partsUsed:[...(f.partsUsed||[]),{name:"",qty:1,receivedQty:"",unit:"ea",unitCost:"",totalPurchaseCost:"",receiptApplied:false}]})); setShowNewPart(null); setShowPartAddChoice(false); }} style={{ ...inp, padding:"12px", cursor:"pointer", textAlign:"left", fontWeight:700, color:T.accent, background:T.grayLt }}>＋ Add New Part<div style={{ marginTop:4, fontSize:10, fontWeight:400, color:T.muted }}>Enter the part, quantity received/used, and purchase cost.</div></button>
+                <button type="button" onClick={()=>{setShowLubricantPicker(true);setShowPartAddChoice(false);}} style={{ ...inp, padding:"12px", cursor:"pointer", textAlign:"left", fontWeight:700, color:T.accent, background:T.grayLt }}>🛢 Use Lubricant / Fluid<div style={{ marginTop:4, fontSize:10, fontWeight:400, color:T.muted }}>Select oil, coolant or another fluid and enter the amount used.</div></button>
               </div>
             </div>
           )}
         </div>
 
 
+
+        {showLubricantPicker&&<div style={{gridColumn:"span 2",marginBottom:14,border:`1px solid ${T.border}`,borderRadius:8,padding:12,background:T.grayLt}}>
+          <div style={{fontWeight:800,marginBottom:8}}>Use Lubricant / Fluid From Inventory</div>
+          <div style={{display:"grid",gridTemplateColumns:"minmax(190px,2fr) 90px 100px auto auto",gap:8,alignItems:"end"}}>
+            <Field label="Lubricant / Fluid"><select style={sel} value={lubricantPick.id} onChange={e=>setLubricantPick(x=>({...x,id:e.target.value}))}><option value="">Select fluid…</option>{(state.lubricants||[]).filter(l=>(+l.onHand||0)>0).map(l=><option key={l.id} value={l.id}>{l.name}{l.grade?` — ${l.grade}`:""} — {(+l.onHand||0).toFixed(2)} gal</option>)}</select></Field>
+            <Field label="Amount"><input style={inp} type="number" min="0" step="0.01" value={lubricantPick.qty} onChange={e=>setLubricantPick(x=>({...x,qty:e.target.value}))}/></Field>
+            <Field label="Unit"><select style={sel} value={lubricantPick.unit} onChange={e=>setLubricantPick(x=>({...x,unit:e.target.value}))}><option value="qt">Quarts</option><option value="gal">Gallons</option><option value="L">Liters</option></select></Field>
+            <Btn small onClick={addLubricantLine}>Add Fluid</Btn><Btn small variant="secondary" onClick={()=>setShowLubricantPicker(false)}>Cancel</Btn>
+          </div>
+        </div>}
 
         {/* Outside Services */}
         <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.grayLt }}>
@@ -5491,6 +5558,14 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
 
 
 function Parts({ state, dispatch }) {
+  useEffect(()=>{
+    if((state.lubricants||[]).length) return;
+    try{
+      const legacy=JSON.parse(localStorage.getItem("maintforge_lubricants")||"[]");
+      if(Array.isArray(legacy)&&legacy.length){ legacy.forEach(l=>dispatch({type:"ADD_LUBRICANT",payload:l})); localStorage.removeItem("maintforge_lubricants"); }
+    }catch{}
+  },[]);
+
   const partEquipmentLabel = (p) => {
     const raw=p.equipmentId||"";
     if(!raw) return "General Stock";
@@ -5503,9 +5578,13 @@ function Parts({ state, dispatch }) {
     return String(raw);
   };
   const [partsSubView,setPartsSubView]=useState("parts");
-  const [lubricants,setLubricants]=useState(()=>{try{return JSON.parse(localStorage.getItem("maintforge_lubricants")||"[]")}catch{return []}});
+  const lubricants=state.lubricants||[];
   const [lubForm,setLubForm]=useState({id:"",name:"",type:"Engine Oil",grade:"",containerQty:"",containerUnit:"gal",totalPrice:"",onHand:"",notes:""});
-  const saveLubricants=(next)=>{setLubricants(next);try{localStorage.setItem("maintforge_lubricants",JSON.stringify(next))}catch{}};
+  const saveLubricants=(next)=>{
+    const current=state.lubricants||[];
+    current.filter(x=>!next.some(n=>n.id===x.id)).forEach(x=>dispatch({type:"DELETE_LUBRICANT",payload:x.id}));
+    next.forEach(x=>dispatch({type:current.some(c=>c.id===x.id)?"UPDATE_LUBRICANT":"ADD_LUBRICANT",payload:x}));
+  };
   const toGallons=(qty,unit)=>{const n=+qty||0;if(unit==="gal")return n;if(unit==="qt")return n/4;if(unit==="L")return n/3.785411784;if(unit==="drum")return n*55;return n;};
   const lubCostPerGal=(l)=>{const g=toGallons(l.containerQty,l.containerUnit);return g>0?(+l.totalPrice||0)/g:0;};
   const addLubricant=()=>{
@@ -5556,7 +5635,9 @@ function Parts({ state, dispatch }) {
     return mc&&msf&&ms&&meq;
   });
 
-  const totalVal = parts.reduce((s,p)=>s+((+p.qty||0)*(+p.unitCost||0)),0);
+  const partsValue = parts.reduce((s,p)=>s+((+p.qty||0)*(+p.unitCost||0)),0);
+  const lubricantValue = lubricants.reduce((sum,l)=>sum+((+l.onHand||0)*lubCostPerGal(l)),0);
+  const totalVal = partsValue + lubricantValue;
   const lowParts = parts.filter(p=>getPartStockStatus(p)==="Low Stock");
   const outParts = parts.filter(p=>getPartStockStatus(p)==="Out of Stock");
   const exportRows = sortedParts.map(p=>{ const eq = p.equipmentId ? (state.equipment||[]).find(e=>e.id===p.equipmentId) : null; return {"Part #":p.partNumber||"", Nomenclature:p.name||"", Category:p.category||"", Location:p.location||"", "Equipment / Model":eq?`${eq.id} - ${eq.name}`:(p.modelFit||""), "Unit $":moneyText(p.unitCost), "Unit Type":p.unit||"ea", Qty:p.qty||0, "Total $":moneyText((+p.qty||0)*(+p.unitCost||0))}; });
@@ -5652,10 +5733,11 @@ function Parts({ state, dispatch }) {
       </Card>}
       {partsSubView==="parts"&&<>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12, marginBottom:16 }}>
-        {[["Inventory Value",moneyFmt(totalVal),T.accent],["Total SKUs",parts.length,T.text],["Low Stock",lowParts.length,T.amber],["Out of Stock",outParts.length,T.red]].map(([l,v,c])=>(
+        {[["Total Inventory Value",moneyFmt(totalVal),T.accent],["Total SKUs",parts.length,T.text],["Low Stock",lowParts.length,T.amber],["Out of Stock",outParts.length,T.red]].map(([l,v,c])=>(
           <Card key={l} style={{ padding:"14px 16px" }}>
             <div style={{ fontFamily:T.sans, fontSize:22, fontWeight:700, color:c }}>{v}</div>
             <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{l}</div>
+            {l==="Total Inventory Value"&&<div style={{fontSize:10,color:T.muted,marginTop:3}}>Parts {moneyFmt(partsValue)} • Fluids {moneyFmt(lubricantValue)}</div>}
           </Card>
         ))}
       </div>
