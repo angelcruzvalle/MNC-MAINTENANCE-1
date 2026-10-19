@@ -5491,6 +5491,41 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
 
 
 function Parts({ state, dispatch }) {
+  const partEquipmentLabel = (p) => {
+    const raw=p.equipmentId||"";
+    if(!raw) return "General Stock";
+    const eq=(state.equipment||[]).find(e=>String(e.id)===String(raw));
+    if(eq) return `${eq.name||eq.nomenclature||eq.id} (${eq.id})`;
+    for(const parent of (state.equipment||[])){
+      const at=(parent.attachments||[]).find(a=>String(a.id)===String(raw));
+      if(at) return `${at.name||at.nomenclature||at.id} (${at.id}) — Attachment`;
+    }
+    return String(raw);
+  };
+  const [partsSubView,setPartsSubView]=useState("parts");
+  const [lubricants,setLubricants]=useState(()=>{try{return JSON.parse(localStorage.getItem("maintforge_lubricants")||"[]")}catch{return []}});
+  const [lubForm,setLubForm]=useState({id:"",name:"",type:"Engine Oil",grade:"",containerQty:"",containerUnit:"gal",totalPrice:"",onHand:"",notes:""});
+  const saveLubricants=(next)=>{setLubricants(next);try{localStorage.setItem("maintforge_lubricants",JSON.stringify(next))}catch{}};
+  const toGallons=(qty,unit)=>{const n=+qty||0;if(unit==="gal")return n;if(unit==="qt")return n/4;if(unit==="L")return n/3.785411784;if(unit==="drum")return n*55;return n;};
+  const lubCostPerGal=(l)=>{const g=toGallons(l.containerQty,l.containerUnit);return g>0?(+l.totalPrice||0)/g:0;};
+  const addLubricant=()=>{
+    if(!String(lubForm.name||"").trim())return alert("Enter a lubricant/fluid name.");
+    if((+lubForm.containerQty||0)<=0)return alert("Enter the container quantity.");
+    const gallons=toGallons(lubForm.containerQty,lubForm.containerUnit);
+    const row={...lubForm,id:lubForm.id||`LUB-${Date.now()}`,onHand:String(lubForm.onHand??"").trim()===""?gallons:+lubForm.onHand,created:lubForm.created||new Date().toISOString()};
+    saveLubricants(lubForm.id?lubricants.map(x=>x.id===lubForm.id?row:x):[...lubricants,row]);
+    setLubForm({id:"",name:"",type:"Engine Oil",grade:"",containerQty:"",containerUnit:"gal",totalPrice:"",onHand:"",notes:""});
+  };
+  const consumeLubricant=(l)=>{
+    const raw=prompt(`How many gallons of ${l.name} were used?\nCurrent on hand: ${(+l.onHand||0).toFixed(2)} gal`);
+    if(raw===null)return;
+    const qty=+raw;if(!Number.isFinite(qty)||qty<=0)return alert("Enter a valid amount.");if(qty>(+l.onHand||0))return alert("Usage cannot exceed quantity on hand.");
+    const cost=qty*lubCostPerGal(l);
+    const wo=prompt(`Optional Work Order number / ID.\nCalculated fluid cost: $${cost.toFixed(2)}`)||"";
+    const usage={id:`LUSE-${Date.now()}`,date:new Date().toISOString().slice(0,10),qty,cost,workOrderId:wo};
+    saveLubricants(lubricants.map(x=>x.id===l.id?{...x,onHand:(+x.onHand||0)-qty,usage:[...(x.usage||[]),usage]}:x));
+  };
+
   const [modal, setModal]       = useState(null);
   const [form, setForm]         = useState({});
   const [search, setSearch]     = useState("");
@@ -5530,7 +5565,7 @@ function Parts({ state, dispatch }) {
   const save = () => {
     if(!form.name) return alert("Nomenclature required.");
     if(!String(form.location||"").trim()) return alert("Choose a Parts Storage Location. Add storage locations in Settings first.");
-    const cleanForm = { ...form, category:String(form.category||"").trim(), unit:String(form.unit||"ea").trim()||"ea", qty:+form.qty||0, unitCost:+form.unitCost||0, minQty:+form.minQty||0, equipmentId:"" };
+    const cleanForm = { ...form, category:String(form.category||"").trim(), unit:String(form.unit||"ea").trim()||"ea", qty:+form.qty||0, unitCost:+form.unitCost||0, minQty:+form.minQty||0, lowStockAlert:form.lowStockAlert!==false, equipmentId:String(form.equipmentId||"") };
     modal==="add"
       ? dispatch({type:"ADD_PART",  payload:{...cleanForm,id:genId("PT")}})
       : dispatch({type:"UPDATE_PART",payload:cleanForm});
@@ -5590,6 +5625,32 @@ function Parts({ state, dispatch }) {
   return (
     <div>
       <datalist id="part-category-options">{partCategories.map(c=><option key={c} value={c} />)}</datalist>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
+        <Btn variant={partsSubView==="parts"?"primary":"secondary"} onClick={()=>setPartsSubView("parts")}>Parts Inventory</Btn>
+        <Btn variant={partsSubView==="lubricants"?"primary":"secondary"} onClick={()=>setPartsSubView("lubricants")}>🛢 Lubricants Inventory</Btn>
+      </div>
+      {partsSubView==="lubricants"&&<Card style={{marginBottom:14}}>
+        <div style={{fontSize:17,fontWeight:900}}>Lubricants & Fluids Inventory</div>
+        <div style={{fontSize:12,color:T.muted,margin:"4px 0 12px"}}>Track oil, coolant, hydraulic fluid and other bulk fluids by volume and purchase cost. When fluid is used, MaintForge calculates the consumed dollar value from the original container price.</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(155px,1fr))",gap:8}}>
+          <Field label="Fluid / Lubricant"><input style={inp} value={lubForm.name} onChange={e=>setLubForm(f=>({...f,name:e.target.value}))} placeholder="10W-30 Engine Oil"/></Field>
+          <Field label="Type"><select style={sel} value={lubForm.type} onChange={e=>setLubForm(f=>({...f,type:e.target.value}))}><option>Engine Oil</option><option>Hydraulic Fluid</option><option>Coolant</option><option>Gear Oil</option><option>Transmission Fluid</option><option>Grease</option><option>Other Fluid</option></select></Field>
+          <Field label="Grade / Specification"><input style={inp} value={lubForm.grade} onChange={e=>setLubForm(f=>({...f,grade:e.target.value}))} placeholder="SAE 10W-30 / API CK-4"/></Field>
+          <Field label="Container Quantity"><input style={inp} type="number" step="0.01" value={lubForm.containerQty} onChange={e=>setLubForm(f=>({...f,containerQty:e.target.value}))}/></Field>
+          <Field label="Container Unit"><select style={sel} value={lubForm.containerUnit} onChange={e=>setLubForm(f=>({...f,containerUnit:e.target.value}))}><option value="gal">Gallons</option><option value="qt">Quarts</option><option value="L">Liters</option><option value="drum">55-gal Drum(s)</option></select></Field>
+          <Field label="Total Purchase Price ($)"><input style={inp} type="number" step="0.01" value={lubForm.totalPrice} onChange={e=>setLubForm(f=>({...f,totalPrice:e.target.value}))}/></Field>
+        </div>
+        <div style={{display:"flex",gap:8,marginTop:8}}><Btn onClick={addLubricant}>{lubForm.id?"Save Fluid":"Add Fluid"}</Btn>{lubForm.id&&<Btn variant="secondary" onClick={()=>setLubForm({id:"",name:"",type:"Engine Oil",grade:"",containerQty:"",containerUnit:"gal",totalPrice:"",onHand:"",notes:""})}>Cancel</Btn>}</div>
+        <div style={{display:"grid",gap:10,marginTop:14}}>
+          {lubricants.length===0?<div style={{padding:18,textAlign:"center",color:T.muted,background:T.grayLt,borderRadius:10}}>No lubricants or fluids recorded yet.</div>:lubricants.map(l=>{const cpu=lubCostPerGal(l);return <div key={l.id} style={{border:`1px solid ${T.border}`,borderRadius:10,padding:12}}>
+            <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}><div><b>{l.name}</b><div style={{fontSize:11,color:T.muted}}>{l.type}{l.grade?` • ${l.grade}`:""}</div></div><div style={{textAlign:"right"}}><b>{(+l.onHand||0).toFixed(2)} gal on hand</b><div style={{fontSize:11,color:T.muted}}>${cpu.toFixed(2)}/gal • {moneyFmt((+l.onHand||0)*cpu)} remaining value</div></div></div>
+            <div style={{fontSize:11,color:T.subtext,marginTop:5}}>Purchased {l.containerQty} {l.containerUnit} for {moneyFmt(l.totalPrice)}</div>
+            <div style={{display:"flex",gap:7,flexWrap:"wrap",marginTop:8}}><Btn small onClick={()=>consumeLubricant(l)}>Use Fluid</Btn><Btn small variant="secondary" onClick={()=>setLubForm({...l})}>Edit</Btn><Btn small variant="danger" onClick={()=>{if(confirm(`Delete ${l.name}?`))saveLubricants(lubricants.filter(x=>x.id!==l.id))}}>Delete</Btn></div>
+            {(l.usage||[]).length>0&&<div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${T.border}`}}>{[...(l.usage||[])].reverse().slice(0,5).map(u=><div key={u.id} style={{fontSize:11,padding:"2px 0"}}>{u.date} — {u.qty.toFixed(2)} gal — {moneyFmt(u.cost)}{u.workOrderId?` — WO ${u.workOrderId}`:""}</div>)}</div>}
+          </div>})}
+        </div>
+      </Card>}
+      {partsSubView==="parts"&&<>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12, marginBottom:16 }}>
         {[["Inventory Value",moneyFmt(totalVal),T.accent],["Total SKUs",parts.length,T.text],["Low Stock",lowParts.length,T.amber],["Out of Stock",outParts.length,T.red]].map(([l,v,c])=>(
           <Card key={l} style={{ padding:"14px 16px" }}>
@@ -5649,6 +5710,11 @@ function Parts({ state, dispatch }) {
         {filtered.map(p=>{ const linkedEq=p.equipmentId?state.equipment.find(e=>e.id===p.equipmentId):null; const stockStatus=getPartStockStatus(p); return <Card key={p.id} style={{padding:12,marginBottom:10}}>
           <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}><div style={{minWidth:0}}><div style={{fontFamily:T.mono,fontSize:11,color:T.accent}}>{p.partNumber||"—"}</div><div style={{fontWeight:800,fontSize:15,overflowWrap:"anywhere"}}>{p.name}</div>{linkedEq&&<div style={{fontSize:11,color:T.accent,marginTop:2}}>For: {linkedEq.name} ({linkedEq.id})</div>}</div><div style={{fontWeight:800,color:stockStatus==="Out of Stock"?T.red:stockStatus==="Low Stock"?T.amber:T.green,textAlign:"right"}}>{p.qty} {p.unit||"ea"}<div style={{fontSize:10}}>{stockStatus}</div></div></div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:10,fontSize:12}}><div><span style={{color:T.muted}}>Category</span><br/><b>{p.category||"—"}</b></div><div><span style={{color:T.muted}}>Unit Cost</span><br/><b>{moneyFmt(p.unitCost)}</b></div><div><span style={{color:T.muted}}>Location</span><br/><b>{p.location||"—"}</b></div><div><span style={{color:T.muted}}>Total Value</span><br/><b>{moneyFmt((+p.qty||0)*(+p.unitCost||0))}</b></div></div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginTop:10,padding:"8px 10px",background:T.grayLt,borderRadius:8}}>
+            <span style={{fontSize:11,fontWeight:700}}>Low Stock Alert</span>
+            <button type="button" onClick={(e)=>{e.stopPropagation();dispatch({type:"UPDATE_PART",payload:{...p,lowStockAlert:p.lowStockAlert===false?true:false}})}} style={{width:44,height:24,borderRadius:12,border:"none",background:p.lowStockAlert!==false?T.accent:"#d1d5db",cursor:"pointer",position:"relative"}}><span style={{position:"absolute",top:3,left:p.lowStockAlert!==false?22:3,width:18,height:18,borderRadius:"50%",background:T.card,display:"block"}}/></button>
+          </div>
+          <div style={{fontSize:11,color:T.subtext,marginTop:8}}><b>Assigned Equipment:</b> {partEquipmentLabel(p)}</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:12}}><Btn small variant="secondary" onClick={()=>openEdit(p)}>Edit</Btn><Btn small variant="danger" onClick={()=>del(p.id)}>Delete</Btn></div>
         </Card>})}
         {!filtered.length&&<div style={{padding:24,textAlign:"center",color:T.muted}}>No parts found.</div>}
@@ -5657,7 +5723,7 @@ function Parts({ state, dispatch }) {
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-              {["Part Number","Name","Category","Unit Cost","Unit","Qty","Total Value",""].map(h=>(
+              {["Part Number","Name","Category","Assigned Equipment","Unit Cost","Unit","Qty","Total Value",""].map(h=>(
                 <th key={h} style={{ padding:"10px 12px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4, whiteSpace:"nowrap" }}>{h}</th>
               ))}
             </tr>
@@ -5681,6 +5747,7 @@ function Parts({ state, dispatch }) {
                       {!linkedEq&&p.modelFit&&<div style={{ fontSize:10, color:T.muted, marginTop:1 }}>Fits: {p.modelFit}</div>}
                     </td>
                     <td style={{ padding:"10px 12px", color:T.subtext }}>{p.category||"—"}</td>
+                    <td style={{ padding:"10px 12px", fontSize:11, fontWeight:700, color:p.equipmentId?T.accent:T.muted }}>{partEquipmentLabel(p)}</td>
                     <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12 }}>{moneyFmt(p.unitCost)}</td>
                     <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12 }}>{p.unit||"ea"}</td>
                     <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:13, fontWeight:700, color:isOut?T.red:isLow?T.amber:T.green }}>{p.qty}<div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600 }}>{stockStatus}</div></td>
@@ -5692,7 +5759,7 @@ function Parts({ state, dispatch }) {
                   </tr>
                   {expanded===p.id && (
                     <tr style={{ borderBottom:`1px solid ${T.border}` }}>
-                      <td colSpan={8} style={{ padding:"12px 20px", background:T.accentLt }}>
+                      <td colSpan={9} style={{ padding:"12px 20px", background:T.accentLt }}>
                         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:"10px 24px", marginBottom:12 }}>
                           {[["Vendor",p.vendor],["Location",p.location],["Unit Type",p.unit||"ea"],["Stock Status",stockStatus],["Min Qty",p.minQty],["PO Number",p.poNumber],["Date Received",p.dateReceived],["Fits Model",p.modelFit]].filter(([,v])=>v).map(([k,v])=>(
                             <div key={k}><div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div><div style={{ fontFamily:T.sans, fontSize:13, color:T.text, marginTop:3 }}>{v}</div></div>
@@ -5700,7 +5767,7 @@ function Parts({ state, dispatch }) {
                         </div>
                         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                           <span style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext }}>Low Stock Alert:</span>
-                          <button type="button" onClick={()=>dispatch({type:"UPDATE_PART",payload:{...p,lowStockAlert:!(p.lowStockAlert!==false)}})}
+                          <button type="button" onClick={(e)=>{e.stopPropagation();dispatch({type:"UPDATE_PART",payload:{...p,lowStockAlert:p.lowStockAlert===false?true:false}})}}
                             style={{ width:44, height:24, borderRadius:12, border:"none", background:p.lowStockAlert!==false?T.accent:"#d1d5db", cursor:"pointer", position:"relative", transition:"background .2s" }}>
                             <span style={{ position:"absolute", top:3, left:p.lowStockAlert!==false?22:3, width:18, height:18, borderRadius:"50%", background:T.card, transition:"left .2s", display:"block" }}/>
                           </button>
@@ -5717,6 +5784,7 @@ function Parts({ state, dispatch }) {
         {filtered.length===0&&<div style={{ padding:40, textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13 }}>No parts found.</div>}
       </Card>
 
+      </>}
       {(modal==="add"||typeof modal==="object"&&modal!==null&&modal.id)&&(
         <Modal title={modal==="add"?"Add Part":`Edit — ${form.partNumber||form.name}`} onClose={()=>setModal(null)}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
@@ -5724,6 +5792,7 @@ function Parts({ state, dispatch }) {
             <Field label="Part Name"><input style={inp} value={form.name||""} onChange={F("name")} /></Field>
             <Field label="Category" half><input style={inp} list="part-category-options" value={form.category||""} onChange={F("category")} placeholder="Pick or type category" /></Field>
             <Field label="Fits Equipment / Model" half><input style={inp} list="part-model-options" value={form.modelFit||""} onChange={F("modelFit")} placeholder="e.g. Toro Workman / HDX" /></Field>
+            <Field label="Assigned Equipment" half><select style={sel} value={form.equipmentId||""} onChange={F("equipmentId")}><option value="">General Stock / Not Assigned</option>{(state.equipment||[]).map(e=><option key={e.id} value={e.id}>{e.name||e.nomenclature} ({e.id})</option>)}</select></Field>
             <datalist id="part-model-options">{modelOptions.map(m=><option key={m} value={m} />)}</datalist>
             <Field label="Vendor" half><input style={inp} value={form.vendor||""} onChange={F("vendor")} /></Field>
             <Field label="PO Number" half><input style={inp} value={form.poNumber||""} onChange={F("poNumber")} /></Field>
