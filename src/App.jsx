@@ -2606,6 +2606,33 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     return woType;
   };
 
+  const procedureOptionsForWO = (woType) => woType==="Inspection" ? (state.inspectionTasks||[]) : (state.pmTasks||[]);
+  const procedureSteps = (task, woType) => {
+    if(!task) return [];
+    const raw = woType==="Inspection" ? task.steps : task.steps;
+    return Array.isArray(raw) ? raw.filter(Boolean).map(String) : String(raw||"").split(/\n+/).map(x=>x.trim()).filter(Boolean);
+  };
+  const applyProcedureToWO = (taskId) => {
+    const task=procedureOptionsForWO(form.woType).find(x=>String(x.id)===String(taskId));
+    const steps=procedureSteps(task,form.woType);
+    const notes=Array.isArray(task?.stepNotes)?task.stepNotes:[];
+    setForm(f=>({
+      ...f, procedureMode:"library", procedureTaskId:taskId,
+      faultDescription:f.faultDescription||task?.description||task?.name||"",
+      description:f.description||task?.description||task?.name||"",
+      serviceStepLines:f.woType==="Service"?steps:f.serviceStepLines,
+      serviceStepNotes:f.woType==="Service"?notes:f.serviceStepNotes,
+      serviceChecklist:f.woType==="Service"?steps.join("\n"):f.serviceChecklist,
+      inspectionSteps:f.woType==="Inspection"?steps.join("\n"):f.inspectionSteps,
+      inspectionStepResults:f.woType==="Inspection"?steps.map((step,i)=>({id:`manual-ins-${Date.now()}-${i}`,step,result:"",comment:""})):f.inspectionStepResults,
+      taskProcedureSnapshot:{taskId:task?.id||"",name:task?.name||"",steps:[...steps],stepNotes:[...notes],capturedAt:new Date().toISOString()}
+    }));
+  };
+  const setManualChecklistRow=(idx,key,value)=>setForm(f=>{const rows=[...(f.manualChecklist||[])];rows[idx]={...(rows[idx]||{}),[key]:value};return {...f,manualChecklist:rows};});
+  const addManualChecklistRow=()=>setForm(f=>({...f,procedureMode:"manual",manualChecklist:[...(f.manualChecklist||[]),{step:"",note:""}]}));
+  const removeManualChecklistRow=(idx)=>setForm(f=>{const rows=[...(f.manualChecklist||[])];rows.splice(idx,1);return {...f,manualChecklist:rows};});
+
+
   /* Equipment picker list */
   const allPickable = [
     ...state.equipment.map(eq=>({ id:eq.id, label:eq.name, sub:`${eq.id} | ${eq.make||""} ${eq.model||""} | Serial: ${eq.serial||"—"} | EIL: ${eq.eilNumber||"—"}`, type:"Equipment", typeColor:"#1e40af", typeBg:"#eff6ff", parentName:null, parentId:null })),
@@ -2640,7 +2667,10 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
       correctiveAction:"",
       serviceChecklist:"",
       inspectionFindings:"",
-      inspectionStepResults:[]
+      inspectionStepResults:[],
+      procedureMode: woType==="Service"||woType==="Inspection" ? "library" : "manual",
+      procedureTaskId:"",
+      manualChecklist:[]
     }));
     setModal("pick");
   };
@@ -2662,9 +2692,10 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
   const pickEquipment = (item) => {
     const eq = state.equipment.find(e=>e.id===item.id);
     const parentEq = item.parentId ? state.equipment.find(e=>e.id===item.parentId) : null;
-    const latestUsage = latestUsageForEquipment(item.parentId || item.id);
-    const isAttachment = item.type === "Attachment";
-    setForm(f=>({...f, woType:f.woType||"Repair", equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||item.parentNomenclature||null, parentId:item.parentId||null, equipmentStatus:(parentEq||eq)?.status||"Fully Operational", usageType:(parentEq||eq)?.usageType||"hours", usageNA:isAttachment ? true : (eq?.trackUsage ? false : (f.usageNA||false)), usageHours:isAttachment ? "" : latestUsage.hours, usageMileage:isAttachment ? "" : latestUsage.mileage}));
+    const attachment = item.parentId ? (parentEq?.attachments||[]).find(a=>String(a.id)===String(item.id)) : null;
+    const latestUsage = latestUsageForEquipment(item.id);
+    const asset = attachment || eq;
+    setForm(f=>({...f, woType:f.woType||"Repair", equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||item.parentNomenclature||null, parentId:item.parentId||null, equipmentStatus:(parentEq||eq)?.status||"Fully Operational", usageType:asset?.usageType||"hours", usageNA:asset?.trackUsage ? false : (f.usageNA||false), usageHours:asset?.trackUsage ? (latestUsage.hours||String(asset.currentHours||"")) : "", usageMileage:asset?.trackUsage ? (latestUsage.mileage||String(asset.currentMileage||"")) : ""}));
     setModal("form");
   };
 
@@ -2774,6 +2805,9 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     if(!(form.faultDescription||"").trim()) return alert("Description required.");
     const usageModeReq = String(form.usageType||"hours").toLowerCase();
     const selectedEquipment = state.equipment.find(e=>e.id===form.equipment);
+    const selectedAttachmentParent = !selectedEquipment ? state.equipment.find(e=>(e.attachments||[]).some(a=>String(a.id)===String(form.equipment))) : null;
+    const selectedAttachment = selectedAttachmentParent ? (selectedAttachmentParent.attachments||[]).find(a=>String(a.id)===String(form.equipment)) : null;
+    const selectedAsset = selectedAttachment || selectedEquipment;
     const latestUsage = latestUsageForEquipment(form.equipment);
     const formWithLatestUsage = applyDefaultMechanic(form.usageNA ? form : {
       ...form,
@@ -2785,18 +2819,36 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     // A work order may record hours, mileage, or both. Either reading satisfies usage validation.
     const hasUsageReading = formWithLatestUsage.usageNA || hoursEntered || mileageEntered;
     if(!hasUsageReading) return alert("Enter the current usage reading or select N/A.");
-    if(formWithLatestUsage.woType === "Inspection" && selectedEquipment && !selectedEquipment.trackUsage && !formWithLatestUsage.usageNA && !hoursEntered && !mileageEntered) {
+    if(formWithLatestUsage.woType === "Inspection" && selectedAsset && !selectedAsset.trackUsage && !formWithLatestUsage.usageNA && !hoursEntered && !mileageEntered) {
       return alert("This equipment has no usage tracking selected. Enter the current usage for this inspection work order, or select N/A.");
+    }
+    if((formWithLatestUsage.woType==="Service"||formWithLatestUsage.woType==="Inspection") && formWithLatestUsage.procedureMode==="manual"){
+      const rows=(formWithLatestUsage.manualChecklist||[]).filter(r=>String(r?.step||"").trim());
+      const steps=rows.map(r=>String(r.step).trim());
+      const notes=rows.map(r=>String(r.note||"").trim());
+      formWithLatestUsage.taskProcedureSnapshot={taskId:"",name:"Manual checklist",steps:[...steps],stepNotes:[...notes],capturedAt:new Date().toISOString(),manual:true};
+      if(formWithLatestUsage.woType==="Service"){
+        formWithLatestUsage.serviceStepLines=steps;
+        formWithLatestUsage.serviceStepNotes=notes;
+        formWithLatestUsage.serviceChecklist=steps.join("\n");
+        formWithLatestUsage.steps=steps;
+      } else {
+        formWithLatestUsage.inspectionSteps=steps.join("\n");
+        formWithLatestUsage.steps=steps;
+        const oldResults=Array.isArray(formWithLatestUsage.inspectionStepResults)?formWithLatestUsage.inspectionStepResults:[];
+        formWithLatestUsage.inspectionStepResults=steps.map((step,i)=>({id:oldResults[i]?.id||`manual-ins-${Date.now()}-${i}`,step,result:oldResults[i]?.result||"",comment:oldResults[i]?.comment||""}));
+      }
     }
     const prevWO = isEdit ? state.workOrders.find(w=>w.id===formWithLatestUsage.id) : null;
 
     // Validate meter readings against the equipment's current recorded usage.
     // Lower readings are allowed only after an explicit warning and never roll the equipment meter backward.
-    const meterEquipment = selectedEquipment || (formWithLatestUsage.parentId ? state.equipment.find(e=>String(e.id)===String(formWithLatestUsage.parentId)) : null);
-    const equipmentIdForMeter = meterEquipment?.id || formWithLatestUsage.equipment;
+    const meterEquipment = selectedEquipment || selectedAttachmentParent || (formWithLatestUsage.parentId ? state.equipment.find(e=>String(e.id)===String(formWithLatestUsage.parentId)) : null);
+    const meterAsset = selectedAttachment || selectedEquipment;
+    const equipmentIdForMeter = meterAsset?.id || formWithLatestUsage.equipment;
     const usageLogsForMeter = (state.usageLogs||[]).filter(l=>String(l.equipmentId)===String(equipmentIdForMeter));
-    const currentHours = Math.max(0, +(meterEquipment?.currentHours||meterEquipment?.hours||0), ...usageLogsForMeter.map(l=>+(l.hours||0)).filter(Number.isFinite));
-    const currentMileage = Math.max(0, +(meterEquipment?.currentMileage||meterEquipment?.mileage||0), ...usageLogsForMeter.map(l=>+(l.mileage||0)).filter(Number.isFinite));
+    const currentHours = Math.max(0, +(meterAsset?.currentHours||meterAsset?.hours||0), ...usageLogsForMeter.map(l=>+(l.hours||0)).filter(Number.isFinite));
+    const currentMileage = Math.max(0, +(meterAsset?.currentMileage||meterAsset?.mileage||0), ...usageLogsForMeter.map(l=>+(l.mileage||0)).filter(Number.isFinite));
     const enteredHours = hoursEntered ? +(formWithLatestUsage.usageHours||0) : null;
     const enteredMileage = mileageEntered ? +(formWithLatestUsage.usageMileage||0) : null;
     if(hoursEntered && Number.isFinite(enteredHours) && enteredHours < currentHours) {
@@ -2844,13 +2896,18 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
       dispatch({type:"ADD_WO", payload:{...formWithLatestUsage, created:normalizedCreatedDate, due:normalizedDueDate, woType:nextType, title:formWithLatestUsage.faultDescription||nextType, faultEnabled:true, id:nextId, woNumber:nextId, outsideServices, partsCost:partsTotal, outsideServicesCost:outsideServicesSubtotal}});
     }
     // A higher/current WO meter reading becomes the equipment's current usage and feeds PM calculations.
-    if(meterEquipment && !formWithLatestUsage.usageNA) {
+    if(meterAsset && !formWithLatestUsage.usageNA) {
       const nextHours = hoursEntered && Number.isFinite(enteredHours) ? Math.max(currentHours, enteredHours) : currentHours;
       const nextMileage = mileageEntered && Number.isFinite(enteredMileage) ? Math.max(currentMileage, enteredMileage) : currentMileage;
       const meterChanged = nextHours > currentHours || nextMileage > currentMileage;
       if(meterChanged) {
-        dispatch({type:"UPDATE_EQ", payload:{...meterEquipment, currentHours:nextHours, hours:nextHours, currentMileage:nextMileage, mileage:nextMileage}});
-        dispatch({type:"ADD_USAGE_LOG", payload:{id:genId("USE"), equipmentId:meterEquipment.id, date:normalizedCreatedDate, hours:hoursEntered?enteredHours:"", mileage:mileageEntered?enteredMileage:"", source:"Work Order", workOrderId:formWithLatestUsage.id||""}});
+        if(selectedAttachment && selectedAttachmentParent){
+          const nextAttachments=(selectedAttachmentParent.attachments||[]).map(a=>String(a.id)===String(selectedAttachment.id)?{...a,currentHours:nextHours,hours:nextHours,currentMileage:nextMileage,mileage:nextMileage}:a);
+          dispatch({type:"UPDATE_EQ",payload:{...selectedAttachmentParent,attachments:nextAttachments}});
+        } else if(selectedEquipment) {
+          dispatch({type:"UPDATE_EQ", payload:{...selectedEquipment, currentHours:nextHours, hours:nextHours, currentMileage:nextMileage, mileage:nextMileage}});
+        }
+        dispatch({type:"ADD_USAGE_LOG", payload:{id:genId("USE"), equipmentId:meterAsset.id, date:normalizedCreatedDate, hours:hoursEntered?enteredHours:"", mileage:mileageEntered?enteredMileage:"", source:"Work Order", workOrderId:formWithLatestUsage.id||""}});
       }
     }
     setModal(null);
@@ -3200,6 +3257,35 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
             <Field label="Mechanic Notes / Work Performed"><textarea style={{ ...inp, minHeight:120, resize:"vertical" }} value={form.mechanicNotes||""} onChange={e=>setForm(f=>({...f,mechanicNotes:e.target.value}))} placeholder="Diagnosis, work performed, findings, and mechanic notes..." /></Field>
           </div>
         </div>
+
+        {(form.woType==="Service"||form.woType==="Inspection")&&(
+          <TypeSection title={`${form.woType} Checklist / Procedure`} subtitle="Use a saved Task Library procedure or build this work order checklist manually." accent={form.woType==="Service"?"#ca8a04":"#16a34a"}>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
+              <Btn type="button" variant={form.procedureMode!=="manual"?"primary":"secondary"} onClick={()=>setForm(f=>({...f,procedureMode:"library"}))}>Use Task Library Procedure</Btn>
+              <Btn type="button" variant={form.procedureMode==="manual"?"primary":"secondary"} onClick={()=>setForm(f=>({...f,procedureMode:"manual",procedureTaskId:"",taskProcedureSnapshot:null}))}>Build Checklist Manually</Btn>
+            </div>
+            {form.procedureMode!=="manual"?<div>
+              <Field label={`${form.woType==="Inspection"?"Inspection":"Service"} Procedure`}>
+                <select style={sel} value={form.procedureTaskId||""} onChange={e=>applyProcedureToWO(e.target.value)}>
+                  <option value="">-- Select a saved procedure --</option>
+                  {procedureOptionsForWO(form.woType).map(task=><option key={task.id} value={task.id}>{task.name}</option>)}
+                </select>
+              </Field>
+              {form.taskProcedureSnapshot?.steps?.length>0&&<div style={{display:"grid",gap:7,marginTop:8}}>
+                {form.taskProcedureSnapshot.steps.map((step,i)=><div key={i} style={{padding:9,border:`1px solid ${T.border}`,borderRadius:8,background:T.grayLt,fontSize:12}}><b>{i+1}. {step}</b>{form.taskProcedureSnapshot.stepNotes?.[i]&&<div style={{color:T.muted,marginTop:3}}>Instruction / spec: {form.taskProcedureSnapshot.stepNotes[i]}</div>}</div>)}
+              </div>}
+            </div>:<div>
+              <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Add the steps needed for this work order. Each step can include an instruction, specification, fluid, torque, or other note.</div>
+              {(form.manualChecklist||[]).map((row,i)=><div key={i} style={{display:"grid",gridTemplateColumns:"32px minmax(180px,1fr) minmax(180px,1fr) auto",gap:8,alignItems:"center",marginBottom:8}}>
+                <b>{i+1}</b>
+                <input style={inp} value={row.step||""} onChange={e=>setManualChecklistRow(i,"step",e.target.value)} placeholder="Checklist step"/>
+                <input style={inp} value={row.note||""} onChange={e=>setManualChecklistRow(i,"note",e.target.value)} placeholder="Instruction / specification (optional)"/>
+                <Btn type="button" variant="danger" onClick={()=>removeManualChecklistRow(i)}>X</Btn>
+              </div>)}
+              <Btn type="button" variant="secondary" onClick={addManualChecklistRow}>+ Add Checklist Step</Btn>
+            </div>}
+          </TypeSection>
+        )}
 
         {form.woType === "Inspection" && (
           <div
@@ -3615,24 +3701,34 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     const hasOpen = (state.workOrders||[]).some(w=>w.woType==="Inspection" && String(w.inspectionScheduleId||"")===String(s.id||"") && w.status!=="Completed");
     return due && !hasOpen;
   });
+  const resolveMaintainableAsset = (id) => {
+    const direct=(state.equipment||[]).find(e=>String(e.id)===String(id));
+    if(direct) return {...direct,assetType:"Equipment"};
+    for(const parent of (state.equipment||[])){
+      const at=(parent.attachments||[]).find(a=>String(a.id)===String(id));
+      if(at) return {...at,assetType:"Attachment",parentId:parent.id,parentName:parent.name};
+    }
+    return null;
+  };
+
   const createDuePMWO = (sch) => {
-    const eq=(state.equipment||[]).find(e=>String(e.id)===String(sch.equipmentId));
+    const eq=resolveMaintainableAsset(sch.equipmentId);
     const task=(state.pmTasks||[]).find(t=>String(t.id)===String(sch.taskId)) || {};
     const logs=(state.usageLogs||[]).filter(l=>String(l.equipmentId)===String(sch.equipmentId));
     const mode=String(eq?.usageType||sch.usageType||"hours").toLowerCase();
     const currentHours=Math.max(+(eq?.currentHours||0),...logs.map(l=>+(l.hours||0)).filter(Number.isFinite),0)||"";
     const currentMileage=Math.max(+(eq?.currentMileage||0),...logs.map(l=>+(l.mileage||0)).filter(Number.isFinite),0)||"";
     const stepLines=(Array.isArray(task.steps)?task.steps:String(task.steps||"").split(/\n+/)).map(x=>String(x?.text||x?.step||x||"").trim()).filter(Boolean);
-    dispatch({type:"ADD_WO",payload:{id:genWOId(eq?.id||sch.equipmentId,"Service"),title:task.name||sch.task||"PM Service",equipment:sch.equipmentId,status:"Open",priority:"Medium",woType:"Service",equipmentStatus:eq?.status||"Fully Operational",created:today(),due:sch.nextDueDate||today(),tech:"",laborHours:0,laborCost:0,partsCost:0,description:task.description||task.name||sch.task||"PM Service",workPerformed:stepLines.join("\n"),serviceSteps:stepLines.join("\n"),serviceStepLines:stepLines,steps:stepLines,serviceChecklist:stepLines.join("\n"),serviceStepNotes:Array.isArray(task.stepNotes)?[...task.stepNotes]:[],taskProcedureSnapshot:{taskId:task.id||sch.taskId,name:task.name||sch.task||"PM Service",steps:[...stepLines],stepNotes:Array.isArray(task.stepNotes)?[...task.stepNotes]:[],capturedAt:new Date().toISOString()},mechanicNotes:"",faultEnabled:true,faultDescription:task.description||task.name||sch.task||"PM Service",usageType:mode,usageHours:mode==="mileage"?"":currentHours,usageMileage:mode==="hours"?"":currentMileage,usageNA:!eq?.trackUsage,partsUsed:Array.isArray(task.parts)?task.parts:[],outsideServices:[],scheduleId:sch.id,pmTaskId:task.id||sch.taskId}});
+    dispatch({type:"ADD_WO",payload:{id:genWOId(eq?.id||sch.equipmentId,"Service"),title:task.name||sch.task||"PM Service",equipment:sch.equipmentId,status:"Open",priority:"Medium",woType:"Service",equipmentStatus:eq?.status||"Fully Operational",created:today(),due:sch.nextDueDate||today(),tech:"",laborHours:0,laborCost:0,partsCost:0,description:task.description||task.name||sch.task||"PM Service",workPerformed:stepLines.join("\n"),serviceSteps:stepLines.join("\n"),serviceStepLines:stepLines,steps:stepLines,serviceChecklist:stepLines.join("\n"),serviceStepNotes:Array.isArray(task.stepNotes)?[...task.stepNotes]:[],taskProcedureSnapshot:{taskId:task.id||sch.taskId,name:task.name||sch.task||"PM Service",steps:[...stepLines],stepNotes:Array.isArray(task.stepNotes)?[...task.stepNotes]:[],capturedAt:new Date().toISOString()},procedureMode:"library",procedureTaskId:task.id||sch.taskId||"",equipmentType:eq?.assetType||"Equipment",parentId:eq?.parentId||null,parentName:eq?.parentName||null,mechanicNotes:"",faultEnabled:true,faultDescription:task.description||task.name||sch.task||"PM Service",usageType:mode,usageHours:mode==="mileage"?"":currentHours,usageMileage:mode==="hours"?"":currentMileage,usageNA:!eq?.trackUsage,partsUsed:Array.isArray(task.parts)?task.parts:[],outsideServices:[],scheduleId:sch.id,pmTaskId:task.id||sch.taskId}});
   };
   const createDueInspectionWO = (sch) => {
-    const eq=(state.equipment||[]).find(e=>String(e.id)===String(sch.equipmentId));
+    const eq=resolveMaintainableAsset(sch.equipmentId);
     const task=(state.inspectionTasks||[]).find(t=>String(t.id)===String(sch.taskId)) || {};
     const occurrence=String(sch.nextDueDate||today()).slice(0,10);
     const steps=(Array.isArray(task.steps)?task.steps:String(task.steps||"").split(/\n+/)).map(x=>String(x?.text||x?.step||x||"").trim()).filter(Boolean);
     const prefix=`${eq?.id||sch.equipmentId}-`; const nums=(state.workOrders||[]).map(w=>String(w.id||"")).filter(id=>id.startsWith(prefix)).map(id=>parseInt(id.slice(prefix.length),10)).filter(n=>!Number.isNaN(n));
     const id=`${prefix}${String(nums.length?Math.max(...nums)+1:1).padStart(2,"0")}`;
-    dispatch({type:"ADD_WO",payload:{id,woType:"Inspection",title:`Inspection - ${task.name||sch.task||"Scheduled Inspection"}`,inspectionTaskName:task.name||sch.task||"Scheduled Inspection",equipment:sch.equipmentId,equipmentStatus:eq?.status||"Fully Operational",status:"Open",priority:"Normal",created:today(),due:occurrence,completed:"",tech:"",usageReading:"N/A",usageType:"N/A",usageNA:true,faultEnabled:true,faultDescription:task.name||sch.task||"Scheduled Inspection",problem:task.name||sch.task||"Scheduled Inspection",description:task.name||sch.task||"Scheduled Inspection",workPerformed:steps.map((x,i)=>`${i+1}. ${x}`).join("\n"),mechanicNotes:task.notes||"",inspectionTaskId:task.id||sch.taskId,inspectionScheduleId:sch.id,inspectionDueOccurrence:occurrence,inspectionSteps:steps.join("\n"),steps,inspectionStepResults:steps.map((step,i)=>({id:`step-${Date.now()}-${i}`,step,result:"",comment:""})),inspectionAttachments:Array.isArray(task.attachments)?task.attachments:[],partsUsed:[],labor:[]}});
+    dispatch({type:"ADD_WO",payload:{id,woType:"Inspection",title:`Inspection - ${task.name||sch.task||"Scheduled Inspection"}`,inspectionTaskName:task.name||sch.task||"Scheduled Inspection",equipment:sch.equipmentId,equipmentStatus:eq?.status||"Fully Operational",status:"Open",priority:"Normal",created:today(),due:occurrence,completed:"",tech:"",usageReading:"N/A",usageType:"N/A",usageNA:true,faultEnabled:true,faultDescription:task.name||sch.task||"Scheduled Inspection",problem:task.name||sch.task||"Scheduled Inspection",description:task.name||sch.task||"Scheduled Inspection",workPerformed:steps.map((x,i)=>`${i+1}. ${x}`).join("\n"),mechanicNotes:task.notes||"",inspectionTaskId:task.id||sch.taskId,inspectionScheduleId:sch.id,inspectionDueOccurrence:occurrence,inspectionSteps:steps.join("\n"),steps,procedureMode:"library",procedureTaskId:task.id||sch.taskId||"",taskProcedureSnapshot:{taskId:task.id||sch.taskId||"",name:task.name||sch.task||"Scheduled Inspection",steps:[...steps],stepNotes:[],capturedAt:new Date().toISOString()},equipmentType:eq?.assetType||"Equipment",parentId:eq?.parentId||null,parentName:eq?.parentName||null,inspectionStepResults:steps.map((step,i)=>({id:`step-${Date.now()}-${i}`,step,result:"",comment:""})),inspectionAttachments:Array.isArray(task.attachments)?task.attachments:[],partsUsed:[],labor:[]}});
   };
 
   return (
@@ -3859,7 +3955,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
 
 /* ATTACHMENTS CARD - used inside Equipment detail view */
 
-function AttachmentsCard({ eq, dispatch }) {
+function AttachmentsCard({ eq, state, dispatch }) {
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId]     = useState(null);
   const [form, setForm]         = useState({});
@@ -3867,7 +3963,7 @@ function AttachmentsCard({ eq, dispatch }) {
 
   const attachments = eq.attachments || [];
 
-  const blankForm = () => ({ id:"", name:"", make:"", model:"", serial:"", eilNumber:"", acquisitionDate:"", acquisitionCost:"", notes:"" });
+  const blankForm = () => ({ id:"", name:"", make:"", model:"", serial:"", eilNumber:"", acquisitionDate:"", acquisitionCost:"", notes:"", trackUsage:false, usageType:"hours", currentHours:"", currentMileage:"", pmBaselineDate:"", pmBaselineUsage:"" });
 
   const openAdd = () => { setForm(blankForm()); setEditId(null); setShowForm(true); };
   const openEdit = (at) => { setForm({...at}); setEditId(at.id); setShowForm(true); };
@@ -3875,6 +3971,13 @@ function AttachmentsCard({ eq, dispatch }) {
 
   const save = () => {
     if(!form.name) return alert("Attachment nomenclature is required.");
+    if(form.trackUsage){
+      if(!form.usageType) return alert("Choose Hours, Mileage, or Hours & Mileage for this attachment.");
+      if((form.usageType==="hours"||form.usageType==="both") && String(form.currentHours??"").trim()==="") return alert("Enter the attachment's current hours.");
+      if((form.usageType==="mileage"||form.usageType==="both") && String(form.currentMileage??"").trim()==="") return alert("Enter the attachment's current mileage.");
+      const current=form.usageType==="mileage"?+form.currentMileage:+form.currentHours;
+      if(String(form.pmBaselineUsage??"").trim()!=="" && Number.isFinite(current) && +form.pmBaselineUsage>current) return alert("Usage at Last Service cannot be greater than current usage.");
+    }
     const requestedId = String(form.id || "").trim();
     const nextId = editId ? (requestedId || editId) : (requestedId || `AT-${String(Date.now()).slice(-5)}`);
     if(attachments.some(a => String(a.id)===String(nextId) && String(a.id)!==String(editId||""))) return alert("That Attachment # is already in use on this equipment.");
@@ -3938,6 +4041,21 @@ function AttachmentsCard({ eq, dispatch }) {
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Purchase Price ($)</label>
               <input style={inp} {...decimalInputAttrs({ placeholder:"0.00" })} value={form.acquisitionCost||""} onChange={e=>setForm(f=>({...f,acquisitionCost:sanitizeDecimalInput(e.target.value)}))} />
             </div>
+            <div style={{ marginBottom:12, gridColumn:"span 2", border:`1px solid ${T.border}`, borderRadius:10, padding:12, background:T.card }}>
+              <label style={{ display:"flex", alignItems:"center", gap:8, fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text }}>
+                <input type="checkbox" checked={!!form.trackUsage} onChange={e=>setForm(f=>({...f,trackUsage:e.target.checked}))}/> Track Attachment Usage
+              </label>
+              <div style={{fontSize:11,color:T.muted,marginTop:4}}>Enable this for powered implements or attachments with their own hour/mileage meter. Date-based PM works with this off.</div>
+              {form.trackUsage&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginTop:10}}>
+                <Field label="Usage Type"><select style={inp} value={form.usageType||"hours"} onChange={F("usageType")}><option value="hours">Engine Hours</option><option value="mileage">Mileage</option><option value="both">Hours & Mileage</option></select></Field>
+                {(form.usageType==="hours"||form.usageType==="both")&&<Field label="Current Hours"><input style={inp} type="number" step="0.1" value={form.currentHours||""} onChange={F("currentHours")}/></Field>}
+                {(form.usageType==="mileage"||form.usageType==="both")&&<Field label="Current Mileage"><input style={inp} type="number" step="1" value={form.currentMileage||""} onChange={F("currentMileage")}/></Field>}
+              </div>}
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginTop:10}}>
+                <Field label="Last Service Date"><input style={inp} type="date" value={form.pmBaselineDate||""} onChange={F("pmBaselineDate")}/></Field>
+                {form.trackUsage&&<Field label="Usage at Last Service"><input style={inp} type="number" step="0.1" value={form.pmBaselineUsage||""} onChange={F("pmBaselineUsage")}/></Field>}
+              </div>
+            </div>
             <div style={{ marginBottom:12, gridColumn:"span 2" }}>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Notes</label>
               <textarea style={{ ...inp, minHeight:56, resize:"vertical" }} value={form.notes||""} onChange={F("notes")} placeholder="Size, capacity, condition, etc." />
@@ -3971,8 +4089,12 @@ function AttachmentsCard({ eq, dispatch }) {
             </tr>
           </thead>
           <tbody>
-            {attachments.map((at,i)=>(
-              <tr key={at.id} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
+            {attachments.map((at,i)=>{
+              const atWOs=(state.workOrders||[]).filter(w=>String(w.equipment||"")===String(at.id));
+              const atPM=(state.pmSchedules||[]).filter(s=>String(s.equipmentId||"")===String(at.id));
+              const atIns=(state.inspectionSchedules||[]).filter(s=>String(s.equipmentId||"")===String(at.id));
+              const completed=atWOs.filter(w=>w.status==="Completed");
+              return (<React.Fragment key={at.id}><tr style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
                 <td style={{ padding:"10px 12px", fontWeight:600, color:T.text }}>{at.name}</td>
                 <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12, color:T.muted }}>{at.eilNumber||"—"}</td>
                 <td style={{ padding:"10px 12px", color:T.subtext }}>{[at.make,at.model].filter(Boolean).join(" ")||"—"}</td>
@@ -3985,7 +4107,19 @@ function AttachmentsCard({ eq, dispatch }) {
                   <Btn small variant="danger" onClick={()=>remove(at.id)}>Remove</Btn>
                 </td>
               </tr>
-            ))}
+              <tr style={{background:i%2===0?"#fff":T.grayLt,borderBottom:`1px solid ${T.border}`}}>
+                <td colSpan="8" style={{padding:"0 12px 10px"}}>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",fontSize:11,color:T.subtext}}>
+                    <span><b>{atPM.length}</b> PM assignment{atPM.length===1?"":"s"}</span>
+                    <span>• <b>{atIns.length}</b> inspection assignment{atIns.length===1?"":"s"}</span>
+                    <span>• <b>{atWOs.filter(w=>w.status!=="Completed").length}</b> open WO</span>
+                    <span>• <b>{completed.filter(w=>w.woType==="Service").length}</b> completed service</span>
+                    <span>• <b>{completed.filter(w=>w.woType==="Inspection").length}</b> completed inspection</span>
+                    <span>• <b>{completed.filter(w=>w.woType==="Repair").length}</b> completed repair</span>
+                  </div>
+                </td>
+              </tr></React.Fragment>);
+            })}
           </tbody>
         </table>
       )}
@@ -4973,7 +5107,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
           </Card>
 
           {/* Attachments / Implements */}
-          <AttachmentsCard eq={eq} dispatch={dispatch} />
+          <AttachmentsCard eq={eq} state={state} dispatch={dispatch} />
 
           {/* Documents Folder */}
           <Card style={{ marginTop:16 }}>
@@ -5261,6 +5395,18 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
                   <label style={{ display:"block", fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Purchase Price ($)</label>
                   <input style={inp} {...decimalInputAttrs({ placeholder:"0.00" })} value={attachEditForm.acquisitionCost||""} onChange={e=>setAttachEditForm(f=>({...f,acquisitionCost:sanitizeDecimalInput(e.target.value)}))} />
                 </div>
+                <div style={{gridColumn:"span 2",border:`1px solid ${T.border}`,borderRadius:10,padding:12}}>
+                  <label style={{display:"flex",alignItems:"center",gap:8,fontFamily:T.sans,fontSize:12,fontWeight:800}}><input type="checkbox" checked={!!attachEditForm.trackUsage} onChange={e=>setAttachEditForm(f=>({...f,trackUsage:e.target.checked}))}/> Track Attachment Usage</label>
+                  {attachEditForm.trackUsage&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:8,marginTop:10}}>
+                    <Field label="Usage Type"><select style={inp} value={attachEditForm.usageType||"hours"} onChange={e=>setAttachEditForm(f=>({...f,usageType:e.target.value}))}><option value="hours">Engine Hours</option><option value="mileage">Mileage</option><option value="both">Hours & Mileage</option></select></Field>
+                    {(attachEditForm.usageType==="hours"||attachEditForm.usageType==="both")&&<Field label="Current Hours"><input style={inp} type="number" step="0.1" value={attachEditForm.currentHours||""} onChange={e=>setAttachEditForm(f=>({...f,currentHours:e.target.value}))}/></Field>}
+                    {(attachEditForm.usageType==="mileage"||attachEditForm.usageType==="both")&&<Field label="Current Mileage"><input style={inp} type="number" step="1" value={attachEditForm.currentMileage||""} onChange={e=>setAttachEditForm(f=>({...f,currentMileage:e.target.value}))}/></Field>}
+                  </div>}
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:8}}>
+                    <Field label="Last Service Date"><input style={inp} type="date" value={attachEditForm.pmBaselineDate||""} onChange={e=>setAttachEditForm(f=>({...f,pmBaselineDate:e.target.value}))}/></Field>
+                    {attachEditForm.trackUsage&&<Field label="Usage at Last Service"><input style={inp} type="number" step="0.1" value={attachEditForm.pmBaselineUsage||""} onChange={e=>setAttachEditForm(f=>({...f,pmBaselineUsage:e.target.value}))}/></Field>}
+                  </div>
+                </div>
                 <div style={{gridColumn:"span 2"}}>
                   <label style={{ display:"block", fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Notes</label>
                   <textarea style={{...inp,minHeight:70,resize:"vertical"}} value={attachEditForm.notes||""} onChange={e=>setAttachEditForm(f=>({...f,notes:e.target.value}))} />
@@ -5292,11 +5438,33 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
                   ["Attachment #",attachDetail.at.id],["EIL #",attachDetail.at.eilNumber],["Make",attachDetail.at.make],["Model",attachDetail.at.model],["Serial Number",attachDetail.at.serial],["Acquisition Date",attachDetail.at.acquisitionDate],["Purchase Price",attachDetail.at.acquisitionCost ? moneyFmt(attachDetail.at.acquisitionCost) : "—"],
                 ].map(([k,v])=>(<div key={k}><div style={{fontFamily:T.sans,fontSize:11,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:.4}}>{k}</div><div style={{fontFamily:T.sans,fontSize:14,color:T.text,marginTop:4,fontWeight:500}}>{v||"—"}</div></div>))}
               </div>
+              {(()=>{
+                const id=attachDetail.at.id;
+                const wos=(state.workOrders||[]).filter(w=>String(w.equipment||"")===String(id));
+                const completed=wos.filter(w=>w.status==="Completed").sort((a,b)=>String(b.completed||b.created||"").localeCompare(String(a.completed||a.created||"")));
+                const pm=(state.pmSchedules||[]).filter(s=>String(s.equipmentId||"")===String(id));
+                const ins=(state.inspectionSchedules||[]).filter(s=>String(s.equipmentId||"")===String(id));
+                return <div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+                  <div style={{fontFamily:T.sans,fontSize:11,fontWeight:800,color:T.muted,textTransform:"uppercase",letterSpacing:.4,marginBottom:8}}>Maintenance</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:8}}>
+                    <div style={{padding:9,background:T.grayLt,borderRadius:8}}><b>{pm.length}</b><div style={{fontSize:11,color:T.muted}}>PM Assignments</div></div>
+                    <div style={{padding:9,background:T.grayLt,borderRadius:8}}><b>{ins.length}</b><div style={{fontSize:11,color:T.muted}}>Inspections</div></div>
+                    <div style={{padding:9,background:T.grayLt,borderRadius:8}}><b>{wos.filter(w=>w.status!=="Completed").length}</b><div style={{fontSize:11,color:T.muted}}>Open WOs</div></div>
+                    <div style={{padding:9,background:T.grayLt,borderRadius:8}}><b>{completed.length}</b><div style={{fontSize:11,color:T.muted}}>Completed WOs</div></div>
+                  </div>
+                  <div style={{marginTop:10,fontSize:12,color:T.subtext}}><b>Usage Tracking:</b> {attachDetail.at.trackUsage?`${attachDetail.at.usageType||"hours"} • ${attachDetail.at.currentHours||0} hr • ${attachDetail.at.currentMileage||0} mi`:"Off / date-based maintenance"}</div>
+                  <div style={{marginTop:10}}>
+                    <div style={{fontSize:12,fontWeight:800,marginBottom:5}}>Recent Maintenance History</div>
+                    {completed.length?completed.slice(0,8).map(w=><div key={w.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"6px 0",borderTop:`1px solid ${T.border}`,fontSize:12}}><span><b>{w.woType||"WO"}</b> — {w.faultDescription||w.title||w.description||w.id}</span><span style={{fontFamily:T.mono,whiteSpace:"nowrap"}}>{w.completed||w.completedDate||w.created||"—"}</span></div>):<div style={{fontSize:12,color:T.muted}}>No completed maintenance yet.</div>}
+                  </div>
+                </div>;
+              })()}
               {attachDetail.at.notes && <div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${T.border}`}}><div style={{fontFamily:T.sans,fontSize:11,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:.4,marginBottom:5}}>Notes</div><div style={{fontFamily:T.sans,fontSize:13,color:T.subtext}}>{attachDetail.at.notes}</div></div>}
               <div style={{display:"flex",justifyContent:"space-between",gap:8,marginTop:16,flexWrap:"wrap"}}>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                   <Btn onClick={()=>onCreateAttachmentWO?.({requestId:Date.now(),woType:"Repair",equipment:attachDetail.at.id,parentId:attachDetail.eq.id})}>🛠 Create Repair WO</Btn>
                   <Btn variant="secondary" onClick={()=>onCreateAttachmentWO?.({requestId:Date.now(),woType:"Service",equipment:attachDetail.at.id,parentId:attachDetail.eq.id})}>🧰 Create Service WO</Btn>
+                  <Btn variant="secondary" onClick={()=>onCreateAttachmentWO?.({requestId:Date.now(),woType:"Inspection",equipment:attachDetail.at.id,parentId:attachDetail.eq.id})}>☑ Create Inspection WO</Btn>
                 </div>
                 <div style={{display:"flex",gap:8}}>
                   <Btn onClick={()=>{setAttachEditForm({...attachDetail.at});setAttachEdit(true);}}>✎ Edit Attachment</Btn>
@@ -5622,7 +5790,10 @@ function Parts({ state, dispatch }) {
 
 /* INSPECTIONS */
 function Inspections({ state, dispatch }) {
-  const equipment = state.equipment || [];
+  const equipment = [
+    ...(state.equipment||[]),
+    ...(state.equipment||[]).flatMap(parent=>(parent.attachments||[]).map(at=>({...at,name:at.name||at.nomenclature,parentId:parent.id,parentName:parent.name,assetType:"Attachment"})))
+  ];
   const tasks = state.inspectionTasks || [];
   const schedules = state.inspectionSchedules || [];
   const [modal, setModal] = useState(null);
@@ -6178,6 +6349,10 @@ function PM({ state, dispatch }) {
   };
 
   const pmTasks  = state.pmTasks    || [];
+  const maintainableAssets = [
+    ...(state.equipment||[]),
+    ...(state.equipment||[]).flatMap(parent=>(parent.attachments||[]).map(at=>({...at,name:at.name||at.nomenclature,parentId:parent.id,parentName:parent.name,assetType:"Attachment"})))
+  ];
   const schedules = state.pmSchedules || [];
   const selectedLibraryTask = pmTasks.find(t=>t.id===selectedTaskId) || pmTasks[0] || null;
 
@@ -6218,7 +6393,8 @@ function PM({ state, dispatch }) {
 
   const currentUsageFor = (equipmentId, type="hours") => {
     const logs = (state.usageLogs||[]).filter(l=>String(l.equipmentId)===String(equipmentId));
-    const eq = (state.equipment||[]).find(e=>String(e.id)===String(equipmentId)) || {};
+    const eq = (state.equipment||[]).find(e=>String(e.id)===String(equipmentId)) ||
+      (state.equipment||[]).flatMap(parent=>(parent.attachments||[]).map(at=>({...at,parentId:parent.id}))).find(a=>String(a.id)===String(equipmentId)) || {};
     const key = type === "mileage" ? "mileage" : "hours";
     const equipmentCurrent = type === "mileage" ? +(eq.currentMileage||eq.mileage||0) : +(eq.currentHours||eq.hours||0);
     const baseline = +(eq.pmBaselineUsage||0);
@@ -6346,7 +6522,7 @@ function PM({ state, dispatch }) {
       if(!selectedTask) return null;
       const trig = getTaskTriggerSettings(selectedTask);
       const schedulePayload = { ...schForm, equipmentId, taskId, equipmentIds:undefined, taskIds:undefined, task:selectedTask.name, ...trig };
-      const baselineEq = (state.equipment||[]).find(e=>String(e.id)===String(equipmentId)) || {};
+      const baselineEq = maintainableAssets.find(e=>String(e.id)===String(equipmentId)) || {};
       const baselineDate = schedulePayload.lastDoneDate || baselineEq.pmBaselineDate || schedulePayload.created || today();
       const baselineUsage = schedulePayload.lastDoneUsage !== undefined && schedulePayload.lastDoneUsage !== "" ? schedulePayload.lastDoneUsage : (baselineEq.pmBaselineUsage || 0);
       const nextTriggers = buildScheduleTriggers(schedulePayload.triggers, baselineDate, baselineUsage);
@@ -6402,8 +6578,8 @@ function PM({ state, dispatch }) {
       task.description ? `Description: ${task.description}` : "",
       stepsText ? `Service Steps:\n${stepsText}` : ""
     ].filter(Boolean).join("\n\n");
-    const eq = state.equipment.find(e=>e.id===equipmentId);
-    const logs = (state.usageLogs||[]).filter(l=>l.equipmentId===equipmentId);
+    const eq = maintainableAssets.find(e=>String(e.id)===String(equipmentId));
+    const logs = (state.usageLogs||[]).filter(l=>String(l.equipmentId)===String(equipmentId));
     const usageMode = (eq?.usageType || sch?.usageType || "hours").toLowerCase();
     const currentHours = Math.max(...logs.map(l=>+(l.hours||0)), 0) || "";
     const currentMileage = Math.max(...logs.map(l=>+(l.mileage||0)), 0) || "";
@@ -6437,6 +6613,13 @@ function PM({ state, dispatch }) {
       partsUsed:taskParts,
       scheduleId:sch?.id||null,
       pmTaskId:task.id||sch?.taskId||null,
+      equipmentType:eq?.assetType||"Equipment",
+      parentId:eq?.parentId||null,
+      parentName:eq?.parentName||null,
+      procedureMode:"library",
+      procedureTaskId:task.id||sch?.taskId||"",
+      serviceStepNotes:Array.isArray(task.stepNotes)?[...task.stepNotes]:[],
+      taskProcedureSnapshot:{taskId:task.id||sch?.taskId||"",name:task.name||sch?.task||"PM Service",steps:[...stepLines],stepNotes:Array.isArray(task.stepNotes)?[...task.stepNotes]:[],capturedAt:new Date().toISOString()}
     }});
   };
 
@@ -6460,7 +6643,7 @@ function PM({ state, dispatch }) {
     const description = String(serviceWOForm.description||"").trim();
     if(!equipmentId) return alert("Select the equipment for this service work order.");
     if(!description) return alert("Enter the service description or work requested.");
-    const eq = (state.equipment||[]).find(e=>String(e.id)===String(equipmentId));
+    const eq = maintainableAssets.find(e=>String(e.id)===String(equipmentId));
     const usageMode = String(eq?.usageType || "hours").toLowerCase();
     const usageValue = serviceWOForm.usage === "" ? "" : Number(serviceWOForm.usage);
     if(eq?.trackUsage && serviceWOForm.usage === "") return alert(`Enter the current ${usageMode==="mileage"?"mileage":"hours"} for this equipment.`);
@@ -7039,7 +7222,7 @@ function PM({ state, dispatch }) {
             <Field label="Equipment to Service" half>
               <select style={{ ...sel, minWidth:320, width:"100%" }} value={manualForm.equipmentId||""} onChange={e=>setManualForm(f=>({...f,equipmentId:e.target.value}))}>
                 <option value="">-- Select Equipment --</option>
-                {state.equipment.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name}</option>)}
+                {maintainableAssets.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name}{e.assetType==="Attachment"?` (Attachment on ${e.parentName})`:""}</option>)}
               </select>
             </Field>
             <Field label="Task to Trigger" half>
@@ -7050,7 +7233,7 @@ function PM({ state, dispatch }) {
             </Field>
           </div>
           {manualForm.equipmentId && manualForm.taskId && (()=>{
-            const eq=state.equipment.find(e=>e.id===manualForm.equipmentId);
+            const eq=maintainableAssets.find(e=>String(e.id)===String(manualForm.equipmentId));
             const task=pmTasks.find(t=>t.id===manualForm.taskId);
             const steps=(task?.steps||[]).filter(Boolean);
             return (
@@ -7083,7 +7266,7 @@ function PM({ state, dispatch }) {
                   <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Equipment *</label>
                   <select style={sel} value={schForm.equipmentId} onChange={e=>setSchForm(f=>({...f,equipmentId:e.target.value,equipmentIds:e.target.value?[e.target.value]:[]}))}>
                     <option value="">-- Select Equipment --</option>
-                    {state.equipment.map(e=><option key={e.id} value={e.id}>{e.name} ({e.id})</option>)}
+                    {maintainableAssets.map(e=><option key={e.id} value={e.id}>{e.name} ({e.id}){e.assetType==="Attachment"?` — Attachment on ${e.parentName}`:""}</option>)}
                   </select>
                 </div>
                 <div style={{ gridColumn:"span 2", marginBottom:14 }}>
@@ -7104,10 +7287,10 @@ function PM({ state, dispatch }) {
               <div style={{ gridColumn:"span 2", display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(280px, 1fr))", gap:14, marginBottom:14 }}>
                 <div>
                   <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Equipment * ({(schForm.equipmentIds||[]).length} selected)</label>
-                  <select multiple size={Math.min(9, Math.max(5, state.equipment.length || 5))} style={{...sel, minHeight:165}} value={schForm.equipmentIds||[]} onChange={e=>{ const ids=getSelectedValues(e); setSchForm(f=>({...f,equipmentIds:ids,equipmentId:ids[0]||""})); }}>
-                    {state.equipment.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name || e.nomenclature}</option>)}
+                  <select multiple size={Math.min(9, Math.max(5, maintainableAssets.length || 5))} style={{...sel, minHeight:165}} value={schForm.equipmentIds||[]} onChange={e=>{ const ids=getSelectedValues(e); setSchForm(f=>({...f,equipmentIds:ids,equipmentId:ids[0]||""})); }}>
+                    {maintainableAssets.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name || e.nomenclature}{e.assetType==="Attachment"?` (Attachment on ${e.parentName})`:""}</option>)}
                   </select>
-                  <div style={{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" }}><Btn variant="secondary" onClick={()=>setSchForm(f=>({...f,equipmentIds:state.equipment.map(e=>e.id),equipmentId:state.equipment[0]?.id||""}))}>Select All Equipment</Btn><Btn variant="secondary" onClick={()=>setSchForm(f=>({...f,equipmentIds:[],equipmentId:""}))}>Clear</Btn></div>
+                  <div style={{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" }}><Btn variant="secondary" onClick={()=>setSchForm(f=>({...f,equipmentIds:maintainableAssets.map(e=>e.id),equipmentId:maintainableAssets[0]?.id||""}))}>Select All Equipment</Btn><Btn variant="secondary" onClick={()=>setSchForm(f=>({...f,equipmentIds:[],equipmentId:""}))}>Clear</Btn></div>
                 </div>
                 <div>
                   <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Service Tasks ({(schForm.taskIds||[]).length} selected)</label>
@@ -8058,7 +8241,7 @@ function ReportUsage({ state }) {
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
             <select style={{ ...sel, width:240 }} value={selEq} onChange={e=>setSelEq(e.target.value)}>
               <option value="all">All Tracked Equipment</option>
-              {trackableEq.map(e=><option key={e.id} value={e.id}>{e.name} ({e.id})</option>)}
+              {trackableEq.map(e=><option key={e.id} value={e.id}>{e.name} ({e.id}){e.assetType==="Attachment"?` — Attachment on ${e.parentName}`:""}</option>)}
             </select>
             <Btn small onClick={printUsageReport}>Print / PDF</Btn>
             <Btn small variant="secondary" onClick={()=>downloadCSV("usage-report.csv", exportRows)}>Excel CSV</Btn>
