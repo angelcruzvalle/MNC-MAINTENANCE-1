@@ -3578,7 +3578,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
   return (
     <div>
       {/* Toolbar */}
-      <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:16 }}>
+      <div className="mf-wo-toolbar" style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:16 }}>
         {/* Row 1: Status tabs + New WO */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
           <div style={{ display:"flex", gap:0, background:T.card, border:`1px solid ${T.border}`, borderRadius:7, overflow:"hidden", flexWrap:"wrap" }}>
@@ -3595,7 +3595,7 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
         </div>
 
         {/* Row 2: Filters + Sort */}
-        <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+        <div className="mf-wo-filter-row" style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
           {/* Type */}
           <select style={{ ...sel, width:140 }} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
             <option value="All">All Types</option>
@@ -4857,7 +4857,8 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
                 <h2 style={{ margin:0, fontFamily:T.sans, fontSize:22, fontWeight:700, color:T.text }}>{eq.name}</h2>
                 <p style={{ margin:"4px 0 0", fontFamily:T.sans, fontSize:14, color:T.subtext }}>{eq.year} {eq.make} {eq.model} · Serial: {eq.serial}</p>
               </div>
-              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+              <div className="mf-equipment-detail-actions" style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                <Btn small onClick={()=>{setHistoricalImport(blankHistoricalImport());setHistoricalImportOpen(true);}}>📷 + Historical Work Order</Btn>
                 <Btn small variant="secondary" onClick={()=>printEquipmentSummary(eq)}>🖨 Print Summary</Btn>
                 <Btn small onClick={()=>openEdit(eq)}>✏ Edit</Btn>
                 <Btn small variant="danger" onClick={()=>del(eq.id)}>Delete</Btn>
@@ -11415,6 +11416,26 @@ export default function App() {
             .mf-brand-title > div:first-child { max-width:calc(100vw - 125px) !important; white-space:normal !important; overflow:visible !important; text-overflow:clip !important; display:-webkit-box !important; -webkit-line-clamp:2 !important; -webkit-box-orient:vertical !important; line-height:1.05 !important; font-size:12px !important; }
             .mf-brand-title > div:last-child { display:none !important; }
             .mf-header { min-height:62px !important; height:auto !important; }
+
+            /* v10 authoritative phone fixes: prevent desktop tables/controls from being squeezed into phone widths. */
+            .mf-wo-desktop-table, .mf-desktop-list { display:none !important; }
+            .mf-wo-toolbar { width:100% !important; min-width:0 !important; }
+            .mf-wo-filter-row { display:grid !important; grid-template-columns:1fr !important; width:100% !important; gap:9px !important; align-items:stretch !important; }
+            .mf-wo-filter-row > select, .mf-wo-filter-row > div, .mf-wo-filter-row > button, .mf-wo-filter-row > span { width:100% !important; min-width:0 !important; max-width:100% !important; margin-left:0 !important; box-sizing:border-box !important; }
+            .mf-wo-filter-row > div select { width:100% !important; min-width:0 !important; flex:1 1 auto !important; }
+            .mf-wo-filter-row > div button { min-width:48px !important; }
+            .mf-equipment-detail-actions { display:grid !important; grid-template-columns:1fr 1fr !important; width:100% !important; margin-top:8px !important; }
+            .mf-equipment-detail-actions .mf-btn { width:100% !important; min-width:0 !important; }
+            .mf-equipment-detail-actions .mf-btn:first-child { grid-column:1 / -1 !important; min-height:50px !important; }
+            .mf-main [style*="grid-template-columns:"1fr 1fr""] { min-width:0 !important; }
+            .mf-modal-body .mf-mobile-form { grid-template-columns:1fr !important; }
+            .mf-modal-body .mf-mobile-form > * { grid-column:1 !important; width:100% !important; min-width:0 !important; }
+            .mf-modal-body [style*="grid-template-columns:"2fr 1.2fr .7fr 1fr auto""] { grid-template-columns:1fr !important; }
+          }
+          @media (max-width: 480px) {
+            main table, .mf-main table { min-width:0 !important; width:100% !important; table-layout:fixed !important; }
+            .mf-equipment-detail-actions { grid-template-columns:1fr !important; }
+            .mf-equipment-detail-actions .mf-btn:first-child { grid-column:1 !important; }
           }
       `}</style>
 
