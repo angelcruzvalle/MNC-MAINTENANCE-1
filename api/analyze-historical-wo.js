@@ -1,28 +1,56 @@
-export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-  if (!process.env.OPENAI_API_KEY) return res.status(500).json({ error: "OPENAI_API_KEY is not configured on the server." });
-  try {
-    const documents = Array.isArray(req.body?.documents) ? req.body.documents : [];
-    const images = documents.filter(d => typeof d?.dataUrl === "string" && d.dataUrl.startsWith("data:image/"));
-    if (!images.length) return res.status(400).json({ error: "At least one image scan is required for AI analysis. PDF-only AI import is not enabled yet." });
-    if (images.length > 8) return res.status(400).json({ error: "Analyze up to 8 photographed pages at a time." });
+const json = (res, status, body) => {
+  res.statusCode = status;
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Cache-Control", "no-store");
+  res.end(JSON.stringify(body));
+};
 
-    const schema = {
-      type:"object", additionalProperties:false,
-      properties:{
-        title:{type:["string","null"]}, woType:{type:["string","null"],enum:["Repair","Service","Inspection",null]},
-        created:{type:["string","null"]}, completed:{type:["string","null"]}, fault:{type:["string","null"]},
-        workPerformed:{type:["string","null"]}, tech:{type:["string","null"]}, laborHours:{type:["number","null"]}, laborCost:{type:["number","null"]},
-        partsUsed:{type:"array",items:{type:"object",additionalProperties:false,properties:{name:{type:["string","null"]},partNumber:{type:["string","null"]},qty:{type:["number","null"]},unitCost:{type:["number","null"]}},required:["name","partNumber","qty","unitCost"]}},
-        missing:{type:"array",items:{type:"string"}}, confidence:{type:"object",additionalProperties:{type:"string"}}
-      }, required:["title","woType","created","completed","fault","workPerformed","tech","laborHours","laborCost","partsUsed","missing","confidence"]
-    };
-    const content=[{type:"input_text",text:`Read these photographed historical maintenance work-order pages. The equipment is already selected in MaintForge, so DO NOT identify equipment. Extract only visible/supportable maintenance facts. Never guess. Dates must be YYYY-MM-DD or null. Classify type as Repair, Service, or Inspection only when supported. 'fault' is the complaint/problem; 'workPerformed' is corrective action/service performed. Extract parts as separate rows with quantity and unit cost when visible. If a total part cost is visible but unit cost is not, do not invent unit cost. Put important unfilled basic fields in missing. Confidence values may be high, medium, or low. Handwriting may be imperfect: use null instead of guessing.`}, ...images.map(d=>({type:"input_image",image_url:d.dataUrl,detail:"high"}))];
-    const r=await fetch("https://api.openai.com/v1/responses",{method:"POST",headers:{"Authorization":`Bearer ${process.env.OPENAI_API_KEY}`,"Content-Type":"application/json"},body:JSON.stringify({model:process.env.MAINTFORGE_VISION_MODEL||"gpt-6-luna",input:[{role:"user",content}],text:{format:{type:"json_schema",name:"historical_work_order",strict:true,schema}}})});
-    const raw=await r.json();
-    if(!r.ok) return res.status(r.status).json({error:raw?.error?.message||"OpenAI vision request failed."});
-    const outputText=raw.output_text || (raw.output||[]).flatMap(x=>x.content||[]).find(x=>x.type==="output_text")?.text;
-    if(!outputText) return res.status(502).json({error:"AI returned no structured work-order data."});
-    return res.status(200).json({data:JSON.parse(outputText)});
-  } catch (err) { return res.status(500).json({error:err?.message||"Historical work-order analysis failed."}); }
+function extractOutputText(data) {
+  if (typeof data?.output_text === "string") return data.output_text;
+  for (const item of data?.output || []) {
+    for (const c of item?.content || []) {
+      if (typeof c?.text === "string") return c.text;
+    }
+  }
+  return "";
+}
+
+function parseJsonText(text) {
+  const cleaned = String(text || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  return JSON.parse(cleaned);
+}
+
+export default async function handler(req, res) {
+  if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return json(res, 503, { code: "AI_NOT_CONFIGURED", error: "AI Import is not configured on the server." });
+
+  const documents = Array.isArray(req.body?.documents) ? req.body.documents.slice(0, 8) : [];
+  if (!documents.length) return json(res, 400, { error: "No scanned work-order pages were provided." });
+  const unsupported = documents.find(d => !String(d?.dataUrl || "").startsWith("data:image/"));
+  if (unsupported) return json(res, 400, { error: `AI scan currently accepts image pages (JPG/PNG/HEIC converted by the browser). “${unsupported.name || "A file"}” is not an image. For a PDF, save or scan its pages as images first.` });
+
+  const content = [{
+    type: "input_text",
+    text: `Read these scanned historical maintenance work-order pages. Return ONLY valid JSON with this exact shape: {"title":"","woType":"Repair|Service|Inspection","created":"YYYY-MM-DD or empty","completed":"YYYY-MM-DD or empty","fault":"","tech":"","laborHours":0,"laborCost":0,"workPerformed":"","notes":"","partsUsed":[{"name":"","partNumber":"","qty":1,"unitCost":0}],"confidence":{"overall":"high|medium|low"},"missing":[]}. Do not invent unreadable values. Put uncertain or unreadable fields in missing. Preserve useful maintenance wording from the document while keeping it concise.`
+  }];
+  for (const doc of documents) content.push({ type: "input_image", image_url: doc.dataUrl, detail: "high" });
+
+  try {
+    const r = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: process.env.OPENAI_MODEL || "gpt-5.6-sol", input: [{ role: "user", content }], max_output_tokens: 1800 })
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) return json(res, r.status, { error: data?.error?.message || `OpenAI request failed (${r.status}).` });
+    const text = extractOutputText(data);
+    if (!text) return json(res, 502, { error: "AI returned no readable result." });
+    let parsed;
+    try { parsed = parseJsonText(text); }
+    catch { return json(res, 502, { error: "AI read the document but returned an invalid result. Please try the scan again." }); }
+    return json(res, 200, { data: parsed });
+  } catch (err) {
+    return json(res, 502, { error: err?.message || "Could not reach the AI service." });
+  }
 }

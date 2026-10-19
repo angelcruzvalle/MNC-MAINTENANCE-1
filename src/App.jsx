@@ -2934,6 +2934,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
 
     const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", "Labor Hours":laborHoursTotal.toFixed(1), Labor:moneyText(laborTotal), Parts:moneyText(partsTotal), Total:moneyText(grandTotal), Description:printableDescription, "Work Performed":wo.description||"", Notes:wo.mechanicNotes||""}];
     const woCsv = rowsToDataUri(woRows);
+    const emailSubject = `Work Order ${wo.id || ""} - ${wo.title || workType}`;
+    const emailBody = [`MaintForge Work Order ${wo.id || ""}`, "", `Type: ${workType}`, `Status: ${wo.status || ""}`, `Equipment: ${eq ? `${eq.name} (${eq.id})` : (wo.equipment || "")}`, `Created: ${wo.created || ""}`, `Completed: ${wo.completed || ""}`, `Mechanic: ${wo.tech || ""}`, "", "Problem / Requested Service:", printableDescription || "", "", "Work Performed:", wo.description || wo.workPerformed || "", "", "Notes:", wo.mechanicNotes || "", "", `Total: ${money(grandTotal)}`].join("\n");
+    const emailHref = `mailto:?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
 
     const inspectionChecklistPrint = (() => {
       if(wo.woType!=="Inspection") return "";
@@ -3074,8 +3077,10 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
       </div>
     </div>
 
-    <div class="pbtn">
+    <div class="pbtn" style="position:sticky;bottom:0;z-index:9999;background:rgba(255,255,255,.96);padding:10px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center;border-top:1px solid #d1d5db">
+      <button class="fileBtn" onclick="window.close()">← Close / Back</button>
       <button class="printBtn" onclick="window.print()">Print / Save PDF</button>
+      <a class="fileBtn" href="${h(emailHref)}">Email Work Order</a>
       <a class="fileBtn" href="${woCsv}" download="work-order-${h(wo.id)}.csv">Download Excel CSV</a>
       <button class="fileBtn" onclick="var blob=new Blob([document.documentElement.outerHTML],{type:'application/msword'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='work-order-${h(wo.id)}.doc';a.click();URL.revokeObjectURL(a.href);">Download Word</button>
     </div>
@@ -4107,6 +4112,9 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
       ? String(wo.inspectionTaskName || wo.faultDescription || wo.description || wo.title || "")
       : String(wo.faultDescription || wo.description || wo.title || "");
     const win = window.open("", "_blank", "width=900,height=700");
+    const historyEmailSubject = `Historical Work Order ${wo.id || ""} - ${wo.title || workType}`;
+    const historyEmailBody = [`MaintForge Historical Work Order ${wo.id || ""}`, "", `Type: ${workType}`, `Status: ${wo.status || "Completed"}`, `Equipment: ${eq ? `${eq.name} (${eq.id})` : (wo.equipment || "")}`, `Date: ${wo.completed || wo.created || ""}`, `Mechanic: ${wo.tech || ""}`, "", "Work Order:", wo.title || wo.faultDescription || "", "", "Work Performed / Notes:", wo.workPerformed || wo.mechanicNotes || wo.description || ""].join("\n");
+    const historyEmailHref = `mailto:?subject=${encodeURIComponent(historyEmailSubject)}&body=${encodeURIComponent(historyEmailBody)}`;
     if (!win) { alert("Please allow pop-ups to print work orders."); return; }
     win.document.write(`<!DOCTYPE html><html><head><title>Work Order ${h(wo.id)}</title><style>
       *{box-sizing:border-box;margin:0;padding:0}
@@ -4213,7 +4221,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
           <div><div class="sigValue">${h(wo.completed||wo.closedDate)||"&nbsp;"}</div><div class="sigLine"><div class="sigLabel">Date</div></div></div>
         </div>
       </div></div>
-      <div class="pbtn"><button onclick="window.print()">Print / Save PDF</button></div>
+      <div class="pbtn" style="position:sticky;bottom:0;z-index:9999;background:rgba(255,255,255,.96);padding:10px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center;border-top:1px solid #d1d5db"><button onclick="window.close()">← Close / Back</button><button onclick="window.print()">Print / Save PDF</button><a href="${h(historyEmailHref)}" style="display:inline-flex;align-items:center;text-decoration:none">Email Work Order</a></div>
     ${printCustomizePanelHtml(wo.woType || "WorkOrder")}
     </body></html>`);
     win.document.close();
@@ -4436,7 +4444,11 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
     try {
       const res=await fetch("/api/analyze-historical-wo",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({documents:docs.map(d=>({name:d.name,type:d.type,dataUrl:d.dataUrl}))})});
       const body=await res.json().catch(()=>({}));
-      if(!res.ok) throw new Error(body?.error || `AI scan failed (${res.status})`);
+      if(!res.ok) {
+        if(res.status===404) throw new Error("AI Import is not deployed yet. Deploy the MaintForge AI server function, then try again.");
+        if(res.status===503 && body?.code==="AI_NOT_CONFIGURED") throw new Error("AI Import is installed but not configured. Add OPENAI_API_KEY to the hosting environment variables and redeploy. The key must stay server-side, not in App.jsx.");
+        throw new Error(body?.error || `AI scan failed (${res.status})`);
+      }
       const a=body?.data || body || {};
       const parts=Array.isArray(a.partsUsed)?a.partsUsed.map(x=>({name:x?.name||"",partNumber:x?.partNumber||"",qty:x?.qty??1,unitCost:x?.unitCost??0})):[];
       setHistoricalImport(f=>({...f,
