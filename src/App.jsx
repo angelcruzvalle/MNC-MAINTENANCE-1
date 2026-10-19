@@ -2469,7 +2469,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   </div>;
 }
 
-function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWORequest, onConsumeWORequest }) {
+function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWORequest }) {
   const [modal, setModal]     = useState(null); // null|"type"|"pick"|"form"|"detail"|"edit"
   const [form, setForm]       = useState({});
   const [filter, setFilter]     = useState("Active"); // "Active" = Open+InProgress default
@@ -2477,8 +2477,8 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
   const [sortBy, setSortBy]         = useState("created");
   const [sortDir, setSortDir]       = useState("desc");
   const [priorityFilter, setPriorityFilter] = useState("All");
-  const [mechFilter, setMechFilter] = useState("All");
   const [equipmentStatusFilter, setEquipmentStatusFilter] = useState("All");
+  const [showFilters, setShowFilters] = useState(false);
   const [completedDateFilter, setCompletedDateFilter] = useState("all");
   const [eqSearch, setEqSearch] = useState("");
   const [showNewTech, setShowNewTech] = useState(false);
@@ -2547,10 +2547,9 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
     const matchStatus   = filter==="Active"?(w.status!=="Completed"):filter==="All"?true:w.status===filter;
     const matchType     = typeFilter==="All"     || w.woType===typeFilter;
     const matchPriority = priorityFilter==="All" || w.priority===priorityFilter;
-    const matchMech     = mechFilter==="All"     || w.tech===mechFilter;
     const woEqStatus = getWOEquipmentStatus(w);
     const matchEquipmentStatus = equipmentStatusFilter==="All" || equipmentStatusFilter==="allAsc" || equipmentStatusFilter==="allDesc" || woEqStatus===equipmentStatusFilter;
-    return matchStatus && matchType && matchPriority && matchMech && matchEquipmentStatus && matchCompletedDate(w);
+    return matchStatus && matchType && matchPriority && matchEquipmentStatus && matchCompletedDate(w);
   }).sort((a,b)=>{
     const compareBySelectedSort = () => {
       let cmp = 0;
@@ -2572,7 +2571,6 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
     }
     return compareBySelectedSort();
   });
-  const allMechanics = [...new Set((state.workOrders||[]).map(w=>w.tech).filter(Boolean))];
   const technicians = state.technicians || [];
   const defaultMechanic = technicians.length === 1 ? technicians[0] : null;
 
@@ -3606,83 +3604,58 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
     );
   };
 
+  const duePMItems = (state.pmSchedules||[]).filter(s=>{
+    const due = s.status==="Overdue" || s.status==="Due" || (s.nextDueDate && s.nextDueDate<=today());
+    const hasOpen = (state.workOrders||[]).some(w=>w.woType==="Service" && String(w.scheduleId||"")===String(s.id||"") && w.status!=="Completed");
+    return due && !hasOpen;
+  });
+  const dueInspectionItems = (state.inspectionSchedules||[]).filter(s=>{
+    const due = s.status==="Overdue" || s.status==="Due" || (s.nextDueDate && s.nextDueDate<=today());
+    const hasOpen = (state.workOrders||[]).some(w=>w.woType==="Inspection" && String(w.inspectionScheduleId||"")===String(s.id||"") && w.status!=="Completed");
+    return due && !hasOpen;
+  });
+  const createDuePMWO = (sch) => {
+    const eq=(state.equipment||[]).find(e=>String(e.id)===String(sch.equipmentId));
+    const task=(state.pmTasks||[]).find(t=>String(t.id)===String(sch.taskId)) || {};
+    const logs=(state.usageLogs||[]).filter(l=>String(l.equipmentId)===String(sch.equipmentId));
+    const mode=String(eq?.usageType||sch.usageType||"hours").toLowerCase();
+    const currentHours=Math.max(+(eq?.currentHours||0),...logs.map(l=>+(l.hours||0)).filter(Number.isFinite),0)||"";
+    const currentMileage=Math.max(+(eq?.currentMileage||0),...logs.map(l=>+(l.mileage||0)).filter(Number.isFinite),0)||"";
+    const stepLines=(Array.isArray(task.steps)?task.steps:String(task.steps||"").split(/\n+/)).map(x=>String(x?.text||x?.step||x||"").trim()).filter(Boolean);
+    dispatch({type:"ADD_WO",payload:{id:genWOId(eq?.id||sch.equipmentId,"Service"),title:task.name||sch.task||"PM Service",equipment:sch.equipmentId,status:"Open",priority:"Medium",woType:"Service",equipmentStatus:eq?.status||"Fully Operational",created:today(),due:sch.nextDueDate||today(),tech:"",laborHours:0,laborCost:0,partsCost:0,description:task.description||task.name||sch.task||"PM Service",workPerformed:stepLines.join("\n"),serviceSteps:stepLines.join("\n"),serviceStepLines:stepLines,steps:stepLines,serviceChecklist:stepLines.join("\n"),mechanicNotes:"",faultEnabled:true,faultDescription:task.description||task.name||sch.task||"PM Service",usageType:mode,usageHours:mode==="mileage"?"":currentHours,usageMileage:mode==="hours"?"":currentMileage,usageNA:!eq?.trackUsage,partsUsed:Array.isArray(task.parts)?task.parts:[],outsideServices:[],scheduleId:sch.id,pmTaskId:task.id||sch.taskId}});
+  };
+  const createDueInspectionWO = (sch) => {
+    const eq=(state.equipment||[]).find(e=>String(e.id)===String(sch.equipmentId));
+    const task=(state.inspectionTasks||[]).find(t=>String(t.id)===String(sch.taskId)) || {};
+    const occurrence=String(sch.nextDueDate||today()).slice(0,10);
+    const steps=(Array.isArray(task.steps)?task.steps:String(task.steps||"").split(/\n+/)).map(x=>String(x?.text||x?.step||x||"").trim()).filter(Boolean);
+    const prefix=`${eq?.id||sch.equipmentId}-`; const nums=(state.workOrders||[]).map(w=>String(w.id||"")).filter(id=>id.startsWith(prefix)).map(id=>parseInt(id.slice(prefix.length),10)).filter(n=>!Number.isNaN(n));
+    const id=`${prefix}${String(nums.length?Math.max(...nums)+1:1).padStart(2,"0")}`;
+    dispatch({type:"ADD_WO",payload:{id,woType:"Inspection",title:`Inspection - ${task.name||sch.task||"Scheduled Inspection"}`,inspectionTaskName:task.name||sch.task||"Scheduled Inspection",equipment:sch.equipmentId,equipmentStatus:eq?.status||"Fully Operational",status:"Open",priority:"Normal",created:today(),due:occurrence,completed:"",tech:"",usageReading:"N/A",usageType:"N/A",usageNA:true,faultEnabled:true,faultDescription:task.name||sch.task||"Scheduled Inspection",problem:task.name||sch.task||"Scheduled Inspection",description:task.name||sch.task||"Scheduled Inspection",workPerformed:steps.map((x,i)=>`${i+1}. ${x}`).join("\n"),mechanicNotes:task.notes||"",inspectionTaskId:task.id||sch.taskId,inspectionScheduleId:sch.id,inspectionDueOccurrence:occurrence,inspectionSteps:steps.join("\n"),steps,inspectionStepResults:steps.map((step,i)=>({id:`step-${Date.now()}-${i}`,step,result:"",comment:""})),inspectionAttachments:Array.isArray(task.attachments)?task.attachments:[],partsUsed:[],labor:[]}});
+  };
+
   return (
     <div>
-      {/* Toolbar */}
-      <div className="mf-wo-toolbar" style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:16 }}>
-        {/* Row 1: Status tabs + New WO */}
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
-          <div style={{ display:"flex", gap:0, background:T.card, border:`1px solid ${T.border}`, borderRadius:7, overflow:"hidden", flexWrap:"wrap" }}>
-            {STATUS_TABS.map((s,i)=>(
-              <button key={s} onClick={()=>setFilter(s)} style={{ padding:"7px 12px", border:"none", borderLeft:i>0?`1px solid ${T.border}`:"none", background:filter===s?T.accent:T.card, color:filter===s?"#fff":T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:filter===s?600:400 }}>{s}</button>
-            ))}
-          </div>
-          <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
-            <Btn onClick={openAdd}>+ New Work Order</Btn>
-            <Btn onClick={()=>openAddForType("Service")} style={{ background:"#ca8a04", borderColor:"#ca8a04" }}>+ New Service Work Order</Btn>
-            <Btn onClick={()=>openAddForType("Inspection")} style={{ background:"#16a34a", borderColor:"#16a34a" }}>+ New Inspection Work Order</Btn>
-          </div>
-          <Btn variant="secondary" onClick={onWOSettings}>⚙ WO Settings</Btn>
-        </div>
+      {/* Due service / inspection notifications */}
+      {(duePMItems.length>0 || dueInspectionItems.length>0) && <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:10,marginBottom:14}}>
+        {duePMItems.length>0 && <Card><div style={{fontWeight:800,fontSize:14,marginBottom:8}}>🔧 Services Due / Overdue ({duePMItems.length})</div>{duePMItems.map(sch=>{const eq=(state.equipment||[]).find(e=>String(e.id)===String(sch.equipmentId));const task=(state.pmTasks||[]).find(t=>String(t.id)===String(sch.taskId));return <div key={sch.id} style={{padding:"9px 0",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",gap:10,alignItems:"center"}}><div><b>{eq?.name||sch.equipmentId}</b><div style={{fontSize:12,color:T.muted}}>{task?.name||sch.task||"PM Service"} · Due {sch.nextDueDate||"now"}</div></div><Btn small onClick={()=>createDuePMWO(sch)}>Create WO</Btn></div>})}</Card>}
+        {dueInspectionItems.length>0 && <Card><div style={{fontWeight:800,fontSize:14,marginBottom:8}}>📋 Inspections Due / Overdue ({dueInspectionItems.length})</div>{dueInspectionItems.map(sch=>{const eq=(state.equipment||[]).find(e=>String(e.id)===String(sch.equipmentId));const task=(state.inspectionTasks||[]).find(t=>String(t.id)===String(sch.taskId));return <div key={sch.id} style={{padding:"9px 0",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",gap:10,alignItems:"center"}}><div><b>{eq?.name||sch.equipmentId}</b><div style={{fontSize:12,color:T.muted}}>{task?.name||sch.task||"Inspection"} · Due {sch.nextDueDate||"now"}</div></div><Btn small onClick={()=>createDueInspectionWO(sch)}>Create WO</Btn></div>})}</Card>}
+      </div>}
 
-        {/* Row 2: Filters + Sort */}
-        <div className="mf-wo-filter-row" style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
-          {/* Type */}
-          <select style={{ ...sel, width:140 }} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
-            <option value="All">All Types</option>
-            {["Repair","Service","Inspection"].map(t=><option key={t}>{t}</option>)}
-          </select>
-          {/* Priority */}
-          <select style={{ ...sel, width:130 }} value={priorityFilter} onChange={e=>setPriorityFilter(e.target.value)}>
-            <option value="All">All Priorities</option>
-            {["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}
-          </select>
-          {/* Mechanic */}
-          <select style={{ ...sel, width:150 }} value={mechFilter} onChange={e=>setMechFilter(e.target.value)}>
-            <option value="All">All Mechanics</option>
-            {allMechanics.map(m=><option key={m}>{m}</option>)}
-          </select>
-          {/* Equipment Status */}
-          <select style={{ ...sel, width:280 }} value={equipmentStatusFilter} onChange={e=>setEquipmentStatusFilter(e.target.value)}>
-            <option value="All">All Equipment Statuses</option>
-            <option value="allAsc">{EQUIPMENT_STATUS_ALL_SORTS.allAsc}</option>
-            <option value="allDesc">{EQUIPMENT_STATUS_ALL_SORTS.allDesc}</option>
-            {EQUIPMENT_STATUS_FILTERS.map(s=><option key={s} value={s}>{s}</option>)}
-          </select>
-          {/* Date range — only when viewing Completed */}
-          {filter==="Completed" && (
-            <select style={{ ...sel, width:150 }} value={completedDateFilter} onChange={e=>setCompletedDateFilter(e.target.value)}>
-              <option value="all">All Time</option>
-              <option value="today">Today</option>
-              <option value="thisweek">This Week</option>
-              <option value="lastweek">Previous Week</option>
-              <option value="thismonth">This Month</option>
-              <option value="lastmonth">Previous Month</option>
-            </select>
-          )}
-          {/* Sort by */}
-          <div style={{ display:"flex", gap:0, border:`1px solid ${T.border}`, borderRadius:6, overflow:"hidden" }}>
-            <select style={{ ...sel, border:"none", borderRadius:0, width:120 }} value={sortBy} onChange={e=>setSortBy(e.target.value)}>
-              <option value="created">Date Created</option>
-              <option value="due">Due Date</option>
-              <option value="completed">Completed Date</option>
-              <option value="priority">Priority</option>
-              <option value="status">Work Order Status</option>
-              <option value="equipmentStatus">Equipment Status</option>
-              <option value="cost">Cost</option>
-            </select>
-            <button onClick={()=>setSortDir(d=>d==="asc"?"desc":"asc")} style={{ padding:"0 10px", border:"none", borderLeft:`1px solid ${T.border}`, background:T.grayLt, cursor:"pointer", fontFamily:T.mono, fontSize:13, color:T.subtext }}>
-              {sortDir==="asc"?"↑":"↓"}
-            </button>
-          </div>
-          {/* Clear filters */}
-          {(typeFilter!=="All"||priorityFilter!=="All"||mechFilter!=="All"||equipmentStatusFilter!=="All") && (
-            <button onClick={()=>{ setTypeFilter("All"); setPriorityFilter("All"); setMechFilter("All"); setEquipmentStatusFilter("All"); }} style={{ background:"none", border:"none", color:T.accent, fontFamily:T.sans, fontSize:12, fontWeight:600, cursor:"pointer" }}>✕ Clear</button>
-          )}
-          <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginLeft:"auto" }}>
-            {filtered.length} work order{filtered.length!==1?"s":""}
-          </span>
+      {/* Toolbar */}
+      <div className="mf-wo-toolbar" style={{display:"flex",flexDirection:"column",gap:10,marginBottom:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
+          <div><div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",marginBottom:5}}>Status</div><div style={{display:"flex",gap:0,background:T.card,border:`1px solid ${T.border}`,borderRadius:7,overflow:"hidden",flexWrap:"wrap"}}>{STATUS_TABS.map((s,i)=><button key={s} onClick={()=>setFilter(s)} style={{padding:"7px 12px",border:"none",borderLeft:i>0?`1px solid ${T.border}`:"none",background:filter===s?T.accent:T.card,color:filter===s?"#fff":T.subtext,cursor:"pointer",fontFamily:T.sans,fontSize:11,fontWeight:filter===s?600:400}}>{s}</button>)}</div></div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}><Btn variant="secondary" onClick={()=>setShowFilters(v=>!v)}>☰ Filters{(typeFilter!=="All"||priorityFilter!=="All"||equipmentStatusFilter!=="All"||completedDateFilter!=="all")?" •":""}</Btn><Btn onClick={openAdd}>+ New Work Order</Btn><Btn onClick={()=>openAddForType("Service")} style={{background:"#ca8a04",borderColor:"#ca8a04"}}>+ New Service Work Order</Btn><Btn onClick={()=>openAddForType("Inspection")} style={{background:"#16a34a",borderColor:"#16a34a"}}>+ New Inspection Work Order</Btn></div>
         </div>
+        {showFilters && <Card><div className="mf-wo-filter-row" style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"end"}}>
+          <Field label="Work Order Type"><select style={{...sel,width:160}} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}><option value="All">All Types</option>{["Repair","Service","Inspection"].map(t=><option key={t}>{t}</option>)}</select></Field>
+          <Field label="Priority"><select style={{...sel,width:150}} value={priorityFilter} onChange={e=>setPriorityFilter(e.target.value)}><option value="All">All Priorities</option>{["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}</select></Field>
+          <Field label="Equipment Status"><select style={{...sel,width:250}} value={equipmentStatusFilter} onChange={e=>setEquipmentStatusFilter(e.target.value)}><option value="All">All Equipment Statuses</option><option value="allAsc">{EQUIPMENT_STATUS_ALL_SORTS.allAsc}</option><option value="allDesc">{EQUIPMENT_STATUS_ALL_SORTS.allDesc}</option>{EQUIPMENT_STATUS_FILTERS.map(x=><option key={x}>{x}</option>)}</select></Field>
+          {filter==="Completed"&&<Field label="Completed"><select style={{...sel,width:160}} value={completedDateFilter} onChange={e=>setCompletedDateFilter(e.target.value)}><option value="all">All Time</option><option value="today">Today</option><option value="thisweek">This Week</option><option value="lastweek">Previous Week</option><option value="thismonth">This Month</option><option value="lastmonth">Previous Month</option></select></Field>}
+          <Field label="Sort"><div style={{display:"flex"}}><select style={{...sel,width:170,borderTopRightRadius:0,borderBottomRightRadius:0}} value={sortBy} onChange={e=>setSortBy(e.target.value)}><option value="created">Date Created</option><option value="due">Due Date</option><option value="completed">Completed Date</option><option value="priority">Priority</option><option value="status">Work Order Status</option><option value="equipmentStatus">Equipment Status</option><option value="cost">Cost</option></select><button onClick={()=>setSortDir(d=>d==="asc"?"desc":"asc")} style={{padding:"0 12px",border:`1px solid ${T.border}`,background:T.grayLt,cursor:"pointer"}}>{sortDir==="asc"?"↑":"↓"}</button></div></Field>
+          <Btn variant="secondary" onClick={()=>{setTypeFilter("All");setPriorityFilter("All");setEquipmentStatusFilter("All");setCompletedDateFilter("all");}}>Clear Filters</Btn><span style={{fontSize:12,color:T.muted,marginLeft:"auto",paddingBottom:10}}>{filtered.length} work order{filtered.length!==1?"s":""}</span>
+        </div></Card>}
       </div>
 
       {/* Mobile work-order summaries — no horizontal scrolling */}
@@ -4294,6 +4267,16 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
   const openEdit = eq => { setForm({...eq, _originalId:eq.id}); setModal("editing"); };
   const save = () => {
     if(!form.name) return alert("Nomenclature required.");
+    if(form.trackUsage) {
+      if(!form.usageType) return alert("Usage Tracking is enabled. Select Engine Hours, Mileage, or Hours & Mileage before saving.");
+      if((form.usageType==="hours" || form.usageType==="both") && (form.currentHours==="" || form.currentHours==null)) return alert("Enter the current engine hours before saving.");
+      if((form.usageType==="mileage" || form.usageType==="both") && (form.currentMileage==="" || form.currentMileage==null)) return alert("Enter the current mileage before saving.");
+      if(form.pmBaselineUsage!=="" && form.pmBaselineUsage!=null) {
+        const baseline=Number(form.pmBaselineUsage);
+        const current=form.usageType==="mileage"?Number(form.currentMileage):Number(form.currentHours);
+        if(Number.isFinite(baseline)&&Number.isFinite(current)&&baseline>current) return alert("Usage at Last Service cannot be greater than the equipment's current usage.");
+      }
+    }
     if(modal==="add") {
       const newId = form.id && form.id.trim() ? form.id.trim() : genId("EQ");
       dispatch({type:"ADD_EQ", payload:{...form, id:newId}});
@@ -4433,6 +4416,11 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
                 <button key={v} type="button" onClick={()=>setForm(f=>({...f,usageType:v}))} style={{ padding:"5px 12px", borderRadius:6, border:`1px solid ${form.usageType===v?T.accent:T.border}`, background:form.usageType===v?T.accentLt:"#fff", color:form.usageType===v?T.accent:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:form.usageType===v?600:400 }}>{l}</button>
               ))}
             </div>
+            {form.usageType && <div className="mf-mobile-form" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 12px",marginTop:12}}>
+              {(form.usageType==="hours"||form.usageType==="both") && <Field label="Current Engine Hours *"><input style={inp} {...decimalInputAttrs({placeholder:"Current hours"})} value={form.currentHours??""} onChange={e=>setForm(f=>({...f,currentHours:sanitizeDecimalInput(e.target.value)}))}/></Field>}
+              {(form.usageType==="mileage"||form.usageType==="both") && <Field label="Current Mileage *"><input style={inp} {...decimalInputAttrs({placeholder:"Current mileage"})} value={form.currentMileage??""} onChange={e=>setForm(f=>({...f,currentMileage:sanitizeDecimalInput(e.target.value)}))}/></Field>}
+              <div style={{gridColumn:"1 / -1",fontSize:11,color:T.muted}}>Required while Usage Tracking is enabled. This becomes the equipment's starting current reading in MaintForge.</div>
+            </div>}
           </div>
         )}
       </div>
@@ -7346,60 +7334,6 @@ function Spending({ state }) {
 
 
 /* USER PROFILE */
-
-function WOSettings({ state, dispatch, onClose }) {
-  const s = state.woSettings || {};
-  const [form, setForm] = useState({
-    headerText:  s.headerText||"Maintenance Work Order",
-    repairPrintColor: s.repairPrintColor || "blue",
-    inspectionPrintColor: s.inspectionPrintColor || "mint",
-    servicePrintColor: s.servicePrintColor || "yellow",
-    footerText:  s.footerText||"",
-  });
-  const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
-  const printColorOptions = [
-    ["blue", "Blue"],
-    ["mint", "Green"],
-    ["yellow", "Yellow"],
-    ["slate", "Slate"]
-  ];
-  const ColorSelect = ({ label, k }) => (
-    <Field label={label}>
-      <select style={inp} value={form[k]} onChange={F(k)}>
-        {printColorOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-      </select>
-    </Field>
-  );
-
-  const save = () => { dispatch({ type:"UPDATE_WO_SETTINGS", payload:form }); onClose(); };
-
-  return (
-    <Modal title="Work Order Settings" onClose={onClose}>
-      <div style={{ display:"flex", flexDirection:"column", gap:14, marginBottom:14 }}>
-        <div style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt, fontFamily:T.sans, fontSize:12, color:T.subtext }}>
-          Printed work orders now use a standardized layout. Company / Organization name and logo are controlled in main Settings.
-        </div>
-        <Field label="Work Order Header Title">
-          <input style={inp} value={form.headerText} onChange={F("headerText")} />
-        </Field>
-        <Field label="Footer / Notes Text">
-          <textarea style={{ ...inp, minHeight:56, resize:"vertical" }} value={form.footerText} onChange={F("footerText")} placeholder="e.g. Authorized signatures required…" />
-        </Field>
-        <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginTop:4 }}>Printable Work Order Colors</div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:10 }}>
-          <ColorSelect label="Repair Work Orders" k="repairPrintColor" />
-          <ColorSelect label="Inspection Work Orders" k="inspectionPrintColor" />
-          <ColorSelect label="Preventive / Service Work Orders" k="servicePrintColor" />
-        </div>
-      </div>
-      <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:16 }}>
-        <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
-        <Btn onClick={save}>Save Settings</Btn>
-      </div>
-    </Modal>
-  );
-}
-
 
 
 /* USAGE TRACKING */
@@ -10604,7 +10538,6 @@ export default function App() {
 
   const [tab, setTab]       = useState(() => readMFLocal(MF_LAST_TAB_KEY, "dashboard") || "dashboard");
   const [menuOpen, setMenuOpen]           = useState(false);
-  const [showWOSettings, setShowWOSettings] = useState(false);
   const [showSettings, setShowSettings]   = useState(false);
   const [showHelp, setShowHelp]           = useState(false);
   const [pendingWORequest, setPendingWORequest] = useState(null);
@@ -10675,7 +10608,7 @@ export default function App() {
 
   const pages = {
     dashboard:        <Dashboard        state={visibleState} dispatch={dispatch} setTab={setTab} onSettings={()=>setShowSettings(true)} />,
-    workorders:       <WorkOrders       state={visibleState} dispatch={dispatch} woSettings={state.woSettings} onWOSettings={()=>setShowWOSettings(true)} initialWORequest={pendingWORequest} onConsumeWORequest={()=>setPendingWORequest(null)} />,
+    workorders:       <WorkOrders       state={visibleState} dispatch={dispatch} woSettings={state.woSettings} initialWORequest={pendingWORequest} onConsumeWORequest={()=>setPendingWORequest(null)} />,
     inspections:      <Inspections      state={visibleState} dispatch={dispatch} />,
     equipment:        <Equipment        state={visibleState} dispatch={dispatch} onCreateAttachmentWO={(request)=>{ setPendingWORequest(request); setTab("workorders"); }} />,
     parts:            <Parts            state={visibleState} dispatch={dispatch} />,
@@ -11597,7 +11530,6 @@ export default function App() {
         <button onClick={()=>setMenuOpen(true)}><span>☰</span><small>More</small></button>
       </nav>
 
-      {showWOSettings && <WOSettings     state={state} dispatch={dispatch} onClose={()=>setShowWOSettings(false)} />}
       {showSettings   && <SystemSettings state={state} dispatch={dispatch} currentUser={activeUser} onClose={()=>setShowSettings(false)} />}
       {showHelp       && <HelpCenter state={state} onClose={()=>setShowHelp(false)} />}
     </div>
