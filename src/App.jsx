@@ -1819,8 +1819,9 @@ const reportButtonsHtml = (rows=[], title="report") => {
   const safeTitle = String(title || "report").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"") || "report";
   const wordHtml = `<!doctype html><html><head><meta charset="utf-8"><title>${safeTitle}</title></head><body>${document?.body?.innerHTML || ""}</body></html>`;
   const wordUri = `data:application/msword;charset=utf-8,${encodeURIComponent(wordHtml)}`;
-  return `<br><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-    <button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
+  return `<br><div style="position:sticky;bottom:0;z-index:9999;display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;padding:10px;background:rgba(255,255,255,.96);border-top:1px solid #d1d5db">
+    <button onclick="if(history.length>1){history.back()}else{window.close()}" style="padding:8px 20px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;cursor:pointer">← Close / Back</button>
+    <button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Share PDF</button>
     ${dataUri ? `<a href="${dataUri}" download="${safeTitle}.csv" style="padding:8px 20px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;text-decoration:none;font-family:Arial,sans-serif;font-size:13px">Download Excel CSV</a>` : ""}
     <a href="${wordUri}" download="${safeTitle}.doc" style="padding:8px 20px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;text-decoration:none;font-family:Arial,sans-serif;font-size:13px">Download Word</a>
   </div>${printCustomizePanelHtml()}`;
@@ -3102,8 +3103,8 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     </div>
 
     <div class="pbtn" style="position:sticky;bottom:0;z-index:9999;background:rgba(255,255,255,.96);padding:10px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center;border-top:1px solid #d1d5db">
-      <button class="fileBtn" onclick="window.close()">← Close / Back</button>
-      <button class="printBtn" onclick="window.print()">Print / Save PDF</button>
+      <button class="fileBtn" onclick="if(history.length>1){history.back()}else{window.close()}">← Close / Back</button>
+      <button class="printBtn" onclick="window.print()">Print / Share PDF</button>
       <a class="fileBtn" href="${h(emailHref)}">Email Work Order</a>
       <a class="fileBtn" href="${woCsv}" download="work-order-${h(wo.id)}.csv">Download Excel CSV</a>
       <button class="fileBtn" onclick="var blob=new Blob([document.documentElement.outerHTML],{type:'application/msword'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='work-order-${h(wo.id)}.doc';a.click();URL.revokeObjectURL(a.href);">Download Word</button>
@@ -3462,7 +3463,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
             {wo.serviceInterval && wo.woType!=="Repair" && <div style={{ fontFamily:T.mono, fontSize:11, color:T.accent, marginTop:2 }}>{wo.serviceInterval}</div>}
           </div>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            <Btn small variant="secondary" onClick={()=>printWO(wo)}>Print</Btn>
+            <Btn small variant="secondary" onClick={()=>printWO(wo)}>Print / PDF</Btn>
             <Btn small variant="danger" onClick={()=>del(wo.id)}>Delete</Btn>
             {!isCompleted && !editMode && <Btn small onClick={()=>setEditMode(true)} style={{ background:"#1e40af", borderColor:"#1e40af" }}>Update Work Order</Btn>}
             {!isCompleted && editMode && <Btn small onClick={()=>{ let payload={ ...wo, ...form }; const isClosingNow = payload.status!==wo.status && payload.status==="Completed"; if(payload.status!==wo.status && !confirmWOStatusChange(wo, payload.status)) return; if(isClosingNow){ const completedDate = askCompletedDate(payload.completed || payload.completedDate || today()); if(!completedDate) return; payload={ ...payload, completed:completedDate, completedDate:completedDate, equipmentStatus:"Fully Operational" }; } dispatch({ type:"UPDATE_WO", payload }); setEditMode(false); setDetailWO(payload); }} style={{ background:T.green, borderColor:T.green }}>Save Changes</Btn>}
@@ -3670,7 +3671,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
             <div className="mf-mobile-summary-meta"><span>{wo.woType || "Repair"}</span><span>{wo.priority || "Medium"}</span>{wo.created&&<span>Created {wo.created}</span>}{wo.due&&<span>Due {wo.due}</span>}</div>
             <div className="mf-mobile-wo-actions" onClick={e=>e.stopPropagation()}>
               <Btn small variant="secondary" onClick={()=>openEdit(wo)}>✏️ Edit</Btn>
-              <Btn small variant="secondary" onClick={()=>printWO(wo)}>🖨 Print</Btn>
+              <Btn small variant="secondary" onClick={()=>printWO(wo)}>🖨 Print / PDF</Btn>
               <Btn small variant="danger" onClick={()=>del(wo.id)}>🗑 Delete</Btn>
             </div>
           </div>;
@@ -3749,7 +3750,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
                       ✏️
                     </button>
                     <button
-                      title="Print Work Order"
+                      title="Print / Share Work Order PDF"
                       onClick={e=>{ e.stopPropagation(); printWO(wo); }}
                       style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:14, color:T.subtext, display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
                       🖨
@@ -4055,7 +4056,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
     win.document.write(`<div class="sectionTitle">Work Order Totals</div><table><tr><th>Type</th><th class="right">Count</th></tr><tr><td>Repair</td><td class="right">${fin.repairWOs}</td></tr><tr><td>Service / PM</td><td class="right">${fin.serviceWOs}</td></tr><tr><td>Inspection</td><td class="right">${fin.inspectionWOs}</td></tr></table>`);
     win.document.write(`<div class="sectionTitle">Work Order History</div><table><tr><th>WO #</th><th>Type</th><th>Status</th><th>Date</th><th>Description</th><th class="right">Labor</th><th class="right">Cost</th></tr>${wos.map(w=>`<tr><td>${esc(w.id||"—")}</td><td>${esc(w.woType||w.type||"—")}</td><td>${esc(w.status||"—")}</td><td>${esc(workOrderDate(w)||"—")}</td><td>${esc(w.title||w.faultDescription||w.description||"—")}</td><td class="right">${esc((+w.laborHours||0).toFixed(1))}h</td><td class="right">${esc(moneyFmt(woTotalCost(w)))}</td></tr>`).join("")}${!wos.length?`<tr><td colspan="7" style="text-align:center;color:#667085;padding:18px">No work orders for this equipment.</td></tr>`:""}</table>`);
     if(eq.notes) win.document.write(`<div class="sectionTitle">Notes</div><div style="white-space:pre-wrap;border:1px solid #e5e7eb;border-radius:8px;padding:10px">${esc(eq.notes)}</div>`);
-    win.document.write(`<div class="actions"><button onclick="window.print()">Print Equipment Summary</button></div>${reportButtonsHtml(exportRows)}</body></html>`);
+    win.document.write(`<div class="actions"><button onclick="if(history.length>1){history.back()}else{window.close()}">← Close / Back</button><button onclick="window.print()">Print / Share PDF</button></div>${reportButtonsHtml(exportRows,"equipment-summary")}</body></html>`);
     win.document.close();
   };
 
@@ -4222,7 +4223,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
           <div><div class="sigValue">${h(wo.completed||wo.closedDate)||"&nbsp;"}</div><div class="sigLine"><div class="sigLabel">Date</div></div></div>
         </div>
       </div></div>
-      <div class="pbtn" style="position:sticky;bottom:0;z-index:9999;background:rgba(255,255,255,.96);padding:10px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center;border-top:1px solid #d1d5db"><button onclick="window.close()">← Close / Back</button><button onclick="window.print()">Print / Save PDF</button><a href="${h(historyEmailHref)}" style="display:inline-flex;align-items:center;text-decoration:none">Email Work Order</a></div>
+      <div class="pbtn" style="position:sticky;bottom:0;z-index:9999;background:rgba(255,255,255,.96);padding:10px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center;border-top:1px solid #d1d5db"><button onclick="if(history.length>1){history.back()}else{window.close()}">← Close / Back</button><button onclick="window.print()">Print / Share PDF</button><a href="${h(historyEmailHref)}" style="display:inline-flex;align-items:center;text-decoration:none">Email Work Order</a></div>
     ${printCustomizePanelHtml(wo.woType || "WorkOrder")}
     </body></html>`);
     win.document.close();
@@ -4269,7 +4270,6 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
   const openEdit = eq => { setForm({...eq, _originalId:eq.id}); setModal("editing"); };
   const save = () => {
     if(!form.name) return alert("Nomenclature required.");
-    if(!String(form.location||"").trim()) return alert("Choose a Parts Storage Location. Add storage locations in Settings first.");
     if(form.trackUsage) {
       if(!form.usageType) return alert("Usage Tracking is enabled. Select Engine Hours, Mileage, or Hours & Mileage before saving.");
       if((form.usageType==="hours" || form.usageType==="both") && (form.currentHours==="" || form.currentHours==null)) return alert("Enter the current engine hours before saving.");
@@ -4661,7 +4661,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
                     <div style={{ fontSize:18, fontWeight:800 }}>{historyWO.id || "Work Order"}</div>
                   </div>
                   <div style={{ display:"flex", gap:8 }}>
-                    <Btn small variant="secondary" onClick={()=>printHistoryWO(historyWO)}>Print</Btn>
+                    <Btn small variant="secondary" onClick={()=>printHistoryWO(historyWO)}>Print / PDF</Btn>
                     {(historyWO.originalDocuments?.length || historyWO.originalDocument?.dataUrl) && <Btn small variant="secondary" onClick={()=>openOriginalHistoricalDocument(historyWO)}>Original Scan</Btn>}
                     <Btn small onClick={()=>setHistoryEdit(true)}>✏ Edit</Btn>
                   </div>
@@ -6005,7 +6005,8 @@ function Inspections({ state, dispatch }) {
                 </div>
               </button>
               {isExpanded && <div style={{ padding:12, borderTop:`1px solid ${T.border}`, background:T.card }}>
-                <div style={{ overflowX:"auto" }}>
+                <div className="mf-inspection-detail-mobile">{row.items.map(s=>{const task=taskById(s.taskId);return <div key={s.id} style={{border:`1px solid ${T.border}`,borderRadius:10,padding:12,marginBottom:10,minWidth:0}}><div style={{fontWeight:800,overflowWrap:"anywhere",marginBottom:9}}>{task?.name||"Missing task"}</div><div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,fontSize:12}}>{[["Every",scheduleFrequencyLabel(s)],["Last Inspection",s.lastInspectionDate||s.lastDoneDate||"—"],["Next Inspection",s.nextDueDate||"—"],["Last Triggered",s.lastTriggered||"—"]].map(([label,value])=><div key={label} style={{minWidth:0,overflowWrap:"anywhere"}}><div style={{color:T.muted,fontSize:11}}>{label}</div><b>{value}</b></div>)}</div>{s.notes&&<div style={{fontSize:12,marginTop:9,overflowWrap:"anywhere"}}>{s.notes}</div>}<div style={{display:"flex",gap:7,flexWrap:"wrap",marginTop:12}}><Btn variant="secondary" onClick={()=>triggerInspection(s)}>Trigger WO</Btn><Btn variant="secondary" onClick={()=>openSchedule(s)}>Edit</Btn><Btn variant="danger" onClick={()=>{if(confirm("Delete this inspection assignment?")) dispatch({type:"DELETE_INSPECTION_SCHEDULE",payload:s.id});}}>Delete</Btn></div></div>})}</div>
+                <div className="mf-inspection-detail-desktop" style={{ overflowX:"auto" }}> 
                   <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:13 }}>
                     <thead><tr style={{ background:T.grayLt }}>
                       {["Inspection Task","Every","Last Inspection","Next Inspection","Last Triggered","Notes","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:"10px", borderBottom:`1px solid ${T.border}`, color:T.subtext }}>{h}</th>)}
@@ -6260,7 +6261,12 @@ function PM({ state, dispatch }) {
     return false;
   };
 
-  const triggered = schedules.filter(shouldTrigger);
+  const hasActivePMWorkOrder = (sch) => (state.workOrders||[]).some(w =>
+    w.woType==="Service" &&
+    String(w.scheduleId||"")===String(sch.id||"") &&
+    w.status!=="Completed"
+  );
+  const triggered = schedules.filter(s=>!hasActivePMWorkOrder(s) && shouldTrigger(s));
 
   /* PM auto-generation is handled once at the App level so it works from every tab and does not duplicate WOs. */
   useEffect(()=>{
@@ -7377,7 +7383,7 @@ function UsageTracking({ state, dispatch }) {
       date: e.date || today(),
       hours: String(e.hours ?? "").trim(),
       mileage: String(e.mileage ?? "").trim(),
-      fuel: String(e.fuel ?? "").trim(),
+      fuel: eq.fuelTracking===false ? "" : String(e.fuel ?? "").trim(),
       notes: String(e.notes ?? "").trim(),
     };
     if(!cleaned.hours && !cleaned.mileage && !cleaned.fuel) { alert("Enter at least one value."); return; }
@@ -7428,7 +7434,7 @@ function UsageTracking({ state, dispatch }) {
           <Field label="Date"><input style={inp} type="date" value={editLog.date||today()} onChange={e=>setEditLog(l=>({...l,date:e.target.value}))} /></Field>
           {showH && <Field label="Hours"><input style={inp} type="number" step="0.1" value={editLog.hours||""} onChange={e=>setEditLog(l=>({...l,hours:e.target.value}))} /></Field>}
           {showM && <Field label="Mileage"><input style={inp} type="number" step="1" value={editLog.mileage||""} onChange={e=>setEditLog(l=>({...l,mileage:e.target.value}))} /></Field>}
-          <Field label="Fuel Added (gal)"><input style={inp} type="number" step="0.1" value={editLog.fuel||""} onChange={e=>setEditLog(l=>({...l,fuel:e.target.value}))} /></Field>
+          {eq?.fuelTracking!==false&&<Field label="Fuel Added (gal)"><input style={inp} type="number" step="0.1" value={editLog.fuel||""} onChange={e=>setEditLog(l=>({...l,fuel:e.target.value}))} /></Field>}
           <Field label="Notes"><textarea style={{...inp,minHeight:70}} value={editLog.notes||""} onChange={e=>setEditLog(l=>({...l,notes:e.target.value}))} /></Field>
           <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}><Btn variant="secondary" onClick={()=>setEditLog(null)}>Cancel</Btn><Btn onClick={saveEditLog}>Save Correction</Btn></div>
         </div>
@@ -7446,6 +7452,7 @@ function UsageTracking({ state, dispatch }) {
     const showM = mode==="mileage"||mode==="both";
     const totH  = currentOf(eqId,"hours");
     const totM  = currentOf(eqId,"mileage");
+    const fuelEnabled = eq.fuelTracking !== false;
     const totF  = totalFuelOf(eqId);
     return (
       <Modal title={eq.name+" — Usage Report"} onClose={()=>setDetailEq(null)}>
@@ -7458,10 +7465,10 @@ function UsageTracking({ state, dispatch }) {
             <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.green, textTransform:"uppercase", letterSpacing:.5 }}>Total Mileage</div>
             <div style={{ fontFamily:T.sans, fontSize:28, fontWeight:800, color:T.green }}>{totM.toLocaleString()}</div>
           </div>}
-          <div style={{ flex:1, background:"#faf5ff", borderRadius:8, padding:"12px 16px", border:"1px solid #e9d5ff", minWidth:120 }}>
+          {fuelEnabled&&<div style={{ flex:1, background:"#faf5ff", borderRadius:8, padding:"12px 16px", border:"1px solid #e9d5ff", minWidth:120 }}>
             <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:"#7c3aed", textTransform:"uppercase", letterSpacing:.5 }}>Total Fuel (gal)</div>
             <div style={{ fontFamily:T.sans, fontSize:28, fontWeight:800, color:"#7c3aed" }}>{totF.toFixed(1)}</div>
-          </div>
+          </div>}
           <div style={{ flex:1, background:T.grayLt, borderRadius:8, padding:"12px 16px", border:`1px solid ${T.border}`, minWidth:120 }}>
             <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Log Entries</div>
             <div style={{ fontFamily:T.sans, fontSize:28, fontWeight:800, color:T.text }}>{logs.length}</div>
@@ -7470,7 +7477,7 @@ function UsageTracking({ state, dispatch }) {
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-              {["Date", showH&&"Hours", showM&&"Mileage","Fuel (gal)","Notes",""].filter(Boolean).map(h=>(
+              {["Date", showH&&"Hours", showM&&"Mileage",fuelEnabled&&"Fuel (gal)","Notes",""].filter(Boolean).map(h=>(
                 <th key={h} style={{ padding:"7px 12px", textAlign:"left", fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</th>
               ))}
             </tr>
@@ -7481,7 +7488,7 @@ function UsageTracking({ state, dispatch }) {
                 <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12 }}>{l.date}</td>
                 {showH&&<td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, color:l.hours?"#1e40af":T.muted }}>{l.hours||"—"}</td>}
                 {showM&&<td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, color:l.mileage?T.green:T.muted }}>{l.mileage?Number(l.mileage).toLocaleString():"—"}</td>}
-                <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, color:l.fuel?"#7c3aed":T.muted }}>{l.fuel||"—"}</td>
+                {fuelEnabled&&<td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, color:l.fuel?"#7c3aed":T.muted }}>{l.fuel||"—"}</td>}
                 <td style={{ padding:"8px 12px", color:T.subtext, fontSize:12 }}>{l.notes||""}</td>
                 <td style={{ padding:"8px 12px" }}>
                   <button onClick={()=>setEditLog({...l})} title="Edit usage entry" style={{ background:"none", border:"none", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:14, fontWeight:700, marginRight:8 }}>✏️</button>
@@ -7552,6 +7559,7 @@ function UsageTracking({ state, dispatch }) {
             const showM = mode==="mileage"||mode==="both";
             const totH  = currentOf(eq.id,"hours");
             const totM  = currentOf(eq.id,"mileage");
+            const fuelEnabled = eq.fuelTracking !== false;
             const totF  = totalFuelOf(eq.id);
             const e     = eqEntry(eq.id);
             return (
@@ -7570,7 +7578,7 @@ function UsageTracking({ state, dispatch }) {
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginBottom:13}}>
                   {showH && <div style={{background:T.accentLt,borderRadius:9,padding:9}}><div style={{fontSize:9,fontWeight:800,color:T.accent,textTransform:"uppercase"}}>Hours</div><div style={{fontSize:17,fontWeight:900,color:T.accent,marginTop:3}}>{totH.toFixed(1)}</div></div>}
                   {showM && <div style={{background:T.greenLt,borderRadius:9,padding:9}}><div style={{fontSize:9,fontWeight:800,color:T.green,textTransform:"uppercase"}}> mileage</div><div style={{fontSize:17,fontWeight:900,color:T.green,marginTop:3}}>{totM.toLocaleString()}</div></div>}
-                  <div style={{background:T.grayLt,borderRadius:9,padding:9}}><div style={{fontSize:9,fontWeight:800,color:T.subtext,textTransform:"uppercase"}}>Fuel</div><div style={{fontSize:17,fontWeight:900,color:T.text,marginTop:3}}>{totF.toFixed(1)} <span style={{fontSize:9}}>gal</span></div></div>
+                  {fuelEnabled&&<div style={{background:T.grayLt,borderRadius:9,padding:9}}><div style={{fontSize:9,fontWeight:800,color:T.subtext,textTransform:"uppercase"}}>Fuel</div><div style={{fontSize:17,fontWeight:900,color:T.text,marginTop:3}}>{totF.toFixed(1)} <span style={{fontSize:9}}>gal</span></div></div>}
                 </div>
 
                 <div style={{fontSize:10,fontWeight:900,color:T.subtext,textTransform:"uppercase",letterSpacing:.5,marginBottom:7}}>Add Usage</div>
@@ -7578,8 +7586,8 @@ function UsageTracking({ state, dispatch }) {
                   {showH && <Field label="Hours"><input style={inp} type="number" step="0.1" min="0" placeholder="Current hours" value={e.hours} onChange={ev=>setEqEntry(eq.id,"hours",ev.target.value)} onKeyDown={ev=>saveOnEnter(ev,eq)}/></Field>}
                   {showM && <Field label="Mileage"><input style={inp} type="number" min="0" placeholder="Current mileage" value={e.mileage} onChange={ev=>setEqEntry(eq.id,"mileage",ev.target.value)} onKeyDown={ev=>saveOnEnter(ev,eq)}/></Field>}
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                  <Field label="Fuel Added (gal)"><input style={inp} type="number" step="0.1" min="0" placeholder="Optional" value={e.fuel} onChange={ev=>setEqEntry(eq.id,"fuel",ev.target.value)} onKeyDown={ev=>saveOnEnter(ev,eq)}/></Field>
+                <div style={{display:"grid",gridTemplateColumns:fuelEnabled?"1fr 1fr":"1fr",gap:8}}>
+                  {fuelEnabled&&<Field label="Fuel Added (gal)"><input style={inp} type="number" step="0.1" min="0" placeholder="Optional" value={e.fuel} onChange={ev=>setEqEntry(eq.id,"fuel",ev.target.value)} onKeyDown={ev=>saveOnEnter(ev,eq)}/></Field>}
                   <Field label="Date"><input style={inp} type="date" value={e.date} onChange={ev=>setEqEntry(eq.id,"date",ev.target.value)}/></Field>
                 </div>
                 <Field label="Notes"><input style={inp} placeholder="Optional notes" value={e.notes} onChange={ev=>setEqEntry(eq.id,"notes",ev.target.value)} onKeyDown={ev=>saveOnEnter(ev,eq)}/></Field>
@@ -7675,7 +7683,6 @@ function EquipmentInventory({ state, dispatch }) {
 
   const save = () => {
     if(!form.name) return alert("Nomenclature required.");
-    if(!String(form.location||"").trim()) return alert("Choose a Parts Storage Location. Add storage locations in Settings first.");
     if(modal==="add") {
       dispatch({type:"ADD_INV", payload:{...form, id:genId("INV"), turnInStatus:"Active"}});
     } else {
@@ -8170,7 +8177,7 @@ function ReportPM({ state }) {
       ${overdue.length?`<h2 style="color:#dc2626">OVERDUE (${overdue.length})</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(overdue)}</table>`:""}
       ${dueSoon.length?`<h2 style="color:#d97706">DUE WITHIN ${lookAheadDays} DAYS (${dueSoon.length})</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(dueSoon)}</table>`:""}
       ${completed.length?`<h2 style="color:#059669">COMPLETED THIS MONTH (${completed.length})</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(completed)}</table>`:""}
-      <br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
+      <br><div style="position:sticky;bottom:0;background:#fff;padding:10px;border-top:1px solid #d1d5db;display:flex;gap:8px;flex-wrap:wrap"><button onclick="if(history.length>1){history.back()}else{window.close()}" style="padding:8px 20px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;cursor:pointer">← Close / Back</button><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Share PDF</button></div>
       </body></html>`);
     win.document.close();
   };
@@ -9241,7 +9248,7 @@ function FuelTracking({ state, dispatch }) {
       <SectionHeading sub="Track tank level like equipment usage: enter inches on the container line and the app calculates gallons.">Fuel Tracking</SectionHeading>
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
         <Btn onClick={openAdd}>+ Add Fuel Container</Btn>
-        <Btn variant="secondary" onClick={()=>printFuelReportWindow(state, period)}>Print</Btn>
+        <Btn variant="secondary" onClick={()=>printFuelReportWindow(state, period)}>Print / PDF</Btn>
       </div>
       {containers.length === 0 ? <div style={{ padding:16, border:`1px dashed ${T.border}`, borderRadius:12, color:T.muted, background:T.soft }}>No fuel containers added yet. Add a container to start tracking fuel levels.</div> : <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:10 }}>
         {containers.map(c=>{ const r=latestFuelReading(state,c.id); const gallons=+(r?.gallons||0); const cap=+c.capacity||0; const pct=cap?fuelPercent(c,gallons):0; const usedMonth=fuelConsumedForPeriod(state,c.id,"month"); const levelColor = pct >= 75 ? "#16a34a" : pct >= 26 ? "#f97316" : "#dc2626"; return <div key={c.id} style={{ border:`1px solid ${r?levelColor:T.border}`, borderRadius:12, padding:10, background:T.card, boxShadow:"0 4px 12px rgba(0,0,0,.035)" }}>
@@ -10956,6 +10963,8 @@ export default function App() {
         </div>
       )}
       <style>{`
+        .mf-inspection-detail-mobile {display:none;}
+
         * { box-sizing:border-box; }
         html { -webkit-text-size-adjust:100%; text-size-adjust:100%; }
         body { margin:0; background:${T.bg}; color:${T.text}; overscroll-behavior-y:none; }
@@ -11207,6 +11216,8 @@ export default function App() {
           .wo-request-mobile-meta { grid-template-columns:1fr !important; font-size:13px !important; }
           .mf-mobile-form { grid-template-columns:1fr !important; }
           .mf-mobile-form > * { grid-column:1 !important; min-width:0 !important; width:100% !important; }
+          .mf-inspection-detail-desktop { display:none !important; }
+          .mf-inspection-detail-mobile { display:block !important; }
           /* Inspection schedule cards: true mobile reflow instead of a squeezed desktop row. */
           .mf-inspection-equipment-row {
             grid-template-columns:minmax(0,1fr) auto !important;
@@ -11274,7 +11285,7 @@ export default function App() {
           input, select, textarea { width:100% !important; min-height:44px !important; border-radius:12px !important; }
           .mf-btn, button { min-height:44px; }
           .mobile-x-scroll { margin-left:-2px; margin-right:-2px; padding-bottom:8px; }
-          .mobile-x-scroll::before { content:"Swipe sideways to see all columns"; display:block; margin:0 0 8px; padding:7px 10px; border-radius:999px; background:${T.accentLt}; color:${T.accent}; font:700 12px ${T.sans}; width:max-content; max-width:100%; }
+          .mobile-x-scroll::before { content:none !important; display:none !important; }
           main table { min-width:920px !important; border-radius:14px !important; }
           main th, main td { padding:10px 12px !important; line-height:1.35 !important; }
           main td div, main td span, main td b { max-width:none !important; white-space:normal !important; }
