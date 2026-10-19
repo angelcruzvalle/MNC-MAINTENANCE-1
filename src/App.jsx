@@ -2791,6 +2791,22 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
     }
     const prevWO = isEdit ? state.workOrders.find(w=>w.id===formWithLatestUsage.id) : null;
 
+    // Validate meter readings against the equipment's current recorded usage.
+    // Lower readings are allowed only after an explicit warning and never roll the equipment meter backward.
+    const meterEquipment = selectedEquipment || (formWithLatestUsage.parentId ? state.equipment.find(e=>String(e.id)===String(formWithLatestUsage.parentId)) : null);
+    const equipmentIdForMeter = meterEquipment?.id || formWithLatestUsage.equipment;
+    const usageLogsForMeter = (state.usageLogs||[]).filter(l=>String(l.equipmentId)===String(equipmentIdForMeter));
+    const currentHours = Math.max(0, +(meterEquipment?.currentHours||meterEquipment?.hours||0), ...usageLogsForMeter.map(l=>+(l.hours||0)).filter(Number.isFinite));
+    const currentMileage = Math.max(0, +(meterEquipment?.currentMileage||meterEquipment?.mileage||0), ...usageLogsForMeter.map(l=>+(l.mileage||0)).filter(Number.isFinite));
+    const enteredHours = hoursEntered ? +(formWithLatestUsage.usageHours||0) : null;
+    const enteredMileage = mileageEntered ? +(formWithLatestUsage.usageMileage||0) : null;
+    if(hoursEntered && Number.isFinite(enteredHours) && enteredHours < currentHours) {
+      if(!confirm(`Engine Hours Warning\n\nCurrent equipment hours: ${currentHours.toLocaleString()} hr\nYou entered: ${enteredHours.toLocaleString()} hr\n\nThis reading is lower than the current recorded hours. It will be saved on this work order but will NOT lower the equipment's current hours.\n\nDo you want to proceed?`)) return;
+    }
+    if(mileageEntered && Number.isFinite(enteredMileage) && enteredMileage < currentMileage) {
+      if(!confirm(`Mileage Warning\n\nCurrent equipment mileage: ${currentMileage.toLocaleString()} mi\nYou entered: ${enteredMileage.toLocaleString()} mi\n\nThis reading is lower than the current recorded mileage. It will be saved on this work order but will NOT lower the equipment's current mileage.\n\nDo you want to proceed?`)) return;
+    }
+
     const newParts = (formWithLatestUsage.partsUsed||[]).filter(p=>String(p?.name||"").trim()).map(raw=>{
       const p = {...raw};
       const nameKey = String(p.name||"").trim().toLowerCase();
@@ -2827,6 +2843,16 @@ function WorkOrders({ state, dispatch, woSettings, onWOSettings, initialWOReques
       const nextType = formWithLatestUsage.woType || "Repair";
       const nextId = genWOId(formWithLatestUsage.equipment, nextType);
       dispatch({type:"ADD_WO", payload:{...formWithLatestUsage, created:normalizedCreatedDate, due:normalizedDueDate, woType:nextType, title:formWithLatestUsage.faultDescription||nextType, faultEnabled:true, id:nextId, woNumber:nextId, outsideServices, partsCost:partsTotal, outsideServicesCost:outsideServicesSubtotal}});
+    }
+    // A higher/current WO meter reading becomes the equipment's current usage and feeds PM calculations.
+    if(meterEquipment && !formWithLatestUsage.usageNA) {
+      const nextHours = hoursEntered && Number.isFinite(enteredHours) ? Math.max(currentHours, enteredHours) : currentHours;
+      const nextMileage = mileageEntered && Number.isFinite(enteredMileage) ? Math.max(currentMileage, enteredMileage) : currentMileage;
+      const meterChanged = nextHours > currentHours || nextMileage > currentMileage;
+      if(meterChanged) {
+        dispatch({type:"UPDATE_EQ", payload:{...meterEquipment, currentHours:nextHours, hours:nextHours, currentMileage:nextMileage, mileage:nextMileage}});
+        dispatch({type:"ADD_USAGE_LOG", payload:{id:genId("USE"), equipmentId:meterEquipment.id, date:normalizedCreatedDate, hours:hoursEntered?enteredHours:"", mileage:mileageEntered?enteredMileage:"", source:"Work Order", workOrderId:formWithLatestUsage.id||""}});
+      }
     }
     setModal(null);
     setDetailWO(null);
@@ -9142,6 +9168,13 @@ function FuelTracking({ state, dispatch }) {
     const inches = parseInches(inchesText, NaN);
     if(!Number.isFinite(inches)) return alert("Enter inches for this container. Examples: 30, 30.5, 30 1/2, 30 7/8.");
     const gallons = calculateFuelGallons(c, inches);
+    const previous = latestFuelReading(state, c.id);
+    const previousGallons = previous ? parseNumber(previous.gallons, NaN) : NaN;
+    if(Number.isFinite(previousGallons) && gallons > previousGallons) {
+      const prevPct = fuelPercent(c, previousGallons);
+      const nextPct = fuelPercent(c, gallons);
+      if(!confirm(`Fuel Level Warning\n\nPrevious level: ${previousGallons.toLocaleString(undefined,{maximumFractionDigits:1})} gal (${prevPct.toFixed(0)}%)\nNew level: ${gallons.toLocaleString(undefined,{maximumFractionDigits:1})} gal (${nextPct.toFixed(0)}%)\n\nThe new fuel level is higher than the previous reading. If the tank was refilled, use the Refill function so the added fuel is recorded.\n\nDo you want to proceed with this level reading anyway?`)) return;
+    }
     dispatch({ type:"ADD_FUEL_READING", payload:{ id:genId("FLOG"), kind:"reading", containerId:c.id, date:row.date||today(), inches, inchesText, gallons, percent:fuelPercent(c, gallons), fuelType:c.fuelType, notes:row.notes||"" } });
     setLevelEntry(prev=>({ ...prev, [c.id]:{ date:today(), inches:"", notes:"" } }));
   };
