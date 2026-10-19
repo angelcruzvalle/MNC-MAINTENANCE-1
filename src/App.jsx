@@ -3622,7 +3622,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     const currentHours=Math.max(+(eq?.currentHours||0),...logs.map(l=>+(l.hours||0)).filter(Number.isFinite),0)||"";
     const currentMileage=Math.max(+(eq?.currentMileage||0),...logs.map(l=>+(l.mileage||0)).filter(Number.isFinite),0)||"";
     const stepLines=(Array.isArray(task.steps)?task.steps:String(task.steps||"").split(/\n+/)).map(x=>String(x?.text||x?.step||x||"").trim()).filter(Boolean);
-    dispatch({type:"ADD_WO",payload:{id:genWOId(eq?.id||sch.equipmentId,"Service"),title:task.name||sch.task||"PM Service",equipment:sch.equipmentId,status:"Open",priority:"Medium",woType:"Service",equipmentStatus:eq?.status||"Fully Operational",created:today(),due:sch.nextDueDate||today(),tech:"",laborHours:0,laborCost:0,partsCost:0,description:task.description||task.name||sch.task||"PM Service",workPerformed:stepLines.join("\n"),serviceSteps:stepLines.join("\n"),serviceStepLines:stepLines,steps:stepLines,serviceChecklist:stepLines.join("\n"),mechanicNotes:"",faultEnabled:true,faultDescription:task.description||task.name||sch.task||"PM Service",usageType:mode,usageHours:mode==="mileage"?"":currentHours,usageMileage:mode==="hours"?"":currentMileage,usageNA:!eq?.trackUsage,partsUsed:Array.isArray(task.parts)?task.parts:[],outsideServices:[],scheduleId:sch.id,pmTaskId:task.id||sch.taskId}});
+    dispatch({type:"ADD_WO",payload:{id:genWOId(eq?.id||sch.equipmentId,"Service"),title:task.name||sch.task||"PM Service",equipment:sch.equipmentId,status:"Open",priority:"Medium",woType:"Service",equipmentStatus:eq?.status||"Fully Operational",created:today(),due:sch.nextDueDate||today(),tech:"",laborHours:0,laborCost:0,partsCost:0,description:task.description||task.name||sch.task||"PM Service",workPerformed:stepLines.join("\n"),serviceSteps:stepLines.join("\n"),serviceStepLines:stepLines,steps:stepLines,serviceChecklist:stepLines.join("\n"),serviceStepNotes:Array.isArray(task.stepNotes)?[...task.stepNotes]:[],taskProcedureSnapshot:{taskId:task.id||sch.taskId,name:task.name||sch.task||"PM Service",steps:[...stepLines],stepNotes:Array.isArray(task.stepNotes)?[...task.stepNotes]:[],capturedAt:new Date().toISOString()},mechanicNotes:"",faultEnabled:true,faultDescription:task.description||task.name||sch.task||"PM Service",usageType:mode,usageHours:mode==="mileage"?"":currentHours,usageMileage:mode==="hours"?"":currentMileage,usageNA:!eq?.trackUsage,partsUsed:Array.isArray(task.parts)?task.parts:[],outsideServices:[],scheduleId:sch.id,pmTaskId:task.id||sch.taskId}});
   };
   const createDueInspectionWO = (sch) => {
     const eq=(state.equipment||[]).find(e=>String(e.id)===String(sch.equipmentId));
@@ -4018,6 +4018,8 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
   const [locationF, setLocationF] = useState("All");
   const [equipSort, setEquipSort] = useState("equipAsc");
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [costView, setCostView] = useState("fy");
+  const [costCustom, setCostCustom] = useState({from:"",to:""});
   const [attachmentsOnly, setAttachmentsOnly] = useState(false);
   const [showNewCat, setShowNewCat] = useState(false);
   const [newCat, setNewCat]     = useState("");
@@ -4267,6 +4269,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
   const openEdit = eq => { setForm({...eq, _originalId:eq.id}); setModal("editing"); };
   const save = () => {
     if(!form.name) return alert("Nomenclature required.");
+    if(!String(form.location||"").trim()) return alert("Choose a Parts Storage Location. Add storage locations in Settings first.");
     if(form.trackUsage) {
       if(!form.usageType) return alert("Usage Tracking is enabled. Select Engine Hours, Mileage, or Hours & Mileage before saving.");
       if((form.usageType==="hours" || form.usageType==="both") && (form.currentHours==="" || form.currentHours==null)) return alert("Enter the current engine hours before saving.");
@@ -4380,9 +4383,6 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
       </Field>
       <Field label="Serial Number" half>
         <SmartInput historyKey="equipment.serial" style={inp} value={form.serial||""} onChange={e=>setForm(f=>({...f,serial:e.target.value}))} />
-      </Field>
-      <Field label="Area / Building / Department" half>
-        <SmartInput historyKey="equipment.area" style={inp} listId="equipment-area-history" extraOptions={[...new Set([...(state.settings?.areas||[]).map(a=>typeof a==="string"?a:a.name), ...(state.equipment||[]).map(e=>e.area).filter(Boolean)])]} value={form.area||""} onChange={e=>setForm(f=>({...f,area:e.target.value}))} placeholder="e.g. Maintenance Building" />
       </Field>
       <Field label="Acquisition Date" half>
         <input style={inp} type="date" value={form.acquisitionDate||""} onChange={e=>setForm(f=>({...f,acquisitionDate:e.target.value}))} />
@@ -4909,7 +4909,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
           <Card>
             <h4 style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Equipment Details</h4>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"12px 20px" }}>
-              {[["Category",eq.category||eq.type],["Location",eq.location],["Area",eq.area],["Last Service",eq.pmBaselineDate],["Usage at Last Service",eq.pmBaselineUsage],["Serial Number",eq.serial],["EIL #",eq.eilNumber],["Year",eq.year],["Make",eq.make],["Model",eq.model],["Acquisition Date",eq.acquisitionDate],["Purchase Price",eq.acquisitionCost?moneyFmt(eq.acquisitionCost):"—"],["Warranty Start",eq.warrantyStart],["Warranty End",eq.warrantyEnd]].map(([k,v])=>(
+              {[["Category",eq.category||eq.type],["Last Service",eq.pmBaselineDate],["Usage at Last Service",eq.pmBaselineUsage],["Serial Number",eq.serial],["EIL #",eq.eilNumber],["Year",eq.year],["Make",eq.make],["Model",eq.model],["Acquisition Date",eq.acquisitionDate],["Purchase Price",eq.acquisitionCost?moneyFmt(eq.acquisitionCost):"—"],["Warranty Start",eq.warrantyStart],["Warranty End",eq.warrantyEnd]].map(([k,v])=>(
                 <div key={k}>
                   <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div>
                   <div style={{ fontFamily:T.sans, fontSize:13, color:T.text, marginTop:3 }}>{v||"—"}</div>
@@ -4924,37 +4924,26 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
             )}
           </Card>
 
-          {/* Equipment Summary */}
+          {/* Equipment Summary / Cost of Ownership */}
           <Card>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, marginBottom:14 }}>
-              <h4 style={{ margin:0, fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Equipment Summary</h4>
-              <Btn small variant="secondary" onClick={()=>printEquipmentSummary(eq)}>Print</Btn>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, marginBottom:12, flexWrap:"wrap" }}>
+              <h4 style={{ margin:0, fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Cost of Ownership</h4>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>{[["fy","Fiscal Year"],["life","Lifetime"],["custom","Custom"]].map(([v,l])=><Btn key={v} small variant={costView===v?"primary":"secondary"} onClick={()=>setCostView(v)}>{l}</Btn>)}</div>
             </div>
+            {costView==="custom"&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}><Field label="From"><input style={inp} type="date" value={costCustom.from} onChange={e=>setCostCustom(x=>({...x,from:e.target.value}))}/></Field><Field label="To"><input style={inp} type="date" value={costCustom.to} onChange={e=>setCostCustom(x=>({...x,to:e.target.value}))}/></Field></div>}
             {(()=>{
-              const usage = equipmentUsageSummary(state, eq);
-              const fin = equipmentFinancialSummary(state, eq);
-              const summaryRows = [
-                ["Year", eq.year || "—", T.text],
-                [`Current ${usage.label}`, usage.display ?? usage.display ?? Number(usage.value||0).toLocaleString(undefined,{maximumFractionDigits:1}), T.text],
-                ["Lifetime Spent", moneyFmt(fin.lifetimeSpent), T.accent],
-                ["FY Spent", moneyFmt(fin.fySpent), T.accent],
-                ["Total Work Orders", fin.totalWOs, T.text],
-                ["Open Work Orders", fin.openWOs, T.amber],
-                ["Lifetime Labor", `${fin.lifetimeLaborHours.toFixed(1)}h`, T.text],
-                ["FY Labor", `${fin.fyLaborHours.toFixed(1)}h`, T.text],
-              ];
-              return <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:10 }}>
-                {summaryRows.map(([k,v,c])=>(
-                  <div key={k} style={{ background:T.grayLt, borderRadius:7, padding:"12px 14px", border:`1px solid ${T.border}` }}>
-                    <div style={{ fontFamily:T.sans, fontSize:20, fontWeight:800, color:c, lineHeight:1.15 }}>{v}</div>
-                    <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:4 }}>{k}</div>
-                  </div>
-                ))}
-                <div style={{ gridColumn:"1 / -1", display:"flex", gap:8, flexWrap:"wrap", paddingTop:2 }}>
-                  <Badge label={`Repair: ${fin.repairWOs}`} />
-                  <Badge label={`Service: ${fin.serviceWOs}`} />
-                  <Badge label={`Inspection: ${fin.inspectionWOs}`} />
-                  <Badge label={`Completed: ${fin.completedWOs}`} />
+              const eqWos=(state.workOrders||[]).filter(w=>String(workOrderEquipmentId(w)||w.equipment||"")===String(eq.id||""));
+              const fyStart=fiscalYearStartDate();
+              const inRange=w=>{const d=dateValue(workOrderDate(w)); if(!d)return costView==="life"; if(costView==="life")return true; if(costView==="fy")return d>=fyStart; const from=costCustom.from?dateValue(costCustom.from):null,to=costCustom.to?dateValue(costCustom.to):null; return (!from||d>=from)&&(!to||d<=to);};
+              const rows=eqWos.filter(inRange);
+              const partsCost=rows.reduce((n,w)=>n+(+w.partsCost||0),0);
+              const outsideCost=rows.reduce((n,w)=>n+(Array.isArray(w.outsideServices)?w.outsideServices.reduce((s,x)=>s+(+x.cost||+x.amount||0),0):(+w.outsideCost||0)),0);
+              const otherCost=rows.reduce((n,w)=>n+(+w.otherCost||0),0);
+              const total=partsCost+outsideCost+otherCost;
+              return <div>
+                <div style={{fontSize:28,fontWeight:900,color:T.accent,marginBottom:4}}>{moneyFmt(total)}</div><div style={{fontSize:11,color:T.muted,marginBottom:12}}>Tracked ownership cost for the selected period. Labor and fuel are excluded.</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10}}>
+                  {[["Parts Cost",moneyFmt(partsCost)],["Outside Services",moneyFmt(outsideCost)],["Other Cost",moneyFmt(otherCost)],["Work Orders",rows.length]].map(([k,v])=><div key={k} style={{background:T.grayLt,borderRadius:7,padding:"11px 12px",border:`1px solid ${T.border}`}}><div style={{fontSize:18,fontWeight:800}}>{v}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{k}</div></div>)}
                 </div>
               </div>;
             })()}
@@ -5346,6 +5335,7 @@ function Parts({ state, dispatch }) {
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
   const partCategories = getPartCategoryOptions(state);
   const modelOptions = getEquipmentModelOptions(state.equipment);
+  const partStorageLocations = Array.isArray(state.settings?.partStorageLocations) ? state.settings.partStorageLocations : [];
   const cats     = ["All",...partCategories];
   const stockFilters = ["All", "In Stock", "Low Stock", "Out of Stock"];
   const parts = Array.isArray(state.parts) ? state.parts : [];
@@ -5371,6 +5361,7 @@ function Parts({ state, dispatch }) {
   const openEdit = p  => { setForm({...p}); setModal(p); };
   const save = () => {
     if(!form.name) return alert("Nomenclature required.");
+    if(!String(form.location||"").trim()) return alert("Choose a Parts Storage Location. Add storage locations in Settings first.");
     const cleanForm = { ...form, category:String(form.category||"").trim(), unit:String(form.unit||"ea").trim()||"ea", qty:+form.qty||0, unitCost:+form.unitCost||0, minQty:+form.minQty||0, equipmentId:"" };
     modal==="add"
       ? dispatch({type:"ADD_PART",  payload:{...cleanForm,id:genId("PT")}})
@@ -5568,7 +5559,7 @@ function Parts({ state, dispatch }) {
             <datalist id="part-model-options">{modelOptions.map(m=><option key={m} value={m} />)}</datalist>
             <Field label="Vendor" half><input style={inp} value={form.vendor||""} onChange={F("vendor")} /></Field>
             <Field label="PO Number" half><input style={inp} value={form.poNumber||""} onChange={F("poNumber")} /></Field>
-            <Field label="Location" half><input style={inp} value={form.location||""} onChange={F("location")} /></Field>
+            <Field label="Storage Location *" half><select style={sel} value={form.location||""} onChange={F("location")}><option value="">Choose storage location...</option>{partStorageLocations.map(x=><option key={x} value={x}>{x}</option>)}</select>{!partStorageLocations.length&&<div style={{fontSize:11,color:T.amber,marginTop:4}}>Add Parts Storage Locations in Settings first.</div>}</Field>
             <Field label="Date Received" half><input style={inp} type="date" value={form.dateReceived||""} onChange={F("dateReceived")} /></Field>
             <Field label="Unit Cost ($)" half><input style={inp} {...decimalInputAttrs()} value={form.unitCost ?? ""} onChange={e=>setForm(f=>({...f,unitCost:sanitizeDecimalInput(e.target.value)}))} /></Field>
             <Field label="Qty on Hand" half><input style={inp} type="number" value={form.qty||0} onChange={F("qty")} /></Field>
@@ -5608,7 +5599,7 @@ function Parts({ state, dispatch }) {
               <input style={inp} type="number" placeholder="Qty" value={p.qty} onChange={e=>setPoRow(i,"qty",e.target.value)} />
               <select style={sel} value={p.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, p.unit||"ea", v=>setPoRow(i,"unit",v))}>{getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}<option value="__new_unit__">+ Add new...</option></select>
               <input style={inp} {...decimalInputAttrs({ placeholder:"0.00" })} value={p.unitCost} onChange={e=>setPoRow(i,"unitCost",sanitizeDecimalInput(e.target.value))} />
-              <input style={inp} placeholder="Location" value={p.location} onChange={e=>setPoRow(i,"location",e.target.value)} />
+              <select style={sel} value={p.location||""} onChange={e=>setPoRow(i,"location",e.target.value)}><option value="">Storage location...</option>{partStorageLocations.map(x=><option key={x} value={x}>{x}</option>)}</select>
               <input style={inp} list="po-model-options" placeholder="Fits model" value={p.modelFit||""} onChange={e=>setPoRow(i,"modelFit",e.target.value)} />
               <datalist id="po-model-options">{modelOptions.map(m=><option key={m} value={m} />)}</datalist>
               {poForm.parts.length>1?<button onClick={()=>delPoRow(i)} style={{ background:"none", border:`1px solid ${T.red}`, borderRadius:5, color:T.red, cursor:"pointer", padding:"6px 8px", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>:<div/>}
@@ -6120,7 +6111,7 @@ function PM({ state, dispatch }) {
   const [serviceWOForm, setServiceWOForm] = useState(blankServiceWOForm());
   const [taskModal, setTaskModal] = useState(false);
   const [editTaskId, setEditTaskId] = useState(null);
-  const blankTaskForm = () => ({ name:"", description:"", steps:[""], parts:[{name:"",qty:"",unit:"ea"}], triggers:[{type:"time",timeInterval:"",timeUnit:"months",usageInterval:"",usageType:"hours",usageMode:"every"}] });
+  const blankTaskForm = () => ({ name:"", description:"", steps:[""], stepNotes:[""], parts:[{name:"",qty:"",unit:"ea"}], triggers:[{type:"time",timeInterval:"",timeUnit:"months",usageInterval:"",usageType:"hours",usageMode:"every"}] });
   const [taskForm, setTaskForm]   = useState(blankTaskForm());
   const [showTaskLib, setShowTaskLib] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
@@ -6570,7 +6561,7 @@ function PM({ state, dispatch }) {
   /* Task library */
   const openNewTask = () => { setEditTaskId(null); setTaskForm(blankTaskForm()); setTaskModal(true); };
   const openEditTask = (t) => { setEditTaskId(t.id); setTaskForm({...t, triggers:t.triggers||[{type:"time",timeInterval:t.timeInterval||"",timeUnit:t.timeUnit||"months",usageInterval:"",usageType:"hours",usageMode:"every"}]}); setTaskModal(true); };
-  const copyPMTask = (t) => { setEditTaskId(null); setTaskForm({...t, id:undefined, name:`Copy of ${t.name||"PM Task"}`, steps:Array.isArray(t.steps)?[...t.steps]:[""], parts:Array.isArray(t.parts)?t.parts.map(p=>({...p})):[{name:"",qty:"",unit:"ea"}], triggers:Array.isArray(t.triggers)?t.triggers.map(tr=>({...tr})):[{type:"time",timeInterval:t.timeInterval||"",timeUnit:t.timeUnit||"months",usageInterval:"",usageType:"hours",usageMode:"every"}]}); setTaskModal(true); };
+  const copyPMTask = (t) => { setEditTaskId(null); setTaskForm({...t, id:undefined, name:`Copy of ${t.name||"PM Task"}`, steps:Array.isArray(t.steps)?[...t.steps]:[""], stepNotes:Array.isArray(t.stepNotes)?[...t.stepNotes]:[], parts:Array.isArray(t.parts)?t.parts.map(p=>({...p})):[{name:"",qty:"",unit:"ea"}], triggers:Array.isArray(t.triggers)?t.triggers.map(tr=>({...tr})):[{type:"time",timeInterval:t.timeInterval||"",timeUnit:t.timeUnit||"months",usageInterval:"",usageType:"hours",usageMode:"every"}]}); setTaskModal(true); };
   const saveTask = () => {
     if(!taskForm.name) return alert("Task name required.");
     if(editTaskId) {
@@ -6584,8 +6575,10 @@ function PM({ state, dispatch }) {
   const addTrigger   = () => setTaskForm(f=>({...f,triggers:[...(f.triggers||[]),{type:"time",timeInterval:"",timeUnit:"months",usageInterval:"",usageType:"hours",usageMode:"every"}]}));
   const setTrigger   = (i,k,v) => setTaskForm(f=>{ const tr=[...(f.triggers||[])]; tr[i]={...tr[i],[k]:v}; return {...f,triggers:tr}; });
   const delTrigger   = i => setTaskForm(f=>{ const tr=[...(f.triggers||[])]; tr.splice(i,1); return {...f,triggers:tr}; });
-  const addTaskStep  = () => setTaskForm(f=>({...f,steps:[...(f.steps||[]),""] }));
+  const savedStepOptions = [...new Set((pmTasks||[]).flatMap(t=>Array.isArray(t.steps)?t.steps:[]).map(s=>String(s||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  const addTaskStep  = () => setTaskForm(f=>({...f,steps:[...(f.steps||[]),""],stepNotes:[...(f.stepNotes||[]),""]}));
   const setStep      = (i,v) => setTaskForm(f=>{ const s=[...(f.steps||[])]; s[i]=v; return {...f,steps:s}; });
+  const setStepNote  = (i,v) => setTaskForm(f=>{ const n=[...(f.stepNotes||[])]; n[i]=v; return {...f,stepNotes:n}; });
 
   const pasteTaskStep = (i) => (e) => {
     try {
@@ -6622,7 +6615,7 @@ function PM({ state, dispatch }) {
       console.error("PM step paste failed", err);
     }
   };
-  const delStep      = i => setTaskForm(f=>{ const s=[...(f.steps||[])]; s.splice(i,1); return {...f,steps:s}; });
+  const delStep      = i => setTaskForm(f=>{ const s=[...(f.steps||[])]; const n=[...(f.stepNotes||[])]; s.splice(i,1); n.splice(i,1); return {...f,steps:s,stepNotes:n}; });
   const addTaskPart  = () => setTaskForm(f=>({...f,parts:[...(f.parts||[]),{name:"",qty:"",unit:"ea"}]}));
   const setTaskPart  = (i,k,v) => setTaskForm(f=>{ const p=[...(f.parts||[])]; p[i]={...p[i],[k]:v}; return {...f,parts:p}; });
   const delTaskPart  = i => setTaskForm(f=>{ const p=[...(f.parts||[])]; p.splice(i,1); return {...f,parts:p}; });
@@ -6914,7 +6907,7 @@ function PM({ state, dispatch }) {
                         <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:6 }}>Task Steps</div>
                         {steps.length===0 ? <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>No steps saved.</div> : (
                           <ol style={{ margin:"0 0 0 20px", padding:0, fontFamily:T.sans, fontSize:13, color:T.subtext, lineHeight:1.6 }}>
-                            {steps.map((s,j)=><li key={j}>{s}</li>)}
+                            {steps.map((s,j)=><li key={j}>{s}{(t.stepNotes||[])[j]&&<div style={{fontSize:11,color:T.muted,margin:"2px 0 6px"}}>{(t.stepNotes||[])[j]}</div>}</li>)}
                           </ol>
                         )}
                       </div>
@@ -6952,13 +6945,18 @@ function PM({ state, dispatch }) {
             <Field label="Description"><textarea style={{ ...inp, minHeight:50, resize:"vertical" }} value={taskForm.description} onPaste={pasteIntoText(v=>setTaskForm(f=>({...f,description:v})))} onChange={e=>setTaskForm(f=>({...f,description:e.target.value}))} placeholder="Brief description..." /></Field>
             <div>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:8 }}>Service Steps</label>
+              <datalist id="pm-saved-step-options">{savedStepOptions.map(s=><option key={s} value={s}/>)}</datalist>
               {(taskForm.steps||[""]).map((step,i)=>(
-                <div key={i} style={{ display:"flex", gap:6, marginBottom:6, alignItems:"center" }}>
-                  <span style={{ fontFamily:T.mono, fontSize:11, color:T.muted, minWidth:20 }}>{i+1}.</span>
-                  <input style={{ ...inp, flex:1 }} value={step} autoFocus={i===(taskForm.steps||[]).length-1 && step===""} onPaste={pasteTaskStep(i)} onChange={e=>setStep(i,e.target.value)} placeholder={`Step ${i+1}...`} />
-                  {(taskForm.steps||[]).length>1&&<button onClick={()=>delStep(i)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
+                <div key={i} style={{ marginBottom:10, padding:10, border:`1px solid ${T.border}`, borderRadius:9, background:T.card }}>
+                  <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                    <span style={{ fontFamily:T.mono, fontSize:11, color:T.muted, minWidth:20 }}>{i+1}.</span>
+                    <input list="pm-saved-step-options" style={{ ...inp, flex:1 }} value={step} autoFocus={i===(taskForm.steps||[]).length-1 && step===""} onPaste={pasteTaskStep(i)} onChange={e=>setStep(i,e.target.value)} placeholder="Choose a saved step or type a new one..." />
+                    {(taskForm.steps||[]).length>1&&<button onClick={()=>delStep(i)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
+                  </div>
+                  <input style={{...inp,marginTop:7,marginLeft:26,width:"calc(100% - 26px)"}} value={(taskForm.stepNotes||[])[i]||""} onChange={e=>setStepNote(i,e.target.value)} placeholder="Optional instruction / specification for this step..." />
                 </div>
               ))}
+              <div style={{fontSize:11,color:T.muted,marginBottom:7}}>Previously used steps appear as suggestions. Type a new step once and it becomes available for future procedures.</div>
               <button onClick={addTaskStep} style={{ background:"none", border:`1px dashed ${T.borderHi}`, borderRadius:6, padding:"5px 12px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>+ Add Step</button>
             </div>
             <div>
@@ -7677,6 +7675,7 @@ function EquipmentInventory({ state, dispatch }) {
 
   const save = () => {
     if(!form.name) return alert("Nomenclature required.");
+    if(!String(form.location||"").trim()) return alert("Choose a Parts Storage Location. Add storage locations in Settings first.");
     if(modal==="add") {
       dispatch({type:"ADD_INV", payload:{...form, id:genId("INV"), turnInStatus:"Active"}});
     } else {
@@ -8978,6 +8977,7 @@ function SystemSettings({ state, dispatch, onClose }) {
     includeLaborInSpending:s.includeLaborInSpending !== false,
     requireTech:s.requireTech || false,
     showEilInventoryNumber:s.showEilInventoryNumber !== false,
+    partStorageLocations:Array.isArray(s.partStorageLocations)?s.partStorageLocations:[],
   });
   const F=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
   const handleLogo=e=>{ const file=e.target.files?.[0]; if(!file)return; const r=new FileReader(); r.onload=ev=>setForm(f=>({...f,logo:ev.target.result})); r.readAsDataURL(file); };
@@ -9005,6 +9005,18 @@ function SystemSettings({ state, dispatch, onClose }) {
         </div>
       </div>
       <div style={{padding:16,border:`1px solid ${T.border}`,borderRadius:14,background:T.surface,marginBottom:16}}>
+        <div style={{fontSize:15,fontWeight:900,marginBottom:4}}>Parts Storage Locations</div>
+        <div style={{fontSize:12,color:T.muted,marginBottom:12}}>These are Parts Inventory storage locations only. They are separate from equipment or facility locations.</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+          {(form.partStorageLocations||[]).map((loc,i)=><div key={`${loc}-${i}`} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 9px",border:`1px solid ${T.border}`,borderRadius:8,background:T.card}}>
+            <b style={{fontSize:12}}>{loc}</b>
+            <button type="button" onClick={()=>{const next=prompt("Edit parts storage location",loc);if(next&&next.trim())setForm(f=>({...f,partStorageLocations:(f.partStorageLocations||[]).map((x,j)=>j===i?next.trim():x)}));}} style={{border:0,background:"none",color:T.accent,cursor:"pointer",fontWeight:800}}>Edit</button>
+            <button type="button" onClick={()=>{const inUse=(state.parts||[]).some(p=>p.location===loc);if(inUse)return alert("This storage location is in use by one or more parts. Move those parts first.");setForm(f=>({...f,partStorageLocations:(f.partStorageLocations||[]).filter((_,j)=>j!==i)}));}} style={{border:0,background:"none",color:T.red,cursor:"pointer",fontWeight:800}}>×</button>
+          </div>)}
+        </div>
+        <Btn small variant="secondary" onClick={()=>{const name=prompt("New parts storage location");if(name&&name.trim())setForm(f=>({...f,partStorageLocations:[...new Set([...(f.partStorageLocations||[]),name.trim()])]}));}}>+ Add Storage Location</Btn>
+      </div>
+      <div style={{padding:16,border:`1px solid ${T.border}`,borderRadius:14,background:T.surface,marginBottom:16}}>
         <div style={{fontSize:15,fontWeight:900,marginBottom:12}}>Defaults</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}><Field label="Default Labor Rate"><input style={inp} {...decimalInputAttrs({placeholder:"45"})} value={form.laborRateDefault} onChange={e=>setForm(f=>({...f,laborRateDefault:sanitizeDecimalInput(e.target.value)}))}/></Field><Field label="Default Priority"><select style={sel} value={form.defaultPriority} onChange={F("defaultPriority")}><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select></Field></div>
       </div>
@@ -9029,7 +9041,7 @@ defaultPriority:"Medium", dateFormat:"MM/DD/YYYY", currency:"USD", showEilInvent
     if(step===1) return setStep(2);
     const location="Main Location";
     onComplete({
-      settings:{ companyName:data.companyName.trim(), department:data.department.trim(), siteName:location, location, phone:data.phone, email:data.email, address:data.address, cityState:data.cityState, logo:data.logo, logoMode:"company", locations:[{id:"MAIN-LOCATION",name:location,address:data.address,cityState:data.cityState,phone:data.phone,email:data.email,logo:data.logo,active:true}], defaultPriority:data.defaultPriority, laborRateDefault:45, dateFormat:data.dateFormat, currency:data.currency, includeLaborInSpending:true, requireTech:false, showEilInventoryNumber:data.showEilInventoryNumber },
+      settings:{ companyName:data.companyName.trim(), department:data.department.trim(), siteName:location, location, phone:data.phone, email:data.email, address:data.address, cityState:data.cityState, logo:data.logo, logoMode:"company", locations:[{id:"MAIN-LOCATION",name:location,address:data.address,cityState:data.cityState,phone:data.phone,email:data.email,logo:data.logo,active:true}], defaultPriority:data.defaultPriority, laborRateDefault:45, dateFormat:data.dateFormat, currency:data.currency, includeLaborInSpending:true, requireTech:false, showEilInventoryNumber:data.showEilInventoryNumber, partStorageLocations:[] },
       profile:null,
       technicians:[],
       categories:data.categories
@@ -9261,7 +9273,7 @@ function FuelTracking({ state, dispatch }) {
       </div>
       <div className="mf-fuel-mobile-list">{containers.map(c=>{ const last=latestFuelReading(state,c.id); const pct=fuelPercent(c,last?.gallons||0); const le=levelEntry[c.id]||{date:today(),inches:"",notes:""}; const preview=le.inches!==""?calculateFuelGallons(c,le.inches):null; return <Card key={c.id} style={{padding:12,marginBottom:10}}>
         <div style={{display:"flex",justifyContent:"space-between",gap:8}}><div><b>{c.name}</b><div style={{fontSize:11,color:T.muted}}>{c.fuelType}</div></div><div style={{textAlign:"right",fontWeight:800}}>{last?`${Math.round(last.gallons).toLocaleString()} gal`:"—"}<div style={{fontSize:11,color:T.muted}}>{last?`${pct.toFixed(1)}% full`:"No reading"}</div></div></div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:10,fontSize:12}}><div>Consumed<br/><b>{Math.round(fuelConsumedForPeriod(state,c.id,period)).toLocaleString()} gal</b></div><div>Refilled<br/><b>{Math.round(fuelRefilledForPeriod(state,c.id,period)).toLocaleString()} gal</b></div></div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8,marginTop:10,fontSize:12}}><div>Current Inches<br/><b>{last?(last.inchesText ?? last.inches ?? "—"):"—"} in</b></div><div>Consumed<br/><b>{Math.round(fuelConsumedForPeriod(state,c.id,period)).toLocaleString()} gal</b></div><div>Refilled<br/><b>{Math.round(fuelRefilledForPeriod(state,c.id,period)).toLocaleString()} gal</b></div></div>
         <div style={{marginTop:10}}><div style={{fontSize:11,fontWeight:800,marginBottom:4}}>Enter tank level (inches)</div><div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8}}><input style={{...inp,minWidth:0}} type="text" placeholder="30 7/8" value={le.inches||""} onChange={e=>setLevel(c.id,"inches",e.target.value)}/><Btn small onClick={()=>saveLevel(c)}>Log</Btn></div>{preview!==null&&<div style={{fontSize:11,color:T.muted,marginTop:4}}>≈ {Math.round(preview).toLocaleString()} gal</div>}<input style={{...inp,width:"100%",marginTop:6}} type="date" value={le.date||today()} onChange={e=>setLevel(c.id,"date",e.target.value)}/></div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6,marginTop:10}}><Btn small variant="secondary" onClick={()=>openRefill(c)}>Refill</Btn><Btn small variant="secondary" onClick={()=>openEdit(c)}>Edit</Btn><Btn small variant="danger" onClick={()=>confirm("Delete this fuel container and its history?")&&dispatch({type:"DELETE_FUEL_CONTAINER",payload:c.id})}>Delete</Btn></div>
       </Card>})}</div>
@@ -9283,7 +9295,18 @@ function FuelTracking({ state, dispatch }) {
     <Card>
       <SectionHeading sub="Historical fuel data for level readings and refill records. Use Edit to correct mistakes.">Fuel History</SectionHeading>
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}><select style={{ ...sel, maxWidth:280 }} value={historyContainer} onChange={e=>setHistoryContainer(e.target.value)}><option value="all">All containers</option>{containers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-      <div className="mobile-x-scroll"><table style={{ borderCollapse:"collapse", width:"100%" }}><thead><tr>{["Date","Container","Type","Fuel","Inches","Gallons","Refill Added","% Full","Notes","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, fontSize:12, color:T.muted }}>{h}</th>)}</tr></thead><tbody>
+      <div className="mf-fuel-history-mobile">{shownHistory.map(r=>{ const c=containers.find(x=>x.id===r.containerId)||{}; const isRefill=(r.kind||"reading")==="refill"; return <Card key={r.id} style={{padding:12,marginBottom:10}}>
+        <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}><div><b>{c.name||"Deleted container"}</b><div style={{fontSize:11,color:T.muted}}>{r.date} · {isRefill?"Refill":"Level"} · {r.fuelType||c.fuelType||"Fuel"}</div></div><Badge label={isRefill?"Refill":"Level"}/></div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8,marginTop:10,fontSize:12}}>
+          <div><span style={{color:T.muted}}>Inches</span><br/><b>{isRefill?"—":(r.inchesText ?? r.inches ?? "—")}</b></div>
+          <div><span style={{color:T.muted}}>Gallons</span><br/><b>{isRefill?"—":Math.round(+r.gallons||0).toLocaleString()}</b></div>
+          <div><span style={{color:T.muted}}>Refill Added</span><br/><b>{isRefill?`${Math.round(+r.gallonsAdded||0).toLocaleString()} gal`:"—"}</b></div>
+          <div><span style={{color:T.muted}}>% Full</span><br/><b>{isRefill?"—":(+r.percent||fuelPercent(c,r.gallons)).toFixed(1)+"%"}</b></div>
+        </div>
+        {r.notes&&<div style={{fontSize:12,marginTop:10,overflowWrap:"anywhere"}}><span style={{color:T.muted}}>Notes:</span> {r.notes}</div>}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:10}}><Btn small variant="secondary" onClick={()=>openEditEvent(r)}>Edit</Btn><Btn small variant="danger" onClick={()=>dispatch({type:"DELETE_FUEL_READING",payload:r.id})}>Delete</Btn></div>
+      </Card>})}{!shownHistory.length&&<div style={{padding:24,textAlign:"center",color:T.muted}}>No fuel history yet.</div>}</div>
+      <div className="mobile-x-scroll mf-fuel-history-desktop"><table style={{ borderCollapse:"collapse", width:"100%" }}><thead><tr>{["Date","Container","Type","Fuel","Inches","Gallons","Refill Added","% Full","Notes","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, fontSize:12, color:T.muted }}>{h}</th>)}</tr></thead><tbody>
         {shownHistory.map(r=>{ const c=containers.find(x=>x.id===r.containerId)||{}; const isRefill=(r.kind||"reading")==="refill"; return <tr key={r.id}><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.date}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, fontWeight:700 }}>{c.name||"Deleted container"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{isRefill?"Refill":"Level"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.fuelType||c.fuelType}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{isRefill?"—":(r.inchesText ?? r.inches)}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{isRefill?"—":Math.round(+r.gallons||0).toLocaleString()}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{isRefill?Math.round(+r.gallonsAdded||0).toLocaleString():"—"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{isRefill?"—":(+r.percent||fuelPercent(c,r.gallons)).toFixed(1)+"%"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.notes}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, display:"flex", gap:6 }}><Btn small variant="secondary" onClick={()=>openEditEvent(r)}>Edit</Btn><Btn small variant="danger" onClick={()=>dispatch({type:"DELETE_FUEL_READING",payload:r.id})}>Delete</Btn></td></tr> })}
         {!shownHistory.length && <tr><td colSpan="10" style={{ padding:24, textAlign:"center", color:T.muted }}>No fuel history yet.</td></tr>}
       </tbody></table></div>
@@ -9396,12 +9419,12 @@ function PerformanceActivity({ state }) {
   const facilityLabel=facility==="all"?"All Facilities":locName(facility);
   const cards=[
     ["Repairs Completed",repairs.length,"🔧"],["Services / PM",services.length,"🛢️"],["Inspections",inspections.length,"📋"],["Total WOs",completed.length,"✓"],
-    ["Labor Hours",laborHours.toFixed(1),"⏱"],["Purchases",purchases,"🛒"],["Parts Consumed",partsConsumed.toLocaleString(),"📦"],["Maintenance Spending",moneyFmt(maintenanceSpend),"💵"]
+    ["Labor Hours",laborHours.toFixed(1),"⏱"],["Parts Consumed",partsConsumed.toLocaleString(),"📦"],["Maintenance Spending",moneyFmt(maintenanceSpend),"💵"]
   ];
   const printReport=()=>{
     const win=window.open("","_blank","width=1000,height=760"); if(!win)return;
     const row=(a,b)=>`<tr><td>${a}</td><td style="text-align:right;font-weight:700">${b}</td></tr>`;
-    win.document.write(`<!doctype html><html><head><title>Performance & Activity Report</title><style>body{font-family:Arial,sans-serif;padding:28px;color:#111}*{box-sizing:border-box}.head{border:2px solid #000;background:#dbeafe;padding:14px 16px}h1{margin:0;font-size:22px}.meta{margin-top:6px;font-size:12px}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #000;padding:8px 10px;font-size:12px}th{background:#dbeafe;text-align:left}.note{font-size:10px;margin-top:12px;color:#333}@media print{button{display:none}}</style></head><body><div class="head"><h1>MaintForge — Maintenance Performance & Activity Report</h1><div class="meta">${label} · ${facilityLabel}</div></div><table><tr><th>Activity</th><th style="text-align:right">Period Total</th></tr>${row("Repairs Completed",repairs.length)}${row("Services / Preventive Maintenance",services.length)}${row("Inspections Completed",inspections.length)}${row("Total Work Orders Completed",completed.length)}${row("Labor Hours",laborHours.toFixed(1)+" hrs")}${row("Purchases Recorded",purchases)}${row("Purchased Quantity",purchaseQty.toLocaleString())}${row("Purchase Spending",moneyFmt(purchaseSpend))}${row("Parts Consumed",partsConsumed.toLocaleString())}${row("Parts Consumed Value",moneyFmt(partsConsumedValue))}${row("Maintenance Spending",moneyFmt(maintenanceSpend))}</table><div class="note">Maintenance Spending follows MaintForge Work Order spending settings. Purchase spending is shown separately and is not added again to Maintenance Spending, avoiding double-counting parts that were purchased and later consumed.</div><button onclick="window.print()" style="margin-top:18px;padding:9px 16px">Print / Save PDF</button></body></html>`); win.document.close();
+    win.document.write(`<!doctype html><html><head><title>Performance & Activity Report</title><style>body{font-family:Arial,sans-serif;padding:28px;color:#111}*{box-sizing:border-box}.head{border:2px solid #000;background:#dbeafe;padding:14px 16px}h1{margin:0;font-size:22px}.meta{margin-top:6px;font-size:12px}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #000;padding:8px 10px;font-size:12px}th{background:#dbeafe;text-align:left}.note{font-size:10px;margin-top:12px;color:#333}@media print{button{display:none}}</style></head><body><div class="head"><h1>MaintForge — Maintenance Performance & Activity Report</h1><div class="meta">${label} · ${facilityLabel}</div></div><table><tr><th>Activity</th><th style="text-align:right">Period Total</th></tr>${row("Repairs Completed",repairs.length)}${row("Services / Preventive Maintenance",services.length)}${row("Inspections Completed",inspections.length)}${row("Total Work Orders Completed",completed.length)}${row("Labor Hours",laborHours.toFixed(1)+" hrs")}${row("Parts Consumed",partsConsumed.toLocaleString())}${row("Parts Consumed Value",moneyFmt(partsConsumedValue))}${row("Maintenance Spending",moneyFmt(maintenanceSpend))}</table><div class="note">Maintenance Spending follows MaintForge Work Order spending settings. Purchase spending is shown separately and is not added again to Maintenance Spending, avoiding double-counting parts that were purchased and later consumed.</div><button onclick="window.print()" style="margin-top:18px;padding:9px 16px">Print / Save PDF</button></body></html>`); win.document.close();
   };
   const topEq=Object.entries(completed.reduce((a,w)=>{const id=w.equipment||"Unknown";a[id]=(a[id]||0)+1;return a;},{})).sort((a,b)=>b[1]-a[1]).slice(0,8);
   return <div>
@@ -9415,7 +9438,7 @@ function PerformanceActivity({ state }) {
       <label style={{fontSize:11,fontWeight:700}}>FACILITY<select style={{...sel,display:"block",marginTop:4,minWidth:190}} value={facility} onChange={e=>setFacility(e.target.value)}><option value="all">All Facilities</option>{(state.locations||[]).map(l=><option key={l.id} value={l.id}>{l.name||l.id}</option>)}</select></label>
     </div><div style={{fontSize:12,color:T.subtext,marginTop:10,fontWeight:700}}>{label}</div></Card>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(165px,1fr))",gap:12,marginBottom:16}}>{cards.map(([k,v,i])=><Card key={k} style={{padding:"15px 16px"}}><div style={{fontSize:18}}>{i}</div><div style={{fontSize:24,fontWeight:800,marginTop:4}}>{v}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{k}</div></Card>)}</div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:16}}><Card><div style={{fontWeight:800,marginBottom:12}}>Spending & Parts</div>{[["Maintenance spending",moneyFmt(maintenanceSpend)],["Purchase spending",moneyFmt(purchaseSpend)],["Parts consumed value",moneyFmt(partsConsumedValue)],["Purchase transactions",purchases],["Purchased quantity",purchaseQty.toLocaleString()]].map(([a,b])=><div key={a} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}><span>{a}</span><b>{b}</b></div>)}<div style={{fontSize:10,color:T.muted,marginTop:10,lineHeight:1.4}}>Purchase spending is reported separately so purchased inventory is not counted twice when it is later consumed on a work order.</div></Card><Card><div style={{fontWeight:800,marginBottom:12}}>Most Active Equipment</div>{topEq.length?topEq.map(([id,count])=><div key={id} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}><span><b>{id}</b> · {eqById[id]?.name||"Equipment"}</span><b>{count} WO{count===1?"":"s"}</b></div>):<div style={{fontSize:12,color:T.muted}}>No completed work orders in this period.</div>}</Card></div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:16}}><Card><div style={{fontWeight:800,marginBottom:12}}>Spending & Parts</div>{[["Maintenance spending",moneyFmt(maintenanceSpend)],["Parts consumed value",moneyFmt(partsConsumedValue)],].map(([a,b])=><div key={a} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}><span>{a}</span><b>{b}</b></div>)}</Card><Card><div style={{fontWeight:800,marginBottom:12}}>Most Active Equipment</div>{topEq.length?topEq.map(([id,count])=><div key={id} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}><span><b>{id}</b> · {eqById[id]?.name||"Equipment"}</span><b>{count} WO{count===1?"":"s"}</b></div>):<div style={{fontSize:12,color:T.muted}}>No completed work orders in this period.</div>}</Card></div>
   </div>;
 }
 
@@ -11401,10 +11424,10 @@ export default function App() {
         }
 
 
-          .mf-parts-mobile-list, .mf-fuel-mobile-list { display:none; }
+          .mf-parts-mobile-list, .mf-fuel-mobile-list, .mf-fuel-history-mobile { display:none; }
           @media (max-width: 768px) {
-            .mf-parts-desktop-table, .mf-fuel-desktop-table { display:none !important; }
-            .mf-parts-mobile-list, .mf-fuel-mobile-list { display:block !important; }
+            .mf-parts-desktop-table, .mf-fuel-desktop-table, .mf-fuel-history-desktop { display:none !important; }
+            .mf-parts-mobile-list, .mf-fuel-mobile-list, .mf-fuel-history-mobile { display:block !important; }
           }
           /* v9 mobile audit: no sideways/sliding columns; reflow controls and dense pages for phones. */
           .mf-field { min-width:0 !important; }
