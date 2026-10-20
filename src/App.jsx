@@ -1215,6 +1215,24 @@ function normalizeMaintForgeSingleSite(input={}) {
   };
 }
 
+function syncEquipmentServiceBaselines(equipment=[], workOrders=[]) {
+  return (equipment||[]).map(eq=>{
+    const services=(workOrders||[]).filter(w=>String(w.equipment)===String(eq.id) && String(w.status).toLowerCase()==="completed" && ["service","preventive","preventative","preventive maintenance","preventative maintenance"].includes(String(w.woType||w.type||"").toLowerCase()) && (w.completed||w.completedDate||w.closedDate));
+    if(!services.length) {
+      if(!eq._mfServiceAutoBaseline) return eq;
+      const { _mfServiceManualDate, _mfServiceManualUsage, _mfServiceAutoBaseline, ...rest }=eq;
+      return {...rest,pmBaselineDate:_mfServiceManualDate||"",pmBaselineUsage:_mfServiceManualUsage??""};
+    }
+    services.sort((a,b)=>String(b.completed||b.completedDate||b.closedDate).localeCompare(String(a.completed||a.completedDate||a.closedDate)));
+    const latest=services[0];
+    const date=String(latest.completed||latest.completedDate||latest.closedDate).slice(0,10);
+    const usageKind=eq.usageType||"hours";
+    const reading=usageKind==="mileage"?latest.usageMileage:usageKind==="both"?(latest.usageMileage||latest.usageHours):(latest.usageHours||latest.usageMileage);
+    const hasReading=!latest.usageNA && reading!==undefined && reading!==null && String(reading).trim()!=="";
+    return {...eq,_mfServiceAutoBaseline:true,_mfServiceManualDate:eq._mfServiceAutoBaseline?eq._mfServiceManualDate:(eq.pmBaselineDate||""),_mfServiceManualUsage:eq._mfServiceAutoBaseline?eq._mfServiceManualUsage:(eq.pmBaselineUsage??""),pmBaselineDate:date,pmBaselineUsage:hasReading?String(reading):(eq._mfServiceAutoBaseline?(eq._mfServiceManualUsage??""):(eq.pmBaselineUsage??""))};
+  });
+}
+
 function reducer(state, { type, payload }) {
   const locationStampedTypes = new Set(["ADD_EQ","ADD_PART","ADD_INV","ADD_FUEL_CONTAINER","ADD_FUEL_READING","ADD_WO_REQUEST","ADD_PM_SCHEDULE","ADD_INSPECTION_SCHEDULE","ADD_PM_TASK","ADD_INSPECTION_TASK","ADD_PM","ADD_TECH","ADD_USAGE_LOG"]);
   const facilityScopedUpdateTypes = new Set(["UPDATE_EQ","UPDATE_PART","UPDATE_INV","UPDATE_FUEL_CONTAINER","UPDATE_FUEL_READING","UPDATE_PM_SCHEDULE","UPDATE_INSPECTION_SCHEDULE","UPDATE_PM_TASK","UPDATE_INSPECTION_TASK","UPDATE_PM","UPDATE_TECH","UPDATE_USAGE_LOG","UPDATE_WO"]);
@@ -1230,9 +1248,9 @@ function reducer(state, { type, payload }) {
       const shouldConsume = payload.status === "Completed" && !payload.inventoryConsumed;
       const savedWO = shouldConsume ? { ...payload, inventoryConsumed:true } : payload;
       const equipmentStatus = savedWO.status==="Completed" ? "Fully Operational" : (savedWO.equipmentStatus || null);
-      const equipment = equipmentStatus
+      const equipment = syncEquipmentServiceBaselines(equipmentStatus
         ? state.equipment.map(e => e.id===savedWO.equipment ? { ...e, status:equipmentStatus } : e)
-        : state.equipment;
+        : state.equipment, [savedWO,...state.workOrders]);
       const parts = shouldConsume ? adjustInventoryForWO(state.parts, savedWO.partsUsed, -1) : state.parts;
       const lubricants = shouldConsume ? adjustLubricantsForWO(state.lubricants, savedWO.partsUsed, -1) : (state.lubricants||[]);
       return { ...state, parts, lubricants, equipment, workOrders: [savedWO,...state.workOrders], notifications:[makeNotification({id:`N${Date.now()}`,type:"wo",msg:`Work Order ${savedWO.id} created`,read:false}),...state.notifications] };
@@ -1269,9 +1287,9 @@ function reducer(state, { type, payload }) {
       payloadWithStatus = payloadWithStatus.status==="Completed" ? { ...payloadWithStatus, equipmentStatus:"Fully Operational" } : payloadWithStatus;
       const updated = state.workOrders.map(w => w.id===payload.id ? payloadWithStatus : w);
       const equipmentStatus = payloadWithStatus.equipmentStatus || null;
-      const equipment = equipmentStatus
+      const equipment = syncEquipmentServiceBaselines(equipmentStatus
         ? state.equipment.map(e => e.id===payloadWithStatus.equipment ? { ...e, status:equipmentStatus } : e)
-        : state.equipment;
+        : state.equipment, updated);
       /* If WO is being completed and is linked to a PM schedule, advance the schedule */
       if(payload.status==="Completed" && payload.scheduleId) {
         const sch = (state.pmSchedules||[]).find(s=>s.id===payload.scheduleId);
@@ -1372,7 +1390,11 @@ function reducer(state, { type, payload }) {
           return { ...s, skippedDueOccurrences, nextDueDate, lastGeneratedDueDate:occurrence || s.lastGeneratedDueDate || "", lastGeneratedWorkOrderId:doomed.id || s.lastGeneratedWorkOrderId || "" };
         });
       }
-      return { ...state, workOrders:(state.workOrders||[]).filter(w => String(w.id)!==String(payload)), inspectionSchedules };
+      const remainingWOs=(state.workOrders||[]).filter(w => String(w.id)!==String(payload));
+      return { ...state, workOrders:remainingWOs, inspectionSchedules,
+        parts:doomed?.inventoryConsumed?adjustInventoryForWO(state.parts,doomed.partsUsed,+1):state.parts,
+        lubricants:doomed?.inventoryConsumed?adjustLubricantsForWO(state.lubricants||[],doomed.partsUsed,+1):(state.lubricants||[]),
+        equipment:syncEquipmentServiceBaselines(state.equipment,remainingWOs) };
     }
     case "ADD_EQ":        return { ...state, equipment: [payload,...state.equipment] };
     case "UPDATE_EQ": {
@@ -2409,6 +2431,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   const [spendPeriod, setSpendPeriod] = useState("month");
   const now = new Date();
   const spendingStart = (() => {
+    if(spendPeriod === "fy") return new Date(now.getMonth()>=9?now.getFullYear():now.getFullYear()-1, 9, 1);
     if(spendPeriod === "year") return new Date(now.getFullYear(), 0, 1);
     if(spendPeriod === "quarter") return new Date(now.getFullYear(), Math.floor(now.getMonth()/3)*3, 1);
     return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -2425,7 +2448,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     return sum;
   },{parts:0,labor:0,services:0});
   const spendingTotal = spendingBreakdown.parts + spendingBreakdown.labor + spendingBreakdown.services;
-  const spendingLabel = spendPeriod === "year" ? "This Year" : spendPeriod === "quarter" ? "This Quarter" : "This Month";
+  const spendingLabel = spendPeriod === "year" ? "This Year" : spendPeriod === "quarter" ? "This Quarter" : spendPeriod === "fy" ? `FY${now.getFullYear()+(now.getMonth()>=9?1:0)}` : "This Month";
   const upcoming = [
     ...pmSchedules.map(x=>({...x,_kind:"PM"})),
     ...inspectionSchedules.map(x=>({...x,_kind:"Inspection"})),
@@ -2476,7 +2499,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
         {!fuelContainers.length ? <div style={{padding:"18px 0",fontSize:12,color:T.muted}}>No fuel tanks have been created.</div> : <div style={{display:"grid",gap:9}}>{fuelContainers.map(c=>{ const r=latestFuelReading(state,c.id); const gallons=+(r?.gallons||0); const pct=r?fuelPercent(c,gallons):0; const levelColor=pct<=25?T.red:pct<75?T.amber:T.green; return <button key={c.id} onClick={()=>go("fuel")} style={{width:"100%",textAlign:"left",border:`1px solid ${levelColor}33`,borderRadius:10,background:T.card,padding:"10px 12px",cursor:"pointer"}}><div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"baseline"}}><div style={{fontSize:12,fontWeight:900,color:T.text}}>{c.name || c.fuelType || "Fuel Tank"}</div><div style={{fontSize:12,fontWeight:900,color:levelColor}}>{r?pct.toFixed(0)+"%":"No reading"}</div></div><div style={{display:"flex",justifyContent:"space-between",gap:10,marginTop:5,fontSize:11,color:T.subtext}}><span>{c.fuelType || "Fuel"}</span><span style={{fontWeight:800}}>{r?Math.round(gallons).toLocaleString()+" gal":"—"}{+c.capacity?` / ${(+c.capacity).toLocaleString()} gal`:""}</span></div><div style={{height:5,borderRadius:999,background:T.grayLt,overflow:"hidden",marginTop:8}}><div style={{height:"100%",width:`${Math.max(0,Math.min(100,pct))}%`,background:levelColor,borderRadius:999}} /></div></button>})}</div>}
       </div>
       <div style={{border:`1px solid ${T.border}`,borderRadius:14,background:T.card,padding:16}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,marginBottom:14,flexWrap:"wrap"}}><div><div style={{fontSize:15,fontWeight:900}}>Spending Snapshot</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Maintenance spending at a glance</div></div><div style={{display:"flex",gap:4,background:T.grayLt,padding:3,borderRadius:9}}>{[["month","Monthly"],["quarter","Quarterly"],["year","Yearly"]].map(([v,l])=><button key={v} onClick={()=>setSpendPeriod(v)} style={{border:0,borderRadius:7,padding:"6px 8px",background:spendPeriod===v?T.card:"transparent",color:spendPeriod===v?T.accent:T.subtext,fontSize:10,fontWeight:900,cursor:"pointer",boxShadow:spendPeriod===v?"0 1px 2px rgba(0,0,0,.08)":"none"}}>{l}</button>)}</div></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,marginBottom:14,flexWrap:"wrap"}}><div><div style={{fontSize:15,fontWeight:900}}>Spending Snapshot</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Maintenance spending at a glance</div></div><div style={{display:"flex",gap:4,background:T.grayLt,padding:3,borderRadius:9,flexWrap:"wrap"}}>{[["month","Monthly"],["quarter","Quarterly"],["year","Yearly"],["fy","FY"]].map(([v,l])=><button key={v} onClick={()=>setSpendPeriod(v)} style={{border:0,borderRadius:7,padding:"6px 8px",background:spendPeriod===v?T.card:"transparent",color:spendPeriod===v?T.accent:T.subtext,fontSize:10,fontWeight:900,cursor:"pointer",boxShadow:spendPeriod===v?"0 1px 2px rgba(0,0,0,.08)":"none"}}>{l}</button>)}</div></div>
         <div style={{fontSize:11,fontWeight:800,color:T.subtext}}>{spendingLabel}</div><div style={{fontSize:30,fontWeight:950,color:T.text,letterSpacing:-1,marginTop:3}}>{moneyFmt(spendingTotal)}</div><div style={{fontSize:10,color:T.muted,marginTop:2}}>{spendingWOs.length} work order{spendingWOs.length===1?"":"s"}</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginTop:14}}>{[["Parts",spendingBreakdown.parts,T.accent],["Labor",spendingBreakdown.labor,T.green],["Outside",spendingBreakdown.services,T.amber]].map(([label,value,color])=><div key={label} style={{padding:"9px 7px",borderRadius:9,background:T.grayLt,minWidth:0}}><div style={{fontSize:9,fontWeight:900,color,textTransform:"uppercase",letterSpacing:.4}}>{label}</div><div style={{fontSize:11,fontWeight:900,color:T.text,marginTop:4,overflow:"hidden",textOverflow:"ellipsis"}}>{moneyFmt(value)}</div></div>)}</div>
         <button onClick={()=>go("spending")} style={{border:0,background:"none",color:T.accent,fontSize:11,fontWeight:800,cursor:"pointer",padding:0,marginTop:13}}>View Spending & Costs →</button>
@@ -4765,14 +4788,14 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
         : <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans, marginBottom:18 }}>
             <thead>
               <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-                {["WO #","Description","Completed","Usage","Cost","Printable","Edit"].map(h=>(
+                {["WO #","Description","Completed","Usage","Cost","View","Edit","Delete"].map(h=>(
                   <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rows.map((wo,i)=>(
-                <tr key={wo.id} onClick={()=>printHistoryWO(wo)} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer" }} title="Click to open the printable work order">
+                <tr key={wo.id} onClick={()=>{setHistoryWO(wo);setHistoryEdit(false);}} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer" }} title="Click to view work order details">
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:T.accent, fontWeight:700 }}>{wo.id}</td>
                   <td style={{ padding:"9px 12px", fontWeight:500, color:T.text }}>{historyLabel(wo, fallbackTitle)}</td>
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{wo.completed||wo.closedDate||"—"}</td>
@@ -4781,8 +4804,8 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
                   <td style={{ padding:"6px 12px" }}>
                     <button
                       type="button"
-                      onClick={(e)=>{ e.stopPropagation(); printHistoryWO(wo); }}
-                      title="Open printable work order"
+                      onClick={(e)=>{ e.stopPropagation(); setHistoryWO(wo); setHistoryEdit(false); }}
+                      title="View work order details"
                       style={{ border:`1px solid ${T.accent}`, background:T.accent, color:"#fff", borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:12, fontWeight:700, lineHeight:1 }}
                     >
                       View
@@ -4798,6 +4821,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
                       ✏️
                     </button>
                   </td>
+                  <td style={{ padding:"6px 12px" }}><button type="button" onClick={e=>{e.stopPropagation();if(window.confirm(`Permanently delete work order ${wo.id}? This removes its history and cost records and restores any inventory consumed by this work order. This cannot be undone.`)){dispatch({type:"DELETE_WO",payload:wo.id});if(historyWO?.id===wo.id)closeHistoryWO();}}} style={{border:`1px solid ${T.red}`,background:T.card,color:T.red,borderRadius:7,padding:"5px 8px",cursor:"pointer",fontSize:12,fontWeight:800}}>Delete</button></td>
                 </tr>
               ))}
             </tbody>
