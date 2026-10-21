@@ -1468,9 +1468,15 @@ function reducer(state, { type, payload }) {
       };
     }
     case "DELETE_EQ":     return { ...state, equipment: state.equipment.filter(e => e.id!==payload) };
-    case "ADD_PART":      return { ...state, parts: [payload,...state.parts] };
+    case "ADD_PART": {
+      // Protect against duplicate submissions and existing catalog part numbers.
+      const key = String(payload.partNumber||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"");
+      if(state.parts.some(p => p.id===payload.id)) return state;
+      if(key && state.parts.some(p => String(p.partNumber||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"")===key)) return state;
+      return { ...state, parts:[payload,...state.parts] };
+    }
     case "UPDATE_PART":   return { ...state, parts: state.parts.map(p => p.id===payload.id ? payload : p) };
-    case "DELETE_PART":   return { ...state, parts: state.parts.filter(p => p.id!==payload) };
+    case "DELETE_PART":   return { ...state, parts: state.parts.filter(p => String(p.id)!==String(payload)) };
     case "ADD_LUBRICANT": return { ...state, lubricants:[payload,...(state.lubricants||[])] };
     case "UPDATE_LUBRICANT": return { ...state, lubricants:(state.lubricants||[]).map(l=>l.id===payload.id?payload:l) };
     case "DELETE_LUBRICANT": return { ...state, lubricants:(state.lubricants||[]).filter(l=>l.id!==payload) };
@@ -1654,7 +1660,7 @@ function reducer(state, { type, payload }) {
   }
 }
 
-const genId = p => `${p}-${String(Date.now()).slice(-5)}`;
+const genId = p => `${p}-${Date.now()}-${Math.random().toString(36).slice(2,10)}`;
 const today = () => new Date().toISOString().split("T")[0];
 const isValidISODate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || "")) && !Number.isNaN(new Date(`${value}T00:00:00`).getTime());
 const formatDateMMDDYYYY = (value = today()) => {
@@ -2760,7 +2766,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     const attachment = item.parentId ? (parentEq?.attachments||[]).find(a=>String(a.id)===String(item.id)) : null;
     const latestUsage = latestUsageForEquipment(item.id);
     const asset = attachment || eq;
-    setForm(f=>({...f, woType:f.woType||"Repair", equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||item.parentNomenclature||null, parentId:item.parentId||null, equipmentStatus:(parentEq||eq)?.status||"Fully Operational", usageType:asset?.usageType||"hours", usageNA:asset?.trackUsage ? false : (f.usageNA||false), usageHours:asset?.trackUsage ? (latestUsage.hours||String(asset.currentHours||"")) : "", usageMileage:asset?.trackUsage ? (latestUsage.mileage||String(asset.currentMileage||"")) : ""}));
+    setForm(f=>({...f, woType:f.woType||"Repair", equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||item.parentNomenclature||null, parentId:item.parentId||null, equipmentStatus:(parentEq||eq)?.status||"Fully Operational", usageType:asset?.usageType||"hours", usageNA:!asset?.trackUsage, usageHours:asset?.trackUsage ? (latestUsage.hours||String(asset.currentHours||"")) : "", usageMileage:asset?.trackUsage ? (latestUsage.mileage||String(asset.currentMileage||"")) : ""}));
     setModal("form");
   };
 
@@ -2773,7 +2779,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     setForm(applyDefaultMechanic({
       woType:initialWORequest.woType||"Repair", title:buildTitle(initialWORequest.woType||"Repair", ""), status:"Open",
       equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||item.parentNomenclature||null, parentId:item.parentId||null,
-      equipmentStatus:parentEq?.status||"Fully Operational", priority:"Medium", created:today(), due:"", tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], outsideServices:[], mechanicNotes:"", faultEnabled:true, faultDescription:"", usageType:parentEq?.usageType||"hours", usageHours:"", usageMileage:"", usageNA:true, repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"", inspectionStepResults:[]
+      equipmentStatus:parentEq?.status||"Fully Operational", priority:"Medium", created:today(), due:"", tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], outsideServices:[], mechanicNotes:"", faultEnabled:true, faultDescription:"", usageType:parentEq?.usageType||"hours", usageHours:"", usageMileage:"", usageNA:!parentEq?.trackUsage, repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"", inspectionStepResults:[]
     }));
     setModal("form");
     onConsumeWORequest?.();
@@ -2795,7 +2801,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
       outsideServices:wo.outsideServices||[],
       usageType: wo.usageType || eq?.usageType || "hours",
       // Inspection WOs for equipment without usage tracking still need the user to confirm a reading or choose N/A.
-      usageNA: needsManualUsagePrompt ? false : !!wo.usageNA,
+      usageNA: eq && !eq.trackUsage ? true : (needsManualUsagePrompt ? false : !!wo.usageNA),
     });
     setModal("edit");
   };
@@ -2874,7 +2880,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     const selectedAttachment = selectedAttachmentParent ? (selectedAttachmentParent.attachments||[]).find(a=>String(a.id)===String(form.equipment)) : null;
     const selectedAsset = selectedAttachment || selectedEquipment;
     const latestUsage = latestUsageForEquipment(form.equipment);
-    const formWithLatestUsage = applyDefaultMechanic(form.usageNA ? form : {
+    const formWithLatestUsage = applyDefaultMechanic((selectedAsset && !selectedAsset.trackUsage) ? {...form,usageNA:true,usageHours:"",usageMileage:""} : form.usageNA ? form : {
       ...form,
       usageHours: String(form.usageHours ?? "").trim() || latestUsage.hours,
       usageMileage: String(form.usageMileage ?? "").trim() || latestUsage.mileage,
@@ -3326,7 +3332,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
               <input style={inp} disabled={!!form.usageNA} type="number" step="1" value={form.usageMileage||""} onChange={e=>setForm(f=>({...f,usageMileage:e.target.value}))} placeholder="Enter current mileage" />
             </div>
           </div>
-          <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:6 }}>If this equipment has no usage tracking selected, enter the reading here for the WO record, or select N/A when there is truly no hour/mileage value.</div>
+          <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:6 }}>Equipment configured without usage tracking automatically uses N/A.</div>
         </div>
 
         <div style={{ gridColumn:"span 2", border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.card, marginBottom:14 }}>
@@ -5671,6 +5677,7 @@ function Parts({ state, dispatch }) {
     if(!form.name) return alert("Nomenclature required.");
     if(!String(form.location||"").trim()) return alert("Choose a Parts Storage Location. Add storage locations in Settings first.");
     const cleanForm = { ...form, category:String(form.category||"").trim(), unit:String(form.unit||"ea").trim()||"ea", qty:+form.qty||0, unitCost:+form.unitCost||0, minQty:+form.minQty||0, lowStockAlert:form.lowStockAlert!==false, equipmentId:String(form.equipmentId||"") };
+    if(modal==="add" && cleanForm.partNumber && parts.some(p=>String(p.partNumber||"").replace(/[^a-z0-9]/gi,"").toUpperCase()===String(cleanForm.partNumber).replace(/[^a-z0-9]/gi,"").toUpperCase())) return alert("This part number already exists. Edit the existing part to update its quantity instead of creating a duplicate.");
     modal==="add"
       ? dispatch({type:"ADD_PART",  payload:{...cleanForm,id:genId("PT")}})
       : dispatch({type:"UPDATE_PART",payload:cleanForm});
@@ -11909,7 +11916,6 @@ export default function App() {
       <main className="mf-main" style={{ width:"100%", maxWidth:"none", padding:"18px clamp(12px, 2vw, 28px)", minHeight:"calc(100vh - 56px)", overflowX:"auto" }}>
         <div style={{ marginBottom:20 }}>
           <h1 style={{ margin:0, fontFamily:T.sans, fontSize:24, fontWeight:700, color:T.text, letterSpacing:-.4 }}>{PAGE_TITLES[tab]}</h1>
-          <div style={{ width:32, height:3, background:T.accent, borderRadius:2, marginTop:6 }} />
         </div>
         <LegacyDataRepairBanner state={state} dispatch={dispatch} />
         <PageErrorBoundary resetKey={tab} onReset={()=>setTab("dashboard")}>
