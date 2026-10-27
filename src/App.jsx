@@ -986,7 +986,7 @@ function adjustInventoryForWO(parts=[], partsUsed=[], direction=-1) {
     if(!item?.partId) return;
     const qty = +(item.qty||0);
     if(!qty) return;
-    next = next.map(p => p.id===item.partId ? { ...p, qty:Math.max(0, +(p.qty||0) + (direction * qty)) } : p);
+    next = next.map(p => String(p.id)===String(item.partId) ? { ...p, qty:+(p.qty||0) + (direction * qty) } : p);
   });
   return next;
 }
@@ -1273,13 +1273,15 @@ function reducer(state, { type, payload }) {
         ? state.equipment.map(e => e.id===payloadWithStatus.equipment ? { ...e, status:equipmentStatus } : e)
         : state.equipment;
       /* If WO is being completed and is linked to a PM schedule, advance the schedule */
-      if(payload.status==="Completed" && payload.scheduleId) {
+      if(payload.status==="Completed" && prevWO?.status!=="Completed" && payload.scheduleId) {
         const sch = (state.pmSchedules||[]).find(s=>s.id===payload.scheduleId);
         if(sch) {
           const logs = (state.usageLogs||[]).filter(l=>l.equipmentId===sch.equipmentId);
-          const curU  = sch.usageType==="mileage"
-            ? Math.max(...logs.map(l=>+(l.mileage||0)), 0)
-            : Math.max(...logs.map(l=>+(l.hours||0)), 0);
+          const linkedEq = (state.equipment||[]).find(e=>String(e.id)===String(sch.equipmentId)) || {};
+          const meterType = String(sch.usageType||"hours").toLowerCase();
+          const curU = meterType==="mileage"
+            ? Math.max(0, Number(linkedEq.currentMileage??linkedEq.mileage)||0, Number(payload.usageMileage)||0, ...logs.map(l=>Number(l.mileage)||0))
+            : Math.max(0, Number(linkedEq.currentHours??linkedEq.hours)||0, Number(payload.usageHours)||0, ...logs.map(l=>Number(l.hours)||0));
           const doneDate = payload.completed||new Date().toISOString().split("T")[0];
           const sourceTriggers = Array.isArray(sch.triggers) && sch.triggers.length ? sch.triggers : [{type:sch.triggerType==="usage"?(sch.usageType||"hours"):"time",timeInterval:sch.timeInterval,timeUnit:sch.timeUnit||"months",usageInterval:sch.usageInterval,usageMode:"every"}];
           const advancedTriggers = sourceTriggers.map(t=>{
@@ -1300,7 +1302,7 @@ function reducer(state, { type, payload }) {
         }
       }
       /* Inspection completion is a single durable transaction. Resolve legacy WOs even if linkage fields are missing. */
-      if(payload.status==="Completed" && payload.woType==="Inspection") {
+      if(payload.status==="Completed" && prevWO?.status!=="Completed" && payload.woType==="Inspection") {
         const schedule = (state.inspectionSchedules||[]).find(s =>
           (payload.inspectionScheduleId && String(s.id)===String(payload.inspectionScheduleId)) ||
           (String(s.equipmentId||"")===String(payload.equipment||payload.equipmentId||"") && payload.inspectionTaskId && String(s.taskId||"")===String(payload.inspectionTaskId)) ||
@@ -1446,8 +1448,16 @@ function reducer(state, { type, payload }) {
       };
     }
     case "DELETE_EQ":     return { ...state, equipment: state.equipment.filter(e => e.id!==payload) };
-    case "ADD_PART":      return { ...state, parts: [payload,...state.parts] };
-    case "UPDATE_PART":   return { ...state, parts: state.parts.map(p => p.id===payload.id ? payload : p) };
+    case "ADD_PART": {
+      const sku=String(payload.partNumber||"").trim().toLowerCase();
+      if(sku && (state.parts||[]).some(p=>String(p.partNumber||"").trim().toLowerCase()===sku)) return state;
+      return { ...state, parts: [payload,...state.parts] };
+    }
+    case "UPDATE_PART": {
+      const sku=String(payload.partNumber||"").trim().toLowerCase();
+      if(sku && (state.parts||[]).some(p=>String(p.id)!==String(payload.id) && String(p.partNumber||"").trim().toLowerCase()===sku)) return state;
+      return { ...state, parts: state.parts.map(p => p.id===payload.id ? payload : p) };
+    }
     case "DELETE_PART":   return { ...state, parts: state.parts.filter(p => p.id!==payload) };
     case "ADD_LUBRICANT": return { ...state, lubricants:[payload,...(state.lubricants||[])] };
     case "UPDATE_LUBRICANT": return { ...state, lubricants:(state.lubricants||[]).map(l=>l.id===payload.id?payload:l) };
@@ -2828,7 +2838,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
   const addPartFromInventory = (invPart, rowIdx) => {
     setForm(f=>{
       const arr = [...(f.partsUsed||[])];
-      arr[rowIdx] = { name:invPart.name, partNumber:invPart.partNumber||"", qty:1, unit:invPart.unit||invPart.unitType||"ea", unitCost:invPart.unitCost, partId:invPart.id, availableQty:+(invPart.qty||0), partSearch:invPart.name||invPart.partNumber||"" };
+      arr[rowIdx] = { name:invPart.name, partNumber:invPart.partNumber||"", qty:1, unit:invPart.unit||invPart.unitType||"ea", unitCost:invPart.unitCost, partId:invPart.id, receivedQty:"", totalPurchaseCost:"", receiptApplied:false, availableQty:+(invPart.qty||0), partSearch:invPart.name||invPart.partNumber||"" };
       return {...f, partsUsed:arr};
     });
   };
@@ -3405,19 +3415,19 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
           <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:8 }}>Parts</label>
           {(form.partsUsed||[]).map((p,idx)=>(
             <div key={idx}>
-              <div style={{ display:"grid", gridTemplateColumns:"minmax(180px,1fr) 82px 82px 96px 110px 110px auto", gap:8, marginBottom:4, alignItems:"center" }}>
+              <div style={{ display:"grid", gridTemplateColumns:p.partId?"minmax(180px,1fr) 82px 96px 110px auto auto":"minmax(180px,1fr) 82px 82px 96px 110px 110px auto auto", gap:8, marginBottom:4, alignItems:"center" }}>
                 <div style={{ position:"relative" }}>
                   <input style={inp} placeholder="Part name or pick from inventory..." value={p.name||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],name:e.target.value,partSearch:e.target.value,partId:undefined,availableQty:undefined,partNumber:undefined}; return {...f,partsUsed:arr}; })} />
                   {p.partId && <span style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", fontFamily:T.mono, fontSize:9, color:T.green }}>inv</span>}
                 </div>
                 <input style={{ ...inp, textAlign:"center" }} type="number" min="0" step="0.01" placeholder="Used" title="Quantity used on this work order" value={p.qty||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],qty:e.target.value}; return {...f,partsUsed:arr}; })} />
-                <input style={{ ...inp, textAlign:"center" }} type="number" min="0" step="0.01" placeholder="Received" title="Quantity purchased/received into inventory" value={p.receivedQty||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],receivedQty:e.target.value,receiptApplied:false}; return {...f,partsUsed:arr}; })} />
+                {!p.partId && <input style={{ ...inp, textAlign:"center" }} type="number" min="0" step="0.01" placeholder="Received" title="Quantity purchased/received into inventory" value={p.receivedQty||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],receivedQty:e.target.value,receiptApplied:false}; return {...f,partsUsed:arr}; })} />}
                 <select style={sel} value={p.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, p.unit||"ea", v=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],unit:v}; return {...f,partsUsed:arr}; }))}>
                   {getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}
                   <option value="__new_unit__">+ Add new...</option>
                 </select>
                 <input style={inp} {...decimalInputAttrs({ placeholder:"Cost / each" })} title="Enter cost per each OR total purchase cost" value={p.unitCost||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; const unitCost=sanitizeDecimalInput(e.target.value); const rq=+(arr[idx]?.receivedQty||0); arr[idx]={...arr[idx],unitCost,totalPurchaseCost:rq&&unitCost!==""?String(rq*(+unitCost)):arr[idx]?.totalPurchaseCost||""}; return {...f,partsUsed:arr}; })} />
-                <input style={inp} {...decimalInputAttrs({ placeholder:"Total purchase $" })} title="Enter total purchase cost OR cost per each" value={p.totalPurchaseCost||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; const totalPurchaseCost=sanitizeDecimalInput(e.target.value); const rq=+(arr[idx]?.receivedQty||0); arr[idx]={...arr[idx],totalPurchaseCost,unitCost:rq&&totalPurchaseCost!==""?String((+totalPurchaseCost)/rq):arr[idx]?.unitCost||""}; return {...f,partsUsed:arr}; })} />
+                {!p.partId && <input style={inp} {...decimalInputAttrs({ placeholder:"Total purchase $" })} title="Enter total purchase cost OR cost per each" value={p.totalPurchaseCost||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; const totalPurchaseCost=sanitizeDecimalInput(e.target.value); const rq=+(arr[idx]?.receivedQty||0); arr[idx]={...arr[idx],totalPurchaseCost,unitCost:rq&&totalPurchaseCost!==""?String((+totalPurchaseCost)/rq):arr[idx]?.unitCost||""}; return {...f,partsUsed:arr}; })} />}
                 <button onClick={()=>setShowNewPart(showNewPart===idx?null:idx)} style={{ padding:"6px 8px", border:`1px solid ${T.border}`, borderRadius:6, background:T.grayLt, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.accent, whiteSpace:"nowrap" }}>
                   {showNewPart===idx?"Close Inventory":"Inventory"}
                 </button>
@@ -4791,7 +4801,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
         : <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans, marginBottom:18 }}>
             <thead>
               <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-                {["WO #","Description","Completed","Usage","Cost","Printable","Edit"].map(h=>(
+                {["WO #","Description","Completed","Usage","Cost","Printable","Edit","Delete"].map(h=>(
                   <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</th>
                 ))}
               </tr>
@@ -4823,6 +4833,15 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
                     >
                       ✏️
                     </button>
+                  </td>
+                  <td style={{ padding:"6px 12px" }}>
+                    <button type="button" onClick={(e)=>{
+                      e.stopPropagation();
+                      if(window.confirm(`Permanently delete historical work order ${wo.id}? This removes its record but will NOT return previously consumed parts to inventory.`)) {
+                        dispatch({type:"DELETE_WO",payload:wo.id});
+                        if(String(historyWO?.id||"")===String(wo.id)) closeHistoryWO();
+                      }
+                    }} style={{border:`1px solid ${T.red}`,background:"transparent",color:T.red,borderRadius:7,padding:"5px 8px",cursor:"pointer",fontSize:12,fontWeight:700}}>Delete</button>
                   </td>
                 </tr>
               ))}
@@ -5672,6 +5691,11 @@ function Parts({ state, dispatch }) {
   const save = () => {
     if(!form.name) return alert("Nomenclature required.");
     if(!String(form.location||"").trim()) return alert("Choose a Parts Storage Location. Add storage locations in Settings first.");
+    const sku = String(form.partNumber||"").trim().toLowerCase();
+    if(sku && parts.some(p=>String(p.partNumber||"").trim().toLowerCase()===sku && String(p.id)!==String(form.id||""))) {
+      alert(`Part #${form.partNumber} already exists in inventory. Edit the existing part or receive stock against it instead of creating a duplicate.`);
+      return;
+    }
     const cleanForm = { ...form, category:String(form.category||"").trim(), unit:String(form.unit||"ea").trim()||"ea", qty:+form.qty||0, unitCost:+form.unitCost||0, minQty:+form.minQty||0, lowStockAlert:form.lowStockAlert!==false, equipmentId:String(form.equipmentId||"") };
     modal==="add"
       ? dispatch({type:"ADD_PART",  payload:{...cleanForm,id:genId("PT")}})
