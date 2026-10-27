@@ -1273,9 +1273,12 @@ function reducer(state, { type, payload }) {
         ? state.equipment.map(e => e.id===payloadWithStatus.equipment ? { ...e, status:equipmentStatus } : e)
         : state.equipment;
       /* If WO is being completed and is linked to a PM schedule, advance the schedule */
-      if(payload.status==="Completed" && prevWO?.status!=="Completed" && payload.scheduleId) {
-        const sch = (state.pmSchedules||[]).find(s=>s.id===payload.scheduleId);
-        if(sch) {
+      if(payload.status==="Completed" && prevWO?.status!=="Completed" && (payload.scheduleId || payload.pmScheduleIds?.length)) {
+        const completedScheduleIds = Array.from(new Set([...(payload.pmScheduleIds||[]),payload.scheduleId].filter(Boolean).map(String)));
+        const matchedSchedules = (state.pmSchedules||[]).filter(s=>completedScheduleIds.includes(String(s.id)));
+        if(matchedSchedules.length) {
+          const advancedSchedules = new Map();
+          for(const sch of matchedSchedules) {
           const logs = (state.usageLogs||[]).filter(l=>l.equipmentId===sch.equipmentId);
           const linkedEq = (state.equipment||[]).find(e=>String(e.id)===String(sch.equipmentId)) || {};
           const meterType = String(sch.usageType||"hours").toLowerCase();
@@ -1298,7 +1301,9 @@ function reducer(state, { type, payload }) {
             nextDueDate: advancedTriggers.find(t=>(t.type||"time")==="time")?.nextDueDate || "",
             nextDueUsage: advancedTriggers.find(t=>t.type==="hours"||t.type==="mileage")?.nextDueUsage || "",
           };
-          return { ...state, lubricants, parts, equipment, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
+          advancedSchedules.set(String(sch.id),advancedSch);
+          }
+          return { ...state, lubricants, parts, equipment, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>advancedSchedules.get(String(s.id))||s) };
         }
       }
       /* Inspection completion is a single durable transaction. Resolve legacy WOs even if linkage fields are missing. */
@@ -2431,6 +2436,23 @@ function mfScheduleDue(schedule, state, asOf=today(), strictlyOverdue=false) {
     }
     return false;
   });
+}
+
+// PM consolidation compares the actual stored due occurrence, never merely "both overdue".
+// Multi-trigger assignments are intentionally excluded: an ambiguous trigger cannot be safely merged.
+function mfPMOccurrenceKey(schedule) {
+  const triggers=Array.isArray(schedule.triggers)&&schedule.triggers.length ? schedule.triggers : [schedule];
+  if(triggers.length!==1) return null;
+  const t=triggers[0];
+  const kind=String(t.type||t.triggerType||schedule.triggerType||"time").toLowerCase();
+  if(kind==="time"||kind==="date") {
+    const due=String(t.nextDueDate||schedule.nextDueDate||"").slice(0,10);
+    return /^\d{4}-\d{2}-\d{2}$/.test(due) ? `${schedule.equipmentId}|date|${due}` : null;
+  }
+  const mode=kind==="usage"?String(schedule.usageType||"hours").toLowerCase():kind;
+  if(mode!=="hours"&&mode!=="mileage") return null;
+  const due=Number(t.nextDueUsage??schedule.nextDueUsage);
+  return Number.isFinite(due)&&due>0 ? `${schedule.equipmentId}|${mode}|${due}` : null;
 }
 
 function Dashboard({ state, dispatch, setTab, onSettings }) {
@@ -3809,9 +3831,16 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
 
   const duePMItems = (state.pmSchedules||[]).filter(s=>{
     const due = mfScheduleDue(s, state);
-    const hasOpen = (state.workOrders||[]).some(w=>w.woType==="Service" && String(w.scheduleId||"")===String(s.id||"") && w.status!=="Completed");
+    const hasOpen = (state.workOrders||[]).some(w=>w.woType==="Service" && (String(w.scheduleId||"")===String(s.id||"") || (w.pmScheduleIds||[]).some(id=>String(id)===String(s.id))) && w.status!=="Completed");
     return due && !hasOpen;
   });
+  const pmDueGroups = duePMItems.reduce((groups,s)=>{
+    const key=mfPMOccurrenceKey(s) || `single:${s.id}`;
+    const group=groups.find(g=>g.key===key);
+    if(group) group.schedules.push(s);
+    else groups.push({key,schedules:[s]});
+    return groups;
+  },[]);
   const dueInspectionItems = (state.inspectionSchedules||[]).filter(s=>{
     const due = s.status==="Overdue" || s.status==="Due" || (s.nextDueDate && s.nextDueDate<=today());
     const hasOpen = (state.workOrders||[]).some(w=>w.woType==="Inspection" && String(w.inspectionScheduleId||"")===String(s.id||"") && w.status!=="Completed");
@@ -3827,7 +3856,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     return null;
   };
 
-  const createDuePMWO = (sch) => {
+  const createDuePMWO = (sch, combinedSchedules=[sch]) => {
     const eq=resolveMaintainableAsset(sch.equipmentId);
     const task=(state.pmTasks||[]).find(t=>String(t.id)===String(sch.taskId)) || {};
     const logs=(state.usageLogs||[]).filter(l=>String(l.equipmentId)===String(sch.equipmentId));
@@ -3835,7 +3864,12 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     const currentHours=Math.max(+(eq?.currentHours||0),...logs.map(l=>+(l.hours||0)).filter(Number.isFinite),0)||"";
     const currentMileage=Math.max(+(eq?.currentMileage||0),...logs.map(l=>+(l.mileage||0)).filter(Number.isFinite),0)||"";
     const stepLines=(Array.isArray(task.steps)?task.steps:String(task.steps||"").split(/\n+/)).map(x=>String(x?.text||x?.step||x||"").trim()).filter(Boolean);
-    dispatch({type:"ADD_WO",payload:{id:genWOId(eq?.id||sch.equipmentId,"Service"),title:task.name||sch.task||"PM Service",equipment:sch.equipmentId,status:"Open",priority:state.settings?.defaultPriority || "Medium",woType:"Service",equipmentStatus:eq?.status||"Fully Operational",created:today(),due:sch.nextDueDate||today(),tech:"",laborHours:0,laborCost:0,partsCost:0,description:task.description||task.name||sch.task||"PM Service",workPerformed:stepLines.join("\n"),serviceSteps:stepLines.join("\n"),serviceStepLines:stepLines,steps:stepLines,serviceChecklist:stepLines.join("\n"),serviceStepNotes:Array.isArray(task.stepNotes)?[...task.stepNotes]:[],taskProcedureSnapshot:{taskId:task.id||sch.taskId,name:task.name||sch.task||"PM Service",steps:[...stepLines],stepNotes:Array.isArray(task.stepNotes)?[...task.stepNotes]:[],capturedAt:new Date().toISOString()},procedureMode:"library",procedureTaskId:task.id||sch.taskId||"",equipmentType:eq?.assetType||"Equipment",parentId:eq?.parentId||null,parentName:eq?.parentName||null,mechanicNotes:"",faultEnabled:true,faultDescription:task.description||task.name||sch.task||"PM Service",usageType:mode,usageHours:mode==="mileage"?"":currentHours,usageMileage:mode==="hours"?"":currentMileage,usageNA:!eq?.trackUsage,partsUsed:Array.isArray(task.parts)?task.parts:[],outsideServices:[],scheduleId:sch.id,pmTaskId:task.id||sch.taskId}});
+    const mergedTasks=combinedSchedules.map(s=>({schedule:s,task:(state.pmTasks||[]).find(t=>String(t.id)===String(s.taskId))||{}}));
+    const combinedSteps=combinedSchedules.length>1 ? mergedTasks.flatMap(({schedule,task:t})=>{
+      const lines=(Array.isArray(t.steps)?t.steps:String(t.steps||"").split(/\n+/)).map(x=>String(x?.text||x?.step||x||"").trim()).filter(Boolean);
+      return [`[${t.name||schedule.task||"PM Service"}]`,...lines];
+    }) : stepLines;
+    dispatch({type:"ADD_WO",payload:{id:genWOId(eq?.id||sch.equipmentId,"Service"),title:combinedSchedules.length>1?`Combined PM — ${mergedTasks.map(({task:t,schedule:x})=>t.name||x.task||"PM").join(" + ")}`:(task.name||sch.task||"PM Service"),equipment:sch.equipmentId,status:"Open",priority:state.settings?.defaultPriority || "Medium",woType:"Service",equipmentStatus:eq?.status||"Fully Operational",created:today(),due:sch.nextDueDate||today(),tech:"",laborHours:0,laborCost:0,partsCost:0,description:task.description||task.name||sch.task||"PM Service",workPerformed:combinedSteps.join("\n"),serviceSteps:combinedSteps.join("\n"),serviceStepLines:combinedSteps,steps:combinedSteps,serviceChecklist:combinedSteps.join("\n"),serviceStepNotes:Array.isArray(task.stepNotes)?[...task.stepNotes]:[],taskProcedureSnapshot:{taskId:task.id||sch.taskId,name:combinedSchedules.length>1?"Combined PM":(task.name||sch.task||"PM Service"),steps:[...combinedSteps],stepNotes:Array.isArray(task.stepNotes)?[...task.stepNotes]:[],capturedAt:new Date().toISOString()},procedureMode:"library",procedureTaskId:task.id||sch.taskId||"",equipmentType:eq?.assetType||"Equipment",parentId:eq?.parentId||null,parentName:eq?.parentName||null,mechanicNotes:"",faultEnabled:true,faultDescription:task.description||task.name||sch.task||"PM Service",usageType:mode,usageHours:mode==="mileage"?"":currentHours,usageMileage:mode==="hours"?"":currentMileage,usageNA:!eq?.trackUsage,partsUsed:mergedTasks.flatMap(({task:t})=>Array.isArray(t.parts)?t.parts.map(p=>({...p})):[]),outsideServices:[],scheduleId:sch.id,pmScheduleIds:combinedSchedules.map(x=>x.id),pmTaskId:task.id||sch.taskId}});
   };
   const createDueInspectionWO = (sch) => {
     const eq=resolveMaintainableAsset(sch.equipmentId);
@@ -3851,7 +3885,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     <div>
       {/* Due service / inspection notifications */}
       {(duePMItems.length>0 || dueInspectionItems.length>0) && <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:10,marginBottom:14}}>
-        {duePMItems.length>0 && <Card><div style={{fontWeight:800,fontSize:14,marginBottom:8}}>🔧 Services Due / Overdue ({duePMItems.length})</div>{duePMItems.map(sch=>{const eq=(state.equipment||[]).find(e=>String(e.id)===String(sch.equipmentId));const task=(state.pmTasks||[]).find(t=>String(t.id)===String(sch.taskId));return <div key={sch.id} style={{padding:"9px 0",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",gap:10,alignItems:"center"}}><div><b>{eq?.name||sch.equipmentId}</b><div style={{fontSize:12,color:T.muted}}>{task?.name||sch.task||"PM Service"} · Due {sch.nextDueDate||"now"}</div></div><Btn small onClick={()=>createDuePMWO(sch)}>Create WO</Btn></div>})}</Card>}
+        {duePMItems.length>0 && <Card><div style={{fontWeight:800,fontSize:14,marginBottom:8}}>🔧 Services Due / Overdue ({duePMItems.length})</div>{pmDueGroups.map(({key,schedules})=>{const sch=schedules[0];const eq=resolveMaintainableAsset(sch.equipmentId);const labels=schedules.map(x=>(state.pmTasks||[]).find(t=>String(t.id)===String(x.taskId))?.name||x.task||"PM Service");return <div key={key} style={{padding:"9px 0",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",gap:10,alignItems:"center"}}><div><b>{eq?.name||sch.equipmentId}</b><div style={{fontSize:12,color:T.muted}}>{labels.join(" + ")} · {schedules.length>1?"Exact same scheduled trigger · ":""}{sch.nextDueDate||sch.nextDueUsage||"now"}</div></div><Btn small onClick={()=>createDuePMWO(sch,schedules)}>{schedules.length>1?`Create Combined WO (${schedules.length})`:"Create WO"}</Btn></div>})}</Card>}
         {dueInspectionItems.length>0 && <Card><div style={{fontWeight:800,fontSize:14,marginBottom:8}}>📋 Inspections Due / Overdue ({dueInspectionItems.length})</div>{dueInspectionItems.map(sch=>{const eq=(state.equipment||[]).find(e=>String(e.id)===String(sch.equipmentId));const task=(state.inspectionTasks||[]).find(t=>String(t.id)===String(sch.taskId));return <div key={sch.id} style={{padding:"9px 0",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",gap:10,alignItems:"center"}}><div><b>{eq?.name||sch.equipmentId}</b><div style={{fontSize:12,color:T.muted}}>{task?.name||sch.task||"Inspection"} · Due {sch.nextDueDate||"now"}</div></div><Btn small onClick={()=>createDueInspectionWO(sch)}>Create WO</Btn></div>})}</Card>}
       </div>}
 
@@ -6676,7 +6710,7 @@ function PM({ state, dispatch }) {
 
   const hasActivePMWorkOrder = (sch) => (state.workOrders||[]).some(w =>
     w.woType==="Service" &&
-    String(w.scheduleId||"")===String(sch.id||"") &&
+    (String(w.scheduleId||"")===String(sch.id||"") || (w.pmScheduleIds||[]).some(id=>String(id)===String(sch.id))) &&
     w.status!=="Completed"
   );
   const triggered = schedules.filter(s=>!hasActivePMWorkOrder(s) && shouldTrigger(s));
@@ -9819,6 +9853,8 @@ function PerformanceActivity({ state }) {
       const startYear=quarter===1?fy-1:fy;
       return [new Date(startYear,startMonth,1),new Date(startYear,startMonth+3,1)];
     }
+    if(periodMode==="lifetime") return [new Date(1970,0,1),new Date(9999,0,1)];
+    if(periodMode==="year") return [new Date(fy,0,1),new Date(fy+1,0,1)];
     if(periodMode==="custom") return [new Date(customStart+"T00:00:00"),new Date(new Date(customEnd+"T00:00:00").getTime()+86400000)];
     return [new Date(fy-1,9,1),new Date(fy,9,1)];
   })();
@@ -9837,11 +9873,12 @@ function PerformanceActivity({ state }) {
   const partLines=completed.flatMap(w=>(w.partsUsed||[]).map(p=>({w,p})));
   const partsConsumed=partLines.reduce((n,x)=>n+(+x.p.qty||0),0);
   const partsConsumedValue=partLines.reduce((n,x)=>n+lineItemTotal(x.p),0);
+  // Purchase lines in completed WOs are not a complete procurement ledger.
   const purchaseLines=partLines.filter(x=>(+x.p.receivedQty||0)>0);
   const purchases=purchaseLines.length;
   const purchaseQty=purchaseLines.reduce((n,x)=>n+(+x.p.receivedQty||0),0);
   const purchaseSpend=purchaseLines.reduce((n,x)=>n+((+x.p.receivedQty||0)*(+x.p.unitCost||+x.p.cost||0)),0);
-  const label=periodMode==="month"?new Date(month+"-01T12:00:00").toLocaleDateString(undefined,{month:"long",year:"numeric"}):periodMode==="quarter"?`FY ${fy} · Q${quarter}`:periodMode==="custom"?`${customStart} – ${customEnd}`:`Fiscal Year ${fy}`;
+  const label=periodMode==="month"?new Date(month+"-01T12:00:00").toLocaleDateString(undefined,{month:"long",year:"numeric"}):periodMode==="quarter"?`FY ${fy} · Q${quarter}`:periodMode==="custom"?`${customStart} – ${customEnd}`:periodMode==="lifetime"?"Lifetime":periodMode==="year"?`Calendar Year ${fy}`:`Fiscal Year ${fy}`;
   const locName=(id)=>state.locations?.find(l=>l.id===id)?.name||"All Facilities";
   const facilityLabel=facility==="all"?"All Facilities":locName(facility);
   const cards=[
@@ -9857,9 +9894,9 @@ function PerformanceActivity({ state }) {
   return <div>
     <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"flex-start",flexWrap:"wrap",marginBottom:16}}><div><div style={{fontSize:20,fontWeight:800}}>Performance & Activity</div><div style={{fontSize:12,color:T.muted,marginTop:4}}>Evaluation-ready maintenance workload and spending for {facilityLabel}.</div></div><Btn onClick={printReport}>Print / PDF</Btn></div>
     <Card style={{padding:14,marginBottom:16}}><div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"end"}}>
-      <label style={{fontSize:11,fontWeight:700}}>PERIOD<select style={{...sel,display:"block",marginTop:4,minWidth:150}} value={periodMode} onChange={e=>setPeriodMode(e.target.value)}><option value="month">Month</option><option value="quarter">Quarter</option><option value="fy">Fiscal Year</option><option value="custom">Custom</option></select></label>
+      <label style={{fontSize:11,fontWeight:700}}>PERIOD<select style={{...sel,display:"block",marginTop:4,minWidth:150}} value={periodMode} onChange={e=>setPeriodMode(e.target.value)}><option value="month">Month</option><option value="quarter">Quarter</option><option value="fy">Fiscal Year</option><option value="year">Calendar Year</option><option value="lifetime">Lifetime</option><option value="custom">Custom</option></select></label>
       {periodMode==="month"&&<label style={{fontSize:11,fontWeight:700}}>MONTH<input style={{...inp,display:"block",marginTop:4}} type="month" value={month} onChange={e=>setMonth(e.target.value)}/></label>}
-      {(periodMode==="fy"||periodMode==="quarter")&&<label style={{fontSize:11,fontWeight:700}}>FISCAL YEAR<input style={{...inp,display:"block",marginTop:4,width:110}} type="number" value={fy} onChange={e=>setFy(+e.target.value||currentFY)}/></label>}
+      {(periodMode==="fy"||periodMode==="quarter"||periodMode==="year")&&<label style={{fontSize:11,fontWeight:700}}>FISCAL YEAR<input style={{...inp,display:"block",marginTop:4,width:110}} type="number" value={fy} onChange={e=>setFy(+e.target.value||currentFY)}/></label>}
       {periodMode==="quarter"&&<label style={{fontSize:11,fontWeight:700}}>QUARTER<select style={{...sel,display:"block",marginTop:4}} value={quarter} onChange={e=>setQuarter(+e.target.value)}>{[1,2,3,4].map(q=><option key={q} value={q}>Q{q}</option>)}</select></label>}
       {periodMode==="custom"&&<><label style={{fontSize:11,fontWeight:700}}>FROM<input style={{...inp,display:"block",marginTop:4}} type="date" value={customStart} onChange={e=>setCustomStart(e.target.value)}/></label><label style={{fontSize:11,fontWeight:700}}>TO<input style={{...inp,display:"block",marginTop:4}} type="date" value={customEnd} onChange={e=>setCustomEnd(e.target.value)}/></label></>}
       <label style={{fontSize:11,fontWeight:700}}>FACILITY<select style={{...sel,display:"block",marginTop:4,minWidth:190}} value={facility} onChange={e=>setFacility(e.target.value)}><option value="all">All Facilities</option>{(state.locations||[]).map(l=><option key={l.id} value={l.id}>{l.name||l.id}</option>)}</select></label>
