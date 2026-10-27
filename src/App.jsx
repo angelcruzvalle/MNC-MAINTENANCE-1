@@ -327,7 +327,6 @@ const INIT = {
   equipment: [],
   preventiveMaintenance: [],
   parts: [],
-  lubricants: [],
   pmSchedules: [],
   pmTasks: [],
   inspectionTasks: [],
@@ -611,7 +610,6 @@ function blankUserState(ownerUserId="") {
     equipment: [],
     preventiveMaintenance: [],
     parts: [],
-    lubricants: [],
     pmSchedules: [],
     pmTasks: [],
     inspectionTasks: [],
@@ -798,7 +796,6 @@ function countLegacyUnassignedRecords(state={}) {
     equipment: state.equipment || [],
     workOrders: state.workOrders || [],
     parts: state.parts || [],
-    lubricants: state.lubricants || [],
     inventoryItems: state.inventoryItems || [],
     technicians: state.technicians || [],
     usageLogs: state.usageLogs || [],
@@ -897,7 +894,6 @@ function migrateLegacyDataToSingleLocation(state={}) {
     equipment: stamp(state.equipment),
     workOrders: stamp(state.workOrders),
     parts: stamp(state.parts),
-    lubricants: stamp(state.lubricants),
     inventoryItems: stamp(state.inventoryItems),
     technicians: stamp(state.technicians),
     usageLogs: stamp(state.usageLogs),
@@ -930,7 +926,6 @@ function autoAssignLegacyDataToDefaultLocation(state={}) {
     equipment: stamp(state.equipment),
     workOrders: stamp(state.workOrders),
     parts: stamp(state.parts),
-    lubricants: stamp(state.lubricants),
     inventoryItems: stamp(state.inventoryItems),
     technicians: stamp(state.technicians),
     usageLogs: stamp(state.usageLogs),
@@ -987,16 +982,6 @@ function adjustInventoryForWO(parts=[], partsUsed=[], direction=-1) {
     const qty = +(item.qty||0);
     if(!qty) return;
     next = next.map(p => p.id===item.partId ? { ...p, qty:Math.max(0, +(p.qty||0) + (direction * qty)) } : p);
-  });
-  return next;
-}
-
-function adjustLubricantsForWO(lubricants=[], partsUsed=[], direction=-1) {
-  let next=[...(lubricants||[])];
-  (partsUsed||[]).filter(x=>x?.kind==="lubricant"&&x.lubricantId).forEach(item=>{
-    const gallons=+(item.gallons||0);
-    if(!gallons) return;
-    next=next.map(l=>l.id===item.lubricantId?{...l,onHand:Math.max(0,+(l.onHand||0)+(direction*gallons))}:l);
   });
   return next;
 }
@@ -1200,7 +1185,6 @@ function normalizeMaintForgeSingleSite(input={}) {
     workOrders:stamp(state.workOrders),
     workOrderRequests:stamp(state.workOrderRequests),
     parts:stamp(state.parts),
-    lubricants:stamp(state.lubricants),
     preventiveMaintenance:stamp(state.preventiveMaintenance),
     pmTasks:stamp(state.pmTasks),
     pmSchedules:stamp(state.pmSchedules),
@@ -1213,24 +1197,6 @@ function normalizeMaintForgeSingleSite(input={}) {
     usageLogs:stamp(state.usageLogs),
     areas:(Array.isArray(state.areas)?state.areas:[]).map(a=>a&&typeof a==="object"?{...a,locationId:siteId,facilityId:siteId}:a),
   };
-}
-
-function syncEquipmentServiceBaselines(equipment=[], workOrders=[]) {
-  return (equipment||[]).map(eq=>{
-    const services=(workOrders||[]).filter(w=>String(w.equipment)===String(eq.id) && String(w.status).toLowerCase()==="completed" && ["service","preventive","preventative","preventive maintenance","preventative maintenance"].includes(String(w.woType||w.type||"").toLowerCase()) && (w.completed||w.completedDate||w.closedDate));
-    if(!services.length) {
-      if(!eq._mfServiceAutoBaseline) return eq;
-      const { _mfServiceManualDate, _mfServiceManualUsage, _mfServiceAutoBaseline, ...rest }=eq;
-      return {...rest,pmBaselineDate:_mfServiceManualDate||"",pmBaselineUsage:_mfServiceManualUsage??""};
-    }
-    services.sort((a,b)=>String(b.completed||b.completedDate||b.closedDate).localeCompare(String(a.completed||a.completedDate||a.closedDate)));
-    const latest=services[0];
-    const date=String(latest.completed||latest.completedDate||latest.closedDate).slice(0,10);
-    const usageKind=eq.usageType||"hours";
-    const reading=usageKind==="mileage"?latest.usageMileage:usageKind==="both"?(latest.usageMileage||latest.usageHours):(latest.usageHours||latest.usageMileage);
-    const hasReading=!latest.usageNA && reading!==undefined && reading!==null && String(reading).trim()!=="";
-    return {...eq,_mfServiceAutoBaseline:true,_mfServiceManualDate:eq._mfServiceAutoBaseline?eq._mfServiceManualDate:(eq.pmBaselineDate||""),_mfServiceManualUsage:eq._mfServiceAutoBaseline?eq._mfServiceManualUsage:(eq.pmBaselineUsage??""),pmBaselineDate:date,pmBaselineUsage:hasReading?String(reading):(eq._mfServiceAutoBaseline?(eq._mfServiceManualUsage??""):(eq.pmBaselineUsage??""))};
-  });
 }
 
 function reducer(state, { type, payload }) {
@@ -1248,19 +1214,17 @@ function reducer(state, { type, payload }) {
       const shouldConsume = payload.status === "Completed" && !payload.inventoryConsumed;
       const savedWO = shouldConsume ? { ...payload, inventoryConsumed:true } : payload;
       const equipmentStatus = savedWO.status==="Completed" ? "Fully Operational" : (savedWO.equipmentStatus || null);
-      const equipment = syncEquipmentServiceBaselines(equipmentStatus
+      const equipment = equipmentStatus
         ? state.equipment.map(e => e.id===savedWO.equipment ? { ...e, status:equipmentStatus } : e)
-        : state.equipment, [savedWO,...state.workOrders]);
+        : state.equipment;
       const parts = shouldConsume ? adjustInventoryForWO(state.parts, savedWO.partsUsed, -1) : state.parts;
-      const lubricants = shouldConsume ? adjustLubricantsForWO(state.lubricants, savedWO.partsUsed, -1) : (state.lubricants||[]);
-      return { ...state, parts, lubricants, equipment, workOrders: [savedWO,...state.workOrders], notifications:[makeNotification({id:`N${Date.now()}`,type:"wo",msg:`Work Order ${savedWO.id} created`,read:false}),...state.notifications] };
+      return { ...state, parts, equipment, workOrders: [savedWO,...state.workOrders], notifications:[makeNotification({id:`N${Date.now()}`,type:"wo",msg:`Work Order ${savedWO.id} created`,read:false}),...state.notifications] };
     }
     case "UPDATE_WO": {
       const prevWO = (state.workOrders||[]).find(w => w.id === payload.id);
       const wasConsumed = !!prevWO?.inventoryConsumed;
       const willBeCompleted = payload.status === "Completed";
       let parts = state.parts;
-      let lubricants = state.lubricants||[];
       let payloadWithStatus = payload;
 
       // Inventory is consumed only when the WO closes/completes.
@@ -1268,18 +1232,14 @@ function reducer(state, { type, payload }) {
       if(prevWO) {
         if(!wasConsumed && willBeCompleted) {
           parts = adjustInventoryForWO(parts, payload.partsUsed, -1);
-          lubricants = adjustLubricantsForWO(lubricants, payload.partsUsed, -1);
           payloadWithStatus = { ...payloadWithStatus, inventoryConsumed:true };
         } else if(wasConsumed && !willBeCompleted) {
           parts = adjustInventoryForWO(parts, prevWO.partsUsed, +1);
-          lubricants = adjustLubricantsForWO(lubricants, prevWO.partsUsed, +1);
           payloadWithStatus = { ...payloadWithStatus, inventoryConsumed:false };
         } else if(wasConsumed && willBeCompleted) {
           // If a closed WO is edited while still completed, restore old parts then consume the updated list.
           parts = adjustInventoryForWO(parts, prevWO.partsUsed, +1);
           parts = adjustInventoryForWO(parts, payload.partsUsed, -1);
-          lubricants = adjustLubricantsForWO(lubricants, prevWO.partsUsed, +1);
-          lubricants = adjustLubricantsForWO(lubricants, payload.partsUsed, -1);
           payloadWithStatus = { ...payloadWithStatus, inventoryConsumed:true };
         }
       }
@@ -1287,9 +1247,9 @@ function reducer(state, { type, payload }) {
       payloadWithStatus = payloadWithStatus.status==="Completed" ? { ...payloadWithStatus, equipmentStatus:"Fully Operational" } : payloadWithStatus;
       const updated = state.workOrders.map(w => w.id===payload.id ? payloadWithStatus : w);
       const equipmentStatus = payloadWithStatus.equipmentStatus || null;
-      const equipment = syncEquipmentServiceBaselines(equipmentStatus
+      const equipment = equipmentStatus
         ? state.equipment.map(e => e.id===payloadWithStatus.equipment ? { ...e, status:equipmentStatus } : e)
-        : state.equipment, updated);
+        : state.equipment;
       /* If WO is being completed and is linked to a PM schedule, advance the schedule */
       if(payload.status==="Completed" && payload.scheduleId) {
         const sch = (state.pmSchedules||[]).find(s=>s.id===payload.scheduleId);
@@ -1314,7 +1274,7 @@ function reducer(state, { type, payload }) {
             nextDueDate: advancedTriggers.find(t=>(t.type||"time")==="time")?.nextDueDate || "",
             nextDueUsage: advancedTriggers.find(t=>t.type==="hours"||t.type==="mileage")?.nextDueUsage || "",
           };
-          return { ...state, lubricants, parts, equipment, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
+          return { ...state, parts, equipment, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>s.id===sch.id?advancedSch:s) };
         }
       }
       /* Inspection completion is a single durable transaction. Resolve legacy WOs even if linkage fields are missing. */
@@ -1361,10 +1321,10 @@ function reducer(state, { type, payload }) {
               ? { ...w, status:"Completed", completed:doneDate, completedDate:doneDate, equipmentStatus:"Fully Operational", duplicateInspectionOccurrence:true, duplicateOfInspectionWO:payload.id }
               : w;
           });
-          return { ...state, lubricants, parts, equipment, workOrders:finalWOs, inspectionSchedules:(state.inspectionSchedules||[]).map(s=>String(s.id)===String(schedule.id)?advanced:s) };
+          return { ...state, parts, equipment, workOrders:finalWOs, inspectionSchedules:(state.inspectionSchedules||[]).map(s=>String(s.id)===String(schedule.id)?advanced:s) };
         }
       }
-      return { ...state, lubricants, parts, equipment, workOrders: updated };
+      return { ...state, parts, equipment, workOrders: updated };
     }
     case "DELETE_WO": {
       const doomed = (state.workOrders||[]).find(w => String(w.id)===String(payload));
@@ -1390,11 +1350,7 @@ function reducer(state, { type, payload }) {
           return { ...s, skippedDueOccurrences, nextDueDate, lastGeneratedDueDate:occurrence || s.lastGeneratedDueDate || "", lastGeneratedWorkOrderId:doomed.id || s.lastGeneratedWorkOrderId || "" };
         });
       }
-      const remainingWOs=(state.workOrders||[]).filter(w => String(w.id)!==String(payload));
-      return { ...state, workOrders:remainingWOs, inspectionSchedules,
-        parts:doomed?.inventoryConsumed?adjustInventoryForWO(state.parts,doomed.partsUsed,+1):state.parts,
-        lubricants:doomed?.inventoryConsumed?adjustLubricantsForWO(state.lubricants||[],doomed.partsUsed,+1):(state.lubricants||[]),
-        equipment:syncEquipmentServiceBaselines(state.equipment,remainingWOs) };
+      return { ...state, workOrders:(state.workOrders||[]).filter(w => String(w.id)!==String(payload)), inspectionSchedules };
     }
     case "ADD_EQ":        return { ...state, equipment: [payload,...state.equipment] };
     case "UPDATE_EQ": {
@@ -1468,18 +1424,9 @@ function reducer(state, { type, payload }) {
       };
     }
     case "DELETE_EQ":     return { ...state, equipment: state.equipment.filter(e => e.id!==payload) };
-    case "ADD_PART": {
-      // Protect against duplicate submissions and existing catalog part numbers.
-      const key = String(payload.partNumber||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"");
-      if(state.parts.some(p => p.id===payload.id)) return state;
-      if(key && state.parts.some(p => String(p.partNumber||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"")===key)) return state;
-      return { ...state, parts:[payload,...state.parts] };
-    }
+    case "ADD_PART":      return { ...state, parts: [payload,...state.parts] };
     case "UPDATE_PART":   return { ...state, parts: state.parts.map(p => p.id===payload.id ? payload : p) };
-    case "DELETE_PART":   return { ...state, parts: state.parts.filter(p => String(p.id)!==String(payload)) };
-    case "ADD_LUBRICANT": return { ...state, lubricants:[payload,...(state.lubricants||[])] };
-    case "UPDATE_LUBRICANT": return { ...state, lubricants:(state.lubricants||[]).map(l=>l.id===payload.id?payload:l) };
-    case "DELETE_LUBRICANT": return { ...state, lubricants:(state.lubricants||[]).filter(l=>l.id!==payload) };
+    case "DELETE_PART":   return { ...state, parts: state.parts.filter(p => p.id!==payload) };
     case "CONSUME_PARTS": {
       let parts = [...state.parts];
       (payload||[]).forEach(({partId,qty})=>{ parts = parts.map(p => p.id===partId ? {...p,qty:Math.max(0,(p.qty||0)-(+qty||0))} : p); });
@@ -1530,7 +1477,6 @@ function reducer(state, { type, payload }) {
         equipment: stamp(state.equipment),
         workOrders: stamp(state.workOrders),
         parts: stamp(state.parts),
-    lubricants: stamp(state.lubricants),
         inventoryItems: stamp(state.inventoryItems),
         technicians: stamp(state.technicians),
         usageLogs: stamp(state.usageLogs),
@@ -1660,7 +1606,7 @@ function reducer(state, { type, payload }) {
   }
 }
 
-const genId = p => `${p}-${Date.now()}-${Math.random().toString(36).slice(2,10)}`;
+const genId = p => `${p}-${String(Date.now()).slice(-5)}`;
 const today = () => new Date().toISOString().split("T")[0];
 const isValidISODate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || "")) && !Number.isNaN(new Date(`${value}T00:00:00`).getTime());
 const formatDateMMDDYYYY = (value = today()) => {
@@ -1873,9 +1819,8 @@ const reportButtonsHtml = (rows=[], title="report") => {
   const safeTitle = String(title || "report").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"") || "report";
   const wordHtml = `<!doctype html><html><head><meta charset="utf-8"><title>${safeTitle}</title></head><body>${document?.body?.innerHTML || ""}</body></html>`;
   const wordUri = `data:application/msword;charset=utf-8,${encodeURIComponent(wordHtml)}`;
-  return `<br><div style="position:sticky;bottom:0;z-index:9999;display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;padding:10px;background:rgba(255,255,255,.96);border-top:1px solid #d1d5db">
-    <button onclick="if(history.length>1){history.back()}else{window.close()}" style="padding:8px 20px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;cursor:pointer">← Close / Back</button>
-    <button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Share PDF</button>
+  return `<br><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+    <button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
     ${dataUri ? `<a href="${dataUri}" download="${safeTitle}.csv" style="padding:8px 20px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;text-decoration:none;font-family:Arial,sans-serif;font-size:13px">Download Excel CSV</a>` : ""}
     <a href="${wordUri}" download="${safeTitle}.doc" style="padding:8px 20px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;text-decoration:none;font-family:Arial,sans-serif;font-size:13px">Download Word</a>
   </div>${printCustomizePanelHtml()}`;
@@ -2021,7 +1966,7 @@ const Btn = ({ children, onClick, variant="primary", small, style={}, type="butt
 };
 
 const Field = ({ label, children, half }) => (
-  <div className="mf-field" style={{ marginBottom:14, gridColumn:half?"span 1":"span 2", minWidth:0 }}>
+  <div style={{ marginBottom:14, gridColumn:half?"span 1":"span 2" }}>
     <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>{label}</label>
     {children}
   </div>
@@ -2255,7 +2200,6 @@ const NAV = [
   { id:"usage",      icon:"📊", label:"Usage Tracking" },
   { id:"fuel",       icon:"⛽", label:"Fuel Tracking" },
   { id:"spending",   icon:"💰", label:"Spending & Costs" },
-  { id:"performance",icon:"📈", label:"Performance" },
 ];
 
 const NAV_REPORTS = [
@@ -2437,7 +2381,6 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   const [spendPeriod, setSpendPeriod] = useState("month");
   const now = new Date();
   const spendingStart = (() => {
-    if(spendPeriod === "fy") return new Date(now.getMonth()>=9?now.getFullYear():now.getFullYear()-1, 9, 1);
     if(spendPeriod === "year") return new Date(now.getFullYear(), 0, 1);
     if(spendPeriod === "quarter") return new Date(now.getFullYear(), Math.floor(now.getMonth()/3)*3, 1);
     return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -2454,7 +2397,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
     return sum;
   },{parts:0,labor:0,services:0});
   const spendingTotal = spendingBreakdown.parts + spendingBreakdown.labor + spendingBreakdown.services;
-  const spendingLabel = spendPeriod === "year" ? "This Year" : spendPeriod === "quarter" ? "This Quarter" : spendPeriod === "fy" ? `FY${now.getFullYear()+(now.getMonth()>=9?1:0)}` : "This Month";
+  const spendingLabel = spendPeriod === "year" ? "This Year" : spendPeriod === "quarter" ? "This Quarter" : "This Month";
   const upcoming = [
     ...pmSchedules.map(x=>({...x,_kind:"PM"})),
     ...inspectionSchedules.map(x=>({...x,_kind:"Inspection"})),
@@ -2505,7 +2448,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
         {!fuelContainers.length ? <div style={{padding:"18px 0",fontSize:12,color:T.muted}}>No fuel tanks have been created.</div> : <div style={{display:"grid",gap:9}}>{fuelContainers.map(c=>{ const r=latestFuelReading(state,c.id); const gallons=+(r?.gallons||0); const pct=r?fuelPercent(c,gallons):0; const levelColor=pct<=25?T.red:pct<75?T.amber:T.green; return <button key={c.id} onClick={()=>go("fuel")} style={{width:"100%",textAlign:"left",border:`1px solid ${levelColor}33`,borderRadius:10,background:T.card,padding:"10px 12px",cursor:"pointer"}}><div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"baseline"}}><div style={{fontSize:12,fontWeight:900,color:T.text}}>{c.name || c.fuelType || "Fuel Tank"}</div><div style={{fontSize:12,fontWeight:900,color:levelColor}}>{r?pct.toFixed(0)+"%":"No reading"}</div></div><div style={{display:"flex",justifyContent:"space-between",gap:10,marginTop:5,fontSize:11,color:T.subtext}}><span>{c.fuelType || "Fuel"}</span><span style={{fontWeight:800}}>{r?Math.round(gallons).toLocaleString()+" gal":"—"}{+c.capacity?` / ${(+c.capacity).toLocaleString()} gal`:""}</span></div><div style={{height:5,borderRadius:999,background:T.grayLt,overflow:"hidden",marginTop:8}}><div style={{height:"100%",width:`${Math.max(0,Math.min(100,pct))}%`,background:levelColor,borderRadius:999}} /></div></button>})}</div>}
       </div>
       <div style={{border:`1px solid ${T.border}`,borderRadius:14,background:T.card,padding:16}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,marginBottom:14,flexWrap:"wrap"}}><div><div style={{fontSize:15,fontWeight:900}}>Spending Snapshot</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Maintenance spending at a glance</div></div><div style={{display:"flex",gap:4,background:T.grayLt,padding:3,borderRadius:9,flexWrap:"wrap"}}>{[["month","Monthly"],["quarter","Quarterly"],["year","Yearly"],["fy","FY"]].map(([v,l])=><button key={v} onClick={()=>setSpendPeriod(v)} style={{border:0,borderRadius:7,padding:"6px 8px",background:spendPeriod===v?T.card:"transparent",color:spendPeriod===v?T.accent:T.subtext,fontSize:10,fontWeight:900,cursor:"pointer",boxShadow:spendPeriod===v?"0 1px 2px rgba(0,0,0,.08)":"none"}}>{l}</button>)}</div></div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,marginBottom:14,flexWrap:"wrap"}}><div><div style={{fontSize:15,fontWeight:900}}>Spending Snapshot</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>Maintenance spending at a glance</div></div><div style={{display:"flex",gap:4,background:T.grayLt,padding:3,borderRadius:9}}>{[["month","Monthly"],["quarter","Quarterly"],["year","Yearly"]].map(([v,l])=><button key={v} onClick={()=>setSpendPeriod(v)} style={{border:0,borderRadius:7,padding:"6px 8px",background:spendPeriod===v?T.card:"transparent",color:spendPeriod===v?T.accent:T.subtext,fontSize:10,fontWeight:900,cursor:"pointer",boxShadow:spendPeriod===v?"0 1px 2px rgba(0,0,0,.08)":"none"}}>{l}</button>)}</div></div>
         <div style={{fontSize:11,fontWeight:800,color:T.subtext}}>{spendingLabel}</div><div style={{fontSize:30,fontWeight:950,color:T.text,letterSpacing:-1,marginTop:3}}>{moneyFmt(spendingTotal)}</div><div style={{fontSize:10,color:T.muted,marginTop:2}}>{spendingWOs.length} work order{spendingWOs.length===1?"":"s"}</div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginTop:14}}>{[["Parts",spendingBreakdown.parts,T.accent],["Labor",spendingBreakdown.labor,T.green],["Outside",spendingBreakdown.services,T.amber]].map(([label,value,color])=><div key={label} style={{padding:"9px 7px",borderRadius:9,background:T.grayLt,minWidth:0}}><div style={{fontSize:9,fontWeight:900,color,textTransform:"uppercase",letterSpacing:.4}}>{label}</div><div style={{fontSize:11,fontWeight:900,color:T.text,marginTop:4,overflow:"hidden",textOverflow:"ellipsis"}}>{moneyFmt(value)}</div></div>)}</div>
         <button onClick={()=>go("spending")} style={{border:0,background:"none",color:T.accent,fontSize:11,fontWeight:800,cursor:"pointer",padding:0,marginTop:13}}>View Spending & Costs →</button>
@@ -2525,23 +2468,7 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
   </div>;
 }
 
-function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWORequest }) {
-  const [showLubricantPicker,setShowLubricantPicker]=useState(false);
-  const [lubricantPick,setLubricantPick]=useState({id:"",qty:"",unit:"qt"});
-  const lubricantToGallons=(qty,unit)=>{const n=+qty||0;return unit==="gal"?n:unit==="qt"?n/4:unit==="L"?n/3.785411784:n;};
-  const lubricantCostPerGal=(l)=>{const n=+l.containerQty||0;const g=l.containerUnit==="gal"?n:l.containerUnit==="qt"?n/4:l.containerUnit==="L"?n/3.785411784:l.containerUnit==="drum"?n*55:n;return g>0?(+l.totalPrice||0)/g:0;};
-  const addLubricantLine=()=>{
-    const l=(state.lubricants||[]).find(x=>String(x.id)===String(lubricantPick.id));
-    if(!l)return alert("Select a lubricant or fluid.");
-    const gallons=lubricantToGallons(lubricantPick.qty,lubricantPick.unit);
-    if(gallons<=0)return alert("Enter a valid quantity.");
-    if(gallons>(+l.onHand||0))return alert(`Only ${(+l.onHand||0).toFixed(2)} gal available.`);
-    const qty=+lubricantPick.qty; const cost=gallons*lubricantCostPerGal(l);
-    const line={kind:"lubricant",lubricantId:l.id,name:l.name,partNumber:l.grade||"",qty,unit:lubricantPick.unit,unitCost:qty>0?cost/qty:0,gallons,fluidCost:cost,availableGallons:+l.onHand||0};
-    setForm(f=>({...f,partsUsed:[...(f.partsUsed||[]),line]}));
-    setLubricantPick({id:"",qty:"",unit:"qt"}); setShowLubricantPicker(false);
-  };
-
+function WorkOrders({ state, dispatch, woSettings, onWOSettings }) {
   const [modal, setModal]     = useState(null); // null|"type"|"pick"|"form"|"detail"|"edit"
   const [form, setForm]       = useState({});
   const [filter, setFilter]     = useState("Active"); // "Active" = Open+InProgress default
@@ -2549,8 +2476,8 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
   const [sortBy, setSortBy]         = useState("created");
   const [sortDir, setSortDir]       = useState("desc");
   const [priorityFilter, setPriorityFilter] = useState("All");
+  const [mechFilter, setMechFilter] = useState("All");
   const [equipmentStatusFilter, setEquipmentStatusFilter] = useState("All");
-  const [showFilters, setShowFilters] = useState(false);
   const [completedDateFilter, setCompletedDateFilter] = useState("all");
   const [eqSearch, setEqSearch] = useState("");
   const [showNewTech, setShowNewTech] = useState(false);
@@ -2619,9 +2546,10 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     const matchStatus   = filter==="Active"?(w.status!=="Completed"):filter==="All"?true:w.status===filter;
     const matchType     = typeFilter==="All"     || w.woType===typeFilter;
     const matchPriority = priorityFilter==="All" || w.priority===priorityFilter;
+    const matchMech     = mechFilter==="All"     || w.tech===mechFilter;
     const woEqStatus = getWOEquipmentStatus(w);
     const matchEquipmentStatus = equipmentStatusFilter==="All" || equipmentStatusFilter==="allAsc" || equipmentStatusFilter==="allDesc" || woEqStatus===equipmentStatusFilter;
-    return matchStatus && matchType && matchPriority && matchEquipmentStatus && matchCompletedDate(w);
+    return matchStatus && matchType && matchPriority && matchMech && matchEquipmentStatus && matchCompletedDate(w);
   }).sort((a,b)=>{
     const compareBySelectedSort = () => {
       let cmp = 0;
@@ -2643,6 +2571,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     }
     return compareBySelectedSort();
   });
+  const allMechanics = [...new Set((state.workOrders||[]).map(w=>w.tech).filter(Boolean))];
   const technicians = state.technicians || [];
   const defaultMechanic = technicians.length === 1 ? technicians[0] : null;
 
@@ -2677,37 +2606,10 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     return woType;
   };
 
-  const procedureOptionsForWO = (woType) => woType==="Inspection" ? (state.inspectionTasks||[]) : (state.pmTasks||[]);
-  const procedureSteps = (task, woType) => {
-    if(!task) return [];
-    const raw = woType==="Inspection" ? task.steps : task.steps;
-    return Array.isArray(raw) ? raw.filter(Boolean).map(String) : String(raw||"").split(/\n+/).map(x=>x.trim()).filter(Boolean);
-  };
-  const applyProcedureToWO = (taskId) => {
-    const task=procedureOptionsForWO(form.woType).find(x=>String(x.id)===String(taskId));
-    const steps=procedureSteps(task,form.woType);
-    const notes=Array.isArray(task?.stepNotes)?task.stepNotes:[];
-    setForm(f=>({
-      ...f, procedureMode:"library", procedureTaskId:taskId,
-      faultDescription:f.faultDescription||task?.description||task?.name||"",
-      description:f.description||task?.description||task?.name||"",
-      serviceStepLines:f.woType==="Service"?steps:f.serviceStepLines,
-      serviceStepNotes:f.woType==="Service"?notes:f.serviceStepNotes,
-      serviceChecklist:f.woType==="Service"?steps.join("\n"):f.serviceChecklist,
-      inspectionSteps:f.woType==="Inspection"?steps.join("\n"):f.inspectionSteps,
-      inspectionStepResults:f.woType==="Inspection"?steps.map((step,i)=>({id:`manual-ins-${Date.now()}-${i}`,step,result:"",comment:""})):f.inspectionStepResults,
-      taskProcedureSnapshot:{taskId:task?.id||"",name:task?.name||"",steps:[...steps],stepNotes:[...notes],capturedAt:new Date().toISOString()}
-    }));
-  };
-  const setManualChecklistRow=(idx,key,value)=>setForm(f=>{const rows=[...(f.manualChecklist||[])];rows[idx]={...(rows[idx]||{}),[key]:value};return {...f,manualChecklist:rows};});
-  const addManualChecklistRow=()=>setForm(f=>({...f,procedureMode:"manual",manualChecklist:[...(f.manualChecklist||[]),{step:"",note:""}]}));
-  const removeManualChecklistRow=(idx)=>setForm(f=>{const rows=[...(f.manualChecklist||[])];rows.splice(idx,1);return {...f,manualChecklist:rows};});
-
-
   /* Equipment picker list */
   const allPickable = [
     ...state.equipment.map(eq=>({ id:eq.id, label:eq.name, sub:`${eq.id} | ${eq.make||""} ${eq.model||""} | Serial: ${eq.serial||"—"} | EIL: ${eq.eilNumber||"—"}`, type:"Equipment", typeColor:"#1e40af", typeBg:"#eff6ff", parentName:null, parentId:null })),
-    ...state.equipment.flatMap(eq=>(eq.attachments||[]).map(at=>({ id:at.id, label:at.name, sub:`${at.id} | ${at.make||""} ${at.model||""} | Serial: ${at.serial||"—"} | EIL: ${at.eilNumber||"—"} | on: ${eq.name} (${eq.id})`, type:"Attachment", typeColor:"#065f46", typeBg:"#ecfdf5", parentName:eq.name, parentNomenclature:eq.name, parentId:eq.id }))),
+    ...state.equipment.flatMap(eq=>(eq.attachments||[]).map(at=>({ id:at.id, label:at.name, sub:`${at.id} | ${at.make||""} ${at.model||""} | Serial: ${at.serial||"—"} | EIL: ${at.eilNumber||"—"} | on: ${eq.name} (${eq.id})`, type:"Attachment", typeColor:"#065f46", typeBg:"#ecfdf5", parentNomenclature:eq.name, parentId:eq.id }))),
   ];
   const filteredPickable = allPickable.filter(i=>`${i.label} ${i.sub}`.toLowerCase().includes(eqSearch.toLowerCase()));
 
@@ -2738,10 +2640,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
       correctiveAction:"",
       serviceChecklist:"",
       inspectionFindings:"",
-      inspectionStepResults:[],
-      procedureMode: woType==="Service"||woType==="Inspection" ? "library" : "manual",
-      procedureTaskId:"",
-      manualChecklist:[]
+      inspectionStepResults:[]
     }));
     setModal("pick");
   };
@@ -2762,37 +2661,16 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
 
   const pickEquipment = (item) => {
     const eq = state.equipment.find(e=>e.id===item.id);
-    const parentEq = item.parentId ? state.equipment.find(e=>e.id===item.parentId) : null;
-    const attachment = item.parentId ? (parentEq?.attachments||[]).find(a=>String(a.id)===String(item.id)) : null;
     const latestUsage = latestUsageForEquipment(item.id);
-    const asset = attachment || eq;
-    setForm(f=>({...f, woType:f.woType||"Repair", equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||item.parentNomenclature||null, parentId:item.parentId||null, equipmentStatus:(parentEq||eq)?.status||"Fully Operational", usageType:asset?.usageType||"hours", usageNA:!asset?.trackUsage, usageHours:asset?.trackUsage ? (latestUsage.hours||String(asset.currentHours||"")) : "", usageMileage:asset?.trackUsage ? (latestUsage.mileage||String(asset.currentMileage||"")) : ""}));
+    setForm(f=>({...f, woType:f.woType||"Repair", equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||null, parentId:item.parentId||null, equipmentStatus:eq?.status||"Fully Operational", usageType:eq?.usageType||"hours", usageNA: eq?.trackUsage ? false : (f.usageNA||false), usageHours:latestUsage.hours, usageMileage:latestUsage.mileage}));
     setModal("form");
   };
-
-  useEffect(() => {
-    if(!initialWORequest?.equipment) return;
-    const item = allPickable.find(i=>String(i.id)===String(initialWORequest.equipment));
-    if(!item) { onConsumeWORequest?.(); return; }
-    const parentEq = item.parentId ? state.equipment.find(e=>e.id===item.parentId) : null;
-    setEqSearch("");
-    setForm(applyDefaultMechanic({
-      woType:initialWORequest.woType||"Repair", title:buildTitle(initialWORequest.woType||"Repair", ""), status:"Open",
-      equipment:item.id, equipmentLabel:item.label, equipmentSub:item.sub, equipmentType:item.type, parentName:item.parentName||item.parentNomenclature||null, parentId:item.parentId||null,
-      equipmentStatus:parentEq?.status||"Fully Operational", priority:"Medium", created:today(), due:"", tech:"", techId:"", laborHours:0, laborCost:0, partsCost:0, partsUsed:[], outsideServices:[], mechanicNotes:"", faultEnabled:true, faultDescription:"", usageType:parentEq?.usageType||"hours", usageHours:"", usageMileage:"", usageNA:!parentEq?.trackUsage, repairCause:"", correctiveAction:"", serviceChecklist:"", inspectionFindings:"", inspectionStepResults:[]
-    }));
-    setModal("form");
-    onConsumeWORequest?.();
-  }, [initialWORequest?.requestId]);
 
   /* Click row to open the editable Work Order form */
   const openEdit = (wo) => {
     setDetailWO(null);
     setEditMode(false);
-    const directEq = state.equipment.find(e=>e.id===wo.equipment);
-    const attachmentParent = !directEq ? state.equipment.find(e=>(e.attachments||[]).some(a=>String(a.id)===String(wo.equipment))) : null;
-    const attachment = attachmentParent ? (attachmentParent.attachments||[]).find(a=>String(a.id)===String(wo.equipment)) : null;
-    const eq = directEq || attachmentParent;
+    const eq = state.equipment.find(e=>e.id===wo.equipment);
     const hasAnyUsageReading = !!String(wo.usageHours||"").trim() || !!String(wo.usageMileage||"").trim();
     const needsManualUsagePrompt = (wo.woType === "Inspection") && eq && !eq.trackUsage && !hasAnyUsageReading && !wo.usageNA;
     setForm({
@@ -2801,7 +2679,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
       outsideServices:wo.outsideServices||[],
       usageType: wo.usageType || eq?.usageType || "hours",
       // Inspection WOs for equipment without usage tracking still need the user to confirm a reading or choose N/A.
-      usageNA: eq && !eq.trackUsage ? true : (needsManualUsagePrompt ? false : !!wo.usageNA),
+      usageNA: needsManualUsagePrompt ? false : !!wo.usageNA,
     });
     setModal("edit");
   };
@@ -2876,11 +2754,8 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     if(!(form.faultDescription||"").trim()) return alert("Description required.");
     const usageModeReq = String(form.usageType||"hours").toLowerCase();
     const selectedEquipment = state.equipment.find(e=>e.id===form.equipment);
-    const selectedAttachmentParent = !selectedEquipment ? state.equipment.find(e=>(e.attachments||[]).some(a=>String(a.id)===String(form.equipment))) : null;
-    const selectedAttachment = selectedAttachmentParent ? (selectedAttachmentParent.attachments||[]).find(a=>String(a.id)===String(form.equipment)) : null;
-    const selectedAsset = selectedAttachment || selectedEquipment;
     const latestUsage = latestUsageForEquipment(form.equipment);
-    const formWithLatestUsage = applyDefaultMechanic((selectedAsset && !selectedAsset.trackUsage) ? {...form,usageNA:true,usageHours:"",usageMileage:""} : form.usageNA ? form : {
+    const formWithLatestUsage = applyDefaultMechanic(form.usageNA ? form : {
       ...form,
       usageHours: String(form.usageHours ?? "").trim() || latestUsage.hours,
       usageMileage: String(form.usageMileage ?? "").trim() || latestUsage.mileage,
@@ -2890,62 +2765,14 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     // A work order may record hours, mileage, or both. Either reading satisfies usage validation.
     const hasUsageReading = formWithLatestUsage.usageNA || hoursEntered || mileageEntered;
     if(!hasUsageReading) return alert("Enter the current usage reading or select N/A.");
-    if(formWithLatestUsage.woType === "Inspection" && selectedAsset && !selectedAsset.trackUsage && !formWithLatestUsage.usageNA && !hoursEntered && !mileageEntered) {
+    if(formWithLatestUsage.woType === "Inspection" && selectedEquipment && !selectedEquipment.trackUsage && !formWithLatestUsage.usageNA && !hoursEntered && !mileageEntered) {
       return alert("This equipment has no usage tracking selected. Enter the current usage for this inspection work order, or select N/A.");
-    }
-    if((formWithLatestUsage.woType==="Service"||formWithLatestUsage.woType==="Inspection") && formWithLatestUsage.procedureMode==="manual"){
-      const rows=(formWithLatestUsage.manualChecklist||[]).filter(r=>String(r?.step||"").trim());
-      const steps=rows.map(r=>String(r.step).trim());
-      const notes=rows.map(r=>String(r.note||"").trim());
-      formWithLatestUsage.taskProcedureSnapshot={taskId:"",name:"Manual checklist",steps:[...steps],stepNotes:[...notes],capturedAt:new Date().toISOString(),manual:true};
-      if(formWithLatestUsage.woType==="Service"){
-        formWithLatestUsage.serviceStepLines=steps;
-        formWithLatestUsage.serviceStepNotes=notes;
-        formWithLatestUsage.serviceChecklist=steps.join("\n");
-        formWithLatestUsage.steps=steps;
-      } else {
-        formWithLatestUsage.inspectionSteps=steps.join("\n");
-        formWithLatestUsage.steps=steps;
-        const oldResults=Array.isArray(formWithLatestUsage.inspectionStepResults)?formWithLatestUsage.inspectionStepResults:[];
-        formWithLatestUsage.inspectionStepResults=steps.map((step,i)=>({id:oldResults[i]?.id||`manual-ins-${Date.now()}-${i}`,step,result:oldResults[i]?.result||"",comment:oldResults[i]?.comment||""}));
-      }
     }
     const prevWO = isEdit ? state.workOrders.find(w=>w.id===formWithLatestUsage.id) : null;
 
-    // Validate meter readings against the equipment's current recorded usage.
-    // Lower readings are allowed only after an explicit warning and never roll the equipment meter backward.
-    const meterEquipment = selectedEquipment || selectedAttachmentParent || (formWithLatestUsage.parentId ? state.equipment.find(e=>String(e.id)===String(formWithLatestUsage.parentId)) : null);
-    const meterAsset = selectedAttachment || selectedEquipment;
-    const equipmentIdForMeter = meterAsset?.id || formWithLatestUsage.equipment;
-    const usageLogsForMeter = (state.usageLogs||[]).filter(l=>String(l.equipmentId)===String(equipmentIdForMeter));
-    const currentHours = Math.max(0, +(meterAsset?.currentHours||meterAsset?.hours||0), ...usageLogsForMeter.map(l=>+(l.hours||0)).filter(Number.isFinite));
-    const currentMileage = Math.max(0, +(meterAsset?.currentMileage||meterAsset?.mileage||0), ...usageLogsForMeter.map(l=>+(l.mileage||0)).filter(Number.isFinite));
-    const enteredHours = hoursEntered ? +(formWithLatestUsage.usageHours||0) : null;
-    const enteredMileage = mileageEntered ? +(formWithLatestUsage.usageMileage||0) : null;
-    if(hoursEntered && Number.isFinite(enteredHours) && enteredHours < currentHours) {
-      if(!confirm(`Engine Hours Warning\n\nCurrent equipment hours: ${currentHours.toLocaleString()} hr\nYou entered: ${enteredHours.toLocaleString()} hr\n\nThis reading is lower than the current recorded hours. It will be saved on this work order but will NOT lower the equipment's current hours.\n\nDo you want to proceed?`)) return;
-    }
-    if(mileageEntered && Number.isFinite(enteredMileage) && enteredMileage < currentMileage) {
-      if(!confirm(`Mileage Warning\n\nCurrent equipment mileage: ${currentMileage.toLocaleString()} mi\nYou entered: ${enteredMileage.toLocaleString()} mi\n\nThis reading is lower than the current recorded mileage. It will be saved on this work order but will NOT lower the equipment's current mileage.\n\nDo you want to proceed?`)) return;
-    }
-
-    for(const item of (formWithLatestUsage.partsUsed||[]).filter(x=>x?.kind==="lubricant")){
-      const l=(state.lubricants||[]).find(x=>String(x.id)===String(item.lubricantId));
-      if(!l) continue;
-      const gallons=lubricantToGallons(item.qty,item.unit);
-      const previousGallons=prevWO?.inventoryConsumed ? +((prevWO.partsUsed||[]).find(x=>x.kind==="lubricant"&&x.lubricantId===item.lubricantId)?.gallons||0) : 0;
-      if(gallons>(+l.onHand||0)+previousGallons) return alert(`Not enough ${l.name} in fluid inventory. Available: ${((+l.onHand||0)+previousGallons).toFixed(2)} gal.`);
-    }
     const newParts = (formWithLatestUsage.partsUsed||[]).filter(p=>String(p?.name||"").trim()).map(raw=>{
       const p = {...raw};
       const nameKey = String(p.name||"").trim().toLowerCase();
-      if(p.kind==="lubricant" && p.lubricantId) {
-        const l=(state.lubricants||[]).find(x=>String(x.id)===String(p.lubricantId));
-        if(!l) return p;
-        const gallons=lubricantToGallons(p.qty,p.unit);
-        const cost=gallons*lubricantCostPerGal(l);
-        return {...p,name:l.name,partNumber:l.grade||p.partNumber||"",gallons,unitCost:(+p.qty||0)>0?cost/(+p.qty):0,fluidCost:cost,availableGallons:+l.onHand||0};
-      }
       let inv = p.partId ? (state.parts||[]).find(x=>x.id===p.partId) : (state.parts||[]).find(x=>String(x.name||"").trim().toLowerCase()===nameKey || (p.partNumber && String(x.partNumber||"").trim().toLowerCase()===String(p.partNumber).trim().toLowerCase()));
       const receivedQty = Math.max(0, +(p.receivedQty||0));
       const usedQty = Math.max(0, +(p.qty||0));
@@ -2979,21 +2806,6 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
       const nextType = formWithLatestUsage.woType || "Repair";
       const nextId = genWOId(formWithLatestUsage.equipment, nextType);
       dispatch({type:"ADD_WO", payload:{...formWithLatestUsage, created:normalizedCreatedDate, due:normalizedDueDate, woType:nextType, title:formWithLatestUsage.faultDescription||nextType, faultEnabled:true, id:nextId, woNumber:nextId, outsideServices, partsCost:partsTotal, outsideServicesCost:outsideServicesSubtotal}});
-    }
-    // A higher/current WO meter reading becomes the equipment's current usage and feeds PM calculations.
-    if(meterAsset && !formWithLatestUsage.usageNA) {
-      const nextHours = hoursEntered && Number.isFinite(enteredHours) ? Math.max(currentHours, enteredHours) : currentHours;
-      const nextMileage = mileageEntered && Number.isFinite(enteredMileage) ? Math.max(currentMileage, enteredMileage) : currentMileage;
-      const meterChanged = nextHours > currentHours || nextMileage > currentMileage;
-      if(meterChanged) {
-        if(selectedAttachment && selectedAttachmentParent){
-          const nextAttachments=(selectedAttachmentParent.attachments||[]).map(a=>String(a.id)===String(selectedAttachment.id)?{...a,currentHours:nextHours,hours:nextHours,currentMileage:nextMileage,mileage:nextMileage}:a);
-          dispatch({type:"UPDATE_EQ",payload:{...selectedAttachmentParent,attachments:nextAttachments}});
-        } else if(selectedEquipment) {
-          dispatch({type:"UPDATE_EQ", payload:{...selectedEquipment, currentHours:nextHours, hours:nextHours, currentMileage:nextMileage, mileage:nextMileage}});
-        }
-        dispatch({type:"ADD_USAGE_LOG", payload:{id:genId("USE"), equipmentId:meterAsset.id, date:normalizedCreatedDate, hours:hoursEntered?enteredHours:"", mileage:mileageEntered?enteredMileage:"", source:"Work Order", workOrderId:formWithLatestUsage.id||""}});
-      }
     }
     setModal(null);
     setDetailWO(null);
@@ -3040,10 +2852,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     const ws = woSettings || {};
     const printOpt = () => true;
     const gs = state.settings || {};
-    const directEq = state.equipment.find(e=>e.id===wo.equipment);
-    const attachmentParent = !directEq ? state.equipment.find(e=>(e.attachments||[]).some(a=>String(a.id)===String(wo.equipment))) : null;
-    const attachment = attachmentParent ? (attachmentParent.attachments||[]).find(a=>String(a.id)===String(wo.equipment)) : null;
-    const eq = directEq || attachmentParent;
+    const eq = state.equipment.find(e=>e.id===wo.equipment);
 
     const h = (value) => String(value ?? "").replace(/[&<>'"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[ch]));
     const money = moneyFmt;
@@ -3090,20 +2899,17 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
       return "repair";
     })();
     const defaultTypeColors = { repair:"blue", inspection:"mint", service:"yellow" };
-    const colorKey = defaultTypeColors[printTypeKey];
+    const colorKey = ws[`${printTypeKey}PrintColor`] || defaultTypeColors[printTypeKey] || "blue";
     const colorMap = {
-      blue:   { accent:"#dbeafe", border:"#111111", dark:"#111111", soft:"#eff6ff" },
-      yellow: { accent:"#fef3c7", border:"#111111", dark:"#111111", soft:"#fffbeb" },
-      mint:   { accent:"#dcfce7", border:"#111111", dark:"#111111", soft:"#f0fdf4" },
+      blue:   { accent:"#dbeafe", border:"#1e3a8a", dark:"#1e3a8a", soft:"#eff6ff" },
+      yellow: { accent:"#fef3c7", border:"#92400e", dark:"#78350f", soft:"#fffbeb" },
+      mint:   { accent:"#dcfce7", border:"#166534", dark:"#14532d", soft:"#f0fdf4" },
       slate:  { accent:"#e2e8f0", border:"#334155", dark:"#1e293b", soft:"#f8fafc" }
     };
     const C = colorMap[colorKey] || colorMap[defaultTypeColors[printTypeKey]] || colorMap.blue;
 
     const woRows = [{"WO #":wo.id, Title:wo.title||"", Status:wo.status||"", Priority:wo.priority||"", Equipment:eq?`${eq.name} (${eq.id})`:wo.equipment||"", Mechanic:wo.tech||"", Created:wo.created||"", Due:wo.due||"", Completed:wo.completed||"", "Labor Hours":laborHoursTotal.toFixed(1), Labor:moneyText(laborTotal), Parts:moneyText(partsTotal), Total:moneyText(grandTotal), Description:printableDescription, "Work Performed":wo.description||"", Notes:wo.mechanicNotes||""}];
     const woCsv = rowsToDataUri(woRows);
-    const emailSubject = `Work Order ${wo.id || ""} - ${wo.title || workType}`;
-    const emailBody = [`MaintForge Work Order ${wo.id || ""}`, "", `Type: ${workType}`, `Status: ${wo.status || ""}`, `Equipment: ${eq ? `${eq.name} (${eq.id})` : (wo.equipment || "")}`, `Created: ${wo.created || ""}`, `Completed: ${wo.completed || ""}`, `Mechanic: ${wo.tech || ""}`, "", "Problem / Requested Service:", printableDescription || "", "", "Work Performed:", wo.description || wo.workPerformed || "", "", "Notes:", wo.mechanicNotes || "", "", `Total: ${money(grandTotal)}`].join("\n");
-    const emailHref = `mailto:?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
 
     const inspectionChecklistPrint = (() => {
       if(wo.woType!=="Inspection") return "";
@@ -3123,49 +2929,49 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
       body{font-family:Arial,Helvetica,sans-serif;background:#fff;color:#111827;font-size:11px;line-height:1.25}
       @page{size:Letter;margin:0}
       .page{width:8.5in;min-height:auto;margin:0 auto;padding:.24in .28in;display:flex;flex-direction:column;gap:4px}
-      .outer{border:1.5px solid ${C.border};border-radius:0;overflow:hidden;background:white}
-      .top{display:grid;grid-template-columns:1.85in minmax(0,1fr) 1.85in;border-bottom:1.5px solid ${C.border};min-height:.95in}
-      .logoBox{display:flex;align-items:center;justify-content:center;border-right:1.5px solid ${C.border};padding:6px 8px;background:white;overflow:hidden;min-width:0}
+      .outer{border:1.5px solid #111827;border-radius:8px;overflow:hidden;background:white}
+      .top{display:grid;grid-template-columns:1.85in minmax(0,1fr) 1.85in;border-bottom:1.5px solid #111827;min-height:.95in}
+      .logoBox{display:flex;align-items:center;justify-content:center;border-right:1.5px solid #111827;padding:6px 8px;background:white;overflow:hidden;min-width:0}
       .logoBox img{width:100%;max-width:1.65in;max-height:.82in;object-fit:contain;display:block}
       .logoText{font-weight:900;text-align:center;color:#111827;font-size:13px;line-height:1.2}
       .companyBox{display:flex;flex-direction:column;align-items:center;justify-content:center;background:${C.soft};padding:8px 14px;text-align:center;min-width:0}
       .company{font-weight:900;letter-spacing:.25px;text-transform:uppercase;color:#111827;line-height:1.02;white-space:normal;max-width:100%;overflow-wrap:anywhere;word-break:normal;text-align:center;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
       .facilityName{margin-top:3px;width:100%;font-weight:800;letter-spacing:.35px;color:#334155;text-transform:uppercase;line-height:1.08;text-align:center;white-space:normal;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-      .typePill{margin-top:4px;border:1.5px solid ${C.border};background:${C.accent};color:#111827;border-radius:0;padding:4px 18px;font-size:12px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;display:inline-flex;gap:6px;align-items:center}
-      .numberBox{border-left:1.5px solid ${C.border};display:grid;grid-template-rows:1fr .32in;text-align:center;background:white;min-width:0}
+      .typePill{margin-top:4px;border:1.5px solid ${C.border};background:${C.accent};color:#111827;border-radius:999px;padding:4px 18px;font-size:12px;font-weight:900;letter-spacing:.8px;text-transform:uppercase;display:inline-flex;gap:6px;align-items:center}
+      .numberBox{border-left:1.5px solid #111827;display:grid;grid-template-rows:1fr .32in;text-align:center;background:white;min-width:0}
       .woNumber{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:6px}
       .woNumber .label{font-size:10px;font-weight:900;letter-spacing:1px;text-transform:uppercase;color:#111827}
       .woNumber .number{font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:900;color:#111827;margin-top:4px;word-break:break-word}
-      .status{display:flex;align-items:center;justify-content:center;background:${C.accent};color:#111;font-size:11px;font-weight:900;letter-spacing:1.3px;text-transform:uppercase;border-top:1.5px solid #111}
-      .completed{background:${C.accent}!important;color:#111!important}
-      .dateGrid{display:grid;grid-template-columns:1fr 1fr 1fr;border-bottom:1.5px solid ${C.border}}
+      .status{display:flex;align-items:center;justify-content:center;background:${C.border};color:white;font-size:11px;font-weight:900;letter-spacing:1.3px;text-transform:uppercase;border-top:1.5px solid #111827}
+      .completed{background:${C.border}!important;color:white!important}
+      .dateGrid{display:grid;grid-template-columns:1fr 1fr 1fr;border-bottom:1.5px solid #111827}
       .infoGrid{display:grid;grid-template-columns:1fr 1fr 1fr}
-      .cell{min-height:.28in;padding:4px 6px;border-right:1px solid #111;border-bottom:1px solid #111;display:grid;grid-template-columns:.95fr 1.35fr;align-items:center;gap:8px;overflow:hidden}
+      .cell{min-height:.28in;padding:4px 6px;border-right:1px solid #9ca3af;border-bottom:1px solid #cbd5e1;display:grid;grid-template-columns:.95fr 1.35fr;align-items:center;gap:8px;overflow:hidden}
       .cell:nth-child(3n){border-right:none}
       .dateGrid .cell{border-bottom:none;grid-template-columns:1fr 1fr;min-height:.26in}
       .fieldLabel{font-size:8.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;color:#111827;line-height:1.1}
       .fieldValue{font-size:10.5px;font-weight:800;color:#111827;line-height:1.15;white-space:normal;overflow-wrap:anywhere}
       .mono{font-family:Arial,Helvetica,sans-serif}
-      .section{border-top:1.5px solid ${C.border};break-inside:auto;page-break-inside:auto}
-      .section-title{background:${C.accent};color:#111827;border-bottom:1px solid #111;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
+      .section{border-top:1.5px solid #111827;break-inside:auto;page-break-inside:auto}
+      .section-title{background:${C.accent};color:#111827;border-bottom:1px solid #94a3b8;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
       .textBlock{padding:5px 7px;min-height:.28in;white-space:pre-wrap;overflow-wrap:anywhere;color:#111827;font-size:12px}
       .textBlock.tall{min-height:.45in}
-      .summaryTitle{background:${C.accent};color:#111827;border-bottom:1px solid #111;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
+      .summaryTitle{background:${C.accent};color:#111827;border-bottom:1px solid #94a3b8;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
       .miniTitle{padding:4px 7px 3px;font-weight:900;text-transform:uppercase;font-size:11px;color:#111827;background:#fff}
       .data-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:10.5px}
-      .data-table th{background:${C.accent};color:#111827;text-transform:uppercase;letter-spacing:.35px;font-size:8.5px;font-weight:900;padding:4px 5px;border-top:1px solid #111;border-bottom:1px solid #111;border-right:1px solid #111;text-align:left}
-      .data-table td{padding:4px 5px;border-bottom:1px solid #111;border-right:1px solid #111;vertical-align:top;overflow-wrap:anywhere;color:#111827}
+      .data-table th{background:#e5e7eb;color:#111827;text-transform:uppercase;letter-spacing:.35px;font-size:8.5px;font-weight:900;padding:4px 5px;border-top:1px solid #9ca3af;border-bottom:1px solid #9ca3af;border-right:1px solid #cbd5e1;text-align:left}
+      .data-table td{padding:4px 5px;border-bottom:1px solid #cbd5e1;border-right:1px solid #e5e7eb;vertical-align:top;overflow-wrap:anywhere;color:#111827}
       .data-table th:last-child,.data-table td:last-child{border-right:none}
       .right{text-align:right}.center{text-align:center}
-      .subRow td{background:${C.soft};font-weight:900;border-top:1.5px solid ${C.border}}
-      .grandTotal{display:grid;grid-template-columns:1fr 1.5in;border-top:1.5px solid ${C.border};background:${C.accent};font-weight:900;font-size:13px;color:#111827}
-      .grandTotal div{padding:9px 12px}.grandTotal div:last-child{text-align:right;border-left:1.5px solid ${C.border}}
-      .signatureGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;padding:8px 10px;border-top:1.5px solid ${C.border};min-height:.42in;align-items:end}
-      .sigLine{border-top:1.5px solid ${C.border};padding-top:5px;min-height:32px}
+      .subRow td{background:#f8fafc;font-weight:900;border-top:1.5px solid #111827}
+      .grandTotal{display:grid;grid-template-columns:1fr 1.5in;border-top:1.5px solid #111827;background:${C.accent};font-weight:900;font-size:13px;color:#111827}
+      .grandTotal div{padding:9px 12px}.grandTotal div:last-child{text-align:right;border-left:1.5px solid #111827}
+      .signatureGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;padding:8px 10px;border-top:1.5px solid #111827;min-height:.42in;align-items:end}
+      .sigLine{border-top:1.5px solid #111827;padding-top:5px;min-height:32px}
       .sigValue{font-size:12px;font-weight:800;margin-bottom:4px;min-height:14px;overflow-wrap:anywhere;color:#111827}
       .sigLabel{font-size:9.5px;font-weight:900;text-transform:uppercase;letter-spacing:.6px;color:#111827}
       .pbtn{margin:14px auto 0;display:flex;gap:10px;justify-content:center}
-      .pbtn button,.pbtn a{padding:9px 24px;font-size:13px;font-weight:800;border-radius:0;cursor:pointer;text-decoration:none;font-family:Arial,Helvetica,sans-serif}
+      .pbtn button,.pbtn a{padding:9px 24px;font-size:13px;font-weight:800;border-radius:6px;cursor:pointer;text-decoration:none;font-family:Arial,Helvetica,sans-serif}
       .printBtn{background:${C.border};color:white;border:none}.fileBtn{background:#fff;color:#111827;border:1px solid #111827}
       @page{size:letter;margin:0}
       @media print{.pbtn,.print-customize{display:none!important}html,body{width:8.5in;margin:0!important;padding:0!important}.page{width:8.5in;padding:.18in .22in}.outer{break-inside:auto;page-break-inside:auto}body{font-size:10px}.section,.data-table tr{break-inside:auto;page-break-inside:auto}}
@@ -3188,23 +2994,18 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
           <div class="section-title">Work Order Type and Equipment Information</div>
           <div class="infoGrid">
             <div class="cell"><div class="fieldLabel">Work Order Type</div><div class="fieldValue">${h(workType)}</div></div>
-            <div class="cell"><div class="fieldLabel">${attachment ? "Parent Equipment #" : "Equipment Number"}</div><div class="fieldValue mono">${h(attachment ? eq?.id : wo.equipment)||"&nbsp;"}</div></div>
-            <div class="cell"><div class="fieldLabel">${attachment ? "Parent Equipment" : "Equipment Name"}</div><div class="fieldValue">${h(eq?.name || wo.equipmentLabel)||"&nbsp;"}</div></div>
-            ${attachment ? `<div class="cell"><div class="fieldLabel">Attachment #</div><div class="fieldValue mono">${h(attachment.id)||"&nbsp;"}</div></div><div class="cell"><div class="fieldLabel">Attachment / Implement</div><div class="fieldValue">${h(attachment.name)||"&nbsp;"}</div></div>` : ""}
-            <div class="cell"><div class="fieldLabel">Make and Model</div><div class="fieldValue">${h(attachment ? `${attachment.make||""} ${attachment.model||""}`.trim() : (eq ? `${eq.make||""} ${eq.model||""}`.trim() : ""))||"&nbsp;"}</div></div>
-            <div class="cell"><div class="fieldLabel">Serial Number</div><div class="fieldValue mono">${h(attachment?.serial || eq?.serial)||"&nbsp;"}</div></div>
+            <div class="cell"><div class="fieldLabel">Equipment Number</div><div class="fieldValue mono">${h(wo.equipment)||"&nbsp;"}</div></div>
+            <div class="cell"><div class="fieldLabel">Equipment Name</div><div class="fieldValue">${h(eq?.name || wo.equipmentLabel)||"&nbsp;"}</div></div>
+            <div class="cell"><div class="fieldLabel">Make and Model</div><div class="fieldValue">${h(eq ? `${eq.make||""} ${eq.model||""}`.trim() : "")||"&nbsp;"}</div></div>
+            <div class="cell"><div class="fieldLabel">Serial Number</div><div class="fieldValue mono">${h(eq?.serial)||"&nbsp;"}</div></div>
             <div class="cell"><div class="fieldLabel">${h(usageDisplayLabel)}</div><div class="fieldValue mono">${h(usageDisplayValue)||"&nbsp;"}</div></div>
-            <div class="cell"><div class="fieldLabel">EIL #</div><div class="fieldValue mono">${h(attachment?.eilNumber || eq?.eilNumber)||"&nbsp;"}</div></div>
+            <div class="cell"><div class="fieldLabel">EIL #</div><div class="fieldValue mono">${h(eq?.eilNumber)||"&nbsp;"}</div></div>
             <div class="cell"><div class="fieldLabel">Priority</div><div class="fieldValue">${h(wo.priority)||"&nbsp;"}</div></div>
             <div class="cell"><div class="fieldLabel">Mechanic</div><div class="fieldValue">${h(wo.tech)||"&nbsp;"}</div></div>
           </div>
         </section>` : ""}
 
-        ${(printOpt("showFaultDescription") || printOpt("showDescription") || (wo.woType !== "Inspection" && printOpt("showMechanicNotes"))) ? `<section class="section"><div class="section-title">Work Details</div>
-          <div class="textBlock"><div class="fieldLabel">Problem Reported / Requested Service</div><div style="margin-top:5px;white-space:pre-wrap">${h(printableDescription)||"&nbsp;"}</div></div>
-          <div class="textBlock"><div class="fieldLabel">Work Description</div><div style="margin-top:5px;white-space:pre-wrap">${h(wo.description)||"&nbsp;"}</div></div>
-          <div class="textBlock tall"><div class="fieldLabel">Mechanic Notes / Work Performed</div><div style="margin-top:5px;white-space:pre-wrap">${h(wo.mechanicNotes)||"&nbsp;"}</div></div>
-        </section>` : ""}
+        ${(printOpt("showFaultDescription") || printOpt("showDescription") || (wo.woType !== "Inspection" && printOpt("showMechanicNotes"))) ? `<section class="section"><div class="section-title">Work Details</div><div class="textBlock tall"><b>Problem Reported</b><br>${h(printableDescription)||"&nbsp;"}<br><br><b>Work Description</b><br>${h(wo.description)||"&nbsp;"}<br><br><b>Mechanic Notes / Work Performed</b><br>${h(wo.mechanicNotes)||"&nbsp;"}</div></section>` : ""}
         ${inspectionChecklistPrint}
 
         ${(printOpt("showParts") || printOpt("showOutsideServices") || printOpt("showLaborHours") || printOpt("showLaborTotal") || printOpt("showGrandTotal") || printOpt("showCosts")) ? `<section class="section" data-print-item="Parts and Labor Summary">
@@ -3244,10 +3045,8 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
       </div>
     </div>
 
-    <div class="pbtn" style="position:sticky;bottom:0;z-index:9999;background:rgba(255,255,255,.96);padding:10px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center;border-top:1px solid #d1d5db">
-      <button class="fileBtn" onclick="if(history.length>1){history.back()}else{window.close()}">← Close / Back</button>
-      <button class="printBtn" onclick="window.print()">Print / Share PDF</button>
-      <a class="fileBtn" href="${h(emailHref)}">Email Work Order</a>
+    <div class="pbtn">
+      <button class="printBtn" onclick="window.print()">Print / Save PDF</button>
       <a class="fileBtn" href="${woCsv}" download="work-order-${h(wo.id)}.csv">Download Excel CSV</a>
       <button class="fileBtn" onclick="var blob=new Blob([document.documentElement.outerHTML],{type:'application/msword'});var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='work-order-${h(wo.id)}.doc';a.click();URL.revokeObjectURL(a.href);">Download Word</button>
     </div>
@@ -3276,9 +3075,9 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
       </div>
     );
     return (
-      <div className="mf-wo-form-grid" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
 
-        <div className="mf-wo-full" style={{ gridColumn:"span 2", marginBottom:10, padding:"10px 12px", border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt, fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text }}>Work Order Type: {typeInfo?.label || `${form.woType||"Repair"} Work Order`}</div>
+        <div style={{ gridColumn:"span 2", marginBottom:10, padding:"10px 12px", border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt, fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text }}>Work Order Type: {typeInfo?.label || `${form.woType||"Repair"} Work Order`}</div>
 
         <Field label="Equipment Status" half>
           <select style={{...sel, minWidth:260, width:"100%"}} value={form.equipmentStatus||"Fully Operational"} onChange={e=>setForm(f=>({...f,equipmentStatus:e.target.value}))}>
@@ -3332,7 +3131,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
               <input style={inp} disabled={!!form.usageNA} type="number" step="1" value={form.usageMileage||""} onChange={e=>setForm(f=>({...f,usageMileage:e.target.value}))} placeholder="Enter current mileage" />
             </div>
           </div>
-          <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:6 }}>Equipment configured without usage tracking automatically uses N/A.</div>
+          <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:6 }}>If this equipment has no usage tracking selected, enter the reading here for the WO record, or select N/A when there is truly no hour/mileage value.</div>
         </div>
 
         <div style={{ gridColumn:"span 2", border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.card, marginBottom:14 }}>
@@ -3342,35 +3141,6 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
             <Field label="Mechanic Notes / Work Performed"><textarea style={{ ...inp, minHeight:120, resize:"vertical" }} value={form.mechanicNotes||""} onChange={e=>setForm(f=>({...f,mechanicNotes:e.target.value}))} placeholder="Diagnosis, work performed, findings, and mechanic notes..." /></Field>
           </div>
         </div>
-
-        {(form.woType==="Service"||form.woType==="Inspection")&&(
-          <TypeSection title={`${form.woType} Checklist / Procedure`} subtitle="Use a saved Task Library procedure or build this work order checklist manually." accent={form.woType==="Service"?"#ca8a04":"#16a34a"}>
-            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
-              <Btn type="button" variant={form.procedureMode!=="manual"?"primary":"secondary"} onClick={()=>setForm(f=>({...f,procedureMode:"library"}))}>Use Task Library Procedure</Btn>
-              <Btn type="button" variant={form.procedureMode==="manual"?"primary":"secondary"} onClick={()=>setForm(f=>({...f,procedureMode:"manual",procedureTaskId:"",taskProcedureSnapshot:null}))}>Build Checklist Manually</Btn>
-            </div>
-            {form.procedureMode!=="manual"?<div>
-              <Field label={`${form.woType==="Inspection"?"Inspection":"Service"} Procedure`}>
-                <select style={sel} value={form.procedureTaskId||""} onChange={e=>applyProcedureToWO(e.target.value)}>
-                  <option value="">-- Select a saved procedure --</option>
-                  {procedureOptionsForWO(form.woType).map(task=><option key={task.id} value={task.id}>{task.name}</option>)}
-                </select>
-              </Field>
-              {form.taskProcedureSnapshot?.steps?.length>0&&<div style={{display:"grid",gap:7,marginTop:8}}>
-                {form.taskProcedureSnapshot.steps.map((step,i)=><div key={i} style={{padding:9,border:`1px solid ${T.border}`,borderRadius:8,background:T.grayLt,fontSize:12}}><b>{i+1}. {step}</b>{form.taskProcedureSnapshot.stepNotes?.[i]&&<div style={{color:T.muted,marginTop:3}}>Instruction / spec: {form.taskProcedureSnapshot.stepNotes[i]}</div>}</div>)}
-              </div>}
-            </div>:<div>
-              <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Add the steps needed for this work order. Each step can include an instruction, specification, fluid, torque, or other note.</div>
-              {(form.manualChecklist||[]).map((row,i)=><div key={i} style={{display:"grid",gridTemplateColumns:"32px minmax(180px,1fr) minmax(180px,1fr) auto",gap:8,alignItems:"center",marginBottom:8}}>
-                <b>{i+1}</b>
-                <input style={inp} value={row.step||""} onChange={e=>setManualChecklistRow(i,"step",e.target.value)} placeholder="Checklist step"/>
-                <input style={inp} value={row.note||""} onChange={e=>setManualChecklistRow(i,"note",e.target.value)} placeholder="Instruction / specification (optional)"/>
-                <Btn type="button" variant="danger" onClick={()=>removeManualChecklistRow(i)}>X</Btn>
-              </div>)}
-              <Btn type="button" variant="secondary" onClick={addManualChecklistRow}>+ Add Checklist Step</Btn>
-            </div>}
-          </TypeSection>
-        )}
 
         {form.woType === "Inspection" && (
           <div
@@ -3497,23 +3267,12 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:8 }}>
                 <button type="button" onClick={()=>{ const idx=(form.partsUsed||[]).length; setForm(f=>({...f,partsUsed:[...(f.partsUsed||[]),{name:"",qty:1,receivedQty:"",unit:"ea",unitCost:"",totalPurchaseCost:"",receiptApplied:false}]})); setShowNewPart(idx); setShowPartAddChoice(false); }} style={{ ...inp, padding:"12px", cursor:"pointer", textAlign:"left", fontWeight:700, color:T.accent, background:T.grayLt }}>🔎 Use Part From Inventory<div style={{ marginTop:4, fontSize:10, fontWeight:400, color:T.muted }}>Search existing stock and enter quantity used.</div></button>
                 <button type="button" onClick={()=>{ setForm(f=>({...f,partsUsed:[...(f.partsUsed||[]),{name:"",qty:1,receivedQty:"",unit:"ea",unitCost:"",totalPurchaseCost:"",receiptApplied:false}]})); setShowNewPart(null); setShowPartAddChoice(false); }} style={{ ...inp, padding:"12px", cursor:"pointer", textAlign:"left", fontWeight:700, color:T.accent, background:T.grayLt }}>＋ Add New Part<div style={{ marginTop:4, fontSize:10, fontWeight:400, color:T.muted }}>Enter the part, quantity received/used, and purchase cost.</div></button>
-                <button type="button" onClick={()=>{setShowLubricantPicker(true);setShowPartAddChoice(false);}} style={{ ...inp, padding:"12px", cursor:"pointer", textAlign:"left", fontWeight:700, color:T.accent, background:T.grayLt }}>🛢 Use Lubricant / Fluid<div style={{ marginTop:4, fontSize:10, fontWeight:400, color:T.muted }}>Select oil, coolant or another fluid and enter the amount used.</div></button>
               </div>
             </div>
           )}
         </div>
 
 
-
-        {showLubricantPicker&&<div style={{gridColumn:"span 2",marginBottom:14,border:`1px solid ${T.border}`,borderRadius:8,padding:12,background:T.grayLt}}>
-          <div style={{fontWeight:800,marginBottom:8}}>Use Lubricant / Fluid From Inventory</div>
-          <div style={{display:"grid",gridTemplateColumns:"minmax(190px,2fr) 90px 100px auto auto",gap:8,alignItems:"end"}}>
-            <Field label="Lubricant / Fluid"><select style={sel} value={lubricantPick.id} onChange={e=>setLubricantPick(x=>({...x,id:e.target.value}))}><option value="">Select fluid…</option>{(state.lubricants||[]).filter(l=>(+l.onHand||0)>0).map(l=><option key={l.id} value={l.id}>{l.name}{l.grade?` — ${l.grade}`:""} — {(+l.onHand||0).toFixed(2)} gal</option>)}</select></Field>
-            <Field label="Amount"><input style={inp} type="number" min="0" step="0.01" value={lubricantPick.qty} onChange={e=>setLubricantPick(x=>({...x,qty:e.target.value}))}/></Field>
-            <Field label="Unit"><select style={sel} value={lubricantPick.unit} onChange={e=>setLubricantPick(x=>({...x,unit:e.target.value}))}><option value="qt">Quarts</option><option value="gal">Gallons</option><option value="L">Liters</option></select></Field>
-            <Btn small onClick={addLubricantLine}>Add Fluid</Btn><Btn small variant="secondary" onClick={()=>setShowLubricantPicker(false)}>Cancel</Btn>
-          </div>
-        </div>}
 
         {/* Outside Services */}
         <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.grayLt }}>
@@ -3645,7 +3404,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
             {wo.serviceInterval && wo.woType!=="Repair" && <div style={{ fontFamily:T.mono, fontSize:11, color:T.accent, marginTop:2 }}>{wo.serviceInterval}</div>}
           </div>
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            <Btn small variant="secondary" onClick={()=>printWO(wo)}>Print / PDF</Btn>
+            <Btn small variant="secondary" onClick={()=>printWO(wo)}>Print</Btn>
             <Btn small variant="danger" onClick={()=>del(wo.id)}>Delete</Btn>
             {!isCompleted && !editMode && <Btn small onClick={()=>setEditMode(true)} style={{ background:"#1e40af", borderColor:"#1e40af" }}>Update Work Order</Btn>}
             {!isCompleted && editMode && <Btn small onClick={()=>{ let payload={ ...wo, ...form }; const isClosingNow = payload.status!==wo.status && payload.status==="Completed"; if(payload.status!==wo.status && !confirmWOStatusChange(wo, payload.status)) return; if(isClosingNow){ const completedDate = askCompletedDate(payload.completed || payload.completedDate || today()); if(!completedDate) return; payload={ ...payload, completed:completedDate, completedDate:completedDate, equipmentStatus:"Fully Operational" }; } dispatch({ type:"UPDATE_WO", payload }); setEditMode(false); setDetailWO(payload); }} style={{ background:T.green, borderColor:T.green }}>Save Changes</Btn>}
@@ -3787,68 +3546,83 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     );
   };
 
-  const duePMItems = (state.pmSchedules||[]).filter(s=>{
-    const due = s.status==="Overdue" || s.status==="Due" || (s.nextDueDate && s.nextDueDate<=today());
-    const hasOpen = (state.workOrders||[]).some(w=>w.woType==="Service" && String(w.scheduleId||"")===String(s.id||"") && w.status!=="Completed");
-    return due && !hasOpen;
-  });
-  const dueInspectionItems = (state.inspectionSchedules||[]).filter(s=>{
-    const due = s.status==="Overdue" || s.status==="Due" || (s.nextDueDate && s.nextDueDate<=today());
-    const hasOpen = (state.workOrders||[]).some(w=>w.woType==="Inspection" && String(w.inspectionScheduleId||"")===String(s.id||"") && w.status!=="Completed");
-    return due && !hasOpen;
-  });
-  const resolveMaintainableAsset = (id) => {
-    const direct=(state.equipment||[]).find(e=>String(e.id)===String(id));
-    if(direct) return {...direct,assetType:"Equipment"};
-    for(const parent of (state.equipment||[])){
-      const at=(parent.attachments||[]).find(a=>String(a.id)===String(id));
-      if(at) return {...at,assetType:"Attachment",parentId:parent.id,parentName:parent.name};
-    }
-    return null;
-  };
-
-  const createDuePMWO = (sch) => {
-    const eq=resolveMaintainableAsset(sch.equipmentId);
-    const task=(state.pmTasks||[]).find(t=>String(t.id)===String(sch.taskId)) || {};
-    const logs=(state.usageLogs||[]).filter(l=>String(l.equipmentId)===String(sch.equipmentId));
-    const mode=String(eq?.usageType||sch.usageType||"hours").toLowerCase();
-    const currentHours=Math.max(+(eq?.currentHours||0),...logs.map(l=>+(l.hours||0)).filter(Number.isFinite),0)||"";
-    const currentMileage=Math.max(+(eq?.currentMileage||0),...logs.map(l=>+(l.mileage||0)).filter(Number.isFinite),0)||"";
-    const stepLines=(Array.isArray(task.steps)?task.steps:String(task.steps||"").split(/\n+/)).map(x=>String(x?.text||x?.step||x||"").trim()).filter(Boolean);
-    dispatch({type:"ADD_WO",payload:{id:genWOId(eq?.id||sch.equipmentId,"Service"),title:task.name||sch.task||"PM Service",equipment:sch.equipmentId,status:"Open",priority:"Medium",woType:"Service",equipmentStatus:eq?.status||"Fully Operational",created:today(),due:sch.nextDueDate||today(),tech:"",laborHours:0,laborCost:0,partsCost:0,description:task.description||task.name||sch.task||"PM Service",workPerformed:stepLines.join("\n"),serviceSteps:stepLines.join("\n"),serviceStepLines:stepLines,steps:stepLines,serviceChecklist:stepLines.join("\n"),serviceStepNotes:Array.isArray(task.stepNotes)?[...task.stepNotes]:[],taskProcedureSnapshot:{taskId:task.id||sch.taskId,name:task.name||sch.task||"PM Service",steps:[...stepLines],stepNotes:Array.isArray(task.stepNotes)?[...task.stepNotes]:[],capturedAt:new Date().toISOString()},procedureMode:"library",procedureTaskId:task.id||sch.taskId||"",equipmentType:eq?.assetType||"Equipment",parentId:eq?.parentId||null,parentName:eq?.parentName||null,mechanicNotes:"",faultEnabled:true,faultDescription:task.description||task.name||sch.task||"PM Service",usageType:mode,usageHours:mode==="mileage"?"":currentHours,usageMileage:mode==="hours"?"":currentMileage,usageNA:!eq?.trackUsage,partsUsed:Array.isArray(task.parts)?task.parts:[],outsideServices:[],scheduleId:sch.id,pmTaskId:task.id||sch.taskId}});
-  };
-  const createDueInspectionWO = (sch) => {
-    const eq=resolveMaintainableAsset(sch.equipmentId);
-    const task=(state.inspectionTasks||[]).find(t=>String(t.id)===String(sch.taskId)) || {};
-    const occurrence=String(sch.nextDueDate||today()).slice(0,10);
-    const steps=(Array.isArray(task.steps)?task.steps:String(task.steps||"").split(/\n+/)).map(x=>String(x?.text||x?.step||x||"").trim()).filter(Boolean);
-    const prefix=`${eq?.id||sch.equipmentId}-`; const nums=(state.workOrders||[]).map(w=>String(w.id||"")).filter(id=>id.startsWith(prefix)).map(id=>parseInt(id.slice(prefix.length),10)).filter(n=>!Number.isNaN(n));
-    const id=`${prefix}${String(nums.length?Math.max(...nums)+1:1).padStart(2,"0")}`;
-    dispatch({type:"ADD_WO",payload:{id,woType:"Inspection",title:`Inspection - ${task.name||sch.task||"Scheduled Inspection"}`,inspectionTaskName:task.name||sch.task||"Scheduled Inspection",equipment:sch.equipmentId,equipmentStatus:eq?.status||"Fully Operational",status:"Open",priority:"Normal",created:today(),due:occurrence,completed:"",tech:"",usageReading:"N/A",usageType:"N/A",usageNA:true,faultEnabled:true,faultDescription:task.name||sch.task||"Scheduled Inspection",problem:task.name||sch.task||"Scheduled Inspection",description:task.name||sch.task||"Scheduled Inspection",workPerformed:steps.map((x,i)=>`${i+1}. ${x}`).join("\n"),mechanicNotes:task.notes||"",inspectionTaskId:task.id||sch.taskId,inspectionScheduleId:sch.id,inspectionDueOccurrence:occurrence,inspectionSteps:steps.join("\n"),steps,procedureMode:"library",procedureTaskId:task.id||sch.taskId||"",taskProcedureSnapshot:{taskId:task.id||sch.taskId||"",name:task.name||sch.task||"Scheduled Inspection",steps:[...steps],stepNotes:[],capturedAt:new Date().toISOString()},equipmentType:eq?.assetType||"Equipment",parentId:eq?.parentId||null,parentName:eq?.parentName||null,inspectionStepResults:steps.map((step,i)=>({id:`step-${Date.now()}-${i}`,step,result:"",comment:""})),inspectionAttachments:Array.isArray(task.attachments)?task.attachments:[],partsUsed:[],labor:[]}});
-  };
-
   return (
     <div>
-      {/* Due service / inspection notifications */}
-      {(duePMItems.length>0 || dueInspectionItems.length>0) && <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:10,marginBottom:14}}>
-        {duePMItems.length>0 && <Card><div style={{fontWeight:800,fontSize:14,marginBottom:8}}>🔧 Services Due / Overdue ({duePMItems.length})</div>{duePMItems.map(sch=>{const eq=(state.equipment||[]).find(e=>String(e.id)===String(sch.equipmentId));const task=(state.pmTasks||[]).find(t=>String(t.id)===String(sch.taskId));return <div key={sch.id} style={{padding:"9px 0",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",gap:10,alignItems:"center"}}><div><b>{eq?.name||sch.equipmentId}</b><div style={{fontSize:12,color:T.muted}}>{task?.name||sch.task||"PM Service"} · Due {sch.nextDueDate||"now"}</div></div><Btn small onClick={()=>createDuePMWO(sch)}>Create WO</Btn></div>})}</Card>}
-        {dueInspectionItems.length>0 && <Card><div style={{fontWeight:800,fontSize:14,marginBottom:8}}>📋 Inspections Due / Overdue ({dueInspectionItems.length})</div>{dueInspectionItems.map(sch=>{const eq=(state.equipment||[]).find(e=>String(e.id)===String(sch.equipmentId));const task=(state.inspectionTasks||[]).find(t=>String(t.id)===String(sch.taskId));return <div key={sch.id} style={{padding:"9px 0",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",gap:10,alignItems:"center"}}><div><b>{eq?.name||sch.equipmentId}</b><div style={{fontSize:12,color:T.muted}}>{task?.name||sch.task||"Inspection"} · Due {sch.nextDueDate||"now"}</div></div><Btn small onClick={()=>createDueInspectionWO(sch)}>Create WO</Btn></div>})}</Card>}
-      </div>}
-
       {/* Toolbar */}
-      <div className="mf-wo-toolbar" style={{display:"flex",flexDirection:"column",gap:10,marginBottom:16}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8}}>
-          <div><div style={{fontSize:11,fontWeight:700,color:T.muted,textTransform:"uppercase",marginBottom:5}}>Status</div><div style={{display:"flex",gap:0,background:T.card,border:`1px solid ${T.border}`,borderRadius:7,overflow:"hidden",flexWrap:"wrap"}}>{STATUS_TABS.map((s,i)=><button key={s} onClick={()=>setFilter(s)} style={{padding:"7px 12px",border:"none",borderLeft:i>0?`1px solid ${T.border}`:"none",background:filter===s?T.accent:T.card,color:filter===s?"#fff":T.subtext,cursor:"pointer",fontFamily:T.sans,fontSize:11,fontWeight:filter===s?600:400}}>{s}</button>)}</div></div>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}><Btn variant="secondary" onClick={()=>setShowFilters(v=>!v)}>☰ Filters{(typeFilter!=="All"||priorityFilter!=="All"||equipmentStatusFilter!=="All"||completedDateFilter!=="all")?" •":""}</Btn><Btn onClick={openAdd}>+ New Work Order</Btn><Btn onClick={()=>openAddForType("Service")} style={{background:"#ca8a04",borderColor:"#ca8a04"}}>+ New Service Work Order</Btn><Btn onClick={()=>openAddForType("Inspection")} style={{background:"#16a34a",borderColor:"#16a34a"}}>+ New Inspection Work Order</Btn></div>
+      <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:16 }}>
+        {/* Row 1: Status tabs + New WO */}
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
+          <div style={{ display:"flex", gap:0, background:T.card, border:`1px solid ${T.border}`, borderRadius:7, overflow:"hidden", flexWrap:"wrap" }}>
+            {STATUS_TABS.map((s,i)=>(
+              <button key={s} onClick={()=>setFilter(s)} style={{ padding:"7px 12px", border:"none", borderLeft:i>0?`1px solid ${T.border}`:"none", background:filter===s?T.accent:T.card, color:filter===s?"#fff":T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:filter===s?600:400 }}>{s}</button>
+            ))}
+          </div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+            <Btn onClick={openAdd}>+ New Work Order</Btn>
+            <Btn onClick={()=>openAddForType("Service")} style={{ background:"#ca8a04", borderColor:"#ca8a04" }}>+ New Service Work Order</Btn>
+            <Btn onClick={()=>openAddForType("Inspection")} style={{ background:"#16a34a", borderColor:"#16a34a" }}>+ New Inspection Work Order</Btn>
+          </div>
+          <Btn variant="secondary" onClick={onWOSettings}>⚙ WO Settings</Btn>
         </div>
-        {showFilters && <Card><div className="mf-wo-filter-row" style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"end"}}>
-          <Field label="Work Order Type"><select style={{...sel,width:160}} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}><option value="All">All Types</option>{["Repair","Service","Inspection"].map(t=><option key={t}>{t}</option>)}</select></Field>
-          <Field label="Priority"><select style={{...sel,width:150}} value={priorityFilter} onChange={e=>setPriorityFilter(e.target.value)}><option value="All">All Priorities</option>{["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}</select></Field>
-          <Field label="Equipment Status"><select style={{...sel,width:250}} value={equipmentStatusFilter} onChange={e=>setEquipmentStatusFilter(e.target.value)}><option value="All">All Equipment Statuses</option><option value="allAsc">{EQUIPMENT_STATUS_ALL_SORTS.allAsc}</option><option value="allDesc">{EQUIPMENT_STATUS_ALL_SORTS.allDesc}</option>{EQUIPMENT_STATUS_FILTERS.map(x=><option key={x}>{x}</option>)}</select></Field>
-          {filter==="Completed"&&<Field label="Completed"><select style={{...sel,width:160}} value={completedDateFilter} onChange={e=>setCompletedDateFilter(e.target.value)}><option value="all">All Time</option><option value="today">Today</option><option value="thisweek">This Week</option><option value="lastweek">Previous Week</option><option value="thismonth">This Month</option><option value="lastmonth">Previous Month</option></select></Field>}
-          <Field label="Sort"><div style={{display:"flex"}}><select style={{...sel,width:170,borderTopRightRadius:0,borderBottomRightRadius:0}} value={sortBy} onChange={e=>setSortBy(e.target.value)}><option value="created">Date Created</option><option value="due">Due Date</option><option value="completed">Completed Date</option><option value="priority">Priority</option><option value="status">Work Order Status</option><option value="equipmentStatus">Equipment Status</option><option value="cost">Cost</option></select><button onClick={()=>setSortDir(d=>d==="asc"?"desc":"asc")} style={{padding:"0 12px",border:`1px solid ${T.border}`,background:T.grayLt,cursor:"pointer"}}>{sortDir==="asc"?"↑":"↓"}</button></div></Field>
-          <Btn variant="secondary" onClick={()=>{setTypeFilter("All");setPriorityFilter("All");setEquipmentStatusFilter("All");setCompletedDateFilter("all");}}>Clear Filters</Btn><span style={{fontSize:12,color:T.muted,marginLeft:"auto",paddingBottom:10}}>{filtered.length} work order{filtered.length!==1?"s":""}</span>
-        </div></Card>}
+
+        {/* Row 2: Filters + Sort */}
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+          {/* Type */}
+          <select style={{ ...sel, width:140 }} value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
+            <option value="All">All Types</option>
+            {["Repair","Service","Inspection"].map(t=><option key={t}>{t}</option>)}
+          </select>
+          {/* Priority */}
+          <select style={{ ...sel, width:130 }} value={priorityFilter} onChange={e=>setPriorityFilter(e.target.value)}>
+            <option value="All">All Priorities</option>
+            {["High","Medium","Low"].map(p=><option key={p}>{p}</option>)}
+          </select>
+          {/* Mechanic */}
+          <select style={{ ...sel, width:150 }} value={mechFilter} onChange={e=>setMechFilter(e.target.value)}>
+            <option value="All">All Mechanics</option>
+            {allMechanics.map(m=><option key={m}>{m}</option>)}
+          </select>
+          {/* Equipment Status */}
+          <select style={{ ...sel, width:280 }} value={equipmentStatusFilter} onChange={e=>setEquipmentStatusFilter(e.target.value)}>
+            <option value="All">All Equipment Statuses</option>
+            <option value="allAsc">{EQUIPMENT_STATUS_ALL_SORTS.allAsc}</option>
+            <option value="allDesc">{EQUIPMENT_STATUS_ALL_SORTS.allDesc}</option>
+            {EQUIPMENT_STATUS_FILTERS.map(s=><option key={s} value={s}>{s}</option>)}
+          </select>
+          {/* Date range — only when viewing Completed */}
+          {filter==="Completed" && (
+            <select style={{ ...sel, width:150 }} value={completedDateFilter} onChange={e=>setCompletedDateFilter(e.target.value)}>
+              <option value="all">All Time</option>
+              <option value="today">Today</option>
+              <option value="thisweek">This Week</option>
+              <option value="lastweek">Previous Week</option>
+              <option value="thismonth">This Month</option>
+              <option value="lastmonth">Previous Month</option>
+            </select>
+          )}
+          {/* Sort by */}
+          <div style={{ display:"flex", gap:0, border:`1px solid ${T.border}`, borderRadius:6, overflow:"hidden" }}>
+            <select style={{ ...sel, border:"none", borderRadius:0, width:120 }} value={sortBy} onChange={e=>setSortBy(e.target.value)}>
+              <option value="created">Date Created</option>
+              <option value="due">Due Date</option>
+              <option value="completed">Completed Date</option>
+              <option value="priority">Priority</option>
+              <option value="status">Work Order Status</option>
+              <option value="equipmentStatus">Equipment Status</option>
+              <option value="cost">Cost</option>
+            </select>
+            <button onClick={()=>setSortDir(d=>d==="asc"?"desc":"asc")} style={{ padding:"0 10px", border:"none", borderLeft:`1px solid ${T.border}`, background:T.grayLt, cursor:"pointer", fontFamily:T.mono, fontSize:13, color:T.subtext }}>
+              {sortDir==="asc"?"↑":"↓"}
+            </button>
+          </div>
+          {/* Clear filters */}
+          {(typeFilter!=="All"||priorityFilter!=="All"||mechFilter!=="All"||equipmentStatusFilter!=="All") && (
+            <button onClick={()=>{ setTypeFilter("All"); setPriorityFilter("All"); setMechFilter("All"); setEquipmentStatusFilter("All"); }} style={{ background:"none", border:"none", color:T.accent, fontFamily:T.sans, fontSize:12, fontWeight:600, cursor:"pointer" }}>✕ Clear</button>
+          )}
+          <span style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginLeft:"auto" }}>
+            {filtered.length} work order{filtered.length!==1?"s":""}
+          </span>
+        </div>
       </div>
 
       {/* Mobile work-order summaries — no horizontal scrolling */}
@@ -3856,17 +3630,12 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
         {filtered.map(wo=>{
           const eq = state.equipment.find(e=>e.id===wo.equipment);
           const eqLabel = eq?.name || wo.equipmentLabel || wo.equipment || "—";
-          return <div key={`mobile-${wo.id}`} className="mf-mobile-summary-card mf-mobile-wo-card" onClick={()=>openEdit(wo)} role="button" tabIndex={0}>
+          return <button key={`mobile-${wo.id}`} className="mf-mobile-summary-card" onClick={()=>openEdit(wo)}>
             <div className="mf-mobile-summary-top"><span className="mf-mobile-summary-id">{wo.id || "Work Order"}</span><Badge label={wo.status||"Open"} /></div>
             <div className="mf-mobile-summary-title">{wo.equipment || "—"} · {eqLabel}</div>
             <div className="mf-mobile-summary-text">{wo.faultDescription || wo.description || wo.title || "No description"}</div>
-            <div className="mf-mobile-summary-meta"><span>{wo.woType || "Repair"}</span><span>{wo.priority || "Medium"}</span>{wo.created&&<span>Created {wo.created}</span>}{wo.due&&<span>Due {wo.due}</span>}</div>
-            <div className="mf-mobile-wo-actions" onClick={e=>e.stopPropagation()}>
-              <Btn small variant="secondary" onClick={()=>openEdit(wo)}>✏️ Edit</Btn>
-              <Btn small variant="secondary" onClick={()=>printWO(wo)}>🖨 Print / PDF</Btn>
-              <Btn small variant="danger" onClick={()=>del(wo.id)}>🗑 Delete</Btn>
-            </div>
-          </div>;
+            <div className="mf-mobile-summary-meta"><span>{wo.woType || "Repair"}</span><span>{wo.priority || "Medium"}</span>{wo.due&&<span>Due {wo.due}</span>}</div>
+          </button>;
         })}
         {!filtered.length && <div className="mf-mobile-empty">No work orders found.</div>}
       </div>
@@ -3942,7 +3711,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
                       ✏️
                     </button>
                     <button
-                      title="Print / Share Work Order PDF"
+                      title="Print Work Order"
                       onClick={e=>{ e.stopPropagation(); printWO(wo); }}
                       style={{ background:T.surface, border:`1px solid ${T.border}`, borderRadius:6, padding:"5px 9px", cursor:"pointer", fontSize:14, color:T.subtext, display:"inline-flex", alignItems:"center", justifyContent:"center" }}>
                       🖨
@@ -4051,7 +3820,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
 
 /* ATTACHMENTS CARD - used inside Equipment detail view */
 
-function AttachmentsCard({ eq, state, dispatch }) {
+function AttachmentsCard({ eq, dispatch }) {
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId]     = useState(null);
   const [form, setForm]         = useState({});
@@ -4059,7 +3828,7 @@ function AttachmentsCard({ eq, state, dispatch }) {
 
   const attachments = eq.attachments || [];
 
-  const blankForm = () => ({ id:"", name:"", make:"", model:"", serial:"", eilNumber:"", acquisitionDate:"", acquisitionCost:"", notes:"", trackUsage:false, usageType:"hours", currentHours:"", currentMileage:"", pmBaselineDate:"", pmBaselineUsage:"" });
+  const blankForm = () => ({ name:"", make:"", model:"", serial:"", eilNumber:"", acquisitionDate:"", acquisitionCost:"", notes:"" });
 
   const openAdd = () => { setForm(blankForm()); setEditId(null); setShowForm(true); };
   const openEdit = (at) => { setForm({...at}); setEditId(at.id); setShowForm(true); };
@@ -4067,24 +3836,10 @@ function AttachmentsCard({ eq, state, dispatch }) {
 
   const save = () => {
     if(!form.name) return alert("Attachment nomenclature is required.");
-    if(form.trackUsage){
-      if(!form.usageType) return alert("Choose Hours, Mileage, or Hours & Mileage for this attachment.");
-      if((form.usageType==="hours"||form.usageType==="both") && String(form.currentHours??"").trim()==="") return alert("Enter the attachment's current hours.");
-      if((form.usageType==="mileage"||form.usageType==="both") && String(form.currentMileage??"").trim()==="") return alert("Enter the attachment's current mileage.");
-      const current=form.usageType==="mileage"?+form.currentMileage:+form.currentHours;
-      if(String(form.pmBaselineUsage??"").trim()!=="" && Number.isFinite(current) && +form.pmBaselineUsage>current) return alert("Usage at Last Service cannot be greater than current usage.");
-    }
-    const requestedId = String(form.id || "").trim();
-    const nextId = editId ? (requestedId || editId) : (requestedId || `AT-${String(Date.now()).slice(-5)}`);
-    if(attachments.some(a => String(a.id)===String(nextId) && String(a.id)!==String(editId||""))) return alert("That Attachment # is already in use on this equipment.");
-    const updatedRecord = { ...form, id:nextId };
     const updated = editId
-      ? attachments.map(a => String(a.id)===String(editId) ? updatedRecord : a)
-      : [...attachments, updatedRecord];
+      ? attachments.map(a => a.id===editId ? {...form, id:editId} : a)
+      : [...attachments, { ...form, id:`AT-${String(Date.now()).slice(-5)}` }];
     dispatch({ type:"UPDATE_EQ", payload:{ ...eq, attachments:updated } });
-    if(editId && String(nextId)!==String(editId)) {
-      (state.workOrders||[]).filter(w=>String(w.equipment)===String(editId)).forEach(w=>dispatch({type:"UPDATE_WO",payload:{...w,equipment:nextId}}));
-    }
     cancel();
   };
 
@@ -4115,11 +3870,7 @@ function AttachmentsCard({ eq, state, dispatch }) {
             {editId ? "Edit Attachment" : "New Attachment"}
           </h5>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
-            <div style={{ marginBottom:12 }}>
-              <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Attachment #</label>
-              <input style={inp} value={form.id||""} onChange={F("id")} placeholder={editId ? "Attachment number" : "Leave blank to auto-generate"} />
-            </div>
-            <div style={{ marginBottom:12 }}>
+            <div style={{ marginBottom:12, gridColumn:"span 2" }}>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Attachment Name *</label>
               <input style={inp} value={form.name||""} onChange={F("name")} placeholder="e.g. Sweeper Broom, Snow Plow, Pallet Forks" />
             </div>
@@ -4136,21 +3887,6 @@ function AttachmentsCard({ eq, state, dispatch }) {
             <div style={{ marginBottom:12 }}>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Purchase Price ($)</label>
               <input style={inp} {...decimalInputAttrs({ placeholder:"0.00" })} value={form.acquisitionCost||""} onChange={e=>setForm(f=>({...f,acquisitionCost:sanitizeDecimalInput(e.target.value)}))} />
-            </div>
-            <div style={{ marginBottom:12, gridColumn:"span 2", border:`1px solid ${T.border}`, borderRadius:10, padding:12, background:T.card }}>
-              <label style={{ display:"flex", alignItems:"center", gap:8, fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text }}>
-                <input type="checkbox" checked={!!form.trackUsage} onChange={e=>setForm(f=>({...f,trackUsage:e.target.checked}))}/> Track Attachment Usage
-              </label>
-              <div style={{fontSize:11,color:T.muted,marginTop:4}}>Enable this for powered implements or attachments with their own hour/mileage meter. Date-based PM works with this off.</div>
-              {form.trackUsage&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginTop:10}}>
-                <Field label="Usage Type"><select style={inp} value={form.usageType||"hours"} onChange={F("usageType")}><option value="hours">Engine Hours</option><option value="mileage">Mileage</option><option value="both">Hours & Mileage</option></select></Field>
-                {(form.usageType==="hours"||form.usageType==="both")&&<Field label="Current Hours"><input style={inp} type="number" step="0.1" value={form.currentHours||""} onChange={F("currentHours")}/></Field>}
-                {(form.usageType==="mileage"||form.usageType==="both")&&<Field label="Current Mileage"><input style={inp} type="number" step="1" value={form.currentMileage||""} onChange={F("currentMileage")}/></Field>}
-              </div>}
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginTop:10}}>
-                <Field label="Last Service Date"><input style={inp} type="date" value={form.pmBaselineDate||""} onChange={F("pmBaselineDate")}/></Field>
-                {form.trackUsage&&<Field label="Usage at Last Service"><input style={inp} type="number" step="0.1" value={form.pmBaselineUsage||""} onChange={F("pmBaselineUsage")}/></Field>}
-              </div>
             </div>
             <div style={{ marginBottom:12, gridColumn:"span 2" }}>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Notes</label>
@@ -4185,12 +3921,8 @@ function AttachmentsCard({ eq, state, dispatch }) {
             </tr>
           </thead>
           <tbody>
-            {attachments.map((at,i)=>{
-              const atWOs=(state.workOrders||[]).filter(w=>String(w.equipment||"")===String(at.id));
-              const atPM=(state.pmSchedules||[]).filter(s=>String(s.equipmentId||"")===String(at.id));
-              const atIns=(state.inspectionSchedules||[]).filter(s=>String(s.equipmentId||"")===String(at.id));
-              const completed=atWOs.filter(w=>w.status==="Completed");
-              return (<React.Fragment key={at.id}><tr style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
+            {attachments.map((at,i)=>(
+              <tr key={at.id} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt }}>
                 <td style={{ padding:"10px 12px", fontWeight:600, color:T.text }}>{at.name}</td>
                 <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12, color:T.muted }}>{at.eilNumber||"—"}</td>
                 <td style={{ padding:"10px 12px", color:T.subtext }}>{[at.make,at.model].filter(Boolean).join(" ")||"—"}</td>
@@ -4203,19 +3935,7 @@ function AttachmentsCard({ eq, state, dispatch }) {
                   <Btn small variant="danger" onClick={()=>remove(at.id)}>Remove</Btn>
                 </td>
               </tr>
-              <tr style={{background:i%2===0?"#fff":T.grayLt,borderBottom:`1px solid ${T.border}`}}>
-                <td colSpan="8" style={{padding:"0 12px 10px"}}>
-                  <div style={{display:"flex",gap:8,flexWrap:"wrap",fontSize:11,color:T.subtext}}>
-                    <span><b>{atPM.length}</b> PM assignment{atPM.length===1?"":"s"}</span>
-                    <span>• <b>{atIns.length}</b> inspection assignment{atIns.length===1?"":"s"}</span>
-                    <span>• <b>{atWOs.filter(w=>w.status!=="Completed").length}</b> open WO</span>
-                    <span>• <b>{completed.filter(w=>w.woType==="Service").length}</b> completed service</span>
-                    <span>• <b>{completed.filter(w=>w.woType==="Inspection").length}</b> completed inspection</span>
-                    <span>• <b>{completed.filter(w=>w.woType==="Repair").length}</b> completed repair</span>
-                  </div>
-                </td>
-              </tr></React.Fragment>);
-            })}
+            ))}
           </tbody>
         </table>
       )}
@@ -4226,19 +3946,15 @@ function AttachmentsCard({ eq, state, dispatch }) {
 
 /* EQUIPMENT */
 
-function Equipment({ state, dispatch, onCreateAttachmentWO }) {
+function Equipment({ state, dispatch }) {
   const [modal, setModal]       = useState(null);
   const [detail, setDetail]     = useState(null);
   const [attachDetail, setAttachDetail] = useState(null);
-  const [attachEdit, setAttachEdit] = useState(false);
-  const [attachEditForm, setAttachEditForm] = useState({});
   const [historyWO, setHistoryWO] = useState(null);
   const [historyEdit, setHistoryEdit] = useState(false);
   const [historicalImportOpen, setHistoricalImportOpen] = useState(false);
-  const blankHistoricalImport = () => ({ title:"", woType:"Repair", created:"", completed:"", fault:"", tech:"", laborHours:"", laborCost:"", notes:"", partsUsed:[], originalDocument:null, aiReview:null });
+  const blankHistoricalImport = () => ({ title:"", woType:"Service", completed:today(), tech:"", laborHours:"", laborCost:"", notes:"", partsUsed:[], originalDocument:null });
   const [historicalImport, setHistoricalImport] = useState(blankHistoricalImport());
-  const [historicalAiBusy, setHistoricalAiBusy] = useState(false);
-  const [historicalAiError, setHistoricalAiError] = useState("");
   const historicalCameraRef = useRef(null);
   const historicalFileRef = useRef(null);
   const [expandedAt, setExpandedAt]     = useState({});
@@ -4249,9 +3965,6 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
   const [locationF, setLocationF] = useState("All");
   const [equipSort, setEquipSort] = useState("equipAsc");
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
-  const [costView, setCostView] = useState("fy");
-  const [costCustom, setCostCustom] = useState({from:"",to:""});
-  const [attachmentsOnly, setAttachmentsOnly] = useState(false);
   const [showNewCat, setShowNewCat] = useState(false);
   const [newCat, setNewCat]     = useState("");
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
@@ -4286,7 +3999,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
     win.document.write(`<div class="sectionTitle">Work Order Totals</div><table><tr><th>Type</th><th class="right">Count</th></tr><tr><td>Repair</td><td class="right">${fin.repairWOs}</td></tr><tr><td>Service / PM</td><td class="right">${fin.serviceWOs}</td></tr><tr><td>Inspection</td><td class="right">${fin.inspectionWOs}</td></tr></table>`);
     win.document.write(`<div class="sectionTitle">Work Order History</div><table><tr><th>WO #</th><th>Type</th><th>Status</th><th>Date</th><th>Description</th><th class="right">Labor</th><th class="right">Cost</th></tr>${wos.map(w=>`<tr><td>${esc(w.id||"—")}</td><td>${esc(w.woType||w.type||"—")}</td><td>${esc(w.status||"—")}</td><td>${esc(workOrderDate(w)||"—")}</td><td>${esc(w.title||w.faultDescription||w.description||"—")}</td><td class="right">${esc((+w.laborHours||0).toFixed(1))}h</td><td class="right">${esc(moneyFmt(woTotalCost(w)))}</td></tr>`).join("")}${!wos.length?`<tr><td colspan="7" style="text-align:center;color:#667085;padding:18px">No work orders for this equipment.</td></tr>`:""}</table>`);
     if(eq.notes) win.document.write(`<div class="sectionTitle">Notes</div><div style="white-space:pre-wrap;border:1px solid #e5e7eb;border-radius:8px;padding:10px">${esc(eq.notes)}</div>`);
-    win.document.write(`<div class="actions"><button onclick="if(history.length>1){history.back()}else{window.close()}">← Close / Back</button><button onclick="window.print()">Print / Share PDF</button></div>${reportButtonsHtml(exportRows,"equipment-summary")}</body></html>`);
+    win.document.write(`<div class="actions"><button onclick="window.print()">Print Equipment Summary</button></div>${reportButtonsHtml(exportRows)}</body></html>`);
     win.document.close();
   };
 
@@ -4344,9 +4057,6 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
       ? String(wo.inspectionTaskName || wo.faultDescription || wo.description || wo.title || "")
       : String(wo.faultDescription || wo.description || wo.title || "");
     const win = window.open("", "_blank", "width=900,height=700");
-    const historyEmailSubject = `Historical Work Order ${wo.id || ""} - ${wo.title || workType}`;
-    const historyEmailBody = [`MaintForge Historical Work Order ${wo.id || ""}`, "", `Type: ${workType}`, `Status: ${wo.status || "Completed"}`, `Equipment: ${eq ? `${eq.name} (${eq.id})` : (wo.equipment || "")}`, `Date: ${wo.completed || wo.created || ""}`, `Mechanic: ${wo.tech || ""}`, "", "Work Order:", wo.title || wo.faultDescription || "", "", "Work Performed / Notes:", wo.workPerformed || wo.mechanicNotes || wo.description || ""].join("\n");
-    const historyEmailHref = `mailto:?subject=${encodeURIComponent(historyEmailSubject)}&body=${encodeURIComponent(historyEmailBody)}`;
     if (!win) { alert("Please allow pop-ups to print work orders."); return; }
     win.document.write(`<!DOCTYPE html><html><head><title>Work Order ${h(wo.id)}</title><style>
       *{box-sizing:border-box;margin:0;padding:0}
@@ -4368,18 +4078,18 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
       .woNumber .number{font-size:18px;font-weight:900;color:#111827;margin-top:4px;word-break:break-word}
       .status{display:flex;align-items:center;justify-content:center;background:${C.border};color:white;font-size:11px;font-weight:900;letter-spacing:1.3px;text-transform:uppercase;border-top:1.5px solid #111827}
       .dateGrid,.infoGrid{display:grid;grid-template-columns:1fr 1fr 1fr;border-bottom:1.5px solid #111827}
-      .cell{min-height:.28in;padding:4px 6px;border-right:1px solid #111;border-bottom:1px solid #111;display:grid;grid-template-columns:.95fr 1.35fr;align-items:center;gap:8px;overflow:hidden}
+      .cell{min-height:.28in;padding:4px 6px;border-right:1px solid #9ca3af;border-bottom:1px solid #cbd5e1;display:grid;grid-template-columns:.95fr 1.35fr;align-items:center;gap:8px;overflow:hidden}
       .cell:nth-child(3n){border-right:none}
       .fieldLabel{font-size:8.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;color:#111827;line-height:1.1}
       .fieldValue{font-size:10.5px;font-weight:800;color:#111827;line-height:1.15;white-space:normal;overflow-wrap:anywhere}
       .section{border-top:1.5px solid #111827;break-inside:auto;page-break-inside:auto}
-      .section-title,.summaryTitle{background:${C.accent};color:#111827;border-bottom:1px solid #111;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
+      .section-title,.summaryTitle{background:${C.accent};color:#111827;border-bottom:1px solid #94a3b8;font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.65px;padding:6px 10px}
       .textBlock{padding:5px 7px;min-height:.28in;white-space:pre-wrap;overflow-wrap:anywhere;color:#111827;font-size:12px}
       .textBlock.tall{min-height:.45in}
       .miniTitle{padding:4px 7px 3px;font-weight:900;text-transform:uppercase;font-size:11px;color:#111827;background:#fff}
       .data-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:10.5px}
-      .data-table th{background:#e5e7eb;color:#111827;text-transform:uppercase;letter-spacing:.35px;font-size:8.5px;font-weight:900;padding:4px 5px;border-top:1px solid #111;border-bottom:1px solid #111;border-right:1px solid #111;text-align:left}
-      .data-table td{padding:4px 5px;border-bottom:1px solid #111;border-right:1px solid #111;vertical-align:top;overflow-wrap:anywhere;color:#111827}
+      .data-table th{background:#e5e7eb;color:#111827;text-transform:uppercase;letter-spacing:.35px;font-size:8.5px;font-weight:900;padding:4px 5px;border-top:1px solid #9ca3af;border-bottom:1px solid #9ca3af;border-right:1px solid #cbd5e1;text-align:left}
+      .data-table td{padding:4px 5px;border-bottom:1px solid #cbd5e1;border-right:1px solid #e5e7eb;vertical-align:top;overflow-wrap:anywhere;color:#111827}
       .data-table th:last-child,.data-table td:last-child{border-right:none}
       .right{text-align:right}.center{text-align:center}
       .subRow td{background:#f8fafc;font-weight:900;border-top:1.5px solid #111827}
@@ -4453,7 +4163,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
           <div><div class="sigValue">${h(wo.completed||wo.closedDate)||"&nbsp;"}</div><div class="sigLine"><div class="sigLabel">Date</div></div></div>
         </div>
       </div></div>
-      <div class="pbtn" style="position:sticky;bottom:0;z-index:9999;background:rgba(255,255,255,.96);padding:10px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center;border-top:1px solid #d1d5db"><button onclick="if(history.length>1){history.back()}else{window.close()}">← Close / Back</button><button onclick="window.print()">Print / Share PDF</button><a href="${h(historyEmailHref)}" style="display:inline-flex;align-items:center;text-decoration:none">Email Work Order</a></div>
+      <div class="pbtn"><button onclick="window.print()">Print / Save PDF</button></div>
     ${printCustomizePanelHtml(wo.woType || "WorkOrder")}
     </body></html>`);
     win.document.close();
@@ -4488,28 +4198,11 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
     return String(a.id||"").localeCompare(String(b.id||""), undefined, { numeric:true, sensitivity:"base" });
   });
 
-  const allEquipmentAttachments = state.equipment.flatMap(eq=>(eq.attachments||[]).map(at=>({ eq, at }))).filter(({eq})=>!["Turned-in","Disposed"].includes(eq.turnInStatus));
-  const filteredAttachments = allEquipmentAttachments.filter(({eq,at})=>{
-    const q=String(search||"").trim().toLowerCase();
-    if(!q) return true;
-    return `${at.id||""} ${at.name||""} ${at.make||""} ${at.model||""} ${at.serial||""} ${at.eilNumber||""} ${eq.id||""} ${eq.name||""}`.toLowerCase().includes(q);
-  }).sort((a,b)=>String(a.at.id||a.at.name||"").localeCompare(String(b.at.id||b.at.name||""),undefined,{numeric:true,sensitivity:"base"}));
-
   const woForEq  = eq => state.workOrders.filter(w=>String(workOrderEquipmentId(w) || w.equipment || "")===String(eq.id||""));
   const openAdd  = () => { setForm({ status:"Fully Operational" }); setModal("add"); };
   const openEdit = eq => { setForm({...eq, _originalId:eq.id}); setModal("editing"); };
   const save = () => {
     if(!form.name) return alert("Nomenclature required.");
-    if(form.trackUsage) {
-      if(!form.usageType) return alert("Usage Tracking is enabled. Select Engine Hours, Mileage, or Hours & Mileage before saving.");
-      if((form.usageType==="hours" || form.usageType==="both") && (form.currentHours==="" || form.currentHours==null)) return alert("Enter the current engine hours before saving.");
-      if((form.usageType==="mileage" || form.usageType==="both") && (form.currentMileage==="" || form.currentMileage==null)) return alert("Enter the current mileage before saving.");
-      if(form.pmBaselineUsage!=="" && form.pmBaselineUsage!=null) {
-        const baseline=Number(form.pmBaselineUsage);
-        const current=form.usageType==="mileage"?Number(form.currentMileage):Number(form.currentHours);
-        if(Number.isFinite(baseline)&&Number.isFinite(current)&&baseline>current) return alert("Usage at Last Service cannot be greater than the equipment's current usage.");
-      }
-    }
     if(modal==="add") {
       const newId = form.id && form.id.trim() ? form.id.trim() : genId("EQ");
       dispatch({type:"ADD_EQ", payload:{...form, id:newId}});
@@ -4614,6 +4307,9 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
       <Field label="Serial Number" half>
         <SmartInput historyKey="equipment.serial" style={inp} value={form.serial||""} onChange={e=>setForm(f=>({...f,serial:e.target.value}))} />
       </Field>
+      <Field label="Area / Building / Department" half>
+        <SmartInput historyKey="equipment.area" style={inp} listId="equipment-area-history" extraOptions={[...new Set([...(state.settings?.areas||[]).map(a=>typeof a==="string"?a:a.name), ...(state.equipment||[]).map(e=>e.area).filter(Boolean)])]} value={form.area||""} onChange={e=>setForm(f=>({...f,area:e.target.value}))} placeholder="e.g. Maintenance Building" />
+      </Field>
       <Field label="Acquisition Date" half>
         <input style={inp} type="date" value={form.acquisitionDate||""} onChange={e=>setForm(f=>({...f,acquisitionDate:e.target.value}))} />
       </Field>
@@ -4646,25 +4342,8 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
                 <button key={v} type="button" onClick={()=>setForm(f=>({...f,usageType:v}))} style={{ padding:"5px 12px", borderRadius:6, border:`1px solid ${form.usageType===v?T.accent:T.border}`, background:form.usageType===v?T.accentLt:"#fff", color:form.usageType===v?T.accent:T.subtext, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:form.usageType===v?600:400 }}>{l}</button>
               ))}
             </div>
-            {form.usageType && <div className="mf-mobile-form" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 12px",marginTop:12}}>
-              {(form.usageType==="hours"||form.usageType==="both") && <Field label="Current Engine Hours *"><input style={inp} {...decimalInputAttrs({placeholder:"Current hours"})} value={form.currentHours??""} onChange={e=>setForm(f=>({...f,currentHours:sanitizeDecimalInput(e.target.value)}))}/></Field>}
-              {(form.usageType==="mileage"||form.usageType==="both") && <Field label="Current Mileage *"><input style={inp} {...decimalInputAttrs({placeholder:"Current mileage"})} value={form.currentMileage??""} onChange={e=>setForm(f=>({...f,currentMileage:sanitizeDecimalInput(e.target.value)}))}/></Field>}
-              <div style={{gridColumn:"1 / -1",fontSize:11,color:T.muted}}>Required while Usage Tracking is enabled. This becomes the equipment's starting current reading in MaintForge.</div>
-            </div>}
           </div>
         )}
-      </div>
-
-      <div style={{ gridColumn:"span 2", marginBottom:14, background:T.grayLt, borderRadius:8, padding:"12px 14px", border:`1px solid ${T.border}` }}>
-        <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:800, color:T.text }}>Preventive Maintenance Baseline</div>
-        <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, margin:"3px 0 10px" }}>Use the equipment’s real last-service information so new PM assignments calculate from its maintenance history instead of from zero or the date it was added to MaintForge.</div>
-        <div className="mf-mobile-form" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 12px" }}>
-          <Field label="Last Service Date"><input style={inp} type="date" value={form.pmBaselineDate||""} onChange={e=>setForm(f=>({...f,pmBaselineDate:e.target.value}))} /></Field>
-          {form.trackUsage && <Field label={form.usageType==="mileage"?"Usage at Last Service (Miles)":form.usageType==="both"?"Usage at Last Service":"Usage at Last Service (Hours)"}>
-            <input style={inp} {...decimalInputAttrs({placeholder:form.usageType==="mileage"?"e.g. 40000":"e.g. 1250"})} value={form.pmBaselineUsage||""} onChange={e=>setForm(f=>({...f,pmBaselineUsage:sanitizeDecimalInput(e.target.value)}))} />
-          </Field>}
-          <div style={{gridColumn:"1 / -1"}}><Field label="Last Service / PM Notes"><input style={inp} value={form.pmBaselineNotes||""} onChange={e=>setForm(f=>({...f,pmBaselineNotes:e.target.value}))} placeholder="Optional — oil service, annual service, source record, etc." /></Field></div>
-        </div>
       </div>
 
       <Field label="Notes">
@@ -4693,43 +4372,17 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
     setHistoricalImport(f=>{ const existing=f.originalDocuments || (f.originalDocument?[f.originalDocument]:[]); const all=[...existing,...docs]; return {...f,originalDocuments:all,originalDocument:all[0]||null}; });
   };
   const removeHistoricalDocument = (id) => setHistoricalImport(f=>{ const docs=(f.originalDocuments || (f.originalDocument?[f.originalDocument]:[])).filter(d=>d.id!==id); return {...f,originalDocuments:docs,originalDocument:docs[0]||null}; });
-  const analyzeHistoricalWorkOrder = async () => {
-    const docs=(historicalImport.originalDocuments || (historicalImport.originalDocument?[historicalImport.originalDocument]:[])).filter(Boolean);
-    if(!docs.length) return alert("Scan or upload at least one page first.");
-    setHistoricalAiBusy(true); setHistoricalAiError("");
-    try {
-      const res=await fetch("/api/analyze-historical-wo",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({documents:docs.map(d=>({name:d.name,type:d.type,dataUrl:d.dataUrl}))})});
-      const body=await res.json().catch(()=>({}));
-      if(!res.ok) {
-        if(res.status===404) throw new Error("AI Import is not deployed yet. Deploy the MaintForge AI server function, then try again.");
-        if(res.status===503 && body?.code==="AI_NOT_CONFIGURED") throw new Error("AI Import is installed but not configured. Add OPENAI_API_KEY to the hosting environment variables and redeploy. The key must stay server-side, not in App.jsx.");
-        throw new Error(body?.error || `AI scan failed (${res.status})`);
-      }
-      const a=body?.data || body || {};
-      const parts=Array.isArray(a.partsUsed)?a.partsUsed.map(x=>({name:x?.name||"",partNumber:x?.partNumber||"",qty:x?.qty??1,unitCost:x?.unitCost??0})):[];
-      setHistoricalImport(f=>({...f,
-        title:a.title||f.title||"", woType:["Repair","Service","Inspection"].includes(a.woType)?a.woType:f.woType,
-        created:a.created||f.created||"", completed:a.completed||f.completed||"", fault:a.fault||f.fault||"", tech:a.tech||f.tech||"",
-        laborHours:a.laborHours??f.laborHours, laborCost:a.laborCost??f.laborCost, notes:a.workPerformed||a.notes||f.notes||"",
-        partsUsed:parts.length?parts:f.partsUsed, aiReview:{confidence:a.confidence||{},missing:Array.isArray(a.missing)?a.missing:[],scannedAt:new Date().toISOString()}
-      }));
-    } catch(err) { setHistoricalAiError(err?.message || "AI could not analyze this work order."); }
-    finally { setHistoricalAiBusy(false); }
-  };
   const saveHistoricalWorkOrder = (equipmentId) => {
     const f=historicalImport;
     if(!String(f.title||"").trim()) return alert("Enter a title or service description for the historical work order.");
     if(!(f.originalDocuments?.length || f.originalDocument?.dataUrl)) return alert("Scan or upload the original work order so the source document stays with the record.");
-    if(!String(f.created||"").trim()) return alert("Enter or confirm the Date Created. AI may leave this blank when it cannot read it reliably.");
-    if(!String(f.completed||"").trim()) return alert("Enter or confirm the Date Completed. AI may leave this blank when it cannot read it reliably.");
-    const created = f.created;
-    const completed = f.completed;
+    const completed = f.completed || today();
     const id = genNextWOId(state.workOrders || [], equipmentId, "HIST");
     const partsUsed=(f.partsUsed||[]).filter(p=>String(p.name||p.partNumber||"").trim()).map(p=>({...p,qty:+(p.qty||1),unitCost:+(p.unitCost||0)}));
     dispatch({type:"ADD_WO",payload:{
       id, equipment:equipmentId, woType:f.woType||"Service", title:String(f.title||"").trim(), status:"Completed",
-      created, completed, completedDate:completed, closedDate:completed, tech:f.tech||"", laborHours:+(f.laborHours||0), laborCost:+(f.laborCost||0),
-      partsUsed, outsideServices:[], faultDescription:f.fault||"", mechanicNotes:f.notes||"", description:f.fault||f.title||"", workPerformed:f.notes||"",
+      created:completed, completed, completedDate:completed, closedDate:completed, tech:f.tech||"", laborHours:+(f.laborHours||0), laborCost:+(f.laborCost||0),
+      partsUsed, outsideServices:[], mechanicNotes:f.notes||"", description:f.notes||f.title||"", workPerformed:f.notes||"",
       historicalImport:true, importedAt:new Date().toISOString(), originalDocument:(f.originalDocuments?.[0]||f.originalDocument), originalDocuments:(f.originalDocuments?.length?f.originalDocuments:(f.originalDocument?[f.originalDocument]:[])), source:"Historical Work Order Import",
       usageNA:true, equipmentStatus:"Fully Operational", priority:"Historical"
     }});
@@ -4794,14 +4447,14 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
         : <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans, marginBottom:18 }}>
             <thead>
               <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-                {["WO #","Description","Completed","Usage","Cost","View","Edit","Delete"].map(h=>(
+                {["WO #","Description","Completed","Usage","Cost","Print","Edit"].map(h=>(
                   <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {rows.map((wo,i)=>(
-                <tr key={wo.id} onClick={()=>{setHistoryWO(wo);setHistoryEdit(false);}} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer" }} title="Click to view work order details">
+                <tr key={wo.id} onClick={()=>{ setHistoryWO(wo); setHistoryEdit(false); }} style={{ borderBottom:`1px solid ${T.border}`, background:i%2===0?"#fff":T.grayLt, cursor:"pointer" }} title="Click to open this work order">
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:11, color:T.accent, fontWeight:700 }}>{wo.id}</td>
                   <td style={{ padding:"9px 12px", fontWeight:500, color:T.text }}>{historyLabel(wo, fallbackTitle)}</td>
                   <td style={{ padding:"9px 12px", fontFamily:T.mono, fontSize:12, color:T.subtext }}>{wo.completed||wo.closedDate||"—"}</td>
@@ -4810,11 +4463,11 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
                   <td style={{ padding:"6px 12px" }}>
                     <button
                       type="button"
-                      onClick={(e)=>{ e.stopPropagation(); setHistoryWO(wo); setHistoryEdit(false); }}
-                      title="View work order details"
+                      onClick={(e)=>{ e.stopPropagation(); printHistoryWO(wo); }}
+                      title="Print this work order"
                       style={{ border:`1px solid ${T.accent}`, background:T.accent, color:"#fff", borderRadius:7, padding:"5px 9px", cursor:"pointer", fontSize:12, fontWeight:700, lineHeight:1 }}
                     >
-                      View
+                      Print
                     </button>
                   </td>
                   <td style={{ padding:"6px 12px" }}>
@@ -4827,7 +4480,6 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
                       ✏️
                     </button>
                   </td>
-                  <td style={{ padding:"6px 12px" }}><button type="button" onClick={e=>{e.stopPropagation();if(window.confirm(`Permanently delete work order ${wo.id}? This removes its history and cost records and restores any inventory consumed by this work order. This cannot be undone.`)){dispatch({type:"DELETE_WO",payload:wo.id});if(historyWO?.id===wo.id)closeHistoryWO();}}} style={{border:`1px solid ${T.red}`,background:T.card,color:T.red,borderRadius:7,padding:"5px 8px",cursor:"pointer",fontSize:12,fontWeight:800}}>Delete</button></td>
                 </tr>
               ))}
             </tbody>
@@ -4845,13 +4497,11 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
             <div className="mf-mobile-form" style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:12}}>
               <Field label="Title / Service"><input style={inp} value={historicalImport.title} onChange={e=>setHistoricalImport(f=>({...f,title:e.target.value}))} placeholder="Example: Hydraulic hose replacement" /></Field>
               <Field label="Work Order Type"><select style={inp} value={historicalImport.woType} onChange={e=>setHistoricalImport(f=>({...f,woType:e.target.value}))}><option>Repair</option><option>Service</option><option>Inspection</option></select></Field>
-              <Field label="Date Created / Opened"><input style={inp} type="date" value={historicalImport.created} onChange={e=>setHistoricalImport(f=>({...f,created:e.target.value}))}/></Field>
-              <Field label="Date Completed / Closed"><input style={inp} type="date" value={historicalImport.completed} onChange={e=>setHistoricalImport(f=>({...f,completed:e.target.value}))}/></Field>
-              <div style={{gridColumn:"1 / -1"}}><Field label="Fault / Complaint"><textarea style={{...inp,minHeight:78}} value={historicalImport.fault} onChange={e=>setHistoricalImport(f=>({...f,fault:e.target.value}))} placeholder="What was reported wrong?" /></Field></div>
+              <Field label="Completed Date"><input style={inp} type="date" value={historicalImport.completed} onChange={e=>setHistoricalImport(f=>({...f,completed:e.target.value}))}/></Field>
               <Field label="Mechanic / Vendor"><input style={inp} value={historicalImport.tech} onChange={e=>setHistoricalImport(f=>({...f,tech:e.target.value}))}/></Field>
               <Field label="Labor Hours"><input style={inp} type="number" step="0.01" value={historicalImport.laborHours} onChange={e=>setHistoricalImport(f=>({...f,laborHours:e.target.value}))}/></Field>
               <Field label="Labor Cost"><input style={inp} type="number" step="0.01" value={historicalImport.laborCost} onChange={e=>setHistoricalImport(f=>({...f,laborCost:e.target.value}))}/></Field>
-              <div style={{gridColumn:"1 / -1"}}><Field label="Work Performed / Corrective Action"><textarea style={{...inp,minHeight:100}} value={historicalImport.notes} onChange={e=>setHistoricalImport(f=>({...f,notes:e.target.value}))}/></Field></div>
+              <div style={{gridColumn:"1 / -1"}}><Field label="Notes / Work Performed"><textarea style={{...inp,minHeight:100}} value={historicalImport.notes} onChange={e=>setHistoricalImport(f=>({...f,notes:e.target.value}))}/></Field></div>
               <div style={{gridColumn:"1 / -1",border:`1px solid ${T.border}`,borderRadius:12,padding:12}}>
                 <div style={{fontWeight:800,marginBottom:8}}>Parts</div>
                 {(historicalImport.partsUsed||[]).map((p,i)=><div key={i} className="mf-mobile-form" style={{display:"grid",gridTemplateColumns:"2fr 1.2fr .7fr 1fr auto",gap:7,marginBottom:7}}><input style={inp} placeholder="Part name" value={p.name||""} onChange={e=>updateHistoricalPart(i,{name:e.target.value})}/><input style={inp} placeholder="Part #" value={p.partNumber||""} onChange={e=>updateHistoricalPart(i,{partNumber:e.target.value})}/><input style={inp} type="number" step="0.01" placeholder="Qty" value={p.qty||""} onChange={e=>updateHistoricalPart(i,{qty:e.target.value})}/><input style={inp} type="number" step="0.01" placeholder="$ each" value={p.unitCost||""} onChange={e=>updateHistoricalPart(i,{unitCost:e.target.value})}/><Btn small variant="danger" onClick={()=>removeHistoricalPart(i)}>×</Btn></div>)}
@@ -4872,12 +4522,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
                   <Btn small variant="secondary" onClick={()=>historicalCameraRef.current?.click()}>+ Scan Another Page</Btn>
                 </div>}
               </div>
-              <div style={{gridColumn:"1 / -1",border:`1px solid ${T.borderHi}`,padding:12,background:T.accentLt}}>
-                <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"center",flexWrap:"wrap"}}><div><div style={{fontWeight:900}}>AI Work Order Reader</div><div style={{fontSize:12,color:T.subtext,marginTop:3}}>Reads the scanned pages and prefills only information it can find. Missing information stays for you to enter.</div></div><Btn onClick={analyzeHistoricalWorkOrder} disabled={historicalAiBusy}>{historicalAiBusy?"Analyzing…":"✨ Analyze Scanned Work Order"}</Btn></div>
-                {historicalAiError && <div style={{marginTop:10,padding:9,border:"1px solid #991b1b",background:T.redLt,color:T.red,fontSize:12,fontWeight:700}}>{historicalAiError}</div>}
-                {historicalImport.aiReview && <div style={{marginTop:10,fontSize:12}}><b>AI review complete.</b> {historicalImport.aiReview.missing?.length?<>Still needs your input: <b>{historicalImport.aiReview.missing.join(", ")}</b>.</>:<>No basic fields were flagged as missing. Please verify the values before saving.</>}</div>}
-              </div>
-              <div style={{gridColumn:"1 / -1",padding:10,border:`1px solid ${T.borderHi}`,background:T.amberLt,color:T.text,fontSize:12}}><b>Review before saving:</b> AI can misread handwriting, dates, quantities, and prices. Confirm the digital fields against the photographed original. MaintForge will not invent a missing created or completed date; you must enter/confirm those before the historical work order can be saved.</div>
+              <div style={{gridColumn:"1 / -1",padding:10,borderRadius:10,background:T.amberLt,color:T.text,fontSize:12}}>Scan-to-prefill is prepared as the next OCR layer; this version keeps the original document and uses reviewed manual fields so an OCR mistake cannot silently alter maintenance history.</div>
               <div style={{gridColumn:"1 / -1",display:"flex",justifyContent:"flex-end",gap:8,flexWrap:"wrap"}}><Btn variant="secondary" onClick={()=>setHistoricalImportOpen(false)}>Cancel</Btn><Btn onClick={()=>saveHistoricalWorkOrder(eq.id)}>Save Historical Work Order</Btn></div>
             </div>
           </Modal>
@@ -4892,7 +4537,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
                     <div style={{ fontSize:18, fontWeight:800 }}>{historyWO.id || "Work Order"}</div>
                   </div>
                   <div style={{ display:"flex", gap:8 }}>
-                    <Btn small variant="secondary" onClick={()=>printHistoryWO(historyWO)}>Print / PDF</Btn>
+                    <Btn small variant="secondary" onClick={()=>printHistoryWO(historyWO)}>Print</Btn>
                     {(historyWO.originalDocuments?.length || historyWO.originalDocument?.dataUrl) && <Btn small variant="secondary" onClick={()=>openOriginalHistoricalDocument(historyWO)}>Original Scan</Btn>}
                     <Btn small onClick={()=>setHistoryEdit(true)}>✏ Edit</Btn>
                   </div>
@@ -5126,8 +4771,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
                 <h2 style={{ margin:0, fontFamily:T.sans, fontSize:22, fontWeight:700, color:T.text }}>{eq.name}</h2>
                 <p style={{ margin:"4px 0 0", fontFamily:T.sans, fontSize:14, color:T.subtext }}>{eq.year} {eq.make} {eq.model} · Serial: {eq.serial}</p>
               </div>
-              <div className="mf-equipment-detail-actions" style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                <Btn small onClick={()=>{setHistoricalImport(blankHistoricalImport());setHistoricalImportOpen(true);}}>📷 + Historical Work Order</Btn>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
                 <Btn small variant="secondary" onClick={()=>printEquipmentSummary(eq)}>🖨 Print Summary</Btn>
                 <Btn small onClick={()=>openEdit(eq)}>✏ Edit</Btn>
                 <Btn small variant="danger" onClick={()=>del(eq.id)}>Delete</Btn>
@@ -5140,7 +4784,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
           <Card>
             <h4 style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Equipment Details</h4>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"12px 20px" }}>
-              {[["Category",eq.category||eq.type],["Last Service",eq.pmBaselineDate],["Usage at Last Service",eq.pmBaselineUsage],["Serial Number",eq.serial],["EIL #",eq.eilNumber],["Year",eq.year],["Make",eq.make],["Model",eq.model],["Acquisition Date",eq.acquisitionDate],["Purchase Price",eq.acquisitionCost?moneyFmt(eq.acquisitionCost):"—"],["Warranty Start",eq.warrantyStart],["Warranty End",eq.warrantyEnd]].map(([k,v])=>(
+              {[["Type",eq.type],["Location",eq.location],["Area",eq.area],["Serial Number",eq.serial],["EIL #",eq.eilNumber],["Year",eq.year],["Make",eq.make],["Model",eq.model],["Acquisition Date",eq.acquisitionDate],["Purchase Price",eq.acquisitionCost?moneyFmt(eq.acquisitionCost):"—"],["Warranty Start",eq.warrantyStart],["Warranty End",eq.warrantyEnd]].map(([k,v])=>(
                 <div key={k}>
                   <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div>
                   <div style={{ fontFamily:T.sans, fontSize:13, color:T.text, marginTop:3 }}>{v||"—"}</div>
@@ -5155,26 +4799,37 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
             )}
           </Card>
 
-          {/* Equipment Summary / Cost of Ownership */}
+          {/* Equipment Summary */}
           <Card>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, marginBottom:12, flexWrap:"wrap" }}>
-              <h4 style={{ margin:0, fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Cost of Ownership</h4>
-              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>{[["fy","Fiscal Year"],["life","Lifetime"],["custom","Custom"]].map(([v,l])=><Btn key={v} small variant={costView===v?"primary":"secondary"} onClick={()=>setCostView(v)}>{l}</Btn>)}</div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8, marginBottom:14 }}>
+              <h4 style={{ margin:0, fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>Equipment Summary</h4>
+              <Btn small variant="secondary" onClick={()=>printEquipmentSummary(eq)}>Print</Btn>
             </div>
-            {costView==="custom"&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}><Field label="From"><input style={inp} type="date" value={costCustom.from} onChange={e=>setCostCustom(x=>({...x,from:e.target.value}))}/></Field><Field label="To"><input style={inp} type="date" value={costCustom.to} onChange={e=>setCostCustom(x=>({...x,to:e.target.value}))}/></Field></div>}
             {(()=>{
-              const eqWos=(state.workOrders||[]).filter(w=>String(workOrderEquipmentId(w)||w.equipment||"")===String(eq.id||""));
-              const fyStart=fiscalYearStartDate();
-              const inRange=w=>{const d=dateValue(workOrderDate(w)); if(!d)return costView==="life"; if(costView==="life")return true; if(costView==="fy")return d>=fyStart; const from=costCustom.from?dateValue(costCustom.from):null,to=costCustom.to?dateValue(costCustom.to):null; return (!from||d>=from)&&(!to||d<=to);};
-              const rows=eqWos.filter(inRange);
-              const partsCost=rows.reduce((n,w)=>n+(+w.partsCost||0),0);
-              const outsideCost=rows.reduce((n,w)=>n+(Array.isArray(w.outsideServices)?w.outsideServices.reduce((s,x)=>s+(+x.cost||+x.amount||0),0):(+w.outsideCost||0)),0);
-              const otherCost=rows.reduce((n,w)=>n+(+w.otherCost||0),0);
-              const total=partsCost+outsideCost+otherCost;
-              return <div>
-                <div style={{fontSize:28,fontWeight:900,color:T.accent,marginBottom:4}}>{moneyFmt(total)}</div><div style={{fontSize:11,color:T.muted,marginBottom:12}}>Tracked ownership cost for the selected period. Labor and fuel are excluded.</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10}}>
-                  {[["Parts Cost",moneyFmt(partsCost)],["Outside Services",moneyFmt(outsideCost)],["Other Cost",moneyFmt(otherCost)],["Work Orders",rows.length]].map(([k,v])=><div key={k} style={{background:T.grayLt,borderRadius:7,padding:"11px 12px",border:`1px solid ${T.border}`}}><div style={{fontSize:18,fontWeight:800}}>{v}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{k}</div></div>)}
+              const usage = equipmentUsageSummary(state, eq);
+              const fin = equipmentFinancialSummary(state, eq);
+              const summaryRows = [
+                ["Year", eq.year || "—", T.text],
+                [`Current ${usage.label}`, usage.display ?? usage.display ?? Number(usage.value||0).toLocaleString(undefined,{maximumFractionDigits:1}), T.text],
+                ["Lifetime Spent", moneyFmt(fin.lifetimeSpent), T.accent],
+                ["FY Spent", moneyFmt(fin.fySpent), T.accent],
+                ["Total Work Orders", fin.totalWOs, T.text],
+                ["Open Work Orders", fin.openWOs, T.amber],
+                ["Lifetime Labor", `${fin.lifetimeLaborHours.toFixed(1)}h`, T.text],
+                ["FY Labor", `${fin.fyLaborHours.toFixed(1)}h`, T.text],
+              ];
+              return <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:10 }}>
+                {summaryRows.map(([k,v,c])=>(
+                  <div key={k} style={{ background:T.grayLt, borderRadius:7, padding:"12px 14px", border:`1px solid ${T.border}` }}>
+                    <div style={{ fontFamily:T.sans, fontSize:20, fontWeight:800, color:c, lineHeight:1.15 }}>{v}</div>
+                    <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, marginTop:4 }}>{k}</div>
+                  </div>
+                ))}
+                <div style={{ gridColumn:"1 / -1", display:"flex", gap:8, flexWrap:"wrap", paddingTop:2 }}>
+                  <Badge label={`Repair: ${fin.repairWOs}`} />
+                  <Badge label={`Service: ${fin.serviceWOs}`} />
+                  <Badge label={`Inspection: ${fin.inspectionWOs}`} />
+                  <Badge label={`Completed: ${fin.completedWOs}`} />
                 </div>
               </div>;
             })()}
@@ -5204,7 +4859,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
           </Card>
 
           {/* Attachments / Implements */}
-          <AttachmentsCard eq={eq} state={state} dispatch={dispatch} />
+          <AttachmentsCard eq={eq} dispatch={dispatch} />
 
           {/* Documents Folder */}
           <Card style={{ marginTop:16 }}>
@@ -5260,8 +4915,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
             win.document.write(reportButtonsHtml(exportRows)+`</body></html>`);
             win.document.close();
           }}>🖨 Equipment Status Report</Btn>
-          <Btn style={{}} variant={attachmentsOnly?"primary":"secondary"} onClick={()=>{ setAttachmentsOnly(v=>!v); setAttachDetail(null); }}>🚜 {attachmentsOnly?"All Equipment":"Attachments / Implements"}</Btn>
-          <Btn style={{ width:"auto" }} onClick={openAdd}>+ Add New Equipment</Btn>
+          <Btn onClick={openAdd}>+ Add New Equipment</Btn>
           <button className="mf-mobile-filter-button" onClick={()=>setMobileFiltersOpen(v=>!v)} style={{ display:"none" }}>☰ Filters{(typeF!=="All"||locationF!=="All") ? " •" : ""}</button>
         </div>
         <div className={`mf-equipment-filters ${mobileFiltersOpen ? "is-open" : ""}`} style={{ display:"flex", gap:16, flexWrap:"wrap", alignItems:"flex-end" }}>
@@ -5295,34 +4949,22 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
 
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 }}>
         <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>
-          Showing <strong style={{ color:T.text }}>{attachmentsOnly?filteredAttachments.length:filtered.length}</strong> of <strong style={{ color:T.text }}>{attachmentsOnly?allEquipmentAttachments.length:state.equipment.length}</strong> {attachmentsOnly?"attachments":"equipment"}
+          Showing <strong style={{ color:T.text }}>{filtered.length}</strong> of <strong style={{ color:T.text }}>{state.equipment.length}</strong> equipment
         </div>
 
       </div>
 
       <div className="mf-mobile-summary-list">
-        {(attachmentsOnly ? filteredAttachments.map(({eq,at})=>({ ...at, _parent:eq })) : filtered).map(eq=><button key={`mobile-eq-${eq._parent?`att-${eq.id}`:eq.id}`} className="mf-mobile-summary-card mf-mobile-equipment-card" onClick={()=>eq._parent?setAttachDetail({eq:eq._parent,at:eq}):setDetail(eq.id)}>
+        {filtered.map(eq=><button key={`mobile-eq-${eq.id}`} className="mf-mobile-summary-card mf-mobile-equipment-card" onClick={()=>setDetail(eq.id)}>
           <div className="mf-mobile-equipment-number">{eq.id || "—"}</div>
-          <div className="mf-mobile-equipment-name">{eq.name || eq.nomenclature || "Unnamed equipment"}{eq._parent?` • on ${eq._parent.id}`:""}</div>
+          <div className="mf-mobile-equipment-name">{eq.name || eq.nomenclature || "Unnamed equipment"}</div>
           <span className="mf-mobile-card-chevron">›</span>
         </button>)}
-        {!(attachmentsOnly?filteredAttachments.length:filtered.length) && <div className="mf-mobile-empty">No {attachmentsOnly?"attachments":"equipment"} found.</div>}
+        {!filtered.length && <div className="mf-mobile-empty">No equipment found.</div>}
       </div>
 
       <div className="mf-desktop-list" style={{ display:"flex", flexDirection:"column", gap:6 }}>
-        {attachmentsOnly && filteredAttachments.map(({eq,at})=>(
-          <div key={`attachment-only-${eq.id}-${at.id}`} onClick={()=>setAttachDetail({eq,at})} style={{ display:"grid", gridTemplateColumns:"110px minmax(180px,1fr) 150px 130px 130px 160px 110px 24px", alignItems:"center", gap:16, padding:"13px 18px", background:T.card, border:`1px solid ${T.border}`, borderRadius:8, boxShadow:T.shadow, cursor:"pointer", minWidth:900 }}>
-            <div><div style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase"}}>Attach #</div><div style={{fontFamily:T.mono,fontSize:12,marginTop:3}}>{at.id||"—"}</div></div>
-            <div><div style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase"}}>Attachment / Implement</div><div style={{fontSize:14,fontWeight:700,marginTop:3}}>{at.name||"Unnamed"}</div></div>
-            <div><div style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase"}}>Parent Equipment</div><div style={{fontSize:12,fontWeight:700,marginTop:3}}>{eq.id} — {eq.name}</div></div>
-            <div><div style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase"}}>Make</div><div style={{fontSize:12,marginTop:3}}>{at.make||"—"}</div></div>
-            <div><div style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase"}}>Model</div><div style={{fontSize:12,marginTop:3}}>{at.model||"—"}</div></div>
-            <div><div style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase"}}>Serial #</div><div style={{fontFamily:T.mono,fontSize:11,marginTop:3}}>{at.serial||"—"}</div></div>
-            <div><div style={{fontSize:9,fontWeight:700,color:T.muted,textTransform:"uppercase"}}>EIL #</div><div style={{fontFamily:T.mono,fontSize:11,marginTop:3}}>{at.eilNumber||"—"}</div></div>
-            <span style={{color:T.accent,fontSize:18}}>›</span>
-          </div>
-        ))}
-        {!attachmentsOnly && filtered.map(eq=>{
+        {filtered.map(eq=>{
           const rs    = rowStyle(eq.status);
           const isOOS = eq.status==="Out of Service / Deadline";
           const isDef = eq.status==="Operational with Deficiencies";
@@ -5458,118 +5100,46 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
             </div>
           );
         })}
-        {(attachmentsOnly?filteredAttachments.length===0:filtered.length===0) && (
+        {filtered.length===0 && (
           <div style={{ padding:48, textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13, background:T.card, borderRadius:8, border:`1px solid ${T.border}` }}>
-            No {attachmentsOnly?"attachments":"equipment"} match your filters.
+            No equipment matches your filters.
           </div>
         )}
       </div>
 
-      {/* ── Attachment Detail / Edit Modal ── */}
+      {/* ── Attachment Detail Modal ── */}
       {attachDetail && (
-        <Modal title={`${attachEdit ? "Edit Attachment" : "Attachment"} — ${attachDetail.at.name}`} onClose={()=>{setAttachDetail(null);setAttachEdit(false);setAttachEditForm({});}}>
+        <Modal title={`Attachment — ${attachDetail.at.name}`} onClose={()=>setAttachDetail(null)}>
           <div style={{ background:T.accentLt, border:`1px solid ${T.accent}44`, borderRadius:8, padding:"8px 14px", marginBottom:14 }}>
             <div style={{ fontFamily:T.sans, fontSize:11, color:T.accent, fontWeight:600 }}>
               🔗 Attached to: {attachDetail.eq.name} ({attachDetail.eq.id})
             </div>
           </div>
-          {attachEdit ? (
-            <>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"12px 16px" }}>
-                {[
-                  ["Attachment #","id"],["Attachment Name","name"],["EIL #","eilNumber"],["Make","make"],["Model","model"],["Serial Number","serial"]
-                ].map(([label,key])=>(
-                  <div key={key}>
-                    <label style={{ display:"block", fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>{label}</label>
-                    <input style={inp} value={attachEditForm[key]||""} onChange={e=>setAttachEditForm(f=>({...f,[key]:e.target.value}))} />
-                  </div>
-                ))}
-                <div>
-                  <label style={{ display:"block", fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Acquisition Date</label>
-                  <input style={inp} type="date" value={attachEditForm.acquisitionDate||""} onChange={e=>setAttachEditForm(f=>({...f,acquisitionDate:e.target.value}))} />
-                </div>
-                <div>
-                  <label style={{ display:"block", fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Purchase Price ($)</label>
-                  <input style={inp} {...decimalInputAttrs({ placeholder:"0.00" })} value={attachEditForm.acquisitionCost||""} onChange={e=>setAttachEditForm(f=>({...f,acquisitionCost:sanitizeDecimalInput(e.target.value)}))} />
-                </div>
-                <div style={{gridColumn:"span 2",border:`1px solid ${T.border}`,borderRadius:10,padding:12}}>
-                  <label style={{display:"flex",alignItems:"center",gap:8,fontFamily:T.sans,fontSize:12,fontWeight:800}}><input type="checkbox" checked={!!attachEditForm.trackUsage} onChange={e=>setAttachEditForm(f=>({...f,trackUsage:e.target.checked}))}/> Track Attachment Usage</label>
-                  {attachEditForm.trackUsage&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:8,marginTop:10}}>
-                    <Field label="Usage Type"><select style={inp} value={attachEditForm.usageType||"hours"} onChange={e=>setAttachEditForm(f=>({...f,usageType:e.target.value}))}><option value="hours">Engine Hours</option><option value="mileage">Mileage</option><option value="both">Hours & Mileage</option></select></Field>
-                    {(attachEditForm.usageType==="hours"||attachEditForm.usageType==="both")&&<Field label="Current Hours"><input style={inp} type="number" step="0.1" value={attachEditForm.currentHours||""} onChange={e=>setAttachEditForm(f=>({...f,currentHours:e.target.value}))}/></Field>}
-                    {(attachEditForm.usageType==="mileage"||attachEditForm.usageType==="both")&&<Field label="Current Mileage"><input style={inp} type="number" step="1" value={attachEditForm.currentMileage||""} onChange={e=>setAttachEditForm(f=>({...f,currentMileage:e.target.value}))}/></Field>}
-                  </div>}
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:8}}>
-                    <Field label="Last Service Date"><input style={inp} type="date" value={attachEditForm.pmBaselineDate||""} onChange={e=>setAttachEditForm(f=>({...f,pmBaselineDate:e.target.value}))}/></Field>
-                    {attachEditForm.trackUsage&&<Field label="Usage at Last Service"><input style={inp} type="number" step="0.1" value={attachEditForm.pmBaselineUsage||""} onChange={e=>setAttachEditForm(f=>({...f,pmBaselineUsage:e.target.value}))}/></Field>}
-                  </div>
-                </div>
-                <div style={{gridColumn:"span 2"}}>
-                  <label style={{ display:"block", fontFamily:T.sans, fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Notes</label>
-                  <textarea style={{...inp,minHeight:70,resize:"vertical"}} value={attachEditForm.notes||""} onChange={e=>setAttachEditForm(f=>({...f,notes:e.target.value}))} />
-                </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"10px 20px" }}>
+            {[
+              ["Attachment #",   attachDetail.at.id],
+              ["EIL #",          attachDetail.at.eilNumber],
+              ["Make",           attachDetail.at.make],
+              ["Model",          attachDetail.at.model],
+              ["Serial Number",  attachDetail.at.serial],
+              ["Acquisition Date", attachDetail.at.acquisitionDate],
+              ["Purchase Price", attachDetail.at.acquisitionCost ? moneyFmt(attachDetail.at.acquisitionCost) : "—"],
+            ].map(([k,v])=>(
+              <div key={k}>
+                <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div>
+                <div style={{ fontFamily:T.sans, fontSize:14, color:T.text, marginTop:4, fontWeight:500 }}>{v||"—"}</div>
               </div>
-              <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:16}}>
-                <Btn variant="secondary" onClick={()=>{setAttachEdit(false);setAttachEditForm({});}}>Cancel</Btn>
-                <Btn onClick={()=>{
-                  if(!String(attachEditForm.name||"").trim()) return alert("Attachment name is required.");
-                  const oldAttachmentId=String(attachDetail.at.id||"");
-                  const nextAttachmentId=String(attachEditForm.id||oldAttachmentId).trim() || oldAttachmentId;
-                  const duplicate=(attachDetail.eq.attachments||[]).some(a=>String(a.id)===nextAttachmentId && String(a.id)!==oldAttachmentId);
-                  if(duplicate) return alert("That Attachment # is already in use on this equipment.");
-                  const updatedAt={...attachDetail.at,...attachEditForm,id:nextAttachmentId};
-                  const updatedEq={...attachDetail.eq,attachments:(attachDetail.eq.attachments||[]).map(a=>String(a.id)===oldAttachmentId?updatedAt:a)};
-                  dispatch({type:"UPDATE_EQ",payload:updatedEq});
-                  if(nextAttachmentId!==oldAttachmentId) {
-                    (state.workOrders||[]).filter(w=>String(w.equipment)===oldAttachmentId).forEach(w=>dispatch({type:"UPDATE_WO",payload:{...w,equipment:nextAttachmentId}}));
-                  }
-                  setAttachDetail({eq:updatedEq,at:updatedAt});
-                  setAttachEdit(false); setAttachEditForm({});
-                }}>Save Attachment Changes</Btn>
-              </div>
-            </>
-          ) : (
-            <>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"10px 20px" }}>
-                {[
-                  ["Attachment #",attachDetail.at.id],["EIL #",attachDetail.at.eilNumber],["Make",attachDetail.at.make],["Model",attachDetail.at.model],["Serial Number",attachDetail.at.serial],["Acquisition Date",attachDetail.at.acquisitionDate],["Purchase Price",attachDetail.at.acquisitionCost ? moneyFmt(attachDetail.at.acquisitionCost) : "—"],
-                ].map(([k,v])=>(<div key={k}><div style={{fontFamily:T.sans,fontSize:11,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:.4}}>{k}</div><div style={{fontFamily:T.sans,fontSize:14,color:T.text,marginTop:4,fontWeight:500}}>{v||"—"}</div></div>))}
-              </div>
-              {(()=>{
-                const id=attachDetail.at.id;
-                const wos=(state.workOrders||[]).filter(w=>String(w.equipment||"")===String(id));
-                const completed=wos.filter(w=>w.status==="Completed").sort((a,b)=>String(b.completed||b.created||"").localeCompare(String(a.completed||a.created||"")));
-                const pm=(state.pmSchedules||[]).filter(s=>String(s.equipmentId||"")===String(id));
-                const ins=(state.inspectionSchedules||[]).filter(s=>String(s.equipmentId||"")===String(id));
-                return <div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
-                  <div style={{fontFamily:T.sans,fontSize:11,fontWeight:800,color:T.muted,textTransform:"uppercase",letterSpacing:.4,marginBottom:8}}>Maintenance</div>
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:8}}>
-                    <div style={{padding:9,background:T.grayLt,borderRadius:8}}><b>{pm.length}</b><div style={{fontSize:11,color:T.muted}}>PM Assignments</div></div>
-                    <div style={{padding:9,background:T.grayLt,borderRadius:8}}><b>{ins.length}</b><div style={{fontSize:11,color:T.muted}}>Inspections</div></div>
-                    <div style={{padding:9,background:T.grayLt,borderRadius:8}}><b>{wos.filter(w=>w.status!=="Completed").length}</b><div style={{fontSize:11,color:T.muted}}>Open WOs</div></div>
-                    <div style={{padding:9,background:T.grayLt,borderRadius:8}}><b>{completed.length}</b><div style={{fontSize:11,color:T.muted}}>Completed WOs</div></div>
-                  </div>
-                  <div style={{marginTop:10,fontSize:12,color:T.subtext}}><b>Usage Tracking:</b> {attachDetail.at.trackUsage?`${attachDetail.at.usageType||"hours"} • ${attachDetail.at.currentHours||0} hr • ${attachDetail.at.currentMileage||0} mi`:"Off / date-based maintenance"}</div>
-                  <div style={{marginTop:10}}>
-                    <div style={{fontSize:12,fontWeight:800,marginBottom:5}}>Recent Maintenance History</div>
-                    {completed.length?completed.slice(0,8).map(w=><div key={w.id} style={{display:"flex",justifyContent:"space-between",gap:8,padding:"6px 0",borderTop:`1px solid ${T.border}`,fontSize:12}}><span><b>{w.woType||"WO"}</b> — {w.faultDescription||w.title||w.description||w.id}</span><span style={{fontFamily:T.mono,whiteSpace:"nowrap"}}>{w.completed||w.completedDate||w.created||"—"}</span></div>):<div style={{fontSize:12,color:T.muted}}>No completed maintenance yet.</div>}
-                  </div>
-                </div>;
-              })()}
-              {attachDetail.at.notes && <div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${T.border}`}}><div style={{fontFamily:T.sans,fontSize:11,fontWeight:600,color:T.muted,textTransform:"uppercase",letterSpacing:.4,marginBottom:5}}>Notes</div><div style={{fontFamily:T.sans,fontSize:13,color:T.subtext}}>{attachDetail.at.notes}</div></div>}
-              <div style={{display:"flex",justifyContent:"space-between",gap:8,marginTop:16,flexWrap:"wrap"}}>
-                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                  <Btn onClick={()=>onCreateAttachmentWO?.({requestId:Date.now(),woType:"Repair",equipment:attachDetail.at.id,parentId:attachDetail.eq.id})}>🛠 Create Repair WO</Btn>
-                  <Btn variant="secondary" onClick={()=>onCreateAttachmentWO?.({requestId:Date.now(),woType:"Service",equipment:attachDetail.at.id,parentId:attachDetail.eq.id})}>🧰 Create Service WO</Btn>
-                  <Btn variant="secondary" onClick={()=>onCreateAttachmentWO?.({requestId:Date.now(),woType:"Inspection",equipment:attachDetail.at.id,parentId:attachDetail.eq.id})}>☑ Create Inspection WO</Btn>
-                </div>
-                <div style={{display:"flex",gap:8}}>
-                  <Btn onClick={()=>{setAttachEditForm({...attachDetail.at});setAttachEdit(true);}}>✎ Edit Attachment</Btn>
-                  <Btn variant="secondary" onClick={()=>setAttachDetail(null)}>Close</Btn>
-                </div>
-              </div>
-            </>
+            ))}
+          </div>
+          {attachDetail.at.notes && (
+            <div style={{ marginTop:14, paddingTop:12, borderTop:`1px solid ${T.border}` }}>
+              <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:5 }}>Notes</div>
+              <div style={{ fontFamily:T.sans, fontSize:13, color:T.subtext }}>{attachDetail.at.notes}</div>
+            </div>
           )}
+          <div style={{ display:"flex", justifyContent:"flex-end", marginTop:16 }}>
+            <Btn variant="secondary" onClick={()=>setAttachDetail(null)}>Close</Btn>
+          </div>
         </Modal>
       )}
 
@@ -5588,53 +5158,6 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
 
 
 function Parts({ state, dispatch }) {
-  useEffect(()=>{
-    if((state.lubricants||[]).length) return;
-    try{
-      const legacy=JSON.parse(localStorage.getItem("maintforge_lubricants")||"[]");
-      if(Array.isArray(legacy)&&legacy.length){ legacy.forEach(l=>dispatch({type:"ADD_LUBRICANT",payload:l})); localStorage.removeItem("maintforge_lubricants"); }
-    }catch{}
-  },[]);
-
-  const partEquipmentLabel = (p) => {
-    const raw=p.equipmentId||"";
-    if(!raw) return "General Stock";
-    const eq=(state.equipment||[]).find(e=>String(e.id)===String(raw));
-    if(eq) return `${eq.name||eq.nomenclature||eq.id} (${eq.id})`;
-    for(const parent of (state.equipment||[])){
-      const at=(parent.attachments||[]).find(a=>String(a.id)===String(raw));
-      if(at) return `${at.name||at.nomenclature||at.id} (${at.id}) — Attachment`;
-    }
-    return String(raw);
-  };
-  const [partsSubView,setPartsSubView]=useState("parts");
-  const lubricants=state.lubricants||[];
-  const [lubForm,setLubForm]=useState({id:"",name:"",type:"Engine Oil",grade:"",containerQty:"",containerUnit:"gal",totalPrice:"",onHand:"",notes:""});
-  const saveLubricants=(next)=>{
-    const current=state.lubricants||[];
-    current.filter(x=>!next.some(n=>n.id===x.id)).forEach(x=>dispatch({type:"DELETE_LUBRICANT",payload:x.id}));
-    next.forEach(x=>dispatch({type:current.some(c=>c.id===x.id)?"UPDATE_LUBRICANT":"ADD_LUBRICANT",payload:x}));
-  };
-  const toGallons=(qty,unit)=>{const n=+qty||0;if(unit==="gal")return n;if(unit==="qt")return n/4;if(unit==="L")return n/3.785411784;if(unit==="drum")return n*55;return n;};
-  const lubCostPerGal=(l)=>{const g=toGallons(l.containerQty,l.containerUnit);return g>0?(+l.totalPrice||0)/g:0;};
-  const addLubricant=()=>{
-    if(!String(lubForm.name||"").trim())return alert("Enter a lubricant/fluid name.");
-    if((+lubForm.containerQty||0)<=0)return alert("Enter the container quantity.");
-    const gallons=toGallons(lubForm.containerQty,lubForm.containerUnit);
-    const row={...lubForm,id:lubForm.id||`LUB-${Date.now()}`,onHand:String(lubForm.onHand??"").trim()===""?gallons:+lubForm.onHand,created:lubForm.created||new Date().toISOString()};
-    saveLubricants(lubForm.id?lubricants.map(x=>x.id===lubForm.id?row:x):[...lubricants,row]);
-    setLubForm({id:"",name:"",type:"Engine Oil",grade:"",containerQty:"",containerUnit:"gal",totalPrice:"",onHand:"",notes:""});
-  };
-  const consumeLubricant=(l)=>{
-    const raw=prompt(`How many gallons of ${l.name} were used?\nCurrent on hand: ${(+l.onHand||0).toFixed(2)} gal`);
-    if(raw===null)return;
-    const qty=+raw;if(!Number.isFinite(qty)||qty<=0)return alert("Enter a valid amount.");if(qty>(+l.onHand||0))return alert("Usage cannot exceed quantity on hand.");
-    const cost=qty*lubCostPerGal(l);
-    const wo=prompt(`Optional Work Order number / ID.\nCalculated fluid cost: $${cost.toFixed(2)}`)||"";
-    const usage={id:`LUSE-${Date.now()}`,date:new Date().toISOString().slice(0,10),qty,cost,workOrderId:wo};
-    saveLubricants(lubricants.map(x=>x.id===l.id?{...x,onHand:(+x.onHand||0)-qty,usage:[...(x.usage||[]),usage]}:x));
-  };
-
   const [modal, setModal]       = useState(null);
   const [form, setForm]         = useState({});
   const [search, setSearch]     = useState("");
@@ -5647,7 +5170,6 @@ function Parts({ state, dispatch }) {
   const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
   const partCategories = getPartCategoryOptions(state);
   const modelOptions = getEquipmentModelOptions(state.equipment);
-  const partStorageLocations = Array.isArray(state.settings?.partStorageLocations) ? state.settings.partStorageLocations : [];
   const cats     = ["All",...partCategories];
   const stockFilters = ["All", "In Stock", "Low Stock", "Out of Stock"];
   const parts = Array.isArray(state.parts) ? state.parts : [];
@@ -5665,9 +5187,7 @@ function Parts({ state, dispatch }) {
     return mc&&msf&&ms&&meq;
   });
 
-  const partsValue = parts.reduce((s,p)=>s+((+p.qty||0)*(+p.unitCost||0)),0);
-  const lubricantValue = lubricants.reduce((sum,l)=>sum+((+l.onHand||0)*lubCostPerGal(l)),0);
-  const totalVal = partsValue + lubricantValue;
+  const totalVal = parts.reduce((s,p)=>s+((+p.qty||0)*(+p.unitCost||0)),0);
   const lowParts = parts.filter(p=>getPartStockStatus(p)==="Low Stock");
   const outParts = parts.filter(p=>getPartStockStatus(p)==="Out of Stock");
   const exportRows = sortedParts.map(p=>{ const eq = p.equipmentId ? (state.equipment||[]).find(e=>e.id===p.equipmentId) : null; return {"Part #":p.partNumber||"", Nomenclature:p.name||"", Category:p.category||"", Location:p.location||"", "Equipment / Model":eq?`${eq.id} - ${eq.name}`:(p.modelFit||""), "Unit $":moneyText(p.unitCost), "Unit Type":p.unit||"ea", Qty:p.qty||0, "Total $":moneyText((+p.qty||0)*(+p.unitCost||0))}; });
@@ -5675,9 +5195,7 @@ function Parts({ state, dispatch }) {
   const openEdit = p  => { setForm({...p}); setModal(p); };
   const save = () => {
     if(!form.name) return alert("Nomenclature required.");
-    if(!String(form.location||"").trim()) return alert("Choose a Parts Storage Location. Add storage locations in Settings first.");
-    const cleanForm = { ...form, category:String(form.category||"").trim(), unit:String(form.unit||"ea").trim()||"ea", qty:+form.qty||0, unitCost:+form.unitCost||0, minQty:+form.minQty||0, lowStockAlert:form.lowStockAlert!==false, equipmentId:String(form.equipmentId||"") };
-    if(modal==="add" && cleanForm.partNumber && parts.some(p=>String(p.partNumber||"").replace(/[^a-z0-9]/gi,"").toUpperCase()===String(cleanForm.partNumber).replace(/[^a-z0-9]/gi,"").toUpperCase())) return alert("This part number already exists. Edit the existing part to update its quantity instead of creating a duplicate.");
+    const cleanForm = { ...form, category:String(form.category||"").trim(), unit:String(form.unit||"ea").trim()||"ea", qty:+form.qty||0, unitCost:+form.unitCost||0, minQty:+form.minQty||0, equipmentId:"" };
     modal==="add"
       ? dispatch({type:"ADD_PART",  payload:{...cleanForm,id:genId("PT")}})
       : dispatch({type:"UPDATE_PART",payload:cleanForm});
@@ -5737,38 +5255,11 @@ function Parts({ state, dispatch }) {
   return (
     <div>
       <datalist id="part-category-options">{partCategories.map(c=><option key={c} value={c} />)}</datalist>
-      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
-        <Btn variant={partsSubView==="parts"?"primary":"secondary"} onClick={()=>setPartsSubView("parts")}>Parts Inventory</Btn>
-        <Btn variant={partsSubView==="lubricants"?"primary":"secondary"} onClick={()=>setPartsSubView("lubricants")}>🛢 Lubricants Inventory</Btn>
-      </div>
-      {partsSubView==="lubricants"&&<Card style={{marginBottom:14}}>
-        <div style={{fontSize:17,fontWeight:900}}>Lubricants & Fluids Inventory</div>
-        <div style={{fontSize:12,color:T.muted,margin:"4px 0 12px"}}>Track oil, coolant, hydraulic fluid and other bulk fluids by volume and purchase cost. When fluid is used, MaintForge calculates the consumed dollar value from the original container price.</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(155px,1fr))",gap:8}}>
-          <Field label="Fluid / Lubricant"><input style={inp} value={lubForm.name} onChange={e=>setLubForm(f=>({...f,name:e.target.value}))} placeholder="10W-30 Engine Oil"/></Field>
-          <Field label="Type"><select style={sel} value={lubForm.type} onChange={e=>setLubForm(f=>({...f,type:e.target.value}))}><option>Engine Oil</option><option>Hydraulic Fluid</option><option>Coolant</option><option>Gear Oil</option><option>Transmission Fluid</option><option>Grease</option><option>Other Fluid</option></select></Field>
-          <Field label="Grade / Specification"><input style={inp} value={lubForm.grade} onChange={e=>setLubForm(f=>({...f,grade:e.target.value}))} placeholder="SAE 10W-30 / API CK-4"/></Field>
-          <Field label="Container Quantity"><input style={inp} type="number" step="0.01" value={lubForm.containerQty} onChange={e=>setLubForm(f=>({...f,containerQty:e.target.value}))}/></Field>
-          <Field label="Container Unit"><select style={sel} value={lubForm.containerUnit} onChange={e=>setLubForm(f=>({...f,containerUnit:e.target.value}))}><option value="gal">Gallons</option><option value="qt">Quarts</option><option value="L">Liters</option><option value="drum">55-gal Drum(s)</option></select></Field>
-          <Field label="Total Purchase Price ($)"><input style={inp} type="number" step="0.01" value={lubForm.totalPrice} onChange={e=>setLubForm(f=>({...f,totalPrice:e.target.value}))}/></Field>
-        </div>
-        <div style={{display:"flex",gap:8,marginTop:8}}><Btn onClick={addLubricant}>{lubForm.id?"Save Fluid":"Add Fluid"}</Btn>{lubForm.id&&<Btn variant="secondary" onClick={()=>setLubForm({id:"",name:"",type:"Engine Oil",grade:"",containerQty:"",containerUnit:"gal",totalPrice:"",onHand:"",notes:""})}>Cancel</Btn>}</div>
-        <div style={{display:"grid",gap:10,marginTop:14}}>
-          {lubricants.length===0?<div style={{padding:18,textAlign:"center",color:T.muted,background:T.grayLt,borderRadius:10}}>No lubricants or fluids recorded yet.</div>:lubricants.map(l=>{const cpu=lubCostPerGal(l);return <div key={l.id} style={{border:`1px solid ${T.border}`,borderRadius:10,padding:12}}>
-            <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}><div><b>{l.name}</b><div style={{fontSize:11,color:T.muted}}>{l.type}{l.grade?` • ${l.grade}`:""}</div></div><div style={{textAlign:"right"}}><b>{(+l.onHand||0).toFixed(2)} gal on hand</b><div style={{fontSize:11,color:T.muted}}>${cpu.toFixed(2)}/gal • {moneyFmt((+l.onHand||0)*cpu)} remaining value</div></div></div>
-            <div style={{fontSize:11,color:T.subtext,marginTop:5}}>Purchased {l.containerQty} {l.containerUnit} for {moneyFmt(l.totalPrice)}</div>
-            <div style={{display:"flex",gap:7,flexWrap:"wrap",marginTop:8}}><Btn small onClick={()=>consumeLubricant(l)}>Use Fluid</Btn><Btn small variant="secondary" onClick={()=>setLubForm({...l})}>Edit</Btn><Btn small variant="danger" onClick={()=>{if(confirm(`Delete ${l.name}?`))saveLubricants(lubricants.filter(x=>x.id!==l.id))}}>Delete</Btn></div>
-            {(l.usage||[]).length>0&&<div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${T.border}`}}>{[...(l.usage||[])].reverse().slice(0,5).map(u=><div key={u.id} style={{fontSize:11,padding:"2px 0"}}>{u.date} — {u.qty.toFixed(2)} gal — {moneyFmt(u.cost)}{u.workOrderId?` — WO ${u.workOrderId}`:""}</div>)}</div>}
-          </div>})}
-        </div>
-      </Card>}
-      {partsSubView==="parts"&&<>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))", gap:12, marginBottom:16 }}>
-        {[["Total Inventory Value",moneyFmt(totalVal),T.accent],["Total SKUs",parts.length,T.text],["Low Stock",lowParts.length,T.amber],["Out of Stock",outParts.length,T.red]].map(([l,v,c])=>(
+        {[["Inventory Value",moneyFmt(totalVal),T.accent],["Total SKUs",parts.length,T.text],["Low Stock",lowParts.length,T.amber],["Out of Stock",outParts.length,T.red]].map(([l,v,c])=>(
           <Card key={l} style={{ padding:"14px 16px" }}>
             <div style={{ fontFamily:T.sans, fontSize:22, fontWeight:700, color:c }}>{v}</div>
             <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>{l}</div>
-            {l==="Total Inventory Value"&&<div style={{fontSize:10,color:T.muted,marginTop:3}}>Parts {moneyFmt(partsValue)} • Fluids {moneyFmt(lubricantValue)}</div>}
           </Card>
         ))}
       </div>
@@ -5819,24 +5310,11 @@ function Parts({ state, dispatch }) {
         </Card>
       )}
 
-      <div className="mf-parts-mobile-list">
-        {filtered.map(p=>{ const linkedEq=p.equipmentId?state.equipment.find(e=>e.id===p.equipmentId):null; const stockStatus=getPartStockStatus(p); return <Card key={p.id} style={{padding:12,marginBottom:10}}>
-          <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}><div style={{minWidth:0}}><div style={{fontFamily:T.mono,fontSize:11,color:T.accent}}>{p.partNumber||"—"}</div><div style={{fontWeight:800,fontSize:15,overflowWrap:"anywhere"}}>{p.name}</div>{linkedEq&&<div style={{fontSize:11,color:T.accent,marginTop:2}}>For: {linkedEq.name} ({linkedEq.id})</div>}</div><div style={{fontWeight:800,color:stockStatus==="Out of Stock"?T.red:stockStatus==="Low Stock"?T.amber:T.green,textAlign:"right"}}>{p.qty} {p.unit||"ea"}<div style={{fontSize:10}}>{stockStatus}</div></div></div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:10,fontSize:12}}><div><span style={{color:T.muted}}>Category</span><br/><b>{p.category||"—"}</b></div><div><span style={{color:T.muted}}>Unit Cost</span><br/><b>{moneyFmt(p.unitCost)}</b></div><div><span style={{color:T.muted}}>Location</span><br/><b>{p.location||"—"}</b></div><div><span style={{color:T.muted}}>Total Value</span><br/><b>{moneyFmt((+p.qty||0)*(+p.unitCost||0))}</b></div></div>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginTop:10,padding:"8px 10px",background:T.grayLt,borderRadius:8}}>
-            <span style={{fontSize:11,fontWeight:700}}>Low Stock Alert</span>
-            <button type="button" onClick={(e)=>{e.stopPropagation();dispatch({type:"UPDATE_PART",payload:{...p,lowStockAlert:p.lowStockAlert===false?true:false}})}} style={{width:44,height:24,borderRadius:12,border:"none",background:p.lowStockAlert!==false?T.accent:"#d1d5db",cursor:"pointer",position:"relative"}}><span style={{position:"absolute",top:3,left:p.lowStockAlert!==false?22:3,width:18,height:18,borderRadius:"50%",background:T.card,display:"block"}}/></button>
-          </div>
-          <div style={{fontSize:11,color:T.subtext,marginTop:8}}><b>Assigned Equipment:</b> {partEquipmentLabel(p)}</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:12}}><Btn small variant="secondary" onClick={()=>openEdit(p)}>Edit</Btn><Btn small variant="danger" onClick={()=>del(p.id)}>Delete</Btn></div>
-        </Card>})}
-        {!filtered.length&&<div style={{padding:24,textAlign:"center",color:T.muted}}>No parts found.</div>}
-      </div>
-      <Card className="mf-parts-desktop-table" style={{ padding:0, overflow:"hidden" }}>
+      <Card style={{ padding:0, overflow:"hidden" }}>
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-              {["Part Number","Name","Category","Assigned Equipment","Unit Cost","Unit","Qty","Total Value",""].map(h=>(
+              {["Part Number","Name","Category","Unit Cost","Unit","Qty","Total Value",""].map(h=>(
                 <th key={h} style={{ padding:"10px 12px", textAlign:"left", fontWeight:600, fontSize:11, color:T.muted, textTransform:"uppercase", letterSpacing:.4, whiteSpace:"nowrap" }}>{h}</th>
               ))}
             </tr>
@@ -5860,7 +5338,6 @@ function Parts({ state, dispatch }) {
                       {!linkedEq&&p.modelFit&&<div style={{ fontSize:10, color:T.muted, marginTop:1 }}>Fits: {p.modelFit}</div>}
                     </td>
                     <td style={{ padding:"10px 12px", color:T.subtext }}>{p.category||"—"}</td>
-                    <td style={{ padding:"10px 12px", fontSize:11, fontWeight:700, color:p.equipmentId?T.accent:T.muted }}>{partEquipmentLabel(p)}</td>
                     <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12 }}>{moneyFmt(p.unitCost)}</td>
                     <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:12 }}>{p.unit||"ea"}</td>
                     <td style={{ padding:"10px 12px", fontFamily:T.mono, fontSize:13, fontWeight:700, color:isOut?T.red:isLow?T.amber:T.green }}>{p.qty}<div style={{ fontFamily:T.sans, fontSize:10, fontWeight:600 }}>{stockStatus}</div></td>
@@ -5872,7 +5349,7 @@ function Parts({ state, dispatch }) {
                   </tr>
                   {expanded===p.id && (
                     <tr style={{ borderBottom:`1px solid ${T.border}` }}>
-                      <td colSpan={9} style={{ padding:"12px 20px", background:T.accentLt }}>
+                      <td colSpan={8} style={{ padding:"12px 20px", background:T.accentLt }}>
                         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))", gap:"10px 24px", marginBottom:12 }}>
                           {[["Vendor",p.vendor],["Location",p.location],["Unit Type",p.unit||"ea"],["Stock Status",stockStatus],["Min Qty",p.minQty],["PO Number",p.poNumber],["Date Received",p.dateReceived],["Fits Model",p.modelFit]].filter(([,v])=>v).map(([k,v])=>(
                             <div key={k}><div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{k}</div><div style={{ fontFamily:T.sans, fontSize:13, color:T.text, marginTop:3 }}>{v}</div></div>
@@ -5880,7 +5357,7 @@ function Parts({ state, dispatch }) {
                         </div>
                         <div style={{ display:"flex", alignItems:"center", gap:10 }}>
                           <span style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext }}>Low Stock Alert:</span>
-                          <button type="button" onClick={(e)=>{e.stopPropagation();dispatch({type:"UPDATE_PART",payload:{...p,lowStockAlert:p.lowStockAlert===false?true:false}})}}
+                          <button type="button" onClick={()=>dispatch({type:"UPDATE_PART",payload:{...p,lowStockAlert:!(p.lowStockAlert!==false)}})}
                             style={{ width:44, height:24, borderRadius:12, border:"none", background:p.lowStockAlert!==false?T.accent:"#d1d5db", cursor:"pointer", position:"relative", transition:"background .2s" }}>
                             <span style={{ position:"absolute", top:3, left:p.lowStockAlert!==false?22:3, width:18, height:18, borderRadius:"50%", background:T.card, transition:"left .2s", display:"block" }}/>
                           </button>
@@ -5897,7 +5374,6 @@ function Parts({ state, dispatch }) {
         {filtered.length===0&&<div style={{ padding:40, textAlign:"center", color:T.muted, fontFamily:T.sans, fontSize:13 }}>No parts found.</div>}
       </Card>
 
-      </>}
       {(modal==="add"||typeof modal==="object"&&modal!==null&&modal.id)&&(
         <Modal title={modal==="add"?"Add Part":`Edit — ${form.partNumber||form.name}`} onClose={()=>setModal(null)}>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 16px" }}>
@@ -5905,11 +5381,10 @@ function Parts({ state, dispatch }) {
             <Field label="Part Name"><input style={inp} value={form.name||""} onChange={F("name")} /></Field>
             <Field label="Category" half><input style={inp} list="part-category-options" value={form.category||""} onChange={F("category")} placeholder="Pick or type category" /></Field>
             <Field label="Fits Equipment / Model" half><input style={inp} list="part-model-options" value={form.modelFit||""} onChange={F("modelFit")} placeholder="e.g. Toro Workman / HDX" /></Field>
-            <Field label="Assigned Equipment" half><select style={sel} value={form.equipmentId||""} onChange={F("equipmentId")}><option value="">General Stock / Not Assigned</option>{(state.equipment||[]).map(e=><option key={e.id} value={e.id}>{e.name||e.nomenclature} ({e.id})</option>)}</select></Field>
             <datalist id="part-model-options">{modelOptions.map(m=><option key={m} value={m} />)}</datalist>
             <Field label="Vendor" half><input style={inp} value={form.vendor||""} onChange={F("vendor")} /></Field>
             <Field label="PO Number" half><input style={inp} value={form.poNumber||""} onChange={F("poNumber")} /></Field>
-            <Field label="Storage Location *" half><select style={sel} value={form.location||""} onChange={F("location")}><option value="">Choose storage location...</option>{partStorageLocations.map(x=><option key={x} value={x}>{x}</option>)}</select>{!partStorageLocations.length&&<div style={{fontSize:11,color:T.amber,marginTop:4}}>Add Parts Storage Locations in Settings first.</div>}</Field>
+            <Field label="Location" half><input style={inp} value={form.location||""} onChange={F("location")} /></Field>
             <Field label="Date Received" half><input style={inp} type="date" value={form.dateReceived||""} onChange={F("dateReceived")} /></Field>
             <Field label="Unit Cost ($)" half><input style={inp} {...decimalInputAttrs()} value={form.unitCost ?? ""} onChange={e=>setForm(f=>({...f,unitCost:sanitizeDecimalInput(e.target.value)}))} /></Field>
             <Field label="Qty on Hand" half><input style={inp} type="number" value={form.qty||0} onChange={F("qty")} /></Field>
@@ -5949,7 +5424,7 @@ function Parts({ state, dispatch }) {
               <input style={inp} type="number" placeholder="Qty" value={p.qty} onChange={e=>setPoRow(i,"qty",e.target.value)} />
               <select style={sel} value={p.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, p.unit||"ea", v=>setPoRow(i,"unit",v))}>{getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}<option value="__new_unit__">+ Add new...</option></select>
               <input style={inp} {...decimalInputAttrs({ placeholder:"0.00" })} value={p.unitCost} onChange={e=>setPoRow(i,"unitCost",sanitizeDecimalInput(e.target.value))} />
-              <select style={sel} value={p.location||""} onChange={e=>setPoRow(i,"location",e.target.value)}><option value="">Storage location...</option>{partStorageLocations.map(x=><option key={x} value={x}>{x}</option>)}</select>
+              <input style={inp} placeholder="Location" value={p.location} onChange={e=>setPoRow(i,"location",e.target.value)} />
               <input style={inp} list="po-model-options" placeholder="Fits model" value={p.modelFit||""} onChange={e=>setPoRow(i,"modelFit",e.target.value)} />
               <datalist id="po-model-options">{modelOptions.map(m=><option key={m} value={m} />)}</datalist>
               {poForm.parts.length>1?<button onClick={()=>delPoRow(i)} style={{ background:"none", border:`1px solid ${T.red}`, borderRadius:5, color:T.red, cursor:"pointer", padding:"6px 8px", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>X</button>:<div/>}
@@ -5972,10 +5447,7 @@ function Parts({ state, dispatch }) {
 
 /* INSPECTIONS */
 function Inspections({ state, dispatch }) {
-  const equipment = [
-    ...(state.equipment||[]),
-    ...(state.equipment||[]).flatMap(parent=>(parent.attachments||[]).map(at=>({...at,name:at.name||at.nomenclature,parentId:parent.id,parentName:parent.name,assetType:"Attachment"})))
-  ];
+  const equipment = state.equipment || [];
   const tasks = state.inspectionTasks || [];
   const schedules = state.inspectionSchedules || [];
   const [modal, setModal] = useState(null);
@@ -6335,7 +5807,7 @@ function Inspections({ state, dispatch }) {
       </Card>}
 
       <Card title="Inspection Schedule / Triggers" right={<span style={{ fontFamily:T.mono, color:T.muted }}>{filteredSchedules.length} inspections / {inspectionEquipmentRows.length} equipment</span>}>
-        <div className="mf-inspection-filters" style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"end", marginBottom:12 }}>
+        <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"end", marginBottom:12 }}>
           <Field label="Every"><select style={{...inp, minWidth:190}} value={inspectionEveryFilter} onChange={e=>setInspectionEveryFilter(e.target.value)}>{["All","Daily","Weekly","Monthly","Quarterly","Semi-Annual","Annual"].map(x=><option key={x} value={x}>{x}</option>)}</select></Field>
           <Field label="Next Due"><select style={{...inp, minWidth:210}} value={inspectionDueSort} onChange={e=>setInspectionDueSort(e.target.value)}><option value="asc">Next Due Ascending</option><option value="desc">Next Due Descending</option></select></Field>
         </div>
@@ -6346,20 +5818,19 @@ function Inspections({ state, dispatch }) {
             const isExpanded = !!expandedInspectionEquipment[row.equipmentId];
             return <div key={row.equipmentId} style={{ border:`1px solid ${T.border}`, borderRadius:14, overflow:"hidden", background:T.card }}>
               <button type="button" onClick={()=>toggleInspectionEquipment(row.equipmentId)} style={{ width:"100%", border:"none", background:isExpanded?T.grayLt:"transparent", cursor:"pointer", padding:0, textAlign:"left" }}>
-                <div className="mf-inspection-equipment-row" style={{ display:"grid", gridTemplateColumns:"minmax(120px,.7fr) minmax(180px,1fr) 140px 140px 90px", gap:10, alignItems:"center", padding:"12px 14px", color:T.text }}>
-                  <div className="mf-inspection-equipment-id" style={{ fontFamily:T.mono, fontWeight:900 }}>{row.eq?.id || row.equipmentId}</div>
-                  <div className="mf-inspection-equipment-main">
-                    <div className="mf-inspection-equipment-name" style={{ fontWeight:800 }}>{equipmentTitle}</div>
-                    <div className="mf-inspection-equipment-count" style={{ color:T.muted, fontSize:12 }}>{row.items.length} assigned inspection{row.items.length===1?"":"s"}{row.overdueCount ? ` • ${row.overdueCount} overdue` : ""}</div>
+                <div style={{ display:"grid", gridTemplateColumns:"minmax(120px,.7fr) minmax(180px,1fr) 140px 140px 90px", gap:10, alignItems:"center", padding:"12px 14px", color:T.text }}>
+                  <div style={{ fontFamily:T.mono, fontWeight:900 }}>{row.eq?.id || row.equipmentId}</div>
+                  <div>
+                    <div style={{ fontWeight:800 }}>{equipmentTitle}</div>
+                    <div style={{ color:T.muted, fontSize:12 }}>{row.items.length} assigned inspection{row.items.length===1?"":"s"}{row.overdueCount ? ` • ${row.overdueCount} overdue` : ""}</div>
                   </div>
-                  <div className="mf-inspection-equipment-due" style={{ color:T.subtext, fontSize:12 }}><b style={{ color:T.text }}>Next Due:</b><br/><span style={{ fontFamily:T.mono }}>{row.nextDue || "—"}</span></div>
-                  <div className="mf-inspection-equipment-task" style={{ color:T.subtext, fontSize:12 }}><b style={{ color:T.text }}>Soonest Task:</b><br/>{taskById(row.items[0]?.taskId)?.name || "—"}</div>
-                  <div className="mf-inspection-equipment-toggle" style={{ justifySelf:"end", fontWeight:900, color:T.blue }}>{isExpanded ? "▲" : "▼"}</div>
+                  <div style={{ color:T.subtext, fontSize:12 }}><b style={{ color:T.text }}>Next Due:</b><br/><span style={{ fontFamily:T.mono }}>{row.nextDue || "—"}</span></div>
+                  <div style={{ color:T.subtext, fontSize:12 }}><b style={{ color:T.text }}>Soonest Task:</b><br/>{taskById(row.items[0]?.taskId)?.name || "—"}</div>
+                  <div style={{ justifySelf:"end", fontWeight:900, color:T.blue }}>{isExpanded ? "▲" : "▼"}</div>
                 </div>
               </button>
               {isExpanded && <div style={{ padding:12, borderTop:`1px solid ${T.border}`, background:T.card }}>
-                <div className="mf-inspection-detail-mobile">{row.items.map(s=>{const task=taskById(s.taskId);return <div key={s.id} style={{border:`1px solid ${T.border}`,borderRadius:10,padding:12,marginBottom:10,minWidth:0}}><div style={{fontWeight:800,overflowWrap:"anywhere",marginBottom:9}}>{task?.name||"Missing task"}</div><div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:10,fontSize:12}}>{[["Every",scheduleFrequencyLabel(s)],["Last Inspection",s.lastInspectionDate||s.lastDoneDate||"—"],["Next Inspection",s.nextDueDate||"—"],["Last Triggered",s.lastTriggered||"—"]].map(([label,value])=><div key={label} style={{minWidth:0,overflowWrap:"anywhere"}}><div style={{color:T.muted,fontSize:11}}>{label}</div><b>{value}</b></div>)}</div>{s.notes&&<div style={{fontSize:12,marginTop:9,overflowWrap:"anywhere"}}>{s.notes}</div>}<div style={{display:"flex",gap:7,flexWrap:"wrap",marginTop:12}}><Btn variant="secondary" onClick={()=>triggerInspection(s)}>Trigger WO</Btn><Btn variant="secondary" onClick={()=>openSchedule(s)}>Edit</Btn><Btn variant="danger" onClick={()=>{if(confirm("Delete this inspection assignment?")) dispatch({type:"DELETE_INSPECTION_SCHEDULE",payload:s.id});}}>Delete</Btn></div></div>})}</div>
-                <div className="mf-inspection-detail-desktop" style={{ overflowX:"auto" }}> 
+                <div style={{ overflowX:"auto" }}>
                   <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:13 }}>
                     <thead><tr style={{ background:T.grayLt }}>
                       {["Inspection Task","Every","Last Inspection","Next Inspection","Last Triggered","Notes","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:"10px", borderBottom:`1px solid ${T.border}`, color:T.subtext }}>{h}</th>)}
@@ -6465,7 +5936,7 @@ function PM({ state, dispatch }) {
   const [serviceWOForm, setServiceWOForm] = useState(blankServiceWOForm());
   const [taskModal, setTaskModal] = useState(false);
   const [editTaskId, setEditTaskId] = useState(null);
-  const blankTaskForm = () => ({ name:"", description:"", steps:[""], stepNotes:[""], parts:[{name:"",qty:"",unit:"ea"}], triggers:[{type:"time",timeInterval:"",timeUnit:"months",usageInterval:"",usageType:"hours",usageMode:"every"}] });
+  const blankTaskForm = () => ({ name:"", description:"", steps:[""], parts:[{name:"",qty:"",unit:"ea"}], triggers:[{type:"time",timeInterval:"",timeUnit:"months",usageInterval:"",usageType:"hours",usageMode:"every"}] });
   const [taskForm, setTaskForm]   = useState(blankTaskForm());
   const [showTaskLib, setShowTaskLib] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState(null);
@@ -6531,10 +6002,6 @@ function PM({ state, dispatch }) {
   };
 
   const pmTasks  = state.pmTasks    || [];
-  const maintainableAssets = [
-    ...(state.equipment||[]),
-    ...(state.equipment||[]).flatMap(parent=>(parent.attachments||[]).map(at=>({...at,name:at.name||at.nomenclature,parentId:parent.id,parentName:parent.name,assetType:"Attachment"})))
-  ];
   const schedules = state.pmSchedules || [];
   const selectedLibraryTask = pmTasks.find(t=>t.id===selectedTaskId) || pmTasks[0] || null;
 
@@ -6574,13 +6041,9 @@ function PM({ state, dispatch }) {
   };
 
   const currentUsageFor = (equipmentId, type="hours") => {
-    const logs = (state.usageLogs||[]).filter(l=>String(l.equipmentId)===String(equipmentId));
-    const eq = (state.equipment||[]).find(e=>String(e.id)===String(equipmentId)) ||
-      (state.equipment||[]).flatMap(parent=>(parent.attachments||[]).map(at=>({...at,parentId:parent.id}))).find(a=>String(a.id)===String(equipmentId)) || {};
+    const logs = (state.usageLogs||[]).filter(l=>l.equipmentId===equipmentId);
     const key = type === "mileage" ? "mileage" : "hours";
-    const equipmentCurrent = type === "mileage" ? +(eq.currentMileage||eq.mileage||0) : +(eq.currentHours||eq.hours||0);
-    const baseline = +(eq.pmBaselineUsage||0);
-    return Math.max(...logs.map(l=>+(l[key]||0)), equipmentCurrent, baseline, 0);
+    return Math.max(...logs.map(l=>+(l[key]||0)), 0);
   };
 
   const buildScheduleTriggers = (triggers, lastDate, lastUsage) => normalizeTaskTriggers({triggers}).map(t=>{
@@ -6619,12 +6082,7 @@ function PM({ state, dispatch }) {
     return false;
   };
 
-  const hasActivePMWorkOrder = (sch) => (state.workOrders||[]).some(w =>
-    w.woType==="Service" &&
-    String(w.scheduleId||"")===String(sch.id||"") &&
-    w.status!=="Completed"
-  );
-  const triggered = schedules.filter(s=>!hasActivePMWorkOrder(s) && shouldTrigger(s));
+  const triggered = schedules.filter(shouldTrigger);
 
   /* PM auto-generation is handled once at the App level so it works from every tab and does not duplicate WOs. */
   useEffect(()=>{
@@ -6704,18 +6162,13 @@ function PM({ state, dispatch }) {
       if(!selectedTask) return null;
       const trig = getTaskTriggerSettings(selectedTask);
       const schedulePayload = { ...schForm, equipmentId, taskId, equipmentIds:undefined, taskIds:undefined, task:selectedTask.name, ...trig };
-      const baselineEq = maintainableAssets.find(e=>String(e.id)===String(equipmentId)) || {};
-      const baselineDate = schedulePayload.lastDoneDate || baselineEq.pmBaselineDate || schedulePayload.created || today();
-      const baselineUsage = schedulePayload.lastDoneUsage !== undefined && schedulePayload.lastDoneUsage !== "" ? schedulePayload.lastDoneUsage : (baselineEq.pmBaselineUsage || 0);
-      const nextTriggers = buildScheduleTriggers(schedulePayload.triggers, baselineDate, baselineUsage);
+      const nextTriggers = buildScheduleTriggers(schedulePayload.triggers, schedulePayload.lastDoneDate, schedulePayload.lastDoneUsage);
       const nextDate  = nextTriggers.find(t=>t.type==="time")?.nextDueDate || "";
       const nextUsage = nextTriggers.find(t=>t.type==="hours"||t.type==="mileage")?.nextDueUsage || "";
       return {
         ...schedulePayload,
         id:existingId || genId("SCH"),
         triggers:nextTriggers,
-        lastDoneDate:schedulePayload.lastDoneDate || baselineEq.pmBaselineDate || "",
-        lastDoneUsage:schedulePayload.lastDoneUsage !== undefined && schedulePayload.lastDoneUsage !== "" ? schedulePayload.lastDoneUsage : (baselineEq.pmBaselineUsage || ""),
         nextDueDate:nextDate,
         nextDueUsage:nextUsage,
         created:schForm.created || today(),
@@ -6760,8 +6213,8 @@ function PM({ state, dispatch }) {
       task.description ? `Description: ${task.description}` : "",
       stepsText ? `Service Steps:\n${stepsText}` : ""
     ].filter(Boolean).join("\n\n");
-    const eq = maintainableAssets.find(e=>String(e.id)===String(equipmentId));
-    const logs = (state.usageLogs||[]).filter(l=>String(l.equipmentId)===String(equipmentId));
+    const eq = state.equipment.find(e=>e.id===equipmentId);
+    const logs = (state.usageLogs||[]).filter(l=>l.equipmentId===equipmentId);
     const usageMode = (eq?.usageType || sch?.usageType || "hours").toLowerCase();
     const currentHours = Math.max(...logs.map(l=>+(l.hours||0)), 0) || "";
     const currentMileage = Math.max(...logs.map(l=>+(l.mileage||0)), 0) || "";
@@ -6795,13 +6248,6 @@ function PM({ state, dispatch }) {
       partsUsed:taskParts,
       scheduleId:sch?.id||null,
       pmTaskId:task.id||sch?.taskId||null,
-      equipmentType:eq?.assetType||"Equipment",
-      parentId:eq?.parentId||null,
-      parentName:eq?.parentName||null,
-      procedureMode:"library",
-      procedureTaskId:task.id||sch?.taskId||"",
-      serviceStepNotes:Array.isArray(task.stepNotes)?[...task.stepNotes]:[],
-      taskProcedureSnapshot:{taskId:task.id||sch?.taskId||"",name:task.name||sch?.task||"PM Service",steps:[...stepLines],stepNotes:Array.isArray(task.stepNotes)?[...task.stepNotes]:[],capturedAt:new Date().toISOString()}
     }});
   };
 
@@ -6825,7 +6271,7 @@ function PM({ state, dispatch }) {
     const description = String(serviceWOForm.description||"").trim();
     if(!equipmentId) return alert("Select the equipment for this service work order.");
     if(!description) return alert("Enter the service description or work requested.");
-    const eq = maintainableAssets.find(e=>String(e.id)===String(equipmentId));
+    const eq = (state.equipment||[]).find(e=>String(e.id)===String(equipmentId));
     const usageMode = String(eq?.usageType || "hours").toLowerCase();
     const usageValue = serviceWOForm.usage === "" ? "" : Number(serviceWOForm.usage);
     if(eq?.trackUsage && serviceWOForm.usage === "") return alert(`Enter the current ${usageMode==="mileage"?"mileage":"hours"} for this equipment.`);
@@ -6932,7 +6378,7 @@ function PM({ state, dispatch }) {
   /* Task library */
   const openNewTask = () => { setEditTaskId(null); setTaskForm(blankTaskForm()); setTaskModal(true); };
   const openEditTask = (t) => { setEditTaskId(t.id); setTaskForm({...t, triggers:t.triggers||[{type:"time",timeInterval:t.timeInterval||"",timeUnit:t.timeUnit||"months",usageInterval:"",usageType:"hours",usageMode:"every"}]}); setTaskModal(true); };
-  const copyPMTask = (t) => { setEditTaskId(null); setTaskForm({...t, id:undefined, name:`Copy of ${t.name||"PM Task"}`, steps:Array.isArray(t.steps)?[...t.steps]:[""], stepNotes:Array.isArray(t.stepNotes)?[...t.stepNotes]:[], parts:Array.isArray(t.parts)?t.parts.map(p=>({...p})):[{name:"",qty:"",unit:"ea"}], triggers:Array.isArray(t.triggers)?t.triggers.map(tr=>({...tr})):[{type:"time",timeInterval:t.timeInterval||"",timeUnit:t.timeUnit||"months",usageInterval:"",usageType:"hours",usageMode:"every"}]}); setTaskModal(true); };
+  const copyPMTask = (t) => { setEditTaskId(null); setTaskForm({...t, id:undefined, name:`Copy of ${t.name||"PM Task"}`, steps:Array.isArray(t.steps)?[...t.steps]:[""], parts:Array.isArray(t.parts)?t.parts.map(p=>({...p})):[{name:"",qty:"",unit:"ea"}], triggers:Array.isArray(t.triggers)?t.triggers.map(tr=>({...tr})):[{type:"time",timeInterval:t.timeInterval||"",timeUnit:t.timeUnit||"months",usageInterval:"",usageType:"hours",usageMode:"every"}]}); setTaskModal(true); };
   const saveTask = () => {
     if(!taskForm.name) return alert("Task name required.");
     if(editTaskId) {
@@ -6946,10 +6392,8 @@ function PM({ state, dispatch }) {
   const addTrigger   = () => setTaskForm(f=>({...f,triggers:[...(f.triggers||[]),{type:"time",timeInterval:"",timeUnit:"months",usageInterval:"",usageType:"hours",usageMode:"every"}]}));
   const setTrigger   = (i,k,v) => setTaskForm(f=>{ const tr=[...(f.triggers||[])]; tr[i]={...tr[i],[k]:v}; return {...f,triggers:tr}; });
   const delTrigger   = i => setTaskForm(f=>{ const tr=[...(f.triggers||[])]; tr.splice(i,1); return {...f,triggers:tr}; });
-  const savedStepOptions = [...new Set((pmTasks||[]).flatMap(t=>Array.isArray(t.steps)?t.steps:[]).map(s=>String(s||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
-  const addTaskStep  = () => setTaskForm(f=>({...f,steps:[...(f.steps||[]),""],stepNotes:[...(f.stepNotes||[]),""]}));
+  const addTaskStep  = () => setTaskForm(f=>({...f,steps:[...(f.steps||[]),""] }));
   const setStep      = (i,v) => setTaskForm(f=>{ const s=[...(f.steps||[])]; s[i]=v; return {...f,steps:s}; });
-  const setStepNote  = (i,v) => setTaskForm(f=>{ const n=[...(f.stepNotes||[])]; n[i]=v; return {...f,stepNotes:n}; });
 
   const pasteTaskStep = (i) => (e) => {
     try {
@@ -6986,7 +6430,7 @@ function PM({ state, dispatch }) {
       console.error("PM step paste failed", err);
     }
   };
-  const delStep      = i => setTaskForm(f=>{ const s=[...(f.steps||[])]; const n=[...(f.stepNotes||[])]; s.splice(i,1); n.splice(i,1); return {...f,steps:s,stepNotes:n}; });
+  const delStep      = i => setTaskForm(f=>{ const s=[...(f.steps||[])]; s.splice(i,1); return {...f,steps:s}; });
   const addTaskPart  = () => setTaskForm(f=>({...f,parts:[...(f.parts||[]),{name:"",qty:"",unit:"ea"}]}));
   const setTaskPart  = (i,k,v) => setTaskForm(f=>{ const p=[...(f.parts||[])]; p[i]={...p[i],[k]:v}; return {...f,parts:p}; });
   const delTaskPart  = i => setTaskForm(f=>{ const p=[...(f.parts||[])]; p.splice(i,1); return {...f,parts:p}; });
@@ -7047,12 +6491,12 @@ function PM({ state, dispatch }) {
         <div style={{ background:T.redLt, border:`1px solid ${T.red}`, borderRadius:8, padding:"12px 16px", marginBottom:16, display:"flex", gap:10, alignItems:"center" }}>
           <span style={{ fontSize:20 }}>🚨</span>
           <div style={{ fontFamily:T.sans, fontSize:13, color:T.red, fontWeight:600 }}>
-            {triggered.length} PM schedule{triggered.length>1?"s":""} due — review the assignment below and use Create WO when you are ready.
+            {triggered.length} PM schedule{triggered.length>1?"s":""} triggered — work orders auto-generated.
           </div>
         </div>
       )}
 
-      <div className="mf-pm-actions" style={{ display:"flex", gap:8, justifyContent:"flex-end", marginBottom:16 }}>
+      <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginBottom:16 }}>
         <Btn variant="secondary" onClick={()=>{ setSelectedTaskId(pmTasks[0]?.id||null); setShowTaskLib(true); }}>
           Tasks Library ({pmTasks.length})
         </Btn>
@@ -7076,15 +6520,7 @@ function PM({ state, dispatch }) {
             No PM tasks assigned yet. Use <b>Task-to-Equipment</b> to link a PM task to a piece of equipment.
           </div>
         ) : (
-          <>
-          <div className="mf-pm-assigned-mobile">
-            {assignedPMEquipmentRows.map(group=><div key={`pm-mobile-${group.equipmentId}`} className="mf-pm-mobile-card">
-              <div className="mf-pm-mobile-head"><div><div className="mf-mobile-summary-id">{group.equipmentId}</div><div className="mf-mobile-summary-title">{group.eqName}</div></div><span style={{ borderRadius:999, padding:"4px 9px", fontFamily:T.sans, fontSize:11, fontWeight:800, color:group.status==="Overdue"?T.red:group.status==="Due Soon"?T.amber:T.green, background:group.status==="Overdue"?"#fee2e2":group.status==="Due Soon"?"#fef3c7":"#dcfce7" }}>{group.status}</span></div>
-              <div className="mf-pm-mobile-meta"><span><b>Tasks</b> {group.rows.length}</span><span><b>Usage</b> {group.currentHours} hrs • {group.currentMileage} mi</span></div>
-              <div className="mf-pm-mobile-tasks">{group.rows.map(r=><div key={r.id} className="mf-pm-mobile-task"><div><b>{r.taskName}</b><div>{r.triggerText}</div><div>{r.nextDueText}</div></div><div className="mf-pm-mobile-task-actions"><Btn small onClick={()=>createPMWorkOrderFromSchedule(r, true)}>Create WO</Btn><Btn small variant="secondary" onClick={()=>{ setSchForm({...r, equipmentIds:[r.equipmentId].filter(Boolean), taskIds:[r.taskId].filter(Boolean)}); setModal("schedule"); }}>Edit</Btn><Btn small variant="danger" onClick={()=>delSchedule(r.id)}>Delete</Btn></div></div>)}</div>
-            </div>)}
-          </div>
-          <div className="mf-pm-assigned-desktop" style={{ overflow:"auto" }}>
+          <div style={{ overflow:"auto" }}>
             <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:T.sans, fontSize:12, minWidth:900 }}>
               <thead>
                 <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
@@ -7147,7 +6583,6 @@ function PM({ state, dispatch }) {
               </tbody>
             </table>
           </div>
-          </>
         )}
       </div>
 
@@ -7278,7 +6713,7 @@ function PM({ state, dispatch }) {
                         <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:800, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:6 }}>Task Steps</div>
                         {steps.length===0 ? <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted }}>No steps saved.</div> : (
                           <ol style={{ margin:"0 0 0 20px", padding:0, fontFamily:T.sans, fontSize:13, color:T.subtext, lineHeight:1.6 }}>
-                            {steps.map((s,j)=><li key={j}>{s}{(t.stepNotes||[])[j]&&<div style={{fontSize:11,color:T.muted,margin:"2px 0 6px"}}>{(t.stepNotes||[])[j]}</div>}</li>)}
+                            {steps.map((s,j)=><li key={j}>{s}</li>)}
                           </ol>
                         )}
                       </div>
@@ -7316,18 +6751,13 @@ function PM({ state, dispatch }) {
             <Field label="Description"><textarea style={{ ...inp, minHeight:50, resize:"vertical" }} value={taskForm.description} onPaste={pasteIntoText(v=>setTaskForm(f=>({...f,description:v})))} onChange={e=>setTaskForm(f=>({...f,description:e.target.value}))} placeholder="Brief description..." /></Field>
             <div>
               <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:8 }}>Service Steps</label>
-              <datalist id="pm-saved-step-options">{savedStepOptions.map(s=><option key={s} value={s}/>)}</datalist>
               {(taskForm.steps||[""]).map((step,i)=>(
-                <div key={i} style={{ marginBottom:10, padding:10, border:`1px solid ${T.border}`, borderRadius:9, background:T.card }}>
-                  <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-                    <span style={{ fontFamily:T.mono, fontSize:11, color:T.muted, minWidth:20 }}>{i+1}.</span>
-                    <input list="pm-saved-step-options" style={{ ...inp, flex:1 }} value={step} autoFocus={i===(taskForm.steps||[]).length-1 && step===""} onPaste={pasteTaskStep(i)} onChange={e=>setStep(i,e.target.value)} placeholder="Choose a saved step or type a new one..." />
-                    {(taskForm.steps||[]).length>1&&<button onClick={()=>delStep(i)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
-                  </div>
-                  <input style={{...inp,marginTop:7,marginLeft:26,width:"calc(100% - 26px)"}} value={(taskForm.stepNotes||[])[i]||""} onChange={e=>setStepNote(i,e.target.value)} placeholder="Optional instruction / specification for this step..." />
+                <div key={i} style={{ display:"flex", gap:6, marginBottom:6, alignItems:"center" }}>
+                  <span style={{ fontFamily:T.mono, fontSize:11, color:T.muted, minWidth:20 }}>{i+1}.</span>
+                  <input style={{ ...inp, flex:1 }} value={step} autoFocus={i===(taskForm.steps||[]).length-1 && step===""} onPaste={pasteTaskStep(i)} onChange={e=>setStep(i,e.target.value)} placeholder={`Step ${i+1}...`} />
+                  {(taskForm.steps||[]).length>1&&<button onClick={()=>delStep(i)} style={{ background:"none", border:"none", color:T.red, cursor:"pointer", fontSize:18, lineHeight:1 }}>×</button>}
                 </div>
               ))}
-              <div style={{fontSize:11,color:T.muted,marginBottom:7}}>Previously used steps appear as suggestions. Type a new step once and it becomes available for future procedures.</div>
               <button onClick={addTaskStep} style={{ background:"none", border:`1px dashed ${T.borderHi}`, borderRadius:6, padding:"5px 12px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:600 }}>+ Add Step</button>
             </div>
             <div>
@@ -7404,7 +6834,7 @@ function PM({ state, dispatch }) {
             <Field label="Equipment to Service" half>
               <select style={{ ...sel, minWidth:320, width:"100%" }} value={manualForm.equipmentId||""} onChange={e=>setManualForm(f=>({...f,equipmentId:e.target.value}))}>
                 <option value="">-- Select Equipment --</option>
-                {maintainableAssets.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name}{e.assetType==="Attachment"?` (Attachment on ${e.parentName})`:""}</option>)}
+                {state.equipment.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name}</option>)}
               </select>
             </Field>
             <Field label="Task to Trigger" half>
@@ -7415,7 +6845,7 @@ function PM({ state, dispatch }) {
             </Field>
           </div>
           {manualForm.equipmentId && manualForm.taskId && (()=>{
-            const eq=maintainableAssets.find(e=>String(e.id)===String(manualForm.equipmentId));
+            const eq=state.equipment.find(e=>e.id===manualForm.equipmentId);
             const task=pmTasks.find(t=>t.id===manualForm.taskId);
             const steps=(task?.steps||[]).filter(Boolean);
             return (
@@ -7448,7 +6878,7 @@ function PM({ state, dispatch }) {
                   <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Equipment *</label>
                   <select style={sel} value={schForm.equipmentId} onChange={e=>setSchForm(f=>({...f,equipmentId:e.target.value,equipmentIds:e.target.value?[e.target.value]:[]}))}>
                     <option value="">-- Select Equipment --</option>
-                    {maintainableAssets.map(e=><option key={e.id} value={e.id}>{e.name} ({e.id}){e.assetType==="Attachment"?` — Attachment on ${e.parentName}`:""}</option>)}
+                    {state.equipment.map(e=><option key={e.id} value={e.id}>{e.name} ({e.id})</option>)}
                   </select>
                 </div>
                 <div style={{ gridColumn:"span 2", marginBottom:14 }}>
@@ -7469,10 +6899,10 @@ function PM({ state, dispatch }) {
               <div style={{ gridColumn:"span 2", display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(280px, 1fr))", gap:14, marginBottom:14 }}>
                 <div>
                   <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Equipment * ({(schForm.equipmentIds||[]).length} selected)</label>
-                  <select multiple size={Math.min(9, Math.max(5, maintainableAssets.length || 5))} style={{...sel, minHeight:165}} value={schForm.equipmentIds||[]} onChange={e=>{ const ids=getSelectedValues(e); setSchForm(f=>({...f,equipmentIds:ids,equipmentId:ids[0]||""})); }}>
-                    {maintainableAssets.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name || e.nomenclature}{e.assetType==="Attachment"?` (Attachment on ${e.parentName})`:""}</option>)}
+                  <select multiple size={Math.min(9, Math.max(5, state.equipment.length || 5))} style={{...sel, minHeight:165}} value={schForm.equipmentIds||[]} onChange={e=>{ const ids=getSelectedValues(e); setSchForm(f=>({...f,equipmentIds:ids,equipmentId:ids[0]||""})); }}>
+                    {state.equipment.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name || e.nomenclature}</option>)}
                   </select>
-                  <div style={{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" }}><Btn variant="secondary" onClick={()=>setSchForm(f=>({...f,equipmentIds:maintainableAssets.map(e=>e.id),equipmentId:maintainableAssets[0]?.id||""}))}>Select All Equipment</Btn><Btn variant="secondary" onClick={()=>setSchForm(f=>({...f,equipmentIds:[],equipmentId:""}))}>Clear</Btn></div>
+                  <div style={{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" }}><Btn variant="secondary" onClick={()=>setSchForm(f=>({...f,equipmentIds:state.equipment.map(e=>e.id),equipmentId:state.equipment[0]?.id||""}))}>Select All Equipment</Btn><Btn variant="secondary" onClick={()=>setSchForm(f=>({...f,equipmentIds:[],equipmentId:""}))}>Clear</Btn></div>
                 </div>
                 <div>
                   <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Service Tasks ({(schForm.taskIds||[]).length} selected)</label>
@@ -7704,6 +7134,60 @@ function Spending({ state }) {
 
 /* USER PROFILE */
 
+function WOSettings({ state, dispatch, onClose }) {
+  const s = state.woSettings || {};
+  const [form, setForm] = useState({
+    headerText:  s.headerText||"Maintenance Work Order",
+    repairPrintColor: s.repairPrintColor || "blue",
+    inspectionPrintColor: s.inspectionPrintColor || "mint",
+    servicePrintColor: s.servicePrintColor || "yellow",
+    footerText:  s.footerText||"",
+  });
+  const F = k => e => setForm(f=>({...f,[k]:e.target.value}));
+  const printColorOptions = [
+    ["blue", "Blue"],
+    ["mint", "Green"],
+    ["yellow", "Yellow"],
+    ["slate", "Slate"]
+  ];
+  const ColorSelect = ({ label, k }) => (
+    <Field label={label}>
+      <select style={inp} value={form[k]} onChange={F(k)}>
+        {printColorOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </select>
+    </Field>
+  );
+
+  const save = () => { dispatch({ type:"UPDATE_WO_SETTINGS", payload:form }); onClose(); };
+
+  return (
+    <Modal title="Work Order Settings" onClose={onClose}>
+      <div style={{ display:"flex", flexDirection:"column", gap:14, marginBottom:14 }}>
+        <div style={{ padding:12, border:`1px solid ${T.border}`, borderRadius:8, background:T.grayLt, fontFamily:T.sans, fontSize:12, color:T.subtext }}>
+          Printed work orders now use a standardized layout. Company / Organization name and logo are controlled in main Settings.
+        </div>
+        <Field label="Work Order Header Title">
+          <input style={inp} value={form.headerText} onChange={F("headerText")} />
+        </Field>
+        <Field label="Footer / Notes Text">
+          <textarea style={{ ...inp, minHeight:56, resize:"vertical" }} value={form.footerText} onChange={F("footerText")} placeholder="e.g. Authorized signatures required…" />
+        </Field>
+        <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginTop:4 }}>Printable Work Order Colors</div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:10 }}>
+          <ColorSelect label="Repair Work Orders" k="repairPrintColor" />
+          <ColorSelect label="Inspection Work Orders" k="inspectionPrintColor" />
+          <ColorSelect label="Preventive / Service Work Orders" k="servicePrintColor" />
+        </div>
+      </div>
+      <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:16 }}>
+        <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
+        <Btn onClick={save}>Save Settings</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+
 
 /* USAGE TRACKING */
 
@@ -7748,14 +7232,10 @@ function UsageTracking({ state, dispatch }) {
       date: e.date || today(),
       hours: String(e.hours ?? "").trim(),
       mileage: String(e.mileage ?? "").trim(),
-      fuel: eq.fuelTracking===false ? "" : String(e.fuel ?? "").trim(),
+      fuel: String(e.fuel ?? "").trim(),
       notes: String(e.notes ?? "").trim(),
     };
     if(!cleaned.hours && !cleaned.mileage && !cleaned.fuel) { alert("Enter at least one value."); return; }
-    const warnings=[];
-    if(cleaned.hours!=="" && +cleaned.hours < currentOf(eq.id,"hours")) warnings.push(`Hours entered (${cleaned.hours}) are lower than the current recorded hours (${currentOf(eq.id,"hours")}).`);
-    if(cleaned.mileage!=="" && +cleaned.mileage < currentOf(eq.id,"mileage")) warnings.push(`Mileage entered (${cleaned.mileage}) is lower than the current recorded mileage (${currentOf(eq.id,"mileage")}).`);
-    if(warnings.length && !confirm(`${warnings.join("\n")}\n\nDo you want to proceed and save this lower reading?`)) return;
     dispatch({ type:"ADD_USAGE_LOG", payload:{ ...cleaned, equipmentId:eq.id, id:genId("UL"), createdAt:new Date().toISOString() }});
     setEntry(prev=>({...prev,[String(eq.id)]:{ date:today(), hours:"", mileage:"", fuel:"", notes:"" }}));
   };
@@ -7776,12 +7256,6 @@ function UsageTracking({ state, dispatch }) {
       alert("Enter at least one value, or delete the log instead.");
       return;
     }
-    const otherLogs=(state.usageLogs||[]).filter(l=>String(l.equipmentId)===String(editLog.equipmentId) && String(l.id)!==String(editLog.id));
-    const maxOther=(field)=>Math.max(0,...otherLogs.map(l=>+(l[field]||0)).filter(Number.isFinite));
-    const warnings=[];
-    if(String(editLog.hours||"").trim() && +editLog.hours < maxOther("hours")) warnings.push(`Hours entered (${editLog.hours}) are lower than another recorded reading (${maxOther("hours")}).`);
-    if(String(editLog.mileage||"").trim() && +editLog.mileage < maxOther("mileage")) warnings.push(`Mileage entered (${editLog.mileage}) is lower than another recorded reading (${maxOther("mileage")}).`);
-    if(warnings.length && !confirm(`${warnings.join("\n")}\n\nDo you want to proceed and save this lower reading?`)) return;
     dispatch({ type:"UPDATE_USAGE_LOG", payload:editLog });
     setEditLog(null);
   };
@@ -7799,7 +7273,7 @@ function UsageTracking({ state, dispatch }) {
           <Field label="Date"><input style={inp} type="date" value={editLog.date||today()} onChange={e=>setEditLog(l=>({...l,date:e.target.value}))} /></Field>
           {showH && <Field label="Hours"><input style={inp} type="number" step="0.1" value={editLog.hours||""} onChange={e=>setEditLog(l=>({...l,hours:e.target.value}))} /></Field>}
           {showM && <Field label="Mileage"><input style={inp} type="number" step="1" value={editLog.mileage||""} onChange={e=>setEditLog(l=>({...l,mileage:e.target.value}))} /></Field>}
-          {eq?.fuelTracking!==false&&<Field label="Fuel Added (gal)"><input style={inp} type="number" step="0.1" value={editLog.fuel||""} onChange={e=>setEditLog(l=>({...l,fuel:e.target.value}))} /></Field>}
+          <Field label="Fuel Added (gal)"><input style={inp} type="number" step="0.1" value={editLog.fuel||""} onChange={e=>setEditLog(l=>({...l,fuel:e.target.value}))} /></Field>
           <Field label="Notes"><textarea style={{...inp,minHeight:70}} value={editLog.notes||""} onChange={e=>setEditLog(l=>({...l,notes:e.target.value}))} /></Field>
           <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}><Btn variant="secondary" onClick={()=>setEditLog(null)}>Cancel</Btn><Btn onClick={saveEditLog}>Save Correction</Btn></div>
         </div>
@@ -7817,7 +7291,6 @@ function UsageTracking({ state, dispatch }) {
     const showM = mode==="mileage"||mode==="both";
     const totH  = currentOf(eqId,"hours");
     const totM  = currentOf(eqId,"mileage");
-    const fuelEnabled = eq.fuelTracking !== false;
     const totF  = totalFuelOf(eqId);
     return (
       <Modal title={eq.name+" — Usage Report"} onClose={()=>setDetailEq(null)}>
@@ -7830,10 +7303,10 @@ function UsageTracking({ state, dispatch }) {
             <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.green, textTransform:"uppercase", letterSpacing:.5 }}>Total Mileage</div>
             <div style={{ fontFamily:T.sans, fontSize:28, fontWeight:800, color:T.green }}>{totM.toLocaleString()}</div>
           </div>}
-          {fuelEnabled&&<div style={{ flex:1, background:"#faf5ff", borderRadius:8, padding:"12px 16px", border:"1px solid #e9d5ff", minWidth:120 }}>
+          <div style={{ flex:1, background:"#faf5ff", borderRadius:8, padding:"12px 16px", border:"1px solid #e9d5ff", minWidth:120 }}>
             <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:"#7c3aed", textTransform:"uppercase", letterSpacing:.5 }}>Total Fuel (gal)</div>
             <div style={{ fontFamily:T.sans, fontSize:28, fontWeight:800, color:"#7c3aed" }}>{totF.toFixed(1)}</div>
-          </div>}
+          </div>
           <div style={{ flex:1, background:T.grayLt, borderRadius:8, padding:"12px 16px", border:`1px solid ${T.border}`, minWidth:120 }}>
             <div style={{ fontFamily:T.sans, fontSize:10, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.5 }}>Log Entries</div>
             <div style={{ fontFamily:T.sans, fontSize:28, fontWeight:800, color:T.text }}>{logs.length}</div>
@@ -7842,7 +7315,7 @@ function UsageTracking({ state, dispatch }) {
         <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13, fontFamily:T.sans }}>
           <thead>
             <tr style={{ background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
-              {["Date", showH&&"Hours", showM&&"Mileage",fuelEnabled&&"Fuel (gal)","Notes",""].filter(Boolean).map(h=>(
+              {["Date", showH&&"Hours", showM&&"Mileage","Fuel (gal)","Notes",""].filter(Boolean).map(h=>(
                 <th key={h} style={{ padding:"7px 12px", textAlign:"left", fontSize:11, fontWeight:700, color:T.muted, textTransform:"uppercase", letterSpacing:.4 }}>{h}</th>
               ))}
             </tr>
@@ -7853,7 +7326,7 @@ function UsageTracking({ state, dispatch }) {
                 <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12 }}>{l.date}</td>
                 {showH&&<td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, color:l.hours?"#1e40af":T.muted }}>{l.hours||"—"}</td>}
                 {showM&&<td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, color:l.mileage?T.green:T.muted }}>{l.mileage?Number(l.mileage).toLocaleString():"—"}</td>}
-                {fuelEnabled&&<td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, color:l.fuel?"#7c3aed":T.muted }}>{l.fuel||"—"}</td>}
+                <td style={{ padding:"8px 12px", fontFamily:T.mono, fontSize:12, color:l.fuel?"#7c3aed":T.muted }}>{l.fuel||"—"}</td>
                 <td style={{ padding:"8px 12px", color:T.subtext, fontSize:12 }}>{l.notes||""}</td>
                 <td style={{ padding:"8px 12px" }}>
                   <button onClick={()=>setEditLog({...l})} title="Edit usage entry" style={{ background:"none", border:"none", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:14, fontWeight:700, marginRight:8 }}>✏️</button>
@@ -7924,7 +7397,6 @@ function UsageTracking({ state, dispatch }) {
             const showM = mode==="mileage"||mode==="both";
             const totH  = currentOf(eq.id,"hours");
             const totM  = currentOf(eq.id,"mileage");
-            const fuelEnabled = eq.fuelTracking !== false;
             const totF  = totalFuelOf(eq.id);
             const e     = eqEntry(eq.id);
             return (
@@ -7943,7 +7415,7 @@ function UsageTracking({ state, dispatch }) {
                 <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:7,marginBottom:13}}>
                   {showH && <div style={{background:T.accentLt,borderRadius:9,padding:9}}><div style={{fontSize:9,fontWeight:800,color:T.accent,textTransform:"uppercase"}}>Hours</div><div style={{fontSize:17,fontWeight:900,color:T.accent,marginTop:3}}>{totH.toFixed(1)}</div></div>}
                   {showM && <div style={{background:T.greenLt,borderRadius:9,padding:9}}><div style={{fontSize:9,fontWeight:800,color:T.green,textTransform:"uppercase"}}> mileage</div><div style={{fontSize:17,fontWeight:900,color:T.green,marginTop:3}}>{totM.toLocaleString()}</div></div>}
-                  {fuelEnabled&&<div style={{background:T.grayLt,borderRadius:9,padding:9}}><div style={{fontSize:9,fontWeight:800,color:T.subtext,textTransform:"uppercase"}}>Fuel</div><div style={{fontSize:17,fontWeight:900,color:T.text,marginTop:3}}>{totF.toFixed(1)} <span style={{fontSize:9}}>gal</span></div></div>}
+                  <div style={{background:T.grayLt,borderRadius:9,padding:9}}><div style={{fontSize:9,fontWeight:800,color:T.subtext,textTransform:"uppercase"}}>Fuel</div><div style={{fontSize:17,fontWeight:900,color:T.text,marginTop:3}}>{totF.toFixed(1)} <span style={{fontSize:9}}>gal</span></div></div>
                 </div>
 
                 <div style={{fontSize:10,fontWeight:900,color:T.subtext,textTransform:"uppercase",letterSpacing:.5,marginBottom:7}}>Add Usage</div>
@@ -7951,8 +7423,8 @@ function UsageTracking({ state, dispatch }) {
                   {showH && <Field label="Hours"><input style={inp} type="number" step="0.1" min="0" placeholder="Current hours" value={e.hours} onChange={ev=>setEqEntry(eq.id,"hours",ev.target.value)} onKeyDown={ev=>saveOnEnter(ev,eq)}/></Field>}
                   {showM && <Field label="Mileage"><input style={inp} type="number" min="0" placeholder="Current mileage" value={e.mileage} onChange={ev=>setEqEntry(eq.id,"mileage",ev.target.value)} onKeyDown={ev=>saveOnEnter(ev,eq)}/></Field>}
                 </div>
-                <div style={{display:"grid",gridTemplateColumns:fuelEnabled?"1fr 1fr":"1fr",gap:8}}>
-                  {fuelEnabled&&<Field label="Fuel Added (gal)"><input style={inp} type="number" step="0.1" min="0" placeholder="Optional" value={e.fuel} onChange={ev=>setEqEntry(eq.id,"fuel",ev.target.value)} onKeyDown={ev=>saveOnEnter(ev,eq)}/></Field>}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                  <Field label="Fuel Added (gal)"><input style={inp} type="number" step="0.1" min="0" placeholder="Optional" value={e.fuel} onChange={ev=>setEqEntry(eq.id,"fuel",ev.target.value)} onKeyDown={ev=>saveOnEnter(ev,eq)}/></Field>
                   <Field label="Date"><input style={inp} type="date" value={e.date} onChange={ev=>setEqEntry(eq.id,"date",ev.target.value)}/></Field>
                 </div>
                 <Field label="Notes"><input style={inp} placeholder="Optional notes" value={e.notes} onChange={ev=>setEqEntry(eq.id,"notes",ev.target.value)} onKeyDown={ev=>saveOnEnter(ev,eq)}/></Field>
@@ -8423,7 +7895,7 @@ function ReportUsage({ state }) {
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
             <select style={{ ...sel, width:240 }} value={selEq} onChange={e=>setSelEq(e.target.value)}>
               <option value="all">All Tracked Equipment</option>
-              {trackableEq.map(e=><option key={e.id} value={e.id}>{e.name} ({e.id}){e.assetType==="Attachment"?` — Attachment on ${e.parentName}`:""}</option>)}
+              {trackableEq.map(e=><option key={e.id} value={e.id}>{e.name} ({e.id})</option>)}
             </select>
             <Btn small onClick={printUsageReport}>Print / PDF</Btn>
             <Btn small variant="secondary" onClick={()=>downloadCSV("usage-report.csv", exportRows)}>Excel CSV</Btn>
@@ -8542,7 +8014,7 @@ function ReportPM({ state }) {
       ${overdue.length?`<h2 style="color:#dc2626">OVERDUE (${overdue.length})</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(overdue)}</table>`:""}
       ${dueSoon.length?`<h2 style="color:#d97706">DUE WITHIN ${lookAheadDays} DAYS (${dueSoon.length})</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(dueSoon)}</table>`:""}
       ${completed.length?`<h2 style="color:#059669">COMPLETED THIS MONTH (${completed.length})</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(completed)}</table>`:""}
-      <br><div style="position:sticky;bottom:0;background:#fff;padding:10px;border-top:1px solid #d1d5db;display:flex;gap:8px;flex-wrap:wrap"><button onclick="if(history.length>1){history.back()}else{window.close()}" style="padding:8px 20px;background:#fff;color:#1a1a2e;border:1px solid #1a1a2e;border-radius:6px;cursor:pointer">← Close / Back</button><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Share PDF</button></div>
+      <br><button onclick="window.print()" style="padding:8px 20px;background:#1a1a2e;color:#fff;border:none;border-radius:6px;cursor:pointer">Print / Save PDF</button>
       </body></html>`);
     win.document.close();
   };
@@ -9349,7 +8821,6 @@ function SystemSettings({ state, dispatch, onClose }) {
     includeLaborInSpending:s.includeLaborInSpending !== false,
     requireTech:s.requireTech || false,
     showEilInventoryNumber:s.showEilInventoryNumber !== false,
-    partStorageLocations:Array.isArray(s.partStorageLocations)?s.partStorageLocations:[],
   });
   const F=k=>e=>setForm(f=>({...f,[k]:e.target.value}));
   const handleLogo=e=>{ const file=e.target.files?.[0]; if(!file)return; const r=new FileReader(); r.onload=ev=>setForm(f=>({...f,logo:ev.target.result})); r.readAsDataURL(file); };
@@ -9377,18 +8848,6 @@ function SystemSettings({ state, dispatch, onClose }) {
         </div>
       </div>
       <div style={{padding:16,border:`1px solid ${T.border}`,borderRadius:14,background:T.surface,marginBottom:16}}>
-        <div style={{fontSize:15,fontWeight:900,marginBottom:4}}>Parts Storage Locations</div>
-        <div style={{fontSize:12,color:T.muted,marginBottom:12}}>These are Parts Inventory storage locations only. They are separate from equipment or facility locations.</div>
-        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
-          {(form.partStorageLocations||[]).map((loc,i)=><div key={`${loc}-${i}`} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 9px",border:`1px solid ${T.border}`,borderRadius:8,background:T.card}}>
-            <b style={{fontSize:12}}>{loc}</b>
-            <button type="button" onClick={()=>{const next=prompt("Edit parts storage location",loc);if(next&&next.trim())setForm(f=>({...f,partStorageLocations:(f.partStorageLocations||[]).map((x,j)=>j===i?next.trim():x)}));}} style={{border:0,background:"none",color:T.accent,cursor:"pointer",fontWeight:800}}>Edit</button>
-            <button type="button" onClick={()=>{const inUse=(state.parts||[]).some(p=>p.location===loc);if(inUse)return alert("This storage location is in use by one or more parts. Move those parts first.");setForm(f=>({...f,partStorageLocations:(f.partStorageLocations||[]).filter((_,j)=>j!==i)}));}} style={{border:0,background:"none",color:T.red,cursor:"pointer",fontWeight:800}}>×</button>
-          </div>)}
-        </div>
-        <Btn small variant="secondary" onClick={()=>{const name=prompt("New parts storage location");if(name&&name.trim())setForm(f=>({...f,partStorageLocations:[...new Set([...(f.partStorageLocations||[]),name.trim()])]}));}}>+ Add Storage Location</Btn>
-      </div>
-      <div style={{padding:16,border:`1px solid ${T.border}`,borderRadius:14,background:T.surface,marginBottom:16}}>
         <div style={{fontSize:15,fontWeight:900,marginBottom:12}}>Defaults</div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}><Field label="Default Labor Rate"><input style={inp} {...decimalInputAttrs({placeholder:"45"})} value={form.laborRateDefault} onChange={e=>setForm(f=>({...f,laborRateDefault:sanitizeDecimalInput(e.target.value)}))}/></Field><Field label="Default Priority"><select style={sel} value={form.defaultPriority} onChange={F("defaultPriority")}><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select></Field></div>
       </div>
@@ -9413,7 +8872,7 @@ defaultPriority:"Medium", dateFormat:"MM/DD/YYYY", currency:"USD", showEilInvent
     if(step===1) return setStep(2);
     const location="Main Location";
     onComplete({
-      settings:{ companyName:data.companyName.trim(), department:data.department.trim(), siteName:location, location, phone:data.phone, email:data.email, address:data.address, cityState:data.cityState, logo:data.logo, logoMode:"company", locations:[{id:"MAIN-LOCATION",name:location,address:data.address,cityState:data.cityState,phone:data.phone,email:data.email,logo:data.logo,active:true}], defaultPriority:data.defaultPriority, laborRateDefault:45, dateFormat:data.dateFormat, currency:data.currency, includeLaborInSpending:true, requireTech:false, showEilInventoryNumber:data.showEilInventoryNumber, partStorageLocations:[] },
+      settings:{ companyName:data.companyName.trim(), department:data.department.trim(), siteName:location, location, phone:data.phone, email:data.email, address:data.address, cityState:data.cityState, logo:data.logo, logoMode:"company", locations:[{id:"MAIN-LOCATION",name:location,address:data.address,cityState:data.cityState,phone:data.phone,email:data.email,logo:data.logo,active:true}], defaultPriority:data.defaultPriority, laborRateDefault:45, dateFormat:data.dateFormat, currency:data.currency, includeLaborInSpending:true, requireTech:false, showEilInventoryNumber:data.showEilInventoryNumber },
       profile:null,
       technicians:[],
       categories:data.categories
@@ -9524,13 +8983,6 @@ function FuelTracking({ state, dispatch }) {
     const inches = parseInches(inchesText, NaN);
     if(!Number.isFinite(inches)) return alert("Enter inches for this container. Examples: 30, 30.5, 30 1/2, 30 7/8.");
     const gallons = calculateFuelGallons(c, inches);
-    const previous = latestFuelReading(state, c.id);
-    const previousGallons = previous ? parseNumber(previous.gallons, NaN) : NaN;
-    if(Number.isFinite(previousGallons) && gallons > previousGallons) {
-      const prevPct = fuelPercent(c, previousGallons);
-      const nextPct = fuelPercent(c, gallons);
-      if(!confirm(`Fuel Level Warning\n\nPrevious level: ${previousGallons.toLocaleString(undefined,{maximumFractionDigits:1})} gal (${prevPct.toFixed(0)}%)\nNew level: ${gallons.toLocaleString(undefined,{maximumFractionDigits:1})} gal (${nextPct.toFixed(0)}%)\n\nThe new fuel level is higher than the previous reading. If the tank was refilled, use the Refill function so the added fuel is recorded.\n\nDo you want to proceed with this level reading anyway?`)) return;
-    }
     dispatch({ type:"ADD_FUEL_READING", payload:{ id:genId("FLOG"), kind:"reading", containerId:c.id, date:row.date||today(), inches, inchesText, gallons, percent:fuelPercent(c, gallons), fuelType:c.fuelType, notes:row.notes||"" } });
     setLevelEntry(prev=>({ ...prev, [c.id]:{ date:today(), inches:"", notes:"" } }));
   };
@@ -9613,7 +9065,7 @@ function FuelTracking({ state, dispatch }) {
       <SectionHeading sub="Track tank level like equipment usage: enter inches on the container line and the app calculates gallons.">Fuel Tracking</SectionHeading>
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
         <Btn onClick={openAdd}>+ Add Fuel Container</Btn>
-        <Btn variant="secondary" onClick={()=>printFuelReportWindow(state, period)}>Print / PDF</Btn>
+        <Btn variant="secondary" onClick={()=>printFuelReportWindow(state, period)}>Print</Btn>
       </div>
       {containers.length === 0 ? <div style={{ padding:16, border:`1px dashed ${T.border}`, borderRadius:12, color:T.muted, background:T.soft }}>No fuel containers added yet. Add a container to start tracking fuel levels.</div> : <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))", gap:10 }}>
         {containers.map(c=>{ const r=latestFuelReading(state,c.id); const gallons=+(r?.gallons||0); const cap=+c.capacity||0; const pct=cap?fuelPercent(c,gallons):0; const usedMonth=fuelConsumedForPeriod(state,c.id,"month"); const levelColor = pct >= 75 ? "#16a34a" : pct >= 26 ? "#f97316" : "#dc2626"; return <div key={c.id} style={{ border:`1px solid ${r?levelColor:T.border}`, borderRadius:12, padding:10, background:T.card, boxShadow:"0 4px 12px rgba(0,0,0,.035)" }}>
@@ -9643,13 +9095,7 @@ function FuelTracking({ state, dispatch }) {
         </select>
         <Btn variant="secondary" onClick={openAdd}>+ Add More Containers</Btn>
       </div>
-      <div className="mf-fuel-mobile-list">{containers.map(c=>{ const last=latestFuelReading(state,c.id); const pct=fuelPercent(c,last?.gallons||0); const le=levelEntry[c.id]||{date:today(),inches:"",notes:""}; const preview=le.inches!==""?calculateFuelGallons(c,le.inches):null; return <Card key={c.id} style={{padding:12,marginBottom:10}}>
-        <div style={{display:"flex",justifyContent:"space-between",gap:8}}><div><b>{c.name}</b><div style={{fontSize:11,color:T.muted}}>{c.fuelType}</div></div><div style={{textAlign:"right",fontWeight:800}}>{last?`${Math.round(last.gallons).toLocaleString()} gal`:"—"}<div style={{fontSize:11,color:T.muted}}>{last?`${pct.toFixed(1)}% full`:"No reading"}</div></div></div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,minmax(0,1fr))",gap:8,marginTop:10,fontSize:12}}><div>Current Inches<br/><b>{last?(last.inchesText ?? last.inches ?? "—"):"—"} in</b></div><div>Consumed<br/><b>{Math.round(fuelConsumedForPeriod(state,c.id,period)).toLocaleString()} gal</b></div><div>Refilled<br/><b>{Math.round(fuelRefilledForPeriod(state,c.id,period)).toLocaleString()} gal</b></div></div>
-        <div style={{marginTop:10}}><div style={{fontSize:11,fontWeight:800,marginBottom:4}}>Enter tank level (inches)</div><div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8}}><input style={{...inp,minWidth:0}} type="text" placeholder="30 7/8" value={le.inches||""} onChange={e=>setLevel(c.id,"inches",e.target.value)}/><Btn small onClick={()=>saveLevel(c)}>Log</Btn></div>{preview!==null&&<div style={{fontSize:11,color:T.muted,marginTop:4}}>≈ {Math.round(preview).toLocaleString()} gal</div>}<input style={{...inp,width:"100%",marginTop:6}} type="date" value={le.date||today()} onChange={e=>setLevel(c.id,"date",e.target.value)}/></div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:6,marginTop:10}}><Btn small variant="secondary" onClick={()=>openRefill(c)}>Refill</Btn><Btn small variant="secondary" onClick={()=>openEdit(c)}>Edit</Btn><Btn small variant="danger" onClick={()=>confirm("Delete this fuel container and its history?")&&dispatch({type:"DELETE_FUEL_CONTAINER",payload:c.id})}>Delete</Btn></div>
-      </Card>})}</div>
-      <div className="mobile-x-scroll mf-fuel-desktop-table"><table style={{ borderCollapse:"collapse", width:"100%" }}><thead><tr>{["Container","Fuel","Latest Level","Gallons","Consumed","Refilled","Enter Inches","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, fontSize:12, color:T.muted }}>{h}</th>)}</tr></thead><tbody>
+      <div className="mobile-x-scroll"><table style={{ borderCollapse:"collapse", width:"100%" }}><thead><tr>{["Container","Fuel","Latest Level","Gallons","Consumed","Refilled","Enter Inches","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, fontSize:12, color:T.muted }}>{h}</th>)}</tr></thead><tbody>
         {containers.map(c=>{ const last=latestFuelReading(state,c.id); const pct=fuelPercent(c,last?.gallons||0); const le=levelEntry[c.id] || { date:today(), inches:"", notes:"" }; const preview = le.inches!=="" ? calculateFuelGallons(c, le.inches) : null; return <tr key={c.id}>
           <td style={{ ...fuelCell, fontWeight:800 }}>{c.name}</td>
           <td style={fuelCell}>{c.fuelType}</td>
@@ -9667,18 +9113,7 @@ function FuelTracking({ state, dispatch }) {
     <Card>
       <SectionHeading sub="Historical fuel data for level readings and refill records. Use Edit to correct mistakes.">Fuel History</SectionHeading>
       <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}><select style={{ ...sel, maxWidth:280 }} value={historyContainer} onChange={e=>setHistoryContainer(e.target.value)}><option value="all">All containers</option>{containers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-      <div className="mf-fuel-history-mobile">{shownHistory.map(r=>{ const c=containers.find(x=>x.id===r.containerId)||{}; const isRefill=(r.kind||"reading")==="refill"; return <Card key={r.id} style={{padding:12,marginBottom:10}}>
-        <div style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"flex-start"}}><div><b>{c.name||"Deleted container"}</b><div style={{fontSize:11,color:T.muted}}>{r.date} · {isRefill?"Refill":"Level"} · {r.fuelType||c.fuelType||"Fuel"}</div></div><Badge label={isRefill?"Refill":"Level"}/></div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(2,minmax(0,1fr))",gap:8,marginTop:10,fontSize:12}}>
-          <div><span style={{color:T.muted}}>Inches</span><br/><b>{isRefill?"—":(r.inchesText ?? r.inches ?? "—")}</b></div>
-          <div><span style={{color:T.muted}}>Gallons</span><br/><b>{isRefill?"—":Math.round(+r.gallons||0).toLocaleString()}</b></div>
-          <div><span style={{color:T.muted}}>Refill Added</span><br/><b>{isRefill?`${Math.round(+r.gallonsAdded||0).toLocaleString()} gal`:"—"}</b></div>
-          <div><span style={{color:T.muted}}>% Full</span><br/><b>{isRefill?"—":(+r.percent||fuelPercent(c,r.gallons)).toFixed(1)+"%"}</b></div>
-        </div>
-        {r.notes&&<div style={{fontSize:12,marginTop:10,overflowWrap:"anywhere"}}><span style={{color:T.muted}}>Notes:</span> {r.notes}</div>}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:10}}><Btn small variant="secondary" onClick={()=>openEditEvent(r)}>Edit</Btn><Btn small variant="danger" onClick={()=>dispatch({type:"DELETE_FUEL_READING",payload:r.id})}>Delete</Btn></div>
-      </Card>})}{!shownHistory.length&&<div style={{padding:24,textAlign:"center",color:T.muted}}>No fuel history yet.</div>}</div>
-      <div className="mobile-x-scroll mf-fuel-history-desktop"><table style={{ borderCollapse:"collapse", width:"100%" }}><thead><tr>{["Date","Container","Type","Fuel","Inches","Gallons","Refill Added","% Full","Notes","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, fontSize:12, color:T.muted }}>{h}</th>)}</tr></thead><tbody>
+      <div className="mobile-x-scroll"><table style={{ borderCollapse:"collapse", width:"100%" }}><thead><tr>{["Date","Container","Type","Fuel","Inches","Gallons","Refill Added","% Full","Notes","Actions"].map(h=><th key={h} style={{ textAlign:"left", padding:10, borderBottom:`1px solid ${T.border}`, fontSize:12, color:T.muted }}>{h}</th>)}</tr></thead><tbody>
         {shownHistory.map(r=>{ const c=containers.find(x=>x.id===r.containerId)||{}; const isRefill=(r.kind||"reading")==="refill"; return <tr key={r.id}><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.date}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, fontWeight:700 }}>{c.name||"Deleted container"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{isRefill?"Refill":"Level"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.fuelType||c.fuelType}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{isRefill?"—":(r.inchesText ?? r.inches)}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{isRefill?"—":Math.round(+r.gallons||0).toLocaleString()}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{isRefill?Math.round(+r.gallonsAdded||0).toLocaleString():"—"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{isRefill?"—":(+r.percent||fuelPercent(c,r.gallons)).toFixed(1)+"%"}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}` }}>{r.notes}</td><td style={{ padding:10, borderBottom:`1px solid ${T.border}`, display:"flex", gap:6 }}><Btn small variant="secondary" onClick={()=>openEditEvent(r)}>Edit</Btn><Btn small variant="danger" onClick={()=>dispatch({type:"DELETE_FUEL_READING",payload:r.id})}>Delete</Btn></td></tr> })}
         {!shownHistory.length && <tr><td colSpan="10" style={{ padding:24, textAlign:"center", color:T.muted }}>No fuel history yet.</td></tr>}
       </tbody></table></div>
@@ -9740,80 +9175,6 @@ function ReportFuel({ state }) {
   </div>;
 }
 
-
-/* PERFORMANCE & ACTIVITY --------------------------------------------------- */
-function PerformanceActivity({ state }) {
-  const now = new Date();
-  const currentFY = now.getMonth() >= 9 ? now.getFullYear()+1 : now.getFullYear();
-  const [periodMode,setPeriodMode] = useState("fy");
-  const [fy,setFy] = useState(currentFY);
-  const [month,setMonth] = useState(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`);
-  const fiscalQuarter = Math.floor(((now.getMonth()+3)%12)/3)+1;
-  const [quarter,setQuarter] = useState(fiscalQuarter);
-  const [customStart,setCustomStart] = useState(`${now.getFullYear()}-01-01`);
-  const [customEnd,setCustomEnd] = useState(`${now.getFullYear()}-12-31`);
-  const [facility,setFacility] = useState("all");
-  const includeLabor = spendingIncludesLabor(state.settings);
-
-  const bounds = (()=>{
-    if(periodMode==="month") {
-      const [y,m]=month.split("-").map(Number); return [new Date(y,m-1,1),new Date(y,m,1)];
-    }
-    if(periodMode==="quarter") {
-      const startMonth=[9,0,3,6][Math.max(0,Math.min(3,quarter-1))];
-      const startYear=quarter===1?fy-1:fy;
-      return [new Date(startYear,startMonth,1),new Date(startYear,startMonth+3,1)];
-    }
-    if(periodMode==="custom") return [new Date(customStart+"T00:00:00"),new Date(new Date(customEnd+"T00:00:00").getTime()+86400000)];
-    return [new Date(fy-1,9,1),new Date(fy,9,1)];
-  })();
-  const [start,end]=bounds;
-  const inRange=(v)=>{ if(!v)return false; const d=new Date(String(v).length<=10?`${v}T12:00:00`:v); return !Number.isNaN(d.getTime())&&d>=start&&d<end; };
-  const eqById=Object.fromEntries((state.equipment||[]).map(e=>[e.id,e]));
-  const locationIdForWO=(w)=>w.locationId||w.facilityId||eqById[w.equipment]?.locationId||eqById[w.equipment]?.facilityId||"";
-  const matchesFacility=(w)=>facility==="all"||locationIdForWO(w)===facility;
-  const completed=(state.workOrders||[]).filter(w=>String(w.status||"").toLowerCase()==="completed"&&inRange(w.completed||w.completedDate||w.closedDate||w.created)&&matchesFacility(w));
-  const normType=(w)=>String(w.woType||w.type||"").toLowerCase();
-  const repairs=completed.filter(w=>normType(w).includes("repair"));
-  const services=completed.filter(w=>normType(w).includes("service")||normType(w).includes("prevent"));
-  const inspections=completed.filter(w=>normType(w).includes("inspect"));
-  const laborHours=completed.reduce((n,w)=>n+(+w.laborHours||0),0);
-  const maintenanceSpend=completed.reduce((n,w)=>n+woSpendingTotal(w,includeLabor),0);
-  const partLines=completed.flatMap(w=>(w.partsUsed||[]).map(p=>({w,p})));
-  const partsConsumed=partLines.reduce((n,x)=>n+(+x.p.qty||0),0);
-  const partsConsumedValue=partLines.reduce((n,x)=>n+lineItemTotal(x.p),0);
-  const purchaseLines=partLines.filter(x=>(+x.p.receivedQty||0)>0);
-  const purchases=purchaseLines.length;
-  const purchaseQty=purchaseLines.reduce((n,x)=>n+(+x.p.receivedQty||0),0);
-  const purchaseSpend=purchaseLines.reduce((n,x)=>n+((+x.p.receivedQty||0)*(+x.p.unitCost||+x.p.cost||0)),0);
-  const label=periodMode==="month"?new Date(month+"-01T12:00:00").toLocaleDateString(undefined,{month:"long",year:"numeric"}):periodMode==="quarter"?`FY ${fy} · Q${quarter}`:periodMode==="custom"?`${customStart} – ${customEnd}`:`Fiscal Year ${fy}`;
-  const locName=(id)=>state.locations?.find(l=>l.id===id)?.name||"All Facilities";
-  const facilityLabel=facility==="all"?"All Facilities":locName(facility);
-  const cards=[
-    ["Repairs Completed",repairs.length,"🔧"],["Services / PM",services.length,"🛢️"],["Inspections",inspections.length,"📋"],["Total WOs",completed.length,"✓"],
-    ["Labor Hours",laborHours.toFixed(1),"⏱"],["Parts Consumed",partsConsumed.toLocaleString(),"📦"],["Maintenance Spending",moneyFmt(maintenanceSpend),"💵"]
-  ];
-  const printReport=()=>{
-    const win=window.open("","_blank","width=1000,height=760"); if(!win)return;
-    const row=(a,b)=>`<tr><td>${a}</td><td style="text-align:right;font-weight:700">${b}</td></tr>`;
-    win.document.write(`<!doctype html><html><head><title>Performance & Activity Report</title><style>body{font-family:Arial,sans-serif;padding:28px;color:#111}*{box-sizing:border-box}.head{border:2px solid #000;background:#dbeafe;padding:14px 16px}h1{margin:0;font-size:22px}.meta{margin-top:6px;font-size:12px}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #000;padding:8px 10px;font-size:12px}th{background:#dbeafe;text-align:left}.note{font-size:10px;margin-top:12px;color:#333}@media print{button{display:none}}</style></head><body><div class="head"><h1>MaintForge — Maintenance Performance & Activity Report</h1><div class="meta">${label} · ${facilityLabel}</div></div><table><tr><th>Activity</th><th style="text-align:right">Period Total</th></tr>${row("Repairs Completed",repairs.length)}${row("Services / Preventive Maintenance",services.length)}${row("Inspections Completed",inspections.length)}${row("Total Work Orders Completed",completed.length)}${row("Labor Hours",laborHours.toFixed(1)+" hrs")}${row("Parts Consumed",partsConsumed.toLocaleString())}${row("Parts Consumed Value",moneyFmt(partsConsumedValue))}${row("Maintenance Spending",moneyFmt(maintenanceSpend))}</table><div class="note">Maintenance Spending follows MaintForge Work Order spending settings. Purchase spending is shown separately and is not added again to Maintenance Spending, avoiding double-counting parts that were purchased and later consumed.</div><button onclick="window.print()" style="margin-top:18px;padding:9px 16px">Print / Save PDF</button></body></html>`); win.document.close();
-  };
-  const topEq=Object.entries(completed.reduce((a,w)=>{const id=w.equipment||"Unknown";a[id]=(a[id]||0)+1;return a;},{})).sort((a,b)=>b[1]-a[1]).slice(0,8);
-  return <div>
-    <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"flex-start",flexWrap:"wrap",marginBottom:16}}><div><div style={{fontSize:20,fontWeight:800}}>Performance & Activity</div><div style={{fontSize:12,color:T.muted,marginTop:4}}>Evaluation-ready maintenance workload and spending for {facilityLabel}.</div></div><Btn onClick={printReport}>Print / PDF</Btn></div>
-    <Card style={{padding:14,marginBottom:16}}><div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"end"}}>
-      <label style={{fontSize:11,fontWeight:700}}>PERIOD<select style={{...sel,display:"block",marginTop:4,minWidth:150}} value={periodMode} onChange={e=>setPeriodMode(e.target.value)}><option value="month">Month</option><option value="quarter">Quarter</option><option value="fy">Fiscal Year</option><option value="custom">Custom</option></select></label>
-      {periodMode==="month"&&<label style={{fontSize:11,fontWeight:700}}>MONTH<input style={{...inp,display:"block",marginTop:4}} type="month" value={month} onChange={e=>setMonth(e.target.value)}/></label>}
-      {(periodMode==="fy"||periodMode==="quarter")&&<label style={{fontSize:11,fontWeight:700}}>FISCAL YEAR<input style={{...inp,display:"block",marginTop:4,width:110}} type="number" value={fy} onChange={e=>setFy(+e.target.value||currentFY)}/></label>}
-      {periodMode==="quarter"&&<label style={{fontSize:11,fontWeight:700}}>QUARTER<select style={{...sel,display:"block",marginTop:4}} value={quarter} onChange={e=>setQuarter(+e.target.value)}>{[1,2,3,4].map(q=><option key={q} value={q}>Q{q}</option>)}</select></label>}
-      {periodMode==="custom"&&<><label style={{fontSize:11,fontWeight:700}}>FROM<input style={{...inp,display:"block",marginTop:4}} type="date" value={customStart} onChange={e=>setCustomStart(e.target.value)}/></label><label style={{fontSize:11,fontWeight:700}}>TO<input style={{...inp,display:"block",marginTop:4}} type="date" value={customEnd} onChange={e=>setCustomEnd(e.target.value)}/></label></>}
-      <label style={{fontSize:11,fontWeight:700}}>FACILITY<select style={{...sel,display:"block",marginTop:4,minWidth:190}} value={facility} onChange={e=>setFacility(e.target.value)}><option value="all">All Facilities</option>{(state.locations||[]).map(l=><option key={l.id} value={l.id}>{l.name||l.id}</option>)}</select></label>
-    </div><div style={{fontSize:12,color:T.subtext,marginTop:10,fontWeight:700}}>{label}</div></Card>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(165px,1fr))",gap:12,marginBottom:16}}>{cards.map(([k,v,i])=><Card key={k} style={{padding:"15px 16px"}}><div style={{fontSize:18}}>{i}</div><div style={{fontSize:24,fontWeight:800,marginTop:4}}>{v}</div><div style={{fontSize:11,color:T.muted,marginTop:3}}>{k}</div></Card>)}</div>
-    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:16}}><Card><div style={{fontWeight:800,marginBottom:12}}>Spending & Parts</div>{[["Maintenance spending",moneyFmt(maintenanceSpend)],["Parts consumed value",moneyFmt(partsConsumedValue)],].map(([a,b])=><div key={a} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}><span>{a}</span><b>{b}</b></div>)}</Card><Card><div style={{fontWeight:800,marginBottom:12}}>Most Active Equipment</div>{topEq.length?topEq.map(([id,count])=><div key={id} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}><span><b>{id}</b> · {eqById[id]?.name||"Equipment"}</span><b>{count} WO{count===1?"":"s"}</b></div>):<div style={{fontSize:12,color:T.muted}}>No completed work orders in this period.</div>}</Card></div>
-  </div>;
-}
-
 const PAGE_TITLES = {
   dashboard:        "Dashboard",
   workorders:       "Work Orders",
@@ -9823,7 +9184,6 @@ const PAGE_TITLES = {
   usage:            "Usage Tracking",
   fuel:             "Fuel Tracking",
   spending:         "Spending & Costs",
-  performance:      "Performance & Activity",
   inventory:        "Equipment Inventory List",
   reports_deadline: "Deadline Equipment Report",
   reports_parts_inv:"Parts Inventory Report",
@@ -10625,41 +9985,19 @@ export default function App() {
           const cloudState = prepareSharedOrganizationStateForCloudSave(pendingState, pendingUser);
           let error = null;
 
-          // Mobile Safari can briefly change connection/visibility state while a large
-          // MaintForge workspace is being sent. Keep the exact same database write, but
-          // give mobile saves a quiet retry window when PostgreSQL returns 57014
-          // (statement timeout). This does NOT report success until Supabase confirms it.
-          const isMobileSave = typeof window !== "undefined" && (
-            window.matchMedia?.("(max-width: 760px)")?.matches ||
-            /iPhone|iPad|iPod|Android/i.test(navigator?.userAgent || "")
-          );
-          const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-          const performCloudWrite = async () => {
-            if(pendingAppSession?.maintForgeAppLogin) {
-              const rpcSave = await supabase.rpc("maintforge_username_save", {
-                login_username:pendingAppSession.username || pendingUser.username,
-                login_password:pendingAppSession.password || "",
-                organization_state:cloudState,
-              });
-              if(rpcSave.error) console.error("Username save RPC error:", rpcSave.error);
-              return rpcSave.error || null;
-            }
+          if(pendingAppSession?.maintForgeAppLogin) {
+            const rpcSave = await supabase.rpc("maintforge_username_save", {
+              login_username:pendingAppSession.username || pendingUser.username,
+              login_password:pendingAppSession.password || "",
+              organization_state:cloudState,
+            });
+            error = rpcSave.error || null;
+            if(error) console.error("Username save RPC error:", error);
+          } else {
             const saveResult = await supabase
               .from("user_state")
               .upsert({ user_id:cloudOwnerId, data:cloudState, updated_at:new Date().toISOString() }, { onConflict:"user_id" });
-            return saveResult.error || null;
-          };
-
-          error = await performCloudWrite();
-          if(isMobileSave && String(error?.code || "") === "57014") {
-            console.warn("MaintForge mobile save timed out; retrying once after connection settles.");
-            await sleep(4500);
-            if(typeof navigator === "undefined" || navigator.onLine !== false) error = await performCloudWrite();
-          }
-          if(isMobileSave && String(error?.code || "") === "57014") {
-            console.warn("MaintForge mobile save retry timed out; making one final delayed attempt.");
-            await sleep(10000);
-            if(typeof navigator === "undefined" || navigator.onLine !== false) error = await performCloudWrite();
+            error = saveResult.error;
           }
 
           if(error) {
@@ -10722,14 +10060,9 @@ export default function App() {
       }
     };
 
-    // Mobile gets a longer quiet period. Touch/form interactions often dispatch several
-    // state updates in a burst; waiting avoids repeatedly sending the full multi-MB
-    // workspace while the user is still editing. Desktop keeps the faster delay.
-    const mobileSaveDelay = typeof window !== "undefined" && (
-      window.matchMedia?.("(max-width: 760px)")?.matches ||
-      /iPhone|iPad|iPod|Android/i.test(navigator?.userAgent || "")
-    ) ? 6500 : 2000;
-    cloudSaveTimerRef.current = setTimeout(flushCloudSaveQueue, mobileSaveDelay);
+    // A slightly longer debounce is intentional for the 8+ MB workspace. UI/local
+    // persistence is immediate; cloud persistence waits for the burst to settle.
+    cloudSaveTimerRef.current = setTimeout(flushCloudSaveQueue, 2000);
 
     return () => {
       if(cloudSaveTimerRef.current) {
@@ -10933,9 +10266,9 @@ export default function App() {
 
   const [tab, setTab]       = useState(() => readMFLocal(MF_LAST_TAB_KEY, "dashboard") || "dashboard");
   const [menuOpen, setMenuOpen]           = useState(false);
+  const [showWOSettings, setShowWOSettings] = useState(false);
   const [showSettings, setShowSettings]   = useState(false);
   const [showHelp, setShowHelp]           = useState(false);
-  const [pendingWORequest, setPendingWORequest] = useState(null);
 
   useEffect(() => {
     try {
@@ -11003,15 +10336,14 @@ export default function App() {
 
   const pages = {
     dashboard:        <Dashboard        state={visibleState} dispatch={dispatch} setTab={setTab} onSettings={()=>setShowSettings(true)} />,
-    workorders:       <WorkOrders       state={visibleState} dispatch={dispatch} woSettings={state.woSettings} initialWORequest={pendingWORequest} onConsumeWORequest={()=>setPendingWORequest(null)} />,
+    workorders:       <WorkOrders       state={visibleState} dispatch={dispatch} woSettings={state.woSettings} onWOSettings={()=>setShowWOSettings(true)} />,
     inspections:      <Inspections      state={visibleState} dispatch={dispatch} />,
-    equipment:        <Equipment        state={visibleState} dispatch={dispatch} onCreateAttachmentWO={(request)=>{ setPendingWORequest(request); setTab("workorders"); }} />,
+    equipment:        <Equipment        state={visibleState} dispatch={dispatch} />,
     parts:            <Parts            state={visibleState} dispatch={dispatch} />,
     pm:               <PM               state={visibleState} dispatch={dispatch} />,
     usage:            <UsageTracking    state={visibleState} dispatch={dispatch} />,
     fuel:             <FuelTracking     state={visibleState} dispatch={dispatch} />,
     spending:         <Spending         state={visibleState} />,
-    performance:      <PerformanceActivity state={state} />,
     inventory:        <EquipmentInventory state={visibleState} dispatch={dispatch} />,
     reports_deadline: <ReportDeadline   state={visibleState} />,
     reports_parts_inv:<ReportPartsInv   state={visibleState} />,
@@ -11328,8 +10660,6 @@ export default function App() {
         </div>
       )}
       <style>{`
-        .mf-inspection-detail-mobile {display:none;}
-
         * { box-sizing:border-box; }
         html { -webkit-text-size-adjust:100%; text-size-adjust:100%; }
         body { margin:0; background:${T.bg}; color:${T.text}; overscroll-behavior-y:none; }
@@ -11581,31 +10911,6 @@ export default function App() {
           .wo-request-mobile-meta { grid-template-columns:1fr !important; font-size:13px !important; }
           .mf-mobile-form { grid-template-columns:1fr !important; }
           .mf-mobile-form > * { grid-column:1 !important; min-width:0 !important; width:100% !important; }
-          .mf-inspection-detail-desktop { display:none !important; }
-          .mf-inspection-detail-mobile { display:block !important; }
-          /* Inspection schedule cards: true mobile reflow instead of a squeezed desktop row. */
-          .mf-inspection-equipment-row {
-            grid-template-columns:minmax(0,1fr) auto !important;
-            grid-template-areas:
-              "id toggle"
-              "main toggle"
-              "due task" !important;
-            gap:7px 12px !important;
-            padding:14px !important;
-            width:100% !important;
-            min-width:0 !important;
-            box-sizing:border-box !important;
-          }
-          .mf-inspection-equipment-id { grid-area:id; min-width:0 !important; white-space:normal !important; overflow-wrap:anywhere !important; font-size:13px !important; }
-          .mf-inspection-equipment-main { grid-area:main; min-width:0 !important; }
-          .mf-inspection-equipment-name { white-space:normal !important; overflow-wrap:anywhere !important; word-break:normal !important; line-height:1.25 !important; font-size:16px !important; }
-          .mf-inspection-equipment-count { white-space:normal !important; overflow-wrap:anywhere !important; line-height:1.3 !important; margin-top:3px !important; }
-          .mf-inspection-equipment-due { grid-area:due; min-width:0 !important; white-space:normal !important; line-height:1.35 !important; }
-          .mf-inspection-equipment-task { grid-area:task; min-width:0 !important; white-space:normal !important; overflow-wrap:anywhere !important; line-height:1.35 !important; }
-          .mf-inspection-equipment-toggle { grid-area:toggle; align-self:center !important; justify-self:end !important; min-width:28px !important; text-align:center !important; }
-          .mf-inspection-filters { display:grid !important; grid-template-columns:1fr !important; width:100% !important; }
-          .mf-inspection-filters > * { min-width:0 !important; width:100% !important; }
-          .mf-inspection-filters select { min-width:0 !important; width:100% !important; }
           .mf-main > div { width:100% !important; max-width:100% !important; }
           input, select, textarea { max-width:100% !important; width:100%; box-sizing:border-box; }
           button { max-width:100%; }
@@ -11650,7 +10955,7 @@ export default function App() {
           input, select, textarea { width:100% !important; min-height:44px !important; border-radius:12px !important; }
           .mf-btn, button { min-height:44px; }
           .mobile-x-scroll { margin-left:-2px; margin-right:-2px; padding-bottom:8px; }
-          .mobile-x-scroll::before { content:none !important; display:none !important; }
+          .mobile-x-scroll::before { content:"Swipe sideways to see all columns"; display:block; margin:0 0 8px; padding:7px 10px; border-radius:999px; background:${T.accentLt}; color:${T.accent}; font:700 12px ${T.sans}; width:max-content; max-width:100%; }
           main table { min-width:920px !important; border-radius:14px !important; }
           main th, main td { padding:10px 12px !important; line-height:1.35 !important; }
           main td div, main td span, main td b { max-width:none !important; white-space:normal !important; }
@@ -11798,72 +11103,6 @@ export default function App() {
           .mf-mobile-bottom-nav { z-index:1100 !important; }
           .mf-wo-phone-detail ~ * { min-width:0 !important; }
         }
-
-
-          .mf-parts-mobile-list, .mf-fuel-mobile-list, .mf-fuel-history-mobile { display:none; }
-          @media (max-width: 768px) {
-            .mf-parts-desktop-table, .mf-fuel-desktop-table, .mf-fuel-history-desktop { display:none !important; }
-            .mf-parts-mobile-list, .mf-fuel-mobile-list, .mf-fuel-history-mobile { display:block !important; }
-          }
-          /* v9 mobile audit: no sideways/sliding columns; reflow controls and dense pages for phones. */
-          .mf-field { min-width:0 !important; }
-          .mf-pm-assigned-mobile { display:none; }
-          @media (max-width: 768px) {
-            .mf-main, main, .mf-main section, .mf-main article, .mf-main > div { overflow-x:hidden !important; }
-            .mf-main table, main table { display:table !important; width:100% !important; min-width:0 !important; max-width:100% !important; table-layout:fixed !important; overflow:visible !important; border-collapse:collapse !important; }
-            .mf-main thead, .mf-main tbody, .mf-main tr, main thead, main tbody, main tr { width:100% !important; }
-            .mf-main th, .mf-main td, main th, main td { min-width:0 !important; max-width:none !important; white-space:normal !important; overflow-wrap:anywhere !important; word-break:normal !important; position:static !important; box-shadow:none !important; }
-            .mf-main th:first-child, .mf-main td:first-child, main th:first-child, main td:first-child { position:static !important; min-width:0 !important; max-width:none !important; box-shadow:none !important; }
-            .mobile-x-scroll, .mf-main div[style*="overflowX"], .mf-main div[style*="overflow-x"] { overflow-x:hidden !important; max-width:100% !important; }
-            .mf-btn { white-space:normal !important; overflow-wrap:normal !important; word-break:normal !important; line-height:1.2 !important; }
-            .mf-wo-form-grid { grid-template-columns:minmax(0,1fr) !important; gap:0 !important; }
-            .mf-wo-form-grid > *, .mf-wo-form-grid .mf-field, .mf-wo-full { grid-column:1 / -1 !important; min-width:0 !important; width:100% !important; box-sizing:border-box !important; }
-            .mf-wo-form-grid input, .mf-wo-form-grid select, .mf-wo-form-grid textarea { width:100% !important; min-width:0 !important; }
-            .mf-mobile-wo-actions { display:grid !important; grid-template-columns:repeat(3,minmax(0,1fr)) !important; gap:7px !important; margin-top:11px !important; }
-            .mf-mobile-wo-actions .mf-btn { width:100% !important; padding:8px 5px !important; font-size:12px !important; }
-            .mf-equipment-primary-actions { grid-template-columns:1fr !important; }
-            .mf-equipment-primary-actions > input, .mf-equipment-primary-actions > button { grid-column:1 !important; width:100% !important; min-width:0 !important; }
-            .mf-equipment-primary-actions > button:nth-of-type(1) { display:none !important; }
-            .mf-mobile-filter-button { grid-column:1 !important; width:100% !important; font-size:14px !important; }
-            .mf-mobile-filter-button::before { content:"" !important; display:none !important; }
-            .mf-pm-actions { display:grid !important; grid-template-columns:1fr 1fr !important; gap:8px !important; }
-            .mf-pm-actions > *, .mf-pm-actions > div { min-width:0 !important; width:100% !important; }
-            .mf-pm-actions > div { display:contents !important; }
-            .mf-pm-actions .mf-btn { width:100% !important; min-height:52px !important; padding:10px !important; }
-            .mf-pm-assigned-desktop { display:none !important; }
-            .mf-pm-assigned-mobile { display:flex !important; flex-direction:column; gap:10px; padding:10px; }
-            .mf-pm-mobile-card { border:1px solid ${T.border}; border-radius:14px; background:${T.card}; padding:13px; min-width:0; }
-            .mf-pm-mobile-head { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; min-width:0; }
-            .mf-pm-mobile-meta { display:flex; flex-direction:column; gap:4px; margin-top:9px; font:12px ${T.sans}; color:${T.subtext}; }
-            .mf-pm-mobile-tasks { display:flex; flex-direction:column; gap:8px; margin-top:10px; }
-            .mf-pm-mobile-task { border-top:1px solid ${T.border}; padding-top:10px; font:12px ${T.sans}; color:${T.subtext}; line-height:1.35; }
-            .mf-pm-mobile-task b { color:${T.text}; font-size:13px; }
-            .mf-pm-mobile-task-actions { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-top:8px; }
-            .mf-pm-mobile-task-actions .mf-btn { width:100%; padding:7px 4px !important; font-size:11px !important; }
-            .mf-brand-title > div:first-child { max-width:calc(100vw - 125px) !important; white-space:normal !important; overflow:visible !important; text-overflow:clip !important; display:-webkit-box !important; -webkit-line-clamp:2 !important; -webkit-box-orient:vertical !important; line-height:1.05 !important; font-size:12px !important; }
-            .mf-brand-title > div:last-child { display:none !important; }
-            .mf-header { min-height:62px !important; height:auto !important; }
-
-            /* v10 authoritative phone fixes: prevent desktop tables/controls from being squeezed into phone widths. */
-            .mf-wo-desktop-table, .mf-desktop-list { display:none !important; }
-            .mf-wo-toolbar { width:100% !important; min-width:0 !important; }
-            .mf-wo-filter-row { display:grid !important; grid-template-columns:1fr !important; width:100% !important; gap:9px !important; align-items:stretch !important; }
-            .mf-wo-filter-row > select, .mf-wo-filter-row > div, .mf-wo-filter-row > button, .mf-wo-filter-row > span { width:100% !important; min-width:0 !important; max-width:100% !important; margin-left:0 !important; box-sizing:border-box !important; }
-            .mf-wo-filter-row > div select { width:100% !important; min-width:0 !important; flex:1 1 auto !important; }
-            .mf-wo-filter-row > div button { min-width:48px !important; }
-            .mf-equipment-detail-actions { display:grid !important; grid-template-columns:1fr 1fr !important; width:100% !important; margin-top:8px !important; }
-            .mf-equipment-detail-actions .mf-btn { width:100% !important; min-width:0 !important; }
-            .mf-equipment-detail-actions .mf-btn:first-child { grid-column:1 / -1 !important; min-height:50px !important; }
-            .mf-main [style*="grid-template-columns:"1fr 1fr""] { min-width:0 !important; }
-            .mf-modal-body .mf-mobile-form { grid-template-columns:1fr !important; }
-            .mf-modal-body .mf-mobile-form > * { grid-column:1 !important; width:100% !important; min-width:0 !important; }
-            .mf-modal-body [style*="grid-template-columns:"2fr 1.2fr .7fr 1fr auto""] { grid-template-columns:1fr !important; }
-          }
-          @media (max-width: 480px) {
-            main table, .mf-main table { min-width:0 !important; width:100% !important; table-layout:fixed !important; }
-            .mf-equipment-detail-actions { grid-template-columns:1fr !important; }
-            .mf-equipment-detail-actions .mf-btn:first-child { grid-column:1 !important; }
-          }
       `}</style>
 
       <SlideMenu tab={tab} setTab={setTab} open={menuOpen} onClose={()=>setMenuOpen(false)} onSettings={()=>setShowSettings(true)} companyName={companyName} profile={profile} />
@@ -11916,6 +11155,7 @@ export default function App() {
       <main className="mf-main" style={{ width:"100%", maxWidth:"none", padding:"18px clamp(12px, 2vw, 28px)", minHeight:"calc(100vh - 56px)", overflowX:"auto" }}>
         <div style={{ marginBottom:20 }}>
           <h1 style={{ margin:0, fontFamily:T.sans, fontSize:24, fontWeight:700, color:T.text, letterSpacing:-.4 }}>{PAGE_TITLES[tab]}</h1>
+          <div style={{ width:32, height:3, background:T.accent, borderRadius:2, marginTop:6 }} />
         </div>
         <LegacyDataRepairBanner state={state} dispatch={dispatch} />
         <PageErrorBoundary resetKey={tab} onReset={()=>setTab("dashboard")}>
@@ -11928,6 +11168,7 @@ export default function App() {
         <button onClick={()=>setMenuOpen(true)}><span>☰</span><small>More</small></button>
       </nav>
 
+      {showWOSettings && <WOSettings     state={state} dispatch={dispatch} onClose={()=>setShowWOSettings(false)} />}
       {showSettings   && <SystemSettings state={state} dispatch={dispatch} currentUser={activeUser} onClose={()=>setShowSettings(false)} />}
       {showHelp       && <HelpCenter state={state} onClose={()=>setShowHelp(false)} />}
     </div>
