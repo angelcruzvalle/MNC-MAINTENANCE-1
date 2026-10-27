@@ -1458,6 +1458,19 @@ function reducer(state, { type, payload }) {
       if(sku && (state.parts||[]).some(p=>String(p.id)!==String(payload.id) && String(p.partNumber||"").trim().toLowerCase()===sku)) return state;
       return { ...state, parts: state.parts.map(p => p.id===payload.id ? payload : p) };
     }
+    case "MERGE_DUPLICATE_PARTS": {
+      const {keepId,removeIds,finalQty}=payload||{};
+      const ids=new Set((removeIds||[]).map(String));
+      const survivor=(state.parts||[]).find(p=>String(p.id)===String(keepId));
+      if(!survivor || ids.has(String(keepId)) || !Number.isFinite(finalQty) || finalQty<0) return state;
+      const remap=partId=>ids.has(String(partId))?keepId:partId;
+      const remapUsed=items=>Array.isArray(items)?items.map(item=>item && typeof item==="object"?{...item,partId:item.partId!=null?remap(item.partId):item.partId,inventoryPartId:item.inventoryPartId!=null?remap(item.inventoryPartId):item.inventoryPartId}:item):items;
+      return {...state,
+        parts:(state.parts||[]).filter(p=>!ids.has(String(p.id))).map(p=>String(p.id)===String(keepId)?{...p,qty:finalQty}:p),
+        workOrders:(state.workOrders||[]).map(w=>({...w,partsUsed:remapUsed(w.partsUsed),parts:remapUsed(w.parts)})),
+        pmTasks:(state.pmTasks||[]).map(t=>({...t,parts:remapUsed(t.parts)})),
+      };
+    }
     case "DELETE_PART":   return { ...state, parts: state.parts.filter(p => p.id!==payload) };
     case "ADD_LUBRICANT": return { ...state, lubricants:[payload,...(state.lubricants||[])] };
     case "UPDATE_LUBRICANT": return { ...state, lubricants:(state.lubricants||[]).map(l=>l.id===payload.id?payload:l) };
@@ -2349,12 +2362,12 @@ function SlideMenu({ tab, setTab, open, onClose, onSettings, companyName, profil
       }}>
         {/* Drawer header — click to open Settings */}
         <div style={{ padding:"18px 20px 14px", borderBottom:`1px solid ${T.border}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-          <button onClick={()=>{ if(!editMenu){ onSettings(); onClose(); } }} style={{ display:"flex", alignItems:"center", gap:10, background:"none", border:"none", cursor:editMenu?"default":"pointer", padding:0, textAlign:"left", flex:1 }}
-            title={editMenu?"Finish menu editing first":"Click to open System Settings"}>
+          <button onClick={()=>{ if(!editMenu){ setTab("dashboard"); onClose(); } }} style={{ display:"flex", alignItems:"center", gap:10, background:"none", border:"none", cursor:editMenu?"default":"pointer", padding:0, textAlign:"left", flex:1 }}
+            title={editMenu?"Finish menu editing first":"Go to Dashboard"}>
             <div style={{ width:34, height:34, background:T.accent, borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16, flexShrink:0 }}>⚙</div>
             <div>
               <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:700, color:T.text, lineHeight:1.2 }}>{companyName||"MaintForge"}</div>
-              <div style={{ fontFamily:T.sans, fontSize:10, color:T.accent }}>{editMenu?"Menu reorder mode":"Tap to open Settings"}</div>
+              <div style={{ fontFamily:T.sans, fontSize:10, color:T.accent }}>{editMenu?"Menu reorder mode":"Tap to open Dashboard"}</div>
             </div>
           </button>
           <button onClick={onClose} style={{ background:"none", border:"none", fontSize:22, color:T.muted, cursor:"pointer", lineHeight:1, padding:0 }}>×</button>
@@ -5702,6 +5715,28 @@ function Parts({ state, dispatch }) {
       : dispatch({type:"UPDATE_PART",payload:cleanForm});
     setModal(null);
   };
+  const duplicateGroups=Object.values(parts.reduce((groups,p)=>{
+    const key=String(p.partNumber||"").trim().toLowerCase();
+    if(key)(groups[key] ||= []).push(p);
+    return groups;
+  },{})).filter(group=>group.length>1);
+  const reconcileDuplicates=()=>{
+    if(!duplicateGroups.length)return alert("No duplicate part numbers found.");
+    const group=duplicateGroups[0];
+    const details=group.map((p,i)=>`${i+1}. ${p.name||"Part"} — ID ${p.id} — ${p.qty||0} ${p.unit||"ea"} — ${p.location||"No location"}`).join("\n");
+    const chosen=prompt(`Duplicate SKU: ${group[0].partNumber}\n\n${details}\n\nEnter the NUMBER of the record to keep (Cancel = no changes).`);
+    if(chosen===null)return;
+    const index=Number(chosen)-1;
+    if(!Number.isInteger(index)||index<0||index>=group.length)return alert("Invalid selection; nothing changed.");
+    const keep=group[index];
+    if(group.some(p=>String(p.unit||"ea").toLowerCase()!==String(keep.unit||"ea").toLowerCase()))return alert("Unit types differ. Correct the units before merging.");
+    const raw=prompt(`Physical stock reconciliation for ${keep.partNumber}:\nCurrent duplicate counts: ${group.map(p=>p.qty||0).join(" + ")}\n\nEnter the VERIFIED total physically on hand. Counts are NOT automatically added because duplicates may represent the same stock.`,String(keep.qty||0));
+    if(raw===null)return;
+    const qty=Number(raw);
+    if(!Number.isFinite(qty)||qty<0)return alert("Enter a valid nonnegative physical quantity.");
+    if(!confirm(`MERGE ${group.length} records for ${keep.partNumber}?\nKeep ID: ${keep.id}\nRemove ${group.length-1} duplicate records\nSet stock to ${qty} ${keep.unit||"ea"}\n\nExisting work order part references will be redirected. Back up your data before proceeding.`))return;
+    dispatch({type:"MERGE_DUPLICATE_PARTS",payload:{keepId:keep.id,removeIds:group.filter(p=>p.id!==keep.id).map(p=>p.id),finalQty:qty}});
+  };
   const del = id => { if(confirm("Delete part?")) dispatch({type:"DELETE_PART",payload:id}); };
 
   const openInvUpdate = () => {
@@ -5791,6 +5826,7 @@ function Parts({ state, dispatch }) {
           </Card>
         ))}
       </div>
+      {duplicateGroups.length>0&&<div role="alert" style={{padding:14,marginBottom:12,border:`1px solid ${T.amber}`,borderRadius:10,background:T.card}}><b>Inventory reconciliation: {duplicateGroups.length} duplicate part number group(s) detected.</b><div style={{fontSize:12,color:T.subtext,margin:"6px 0"}}>Review each group, choose the record to retain, and enter a verified physical count. Nothing is merged automatically.</div><Btn small onClick={reconcileDuplicates}>Review & Merge First Duplicate Group</Btn></div>}
       <div style={{ display:"flex", justifyContent:"space-between", marginBottom:12, gap:8, flexWrap:"wrap" }}>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
           <input style={{ ...inp, maxWidth:240 }} placeholder="Search parts..." value={search} onChange={e=>setSearch(e.target.value)} />
@@ -9401,7 +9437,7 @@ function SystemSettings({ state, dispatch, onClose }) {
         <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
           {(form.partStorageLocations||[]).map((loc,i)=><div key={`${loc}-${i}`} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 9px",border:`1px solid ${T.border}`,borderRadius:8,background:T.card}}>
             <b style={{fontSize:12}}>{loc}</b>
-            <button type="button" onClick={()=>{const next=prompt("Edit parts storage location",loc);if(next&&next.trim())setForm(f=>({...f,partStorageLocations:(f.partStorageLocations||[]).map((x,j)=>j===i?next.trim():x)}));}} style={{border:0,background:"none",color:T.accent,cursor:"pointer",fontWeight:800}}>Edit</button>
+            <button type="button" onClick={()=>{const next=prompt("Edit parts storage location",loc);if(next&&next.trim() && !(form.partStorageLocations||[]).some((x,j)=>j!==i&&x.toLowerCase()===next.trim().toLowerCase())){setForm(f=>({...f,partStorageLocations:(f.partStorageLocations||[]).map((x,j)=>j===i?next.trim():x)}));(state.parts||[]).filter(p=>p.location===loc).forEach(p=>dispatch({type:"UPDATE_PART",payload:{...p,location:next.trim()}}));}}} style={{border:0,background:"none",color:T.accent,cursor:"pointer",fontWeight:800}}>Edit</button>
             <button type="button" onClick={()=>{const inUse=(state.parts||[]).some(p=>p.location===loc);if(inUse)return alert("This storage location is in use by one or more parts. Move those parts first.");setForm(f=>({...f,partStorageLocations:(f.partStorageLocations||[]).filter((_,j)=>j!==i)}));}} style={{border:0,background:"none",color:T.red,cursor:"pointer",fontWeight:800}}>×</button>
           </div>)}
         </div>
@@ -11897,7 +11933,7 @@ export default function App() {
           </button>
           <div style={{ width:1, height:28, background:T.border }} />
           {resolveMaintForgeLogo(state) && (
-            <img src={resolveMaintForgeLogo(state)} alt="logo" style={{ height:36, maxWidth:80, objectFit:"contain", borderRadius:4 }} />
+            <button type="button" aria-label="Go to Dashboard" title="Go to Dashboard" onClick={()=>setTab("dashboard")} style={{border:0,background:"transparent",padding:0,cursor:"pointer",display:"flex",alignItems:"center"}}><img src={resolveMaintForgeLogo(state)} alt="Company logo" style={{ height:36, maxWidth:80, objectFit:"contain", borderRadius:4 }} /></button>
           )}
           <button className="mf-brand-title" onClick={()=>setTab("dashboard")} title="Go to dashboard" style={{ background:"none", border:"none", padding:0, textAlign:"left", cursor:"pointer" }}>
             <div style={{ fontFamily:T.sans, fontSize:14, fontWeight:700, color:T.text, letterSpacing:-.3, lineHeight:1.2 }}>{companyName}</div>
@@ -11935,7 +11971,6 @@ export default function App() {
       <main className="mf-main" style={{ width:"100%", maxWidth:"none", padding:"18px clamp(12px, 2vw, 28px)", minHeight:"calc(100vh - 56px)", overflowX:"auto" }}>
         <div style={{ marginBottom:20 }}>
           <h1 style={{ margin:0, fontFamily:T.sans, fontSize:24, fontWeight:700, color:T.text, letterSpacing:-.4 }}>{PAGE_TITLES[tab]}</h1>
-          <div style={{ width:32, height:3, background:T.accent, borderRadius:2, marginTop:6 }} />
         </div>
         <LegacyDataRepairBanner state={state} dispatch={dispatch} />
         <PageErrorBoundary resetKey={tab} onReset={()=>setTab("dashboard")}>
