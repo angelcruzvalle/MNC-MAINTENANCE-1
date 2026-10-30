@@ -1215,6 +1215,23 @@ function normalizeMaintForgeSingleSite(input={}) {
   };
 }
 
+// Keep the equipment service baseline synchronized with completed Service Work Orders.
+// Only a newer service can replace the existing baseline; never lower current meters.
+function syncCompletedServiceBaseline(equipment, wo) {
+  if (!wo || String(wo.status || "").toLowerCase() !== "completed" || !/service/i.test(String(wo.woType || wo.type || ""))) return equipment;
+  const eqId = String(wo.equipment || wo.equipmentId || "");
+  const date = String(wo.completed || wo.completedDate || wo.dateCompleted || wo.closedDate || "").slice(0, 10);
+  if (!eqId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return equipment;
+  return equipment.map(eq => {
+    if (String(eq.id) !== eqId || (eq.pmBaselineDate && String(eq.pmBaselineDate).slice(0,10) > date)) return eq;
+    const mode = String(eq.usageType || "hours").toLowerCase();
+    const off = usageTrackingIsOff(eq);
+    const meter = mode === "mileage" ? Number(wo.usageMileage) : Number(wo.usageHours);
+    const hasMeter = !off && Number.isFinite(meter) && meter >= 0 && (mode === "mileage" ? wo.usageMileage : wo.usageHours) !== undefined && (mode === "mileage" ? wo.usageMileage : wo.usageHours) !== "";
+    return { ...eq, pmBaselineDate:date, ...(hasMeter ? {pmBaselineUsage:meter} : {}) };
+  });
+}
+
 function reducer(state, { type, payload }) {
   const locationStampedTypes = new Set(["ADD_EQ","ADD_PART","ADD_INV","ADD_FUEL_CONTAINER","ADD_FUEL_READING","ADD_WO_REQUEST","ADD_PM_SCHEDULE","ADD_INSPECTION_SCHEDULE","ADD_PM_TASK","ADD_INSPECTION_TASK","ADD_PM","ADD_TECH","ADD_USAGE_LOG"]);
   const facilityScopedUpdateTypes = new Set(["UPDATE_EQ","UPDATE_PART","UPDATE_INV","UPDATE_FUEL_CONTAINER","UPDATE_FUEL_READING","UPDATE_PM_SCHEDULE","UPDATE_INSPECTION_SCHEDULE","UPDATE_PM_TASK","UPDATE_INSPECTION_TASK","UPDATE_PM","UPDATE_TECH","UPDATE_USAGE_LOG","UPDATE_WO"]);
@@ -1235,7 +1252,7 @@ function reducer(state, { type, payload }) {
         : state.equipment;
       const parts = shouldConsume ? adjustInventoryForWO(state.parts, savedWO.partsUsed, -1) : state.parts;
       const lubricants = shouldConsume ? adjustLubricantsForWO(state.lubricants, savedWO.partsUsed, -1) : (state.lubricants||[]);
-      return { ...state, parts, lubricants, equipment, workOrders: [savedWO,...state.workOrders], notifications:[makeNotification({id:`N${Date.now()}`,type:"wo",msg:`Work Order ${savedWO.id} created`,read:false}),...state.notifications] };
+      return { ...state, parts, lubricants, equipment:syncCompletedServiceBaseline(equipment,savedWO), workOrders: [savedWO,...state.workOrders], notifications:[makeNotification({id:`N${Date.now()}`,type:"wo",msg:`Work Order ${savedWO.id} created`,read:false}),...state.notifications] };
     }
     case "UPDATE_WO": {
       const prevWO = (state.workOrders||[]).find(w => w.id === payload.id);
@@ -1303,7 +1320,7 @@ function reducer(state, { type, payload }) {
           };
           advancedSchedules.set(String(sch.id),advancedSch);
           }
-          return { ...state, lubricants, parts, equipment, workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>advancedSchedules.get(String(s.id))||s) };
+          return { ...state, lubricants, parts, equipment:syncCompletedServiceBaseline(equipment,payloadWithStatus), workOrders:updated, pmSchedules:(state.pmSchedules||[]).map(s=>advancedSchedules.get(String(s.id))||s) };
         }
       }
       /* Inspection completion is a single durable transaction. Resolve legacy WOs even if linkage fields are missing. */
@@ -1353,7 +1370,7 @@ function reducer(state, { type, payload }) {
           return { ...state, lubricants, parts, equipment, workOrders:finalWOs, inspectionSchedules:(state.inspectionSchedules||[]).map(s=>String(s.id)===String(schedule.id)?advanced:s) };
         }
       }
-      return { ...state, lubricants, parts, equipment, workOrders: updated };
+      return { ...state, lubricants, parts, equipment:syncCompletedServiceBaseline(equipment,payloadWithStatus), workOrders: updated };
     }
     case "DELETE_WO": {
       const doomed = (state.workOrders||[]).find(w => String(w.id)===String(payload));
