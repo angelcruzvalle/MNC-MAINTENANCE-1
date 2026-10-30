@@ -3184,6 +3184,8 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     const emailBody = [`MaintForge Work Order ${wo.id || ""}`, "", `Type: ${workType}`, `Status: ${wo.status || ""}`, `Equipment: ${eq ? `${eq.name} (${eq.id})` : (wo.equipment || "")}`, `Created: ${wo.created || ""}`, `Completed: ${wo.completed || ""}`, `Mechanic: ${wo.tech || ""}`, "", "Problem / Requested Service:", printableDescription || "", "", "Work Performed:", wo.description || wo.workPerformed || "", "", "Notes:", wo.mechanicNotes || "", "", `Total: ${money(grandTotal)}`].join("\n");
     const emailHref = `mailto:?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
 
+    const cleanServiceDescription = (value) => wo.woType==="Service" ? String(value||"").replace(/(?:^|\n)\s*Service Steps:\s*[\s\S]*$/i,"").replace(/\b(?:Manually triggered service|Auto-generated service|Automatically triggered service)\s*:\s*/gi,"").trim() : value;
+
     const inspectionChecklistPrint = (() => {
       if(wo.woType!=="Inspection") return "";
       const results = Array.isArray(wo.inspectionStepResults) && wo.inspectionStepResults.length
@@ -3280,14 +3282,14 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
         </section>` : ""}
 
         ${(printOpt("showFaultDescription") || printOpt("showDescription") || (wo.woType !== "Inspection" && printOpt("showMechanicNotes"))) ? `<section class="section"><div class="section-title">Work Details</div>
-          <div class="textBlock"><div class="fieldLabel">Problem Reported / Requested Service</div><div style="margin-top:5px;white-space:pre-wrap">${h(printableDescription)||"&nbsp;"}</div></div>
-          <div class="textBlock"><div class="fieldLabel">Work Description</div><div style="margin-top:5px;white-space:pre-wrap">${h(wo.description)||"&nbsp;"}</div></div>
+          <div class="textBlock"><div class="fieldLabel">Problem Reported / Requested Service</div><div style="margin-top:5px;white-space:pre-wrap">${h(cleanServiceDescription(printableDescription))||"&nbsp;"}</div></div>
+          <div class="textBlock"><div class="fieldLabel">Work Description</div><div style="margin-top:5px;white-space:pre-wrap">${h(cleanServiceDescription(wo.description))||"&nbsp;"}</div></div>
           <div class="textBlock tall"><div class="fieldLabel">Mechanic Notes / Work Performed</div><div style="margin-top:5px;white-space:pre-wrap">${h(wo.mechanicNotes)||"&nbsp;"}</div></div>
-        </section>` : ""}
         ${wo.woType==="Service" ? (()=>{
           const steps=Array.isArray(wo.taskProcedureSnapshot?.steps)&&wo.taskProcedureSnapshot.steps.length?wo.taskProcedureSnapshot.steps:(Array.isArray(wo.serviceStepLines)&&wo.serviceStepLines.length?wo.serviceStepLines:String(wo.serviceChecklist||"").split("\n").filter(Boolean));
-          return steps.length?`<section class="section"><div class="section-title">Service Checklist — Completed Procedures</div><table class="data-table"><thead><tr><th style="width:16%">Status</th><th>Procedure / Work Details</th></tr></thead><tbody>${steps.map((step,i)=>`<tr><td style="font-weight:900;white-space:nowrap">${wo.serviceStepCompleted?.[i]?"[X] Done":"[ ] Pending"}</td><td>${h(step)}</td></tr>`).join("")}</tbody></table></section>`:"";
+          return steps.length?`<div class="textBlock"><div class="fieldLabel">Service Procedures — Completion Status</div><table class="data-table"><thead><tr><th style="width:16%">Status</th><th>Procedure / Work Details</th></tr></thead><tbody>${steps.map((step,i)=>`<tr><td style="font-weight:900;white-space:nowrap">${wo.serviceStepCompleted?.[i]?"[X] Done":"[ ] Pending"}</td><td>${h(step)}</td></tr>`).join("")}</tbody></table></div>`:"";
         })() : ""}
+        </section>` : ""}
         ${inspectionChecklistPrint}
 
         ${(printOpt("showParts") || printOpt("showOutsideServices") || printOpt("showLaborHours") || printOpt("showLaborTotal") || printOpt("showGrandTotal") || printOpt("showCosts")) ? `<section class="section" data-print-item="Parts and Labor Summary">
@@ -3424,10 +3426,33 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
             <Field label="Work Description / Problem Reported"><textarea style={{ ...inp, minHeight:120, resize:"vertical" }} value={form.description||""} onChange={e=>setForm(f=>({...f,description:e.target.value}))} placeholder="Describe the problem reported and work requested..." /></Field>
             <Field label="Mechanic Notes / Work Performed"><textarea style={{ ...inp, minHeight:120, resize:"vertical" }} value={form.mechanicNotes||""} onChange={e=>setForm(f=>({...f,mechanicNotes:e.target.value}))} placeholder="Diagnosis, work performed, findings, and mechanic notes..." /></Field>
           </div>
-          {form.woType==="Service"&&((form.taskProcedureSnapshot?.steps||form.serviceStepLines||[]).length>0)&&<div style={{marginTop:10,borderTop:`1px solid ${T.border}`,paddingTop:9}}><div style={{fontWeight:800,fontSize:12,marginBottom:6}}>Service Tasks — Completion Status (also printed)</div>{(form.taskProcedureSnapshot?.steps||form.serviceStepLines||[]).map((step,i)=><label key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0",fontSize:12}}><input type="checkbox" checked={!!form.serviceStepCompleted?.[i]} onChange={e=>setForm(f=>({...f,serviceStepCompleted:{...(f.serviceStepCompleted||{}),[i]:e.target.checked}}))}/><span style={{textDecoration:form.serviceStepCompleted?.[i]?"line-through":"none"}}>{step}</span><b style={{marginLeft:"auto",color:form.serviceStepCompleted?.[i]?T.green:T.muted}}>{form.serviceStepCompleted?.[i]?"Completed":"Pending"}</b></label>)}</div>}
+          {form.woType==="Service"&&<div style={{marginTop:12,borderTop:`1px solid ${T.border}`,paddingTop:12}}>
+            <div style={{fontWeight:800,fontSize:12,marginBottom:8}}>Service Procedures — Work Details</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+              <Btn type="button" variant={form.procedureMode!=="manual"?"primary":"secondary"} onClick={()=>setForm(f=>({...f,procedureMode:"library"}))}>Use Task Library Procedure</Btn>
+              <Btn type="button" variant={form.procedureMode==="manual"?"primary":"secondary"} onClick={()=>setForm(f=>({...f,procedureMode:"manual",procedureTaskId:"",manualChecklist:(f.taskProcedureSnapshot?.steps||f.serviceStepLines||[]).map((step,i)=>({step,note:f.taskProcedureSnapshot?.stepNotes?.[i]||""})),taskProcedureSnapshot:null}))}>Edit Steps Manually</Btn>
+            </div>
+            {form.procedureMode!=="manual"&&<Field label="Select Service Procedure"><select style={sel} value={form.procedureTaskId||""} onChange={e=>applyProcedureToWO(e.target.value)}><option value="">-- Select a saved procedure --</option>{procedureOptionsForWO("Service").map(task=><option key={task.id} value={task.id}>{task.name}</option>)}</select></Field>}
+            {form.procedureMode==="manual"? <div>
+              {(form.manualChecklist||[]).map((row,i)=><div key={i} style={{display:"grid",gridTemplateColumns:"24px minmax(0,1fr) minmax(0,1fr) auto",gap:8,alignItems:"center",marginBottom:8}}>
+                <input type="checkbox" aria-label={`Completed: ${row.step||`Step ${i+1}`}`} checked={!!form.serviceStepCompleted?.[i]} onChange={e=>setForm(f=>({...f,serviceStepCompleted:{...(f.serviceStepCompleted||{}),[i]:e.target.checked}}))}/>
+                <input style={{...inp,minWidth:0}} value={row.step||""} onChange={e=>setManualChecklistRow(i,"step",e.target.value)} placeholder="Service step"/>
+                <input style={{...inp,minWidth:0}} value={row.note||""} onChange={e=>setManualChecklistRow(i,"note",e.target.value)} placeholder="Optional instruction"/>
+                <Btn type="button" variant="danger" onClick={()=>removeManualChecklistRow(i)}>X</Btn>
+              </div>)}
+              <Btn type="button" variant="secondary" onClick={addManualChecklistRow}>+ Add Step</Btn>
+            </div> : <div style={{display:"grid",gap:7}}>
+              {(form.taskProcedureSnapshot?.steps||form.serviceStepLines||[]).map((step,i)=><div key={i} style={{display:"flex",alignItems:"flex-start",gap:9,padding:9,border:`1px solid ${T.border}`,borderRadius:8}}>
+                <input type="checkbox" aria-label={`Completed: ${step}`} checked={!!form.serviceStepCompleted?.[i]} onChange={e=>setForm(f=>({...f,serviceStepCompleted:{...(f.serviceStepCompleted||{}),[i]:e.target.checked}}))}/>
+                <div style={{flex:1,fontSize:12}}><b>{i+1}. {step}</b>{form.taskProcedureSnapshot?.stepNotes?.[i]&&<div style={{color:T.muted,marginTop:3}}>{form.taskProcedureSnapshot.stepNotes[i]}</div>}</div>
+                <button type="button" onClick={()=>setForm(f=>{const snap=f.taskProcedureSnapshot||{};const steps=[...(snap.steps||f.serviceStepLines||[])];const notes=[...(snap.stepNotes||[])];steps.splice(i,1);notes.splice(i,1);const done={};steps.forEach((_,j)=>done[j]=!!f.serviceStepCompleted?.[j>=i?j+1:j]);return {...f,taskProcedureSnapshot:{...snap,steps,stepNotes:notes},serviceStepLines:steps,serviceChecklist:steps.join("\n"),serviceStepCompleted:done};})} style={{border:`1px solid ${T.border}`,borderRadius:5,background:T.card,cursor:"pointer",padding:"4px 7px"}}>Remove</button>
+              </div>)}
+            </div>}
+          </div>}
+
         </div>
 
-        {(form.woType==="Service"||form.woType==="Inspection")&&(
+        {form.woType==="Inspection"&&(
           <TypeSection title={`${form.woType} Checklist / Procedure`} subtitle="Use a saved Task Library procedure or build this work order checklist manually." accent={form.woType==="Service"?"#ca8a04":"#16a34a"}>
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
               <Btn type="button" variant={form.procedureMode!=="manual"?"primary":"secondary"} onClick={()=>setForm(f=>({...f,procedureMode:"library"}))}>Use Task Library Procedure</Btn>
@@ -6900,9 +6925,9 @@ function PM({ state, dispatch }) {
     const stepsText = buildTaskStepsText(task);
     const taskParts = (task.parts||[]).filter(p=>p.name).map(p=>({ name:p.name, qty:p.qty||1, unit:p.unit||"ea", unitCost:0 }));
     const details = [
-      `${manual?"Manually triggered service":"Auto-generated service"}: ${task.name||sch?.task||"PM Service"}`,
+      `${task.name||sch?.task||"PM Service"}`,
       task.description ? `Description: ${task.description}` : "",
-      stepsText ? `Service Steps:\n${stepsText}` : ""
+
     ].filter(Boolean).join("\n\n");
     const eq = maintainableAssets.find(e=>String(e.id)===String(equipmentId));
     const logs = (state.usageLogs||[]).filter(l=>String(l.equipmentId)===String(equipmentId));
