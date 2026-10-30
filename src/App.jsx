@@ -2570,7 +2570,9 @@ function Dashboard({ state, dispatch, setTab, onSettings }) {
 function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWORequest }) {
   const [showLubricantPicker,setShowLubricantPicker]=useState(false);
   const [lubricantPick,setLubricantPick]=useState({id:"",qty:"",unit:"qt"});
-  const lubricantToGallons=(qty,unit)=>{const n=+qty||0;return unit==="gal"?n:unit==="qt"?n/4:unit==="L"?n/3.785411784:n;};
+  const [showNewFluid,setShowNewFluid]=useState(false);
+  const [newFluid,setNewFluid]=useState({name:"",type:"Engine Oil",grade:"",containerQty:"",containerUnit:"gal",totalPrice:"",usedQty:"",usedUnit:"qt"});
+  const lubricantToGallons=(qty,unit)=>{const n=+qty||0;return unit==="gal"?n:unit==="qt"?n/4:unit==="L"?n/3.785411784:unit==="pail"?n*5:n;};
   const lubricantCostPerGal=(l)=>{const n=+l.containerQty||0;const g=l.containerUnit==="gal"?n:l.containerUnit==="qt"?n/4:l.containerUnit==="L"?n/3.785411784:l.containerUnit==="drum"?n*55:n;return g>0?(+l.totalPrice||0)/g:0;};
   const addLubricantLine=()=>{
     const l=(state.lubricants||[]).find(x=>String(x.id)===String(lubricantPick.id));
@@ -2584,8 +2586,38 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     setLubricantPick({id:"",qty:"",unit:"qt"}); setShowLubricantPicker(false);
   };
 
+  const addNewFluidToWO=()=>{
+    const f=newFluid;
+    if(!String(f.name||"").trim()) return alert("Enter a lubricant name.");
+    const containerGallons=lubricantToGallons(f.containerQty,f.containerUnit);
+    const usedGallons=lubricantToGallons(f.usedQty,f.usedUnit);
+    if(containerGallons<=0||usedGallons<=0||usedGallons>containerGallons) return alert("Enter valid received and used quantities (used cannot exceed received).");
+    const item={id:genId("LUB"),name:String(f.name).trim(),type:f.type,grade:f.grade,containerQty:+f.containerQty,containerUnit:f.containerUnit,totalPrice:+f.totalPrice||0,onHand:containerGallons};
+    dispatch({type:"ADD_LUBRICANT",payload:item});
+    const cost=containerGallons>0?(+item.totalPrice||0)*usedGallons/containerGallons:0;
+    setForm(prev=>({...prev,partsUsed:[...(prev.partsUsed||[]),{kind:"lubricant",lubricantId:item.id,name:item.name,partNumber:item.grade,qty:+f.usedQty,unit:f.usedUnit,gallons:usedGallons,unitCost:cost/(+f.usedQty),fluidCost:cost}]}));
+    setNewFluid({name:"",type:"Engine Oil",grade:"",containerQty:"",containerUnit:"gal",totalPrice:"",usedQty:"",usedUnit:"qt"});
+    setShowNewFluid(false);
+  };
   const [modal, setModal]     = useState(null); // null|"type"|"pick"|"form"|"detail"|"edit"
   const [form, setForm]       = useState({});
+  const savedFormBaseline = useRef(null);
+  const editingWO = modal === "form" || modal === "edit" || (modal === "detail" && editMode);
+  const hasUnsavedWOChanges = () => editingWO && savedFormBaseline.current !== null && JSON.stringify(form) !== savedFormBaseline.current;
+  const closeWOEditor = () => {
+    if(hasUnsavedWOChanges() && !window.confirm("You have unsaved Work Order changes. Discard them and leave?")) return;
+    savedFormBaseline.current = null;
+    setModal(null); setDetailWO(null); setEditMode(false);
+  };
+  useEffect(() => {
+    if(!editingWO) { savedFormBaseline.current = null; return; }
+    if(savedFormBaseline.current === null) savedFormBaseline.current = JSON.stringify(form);
+  }, [editingWO]);
+  useEffect(() => {
+    const beforeUnload = e => { if(hasUnsavedWOChanges()) { e.preventDefault(); e.returnValue = ""; } };
+    window.addEventListener("beforeunload",beforeUnload);
+    return () => window.removeEventListener("beforeunload",beforeUnload);
+  });
   const [filter, setFilter]     = useState("Active"); // "Active" = Open+InProgress default
   const [typeFilter, setTypeFilter] = useState("All");
   const [sortBy, setSortBy]         = useState("created");
@@ -2736,6 +2768,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
       serviceStepLines:f.woType==="Service"?steps:f.serviceStepLines,
       serviceStepNotes:f.woType==="Service"?notes:f.serviceStepNotes,
       serviceChecklist:f.woType==="Service"?steps.join("\n"):f.serviceChecklist,
+      serviceStepCompleted:f.woType==="Service"?{}:f.serviceStepCompleted,
       inspectionSteps:f.woType==="Inspection"?steps.join("\n"):f.inspectionSteps,
       inspectionStepResults:f.woType==="Inspection"?steps.map((step,i)=>({id:`manual-ins-${Date.now()}-${i}`,step,result:"",comment:""})):f.inspectionStepResults,
       taskProcedureSnapshot:{taskId:task?.id||"",name:task?.name||"",steps:[...steps],stepNotes:[...notes],capturedAt:new Date().toISOString()}
@@ -2941,6 +2974,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
       const notes=rows.map(r=>String(r.note||"").trim());
       formWithLatestUsage.taskProcedureSnapshot={taskId:"",name:"Manual checklist",steps:[...steps],stepNotes:[...notes],capturedAt:new Date().toISOString(),manual:true};
       if(formWithLatestUsage.woType==="Service"){
+        formWithLatestUsage.serviceStepCompleted=Object.fromEntries(steps.map((_,i)=>[i,!!formWithLatestUsage.serviceStepCompleted?.[i]]));
         formWithLatestUsage.serviceStepLines=steps;
         formWithLatestUsage.serviceStepNotes=notes;
         formWithLatestUsage.serviceChecklist=steps.join("\n");
@@ -3037,6 +3071,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
         dispatch({type:"ADD_USAGE_LOG", payload:{id:genId("USE"), equipmentId:meterAsset.id, date:normalizedCreatedDate, hours:hoursEntered?enteredHours:"", mileage:mileageEntered?enteredMileage:"", source:"Work Order", workOrderId:formWithLatestUsage.id||""}});
       }
     }
+    savedFormBaseline.current = null;
     setModal(null);
     setDetailWO(null);
   };
@@ -3112,6 +3147,8 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
       : (wo.faultDescription || "");
 
     const partsUsed = Array.isArray(wo.partsUsed) ? wo.partsUsed : [];
+    const printedParts = partsUsed.filter(p=>p.kind!=="lubricant");
+    const printedFluids = partsUsed.filter(p=>p.kind==="lubricant");
     const partsTotal = partsUsed.reduce((sum, part) => sum + lineItemTotal(part), 0);
     const outsideServices = Array.isArray(wo.outsideServices) ? wo.outsideServices : [];
     const outsideServicesSubtotal = outsideServicesTotal(outsideServices);
@@ -3247,16 +3284,20 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
           <div class="textBlock"><div class="fieldLabel">Work Description</div><div style="margin-top:5px;white-space:pre-wrap">${h(wo.description)||"&nbsp;"}</div></div>
           <div class="textBlock tall"><div class="fieldLabel">Mechanic Notes / Work Performed</div><div style="margin-top:5px;white-space:pre-wrap">${h(wo.mechanicNotes)||"&nbsp;"}</div></div>
         </section>` : ""}
+        ${wo.woType==="Service" ? (()=>{
+          const steps=Array.isArray(wo.taskProcedureSnapshot?.steps)&&wo.taskProcedureSnapshot.steps.length?wo.taskProcedureSnapshot.steps:(Array.isArray(wo.serviceStepLines)&&wo.serviceStepLines.length?wo.serviceStepLines:String(wo.serviceChecklist||"").split("\n").filter(Boolean));
+          return steps.length?`<section class="section"><div class="section-title">Service Checklist — Completed Procedures</div><table class="data-table"><thead><tr><th style="width:16%">Status</th><th>Procedure / Work Details</th></tr></thead><tbody>${steps.map((step,i)=>`<tr><td style="font-weight:900;white-space:nowrap">${wo.serviceStepCompleted?.[i]?"[X] Done":"[ ] Pending"}</td><td>${h(step)}</td></tr>`).join("")}</tbody></table></section>`:"";
+        })() : ""}
         ${inspectionChecklistPrint}
 
         ${(printOpt("showParts") || printOpt("showOutsideServices") || printOpt("showLaborHours") || printOpt("showLaborTotal") || printOpt("showGrandTotal") || printOpt("showCosts")) ? `<section class="section" data-print-item="Parts and Labor Summary">
           <div class="summaryTitle">Parts and Labor Summary</div>
-          ${printOpt("showParts") ? `<div class="miniTitle">Parts Used</div>
+          ${printOpt("showParts") ? `<div class="miniTitle">Parts / Lubricants Used</div>
           <table class="data-table">
             <thead><tr><th style="width:50%">Part Name / Part Number</th><th style="width:13%" class="center">Quantity</th>${printOpt("showPartsUnitPrice") ? `<th style="width:18%" class="right">Unit Price</th>` : ""}${printOpt("showPartsLineTotal") ? `<th style="width:19%" class="right">Total</th>` : ""}</tr></thead>
             <tbody>
-              ${partsUsed.length>0 ? partsUsed.map(part=>{ const q=+(part.qty||1); const u=+(part.unitCost||0); return `<tr><td>${h(printablePartNameWithNumber(part))}</td><td class="center">${h(q)} ${h(part.unit||"ea")}</td>${printOpt("showPartsUnitPrice") ? `<td class="right">${money(u)}</td>` : ""}${printOpt("showPartsLineTotal") ? `<td class="right">${money(q*u)}</td>` : ""}</tr>`; }).join("") : `<tr><td colspan="${2 + (printOpt("showPartsUnitPrice") ? 1 : 0) + (printOpt("showPartsLineTotal") ? 1 : 0)}" style="color:#64748b;font-style:italic">No parts listed</td></tr>`}
-              ${printOpt("showPartsSubtotal") ? `<tr class="subRow"><td colspan="${2 + (printOpt("showPartsUnitPrice") ? 1 : 0) + (printOpt("showPartsLineTotal") ? 1 : 0)}">Parts Subtotal: ${money(partsTotal)}</td></tr>` : ""}
+              ${partsUsed.length>0 ? partsUsed.map(part=>{ const q=+(part.qty||1); const u=+(part.unitCost||0); return `<tr><td>${part.kind==="lubricant"?`<b>Lubricant / Fluid:</b> ${h(part.name||"Fluid")}${part.partNumber?` (${h(part.partNumber)})`:""}`:h(printablePartNameWithNumber(part))}</td><td class="center">${h(q)} ${h(part.unit||"ea")}</td>${printOpt("showPartsUnitPrice") ? `<td class="right">${money(u)}</td>` : ""}${printOpt("showPartsLineTotal") ? `<td class="right">${money(q*u)}</td>` : ""}</tr>`; }).join("") : `<tr><td colspan="${2 + (printOpt("showPartsUnitPrice") ? 1 : 0) + (printOpt("showPartsLineTotal") ? 1 : 0)}" style="color:#64748b;font-style:italic">No parts listed</td></tr>`}
+              ${printOpt("showPartsSubtotal") ? `<tr class="subRow"><td colspan="${2 + (printOpt("showPartsUnitPrice") ? 1 : 0) + (printOpt("showPartsLineTotal") ? 1 : 0)}">Parts / Lubricants Subtotal: ${money(partsTotal)}</td></tr>` : ""}
             </tbody>
           </table>` : ""}
 
@@ -3383,6 +3424,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
             <Field label="Work Description / Problem Reported"><textarea style={{ ...inp, minHeight:120, resize:"vertical" }} value={form.description||""} onChange={e=>setForm(f=>({...f,description:e.target.value}))} placeholder="Describe the problem reported and work requested..." /></Field>
             <Field label="Mechanic Notes / Work Performed"><textarea style={{ ...inp, minHeight:120, resize:"vertical" }} value={form.mechanicNotes||""} onChange={e=>setForm(f=>({...f,mechanicNotes:e.target.value}))} placeholder="Diagnosis, work performed, findings, and mechanic notes..." /></Field>
           </div>
+          {form.woType==="Service"&&((form.taskProcedureSnapshot?.steps||form.serviceStepLines||[]).length>0)&&<div style={{marginTop:10,borderTop:`1px solid ${T.border}`,paddingTop:9}}><div style={{fontWeight:800,fontSize:12,marginBottom:6}}>Service Tasks — Completion Status (also printed)</div>{(form.taskProcedureSnapshot?.steps||form.serviceStepLines||[]).map((step,i)=><label key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0",fontSize:12}}><input type="checkbox" checked={!!form.serviceStepCompleted?.[i]} onChange={e=>setForm(f=>({...f,serviceStepCompleted:{...(f.serviceStepCompleted||{}),[i]:e.target.checked}}))}/><span style={{textDecoration:form.serviceStepCompleted?.[i]?"line-through":"none"}}>{step}</span><b style={{marginLeft:"auto",color:form.serviceStepCompleted?.[i]?T.green:T.muted}}>{form.serviceStepCompleted?.[i]?"Completed":"Pending"}</b></label>)}</div>}
         </div>
 
         {(form.woType==="Service"||form.woType==="Inspection")&&(
@@ -3399,12 +3441,12 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
                 </select>
               </Field>
               {form.taskProcedureSnapshot?.steps?.length>0&&<div style={{display:"grid",gap:7,marginTop:8}}>
-                {form.taskProcedureSnapshot.steps.map((step,i)=><div key={i} style={{padding:9,border:`1px solid ${T.border}`,borderRadius:8,background:T.grayLt,fontSize:12}}><b>{i+1}. {step}</b>{form.taskProcedureSnapshot.stepNotes?.[i]&&<div style={{color:T.muted,marginTop:3}}>Instruction / spec: {form.taskProcedureSnapshot.stepNotes[i]}</div>}</div>)}
+                {form.taskProcedureSnapshot.steps.map((step,i)=><div key={i} style={{padding:9,border:`1px solid ${T.border}`,borderRadius:8,background:T.grayLt,fontSize:12,display:"flex",gap:9,alignItems:"flex-start"}}>{form.woType==="Service"&&<input type="checkbox" aria-label={`Completed: ${step}`} checked={!!form.serviceStepCompleted?.[i]} onChange={e=>setForm(f=>({...f,serviceStepCompleted:{...(f.serviceStepCompleted||{}),[i]:e.target.checked}}))}/>}<div><b>{i+1}. {step}</b>{form.taskProcedureSnapshot.stepNotes?.[i]&&<div style={{color:T.muted,marginTop:3}}>Instruction / spec: {form.taskProcedureSnapshot.stepNotes[i]}</div>}</div>{form.woType==="Service"&&<button type="button" title="Remove procedure from this work order only" onClick={()=>setForm(f=>{const snap=f.taskProcedureSnapshot||{};const steps=[...(snap.steps||[])];const notes=[...(snap.stepNotes||[])];steps.splice(i,1);notes.splice(i,1);const done={};steps.forEach((_,j)=>{done[j]=!!f.serviceStepCompleted?.[j>=i?j+1:j];});return {...f,taskProcedureSnapshot:{...snap,steps,stepNotes:notes},serviceStepLines:steps,serviceChecklist:steps.join("\n"),serviceStepCompleted:done};})} style={{marginLeft:"auto",border:`1px solid ${T.border}`,background:T.card,borderRadius:5,cursor:"pointer",padding:"4px 7px"}}>Remove</button>}</div>)}
               </div>}
             </div>:<div>
               <div style={{fontSize:12,color:T.muted,marginBottom:8}}>Add the steps needed for this work order. Each step can include an instruction, specification, fluid, torque, or other note.</div>
               {(form.manualChecklist||[]).map((row,i)=><div key={i} style={{display:"grid",gridTemplateColumns:"32px minmax(180px,1fr) minmax(180px,1fr) auto",gap:8,alignItems:"center",marginBottom:8}}>
-                <b>{i+1}</b>
+                <div style={{display:"flex",alignItems:"center",gap:4}}>{form.woType==="Service"&&<input type="checkbox" checked={!!form.serviceStepCompleted?.[i]} onChange={e=>setForm(f=>({...f,serviceStepCompleted:{...(f.serviceStepCompleted||{}),[i]:e.target.checked}}))}/>}<b>{i+1}</b></div>
                 <input style={inp} value={row.step||""} onChange={e=>setManualChecklistRow(i,"step",e.target.value)} placeholder="Checklist step"/>
                 <input style={inp} value={row.note||""} onChange={e=>setManualChecklistRow(i,"note",e.target.value)} placeholder="Instruction / specification (optional)"/>
                 <Btn type="button" variant="danger" onClick={()=>removeManualChecklistRow(i)}>X</Btn>
@@ -3447,25 +3489,26 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
 
         {/* Parts */}
         <div style={{ gridColumn:"span 2", marginBottom:14, border:`1px solid ${T.border}`, borderRadius:8, padding:12, background:T.grayLt }}>
-          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:8 }}>Parts</label>
+          <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:700, color:T.text, marginBottom:8 }}>Parts / Lubricants Used</label>
           {(form.partsUsed||[]).map((p,idx)=>(
             <div key={idx}>
-              <div style={{ display:"grid", gridTemplateColumns:p.partId?"minmax(180px,1fr) 82px 96px 110px auto auto":"minmax(180px,1fr) 82px 82px 96px 110px 110px auto auto", gap:8, marginBottom:4, alignItems:"center" }}>
+              <div style={{ display:"grid", gridTemplateColumns:(p.partId||p.kind==="lubricant")?"minmax(180px,1fr) 82px 96px 110px auto auto":"minmax(150px,1fr) 115px 75px 75px 90px 100px 100px auto auto", gap:8, marginBottom:4, alignItems:"center" }}>
                 <div style={{ position:"relative" }}>
-                  <input style={inp} placeholder="Part name or pick from inventory..." value={p.name||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],name:e.target.value,partSearch:e.target.value,partId:undefined,availableQty:undefined,partNumber:undefined}; return {...f,partsUsed:arr}; })} />
+                  <input style={inp} placeholder="Part / lubricant name or pick from inventory..." value={p.name||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],name:e.target.value,partSearch:e.target.value,partId:undefined,availableQty:undefined,partNumber:arr[idx]?.partNumber||""}; return {...f,partsUsed:arr}; })} />
                   {p.partId && <span style={{ position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", fontFamily:T.mono, fontSize:9, color:T.green }}>inv</span>}
                 </div>
+                {!p.partId && p.kind!=="lubricant" && <input style={{...inp, minWidth:90}} placeholder="Part # (optional)" aria-label="Part number" value={p.partNumber||""} onChange={e=>setForm(f=>{const arr=[...(f.partsUsed||[])];arr[idx]={...arr[idx],partNumber:e.target.value};return {...f,partsUsed:arr};})}/>}
                 <input style={{ ...inp, textAlign:"center" }} type="number" min="0" step="0.01" placeholder="Used" title="Quantity used on this work order" value={p.qty||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],qty:e.target.value}; return {...f,partsUsed:arr}; })} />
-                {!p.partId && <input style={{ ...inp, textAlign:"center" }} type="number" min="0" step="0.01" placeholder="Received" title="Quantity purchased/received into inventory" value={p.receivedQty||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],receivedQty:e.target.value,receiptApplied:false}; return {...f,partsUsed:arr}; })} />}
+                {!p.partId && p.kind!=="lubricant" && <input style={{ ...inp, textAlign:"center" }} type="number" min="0" step="0.01" placeholder="Received" title="Quantity purchased/received into inventory" value={p.receivedQty||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],receivedQty:e.target.value,receiptApplied:false}; return {...f,partsUsed:arr}; })} />}
                 <select style={sel} value={p.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, p.unit||"ea", v=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr[idx]={...arr[idx],unit:v}; return {...f,partsUsed:arr}; }))}>
                   {getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}
                   <option value="__new_unit__">+ Add new...</option>
                 </select>
                 <input style={inp} {...decimalInputAttrs({ placeholder:"Cost / each" })} title="Enter cost per each OR total purchase cost" value={p.unitCost||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; const unitCost=sanitizeDecimalInput(e.target.value); const rq=+(arr[idx]?.receivedQty||0); arr[idx]={...arr[idx],unitCost,totalPurchaseCost:rq&&unitCost!==""?String(rq*(+unitCost)):arr[idx]?.totalPurchaseCost||""}; return {...f,partsUsed:arr}; })} />
-                {!p.partId && <input style={inp} {...decimalInputAttrs({ placeholder:"Total purchase $" })} title="Enter total purchase cost OR cost per each" value={p.totalPurchaseCost||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; const totalPurchaseCost=sanitizeDecimalInput(e.target.value); const rq=+(arr[idx]?.receivedQty||0); arr[idx]={...arr[idx],totalPurchaseCost,unitCost:rq&&totalPurchaseCost!==""?String((+totalPurchaseCost)/rq):arr[idx]?.unitCost||""}; return {...f,partsUsed:arr}; })} />}
-                <button onClick={()=>setShowNewPart(showNewPart===idx?null:idx)} style={{ padding:"6px 8px", border:`1px solid ${T.border}`, borderRadius:6, background:T.grayLt, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.accent, whiteSpace:"nowrap" }}>
+                {!p.partId && p.kind!=="lubricant" && <input style={inp} {...decimalInputAttrs({ placeholder:"Total purchase $" })} title="Enter total purchase cost OR cost per each" value={p.totalPurchaseCost||""} onChange={e=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; const totalPurchaseCost=sanitizeDecimalInput(e.target.value); const rq=+(arr[idx]?.receivedQty||0); arr[idx]={...arr[idx],totalPurchaseCost,unitCost:rq&&totalPurchaseCost!==""?String((+totalPurchaseCost)/rq):arr[idx]?.unitCost||""}; return {...f,partsUsed:arr}; })} />}
+                {p.kind!=="lubricant"&&<button onClick={()=>setShowNewPart(showNewPart===idx?null:idx)} style={{ padding:"6px 8px", border:`1px solid ${T.border}`, borderRadius:6, background:T.grayLt, cursor:"pointer", fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.accent, whiteSpace:"nowrap" }}>
                   {showNewPart===idx?"Close Inventory":"Inventory"}
-                </button>
+                </button>}
                 <button onClick={()=>setForm(f=>{ const arr=[...(f.partsUsed||[])]; arr.splice(idx,1); return {...f,partsUsed:arr}; })} title="Remove part" aria-label="Remove part" style={{ width:28, minWidth:28, maxWidth:28, height:28, padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", justifySelf:"end", border:`1px solid ${T.red}`, borderRadius:999, background:"none", color:T.red, cursor:"pointer", fontFamily:T.sans, fontSize:15, lineHeight:1, fontWeight:700 }}>×</button>
               </div>
               {p.partId && (
@@ -3530,15 +3573,16 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
           ))}
           {!showPartAddChoice ? (
             <button onClick={()=>setShowPartAddChoice(true)} style={{ background:"none", border:`1px dashed ${T.borderHi}`, borderRadius:6, padding:"9px 16px", color:T.accent, cursor:"pointer", fontFamily:T.sans, fontSize:12, fontWeight:700, width:"100%" }}>
-              + Add Part
+              + Add Part / Lubricant
             </button>
           ) : (
             <div style={{ position:"relative", border:`1px solid ${T.border}`, borderRadius:9, padding:"12px 42px 12px 12px", background:T.card }}>
               <button type="button" onClick={()=>setShowPartAddChoice(false)} title="Close" aria-label="Close add part choices" style={{ position:"absolute", top:8, right:8, width:26, minWidth:26, maxWidth:26, height:26, padding:0, display:"inline-flex", alignItems:"center", justifyContent:"center", border:`1px solid ${T.border}`, borderRadius:999, background:T.grayLt, color:T.text, cursor:"pointer", fontSize:15, lineHeight:1, fontWeight:700 }}>×</button>
-              <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:9 }}>Add a part</div>
+              <div style={{ fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, marginBottom:9 }}>Add a part or lubricant / fluid</div>
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:8 }}>
                 <button type="button" onClick={()=>{ const idx=(form.partsUsed||[]).length; setForm(f=>({...f,partsUsed:[...(f.partsUsed||[]),{name:"",qty:1,receivedQty:"",unit:"ea",unitCost:"",totalPurchaseCost:"",receiptApplied:false}]})); setShowNewPart(idx); setShowPartAddChoice(false); }} style={{ ...inp, padding:"12px", cursor:"pointer", textAlign:"left", fontWeight:700, color:T.accent, background:T.grayLt }}>🔎 Use Part From Inventory<div style={{ marginTop:4, fontSize:10, fontWeight:400, color:T.muted }}>Search existing stock and enter quantity used.</div></button>
                 <button type="button" onClick={()=>{ setForm(f=>({...f,partsUsed:[...(f.partsUsed||[]),{name:"",qty:1,receivedQty:"",unit:"ea",unitCost:"",totalPurchaseCost:"",receiptApplied:false}]})); setShowNewPart(null); setShowPartAddChoice(false); }} style={{ ...inp, padding:"12px", cursor:"pointer", textAlign:"left", fontWeight:700, color:T.accent, background:T.grayLt }}>＋ Add New Part<div style={{ marginTop:4, fontSize:10, fontWeight:400, color:T.muted }}>Enter the part, quantity received/used, and purchase cost.</div></button>
+                <button type="button" onClick={()=>{setShowNewFluid(true);setShowPartAddChoice(false);}} style={{ ...inp, padding:"12px", cursor:"pointer", textAlign:"left", fontWeight:700, color:T.accent, background:T.grayLt }}>＋ Add New Lubricant / Fluid<div style={{ marginTop:4, fontSize:10, fontWeight:400, color:T.muted }}>Receive oil or fluid into inventory and use some on this work order.</div></button>
                 <button type="button" onClick={()=>{setShowLubricantPicker(true);setShowPartAddChoice(false);}} style={{ ...inp, padding:"12px", cursor:"pointer", textAlign:"left", fontWeight:700, color:T.accent, background:T.grayLt }}>🛢 Use Lubricant / Fluid<div style={{ marginTop:4, fontSize:10, fontWeight:400, color:T.muted }}>Select oil, coolant or another fluid and enter the amount used.</div></button>
               </div>
             </div>
@@ -3547,12 +3591,23 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
 
 
 
+        {showNewFluid&&<div style={{gridColumn:"span 2",marginBottom:14,border:`1px solid ${T.border}`,borderRadius:8,padding:12,background:T.grayLt}}>
+          <div style={{fontWeight:800,marginBottom:8}}>Add New Lubricant / Fluid to Inventory and Work Order</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:8}}>
+            <Field label="Product Name"><input style={inp} value={newFluid.name} onChange={e=>setNewFluid(f=>({...f,name:e.target.value}))}/></Field>
+            <Field label="Fluid Type"><select style={sel} value={newFluid.type} onChange={e=>setNewFluid(f=>({...f,type:e.target.value}))}>{["Engine Oil","Hydraulic Fluid","Coolant","Gear Oil","Transmission Fluid","Grease","Other Fluid"].map(x=><option key={x}>{x}</option>)}</select></Field>
+            <Field label="Grade"><input style={inp} value={newFluid.grade} onChange={e=>setNewFluid(f=>({...f,grade:e.target.value}))}/></Field>
+            <Field label="Quantity Received"><input style={inp} type="number" min="0" step="0.01" value={newFluid.containerQty} onChange={e=>setNewFluid(f=>({...f,containerQty:e.target.value}))}/></Field>
+            <Field label="Received Unit"><select style={sel} value={newFluid.containerUnit} onChange={e=>setNewFluid(f=>({...f,containerUnit:e.target.value}))}><option value="gal">Gallons</option><option value="qt">Quarts</option><option value="L">Liters</option></select></Field>
+            <Field label="Total Purchase Cost"><input style={inp} type="number" min="0" step="0.01" value={newFluid.totalPrice} onChange={e=>setNewFluid(f=>({...f,totalPrice:e.target.value}))}/></Field>
+            <Field label="Amount Used"><div style={{display:"flex",gap:5}}><input aria-label="Amount used" style={{...inp,width:75,minWidth:0,flex:1}} type="number" min="0" step="0.01" value={newFluid.usedQty} onChange={e=>setNewFluid(f=>({...f,usedQty:e.target.value}))}/><select aria-label="Unit used" style={{...sel,width:95,minWidth:0,flex:1}} value={newFluid.usedUnit} onChange={e=>setNewFluid(f=>({...f,usedUnit:e.target.value}))}><option value="qt">Quarts</option><option value="gal">Gallons</option><option value="L">Liters</option><option value="pail">5-gal Pail</option></select></div></Field>
+          </div><div style={{display:"flex",gap:8,marginTop:10}}><Btn small onClick={addNewFluidToWO}>Add & Use Fluid</Btn><Btn small variant="secondary" onClick={()=>setShowNewFluid(false)}>Cancel</Btn></div>
+        </div>}
         {showLubricantPicker&&<div style={{gridColumn:"span 2",marginBottom:14,border:`1px solid ${T.border}`,borderRadius:8,padding:12,background:T.grayLt}}>
           <div style={{fontWeight:800,marginBottom:8}}>Use Lubricant / Fluid From Inventory</div>
-          <div style={{display:"grid",gridTemplateColumns:"minmax(190px,2fr) 90px 100px auto auto",gap:8,alignItems:"end"}}>
+          <div style={{display:"grid",gridTemplateColumns:"minmax(150px,2fr) minmax(170px,1fr) auto auto",gap:8,alignItems:"end"}}>
             <Field label="Lubricant / Fluid"><select style={sel} value={lubricantPick.id} onChange={e=>setLubricantPick(x=>({...x,id:e.target.value}))}><option value="">Select fluid…</option>{(state.lubricants||[]).filter(l=>(+l.onHand||0)>0).map(l=><option key={l.id} value={l.id}>{l.name}{l.grade?` — ${l.grade}`:""} — {(+l.onHand||0).toFixed(2)} gal</option>)}</select></Field>
-            <Field label="Amount"><input style={inp} type="number" min="0" step="0.01" value={lubricantPick.qty} onChange={e=>setLubricantPick(x=>({...x,qty:e.target.value}))}/></Field>
-            <Field label="Unit"><select style={sel} value={lubricantPick.unit} onChange={e=>setLubricantPick(x=>({...x,unit:e.target.value}))}><option value="qt">Quarts</option><option value="gal">Gallons</option><option value="L">Liters</option></select></Field>
+            <Field label="Amount / Unit"><div style={{display:"flex",gap:5,minWidth:0}}><input aria-label="Fluid amount" style={{...inp,width:72,minWidth:0,flex:"1 1 70px"}} type="number" min="0" step="0.01" value={lubricantPick.qty} onChange={e=>setLubricantPick(x=>({...x,qty:e.target.value}))}/><select aria-label="Fluid unit" style={{...sel,width:98,minWidth:0,flex:"1 1 90px"}} value={lubricantPick.unit} onChange={e=>setLubricantPick(x=>({...x,unit:e.target.value}))}><option value="qt">Quarts</option><option value="gal">Gallons</option><option value="L">Liters</option></select></div></Field>
             <Btn small onClick={addLubricantLine}>Add Fluid</Btn><Btn small variant="secondary" onClick={()=>setShowLubricantPicker(false)}>Cancel</Btn>
           </div>
         </div>}
@@ -4019,7 +4074,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
 
       {/* Detail modal — read-only by default, editable when Update clicked */}
       {modal==="detail" && detailWO && (
-        <Modal title={`Work Order — ${detailWO.id}`} onClose={()=>{ setModal(null); setDetailWO(null); setEditMode(false); }}>
+        <Modal title={`Work Order — ${detailWO.id}`} onClose={closeWOEditor}>
           {renderWODetail(state.workOrders.find(w=>w.id===detailWO.id)||detailWO)}
           {editMode && (
             <div style={{ borderTop:`2px solid ${T.accent}`, marginTop:16, paddingTop:16 }}>
@@ -4032,14 +4087,14 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
 
       {/* Edit modal */}
       {modal==="edit" && (
-        <Modal title={`Edit Work Order — ${form.id}`} onClose={()=>setModal(null)}>
+        <Modal title={`Edit Work Order — ${form.id}`} onClose={closeWOEditor}>
           <div style={{ background:T.grayLt, border:`1px solid ${T.border}`, borderRadius:8, padding:"10px 14px", marginBottom:14 }}>
             <div style={{ fontFamily:T.sans, fontSize:11, fontWeight:600, color:T.muted, textTransform:"uppercase", letterSpacing:.4, marginBottom:3 }}>Equipment</div>
             <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:600, color:T.text }}>{state.equipment.find(e=>e.id===form.equipment)?.name||form.equipmentLabel||form.equipment||"—"}</div>
           </div>
           {renderWOForm()}
           <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:8 }}>
-            <Btn variant="secondary" onClick={()=>setModal(null)}>Cancel</Btn>
+            <Btn variant="secondary" onClick={closeWOEditor}>Cancel</Btn>
             <Btn onClick={()=>save(true)}>Save Work Order Changes</Btn>
           </div>
         </Modal>
