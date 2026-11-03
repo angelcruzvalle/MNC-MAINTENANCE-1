@@ -4495,8 +4495,8 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
       ? String(wo.inspectionTaskName || wo.faultDescription || wo.description || wo.title || "")
       : String(wo.faultDescription || wo.description || wo.title || "");
     const win = window.open("", "_blank", "width=900,height=700");
-    const historyEmailSubject = `Historical Work Order ${wo.id || ""} - ${wo.title || workType}`;
-    const historyEmailBody = [`MaintForge Historical Work Order ${wo.id || ""}`, "", `Type: ${workType}`, `Status: ${wo.status || "Completed"}`, `Equipment: ${eq ? `${eq.name} (${eq.id})` : (wo.equipment || "")}`, `Date: ${wo.completed || wo.created || ""}`, `Mechanic: ${wo.tech || ""}`, "", "Work Order:", wo.title || wo.faultDescription || "", "", "Work Performed / Notes:", wo.workPerformed || wo.mechanicNotes || wo.description || ""].join("\n");
+    const historyEmailSubject = `Historical Work Order ${wo.id || ""} - ${wo.title || type}`;
+    const historyEmailBody = [`MaintForge Historical Work Order ${wo.id || ""}`, "", `Type: ${type}`, `Status: ${wo.status || "Completed"}`, `Equipment: ${eq ? `${eq.name} (${eq.id})` : (wo.equipment || "")}`, `Date: ${wo.completed || wo.created || ""}`, `Mechanic: ${wo.tech || ""}`, "", "Work Order:", wo.title || wo.faultDescription || "", "", "Work Performed / Notes:", wo.workPerformed || wo.mechanicNotes || wo.description || ""].join("\n");
     const historyEmailHref = `mailto:?subject=${encodeURIComponent(historyEmailSubject)}&body=${encodeURIComponent(historyEmailBody)}`;
     if (!win) { alert("Please allow pop-ups to print work orders."); return; }
     win.document.write(`<!DOCTYPE html><html><head><title>Work Order ${h(wo.id)}</title><style>
