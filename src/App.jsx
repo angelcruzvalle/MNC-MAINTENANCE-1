@@ -1492,14 +1492,24 @@ function reducer(state, { type, payload }) {
       return { ...state, parts: state.parts.map(p => String(p.id)===String(payload.id) ? updated : p) };
     }
     case "MERGE_DUPLICATE_PARTS": {
-      const {keepId,removeIds,finalQty}=payload||{};
-      const ids=new Set((removeIds||[]).map(String));
-      const survivor=(state.parts||[]).find(p=>String(p.id)===String(keepId));
-      if(!survivor || ids.has(String(keepId)) || !Number.isFinite(finalQty) || finalQty<0) return state;
+      const {keepIndex,partNumber,finalQty,expectedParts,mergedId}=payload||{};
+      const parts=state.parts||[];
+      // Select by row, since legacy imports can contain multiple rows with the same ID.
+      if(!Number.isInteger(keepIndex) || !parts[keepIndex] || JSON.stringify(parts)!==expectedParts || !Number.isFinite(finalQty) || finalQty<0) return state;
+      const sku=String(partNumber||"").trim().toLowerCase();
+      const survivor=parts[keepIndex];
+      if(!sku || String(survivor.partNumber||"").trim().toLowerCase()!==sku) return state;
+      const group=parts.filter(p=>String(p.partNumber||"").trim().toLowerCase()===sku);
+      if(group.length<2 || group.some(p=>String(p.unit||"ea").trim().toLowerCase()!==String(survivor.unit||"ea").trim().toLowerCase())) return state;
+      const ids=new Set(group.map(p=>String(p.id??"")).filter(Boolean));
+      // An ID shared by unrelated SKUs is ambiguous: do not rewrite its history.
+      if(parts.some(p=>String(p.partNumber||"").trim().toLowerCase()!==sku && ids.has(String(p.id)))) return state;
+      const keepId=survivor.id || mergedId;
+      if(!keepId) return state;
       const remap=partId=>ids.has(String(partId))?keepId:partId;
       const remapUsed=items=>Array.isArray(items)?items.map(item=>item && typeof item==="object"?{...item,partId:item.partId!=null?remap(item.partId):item.partId,inventoryPartId:item.inventoryPartId!=null?remap(item.inventoryPartId):item.inventoryPartId}:item):items;
       return {...state,
-        parts:(state.parts||[]).filter(p=>!ids.has(String(p.id))).map(p=>String(p.id)===String(keepId)?{...p,qty:finalQty}:p),
+        parts:parts.flatMap((p,i)=>String(p.partNumber||"").trim().toLowerCase()!==sku?[p]:i===keepIndex?[{...survivor,id:keepId,qty:finalQty}]:[]),
         workOrders:(state.workOrders||[]).map(w=>({...w,partsUsed:remapUsed(w.partsUsed),parts:remapUsed(w.parts)})),
         pmTasks:(state.pmTasks||[]).map(t=>({...t,parts:remapUsed(t.parts)})),
       };
@@ -1688,7 +1698,7 @@ function reducer(state, { type, payload }) {
   }
 }
 
-const genId = p => `${p}-${String(Date.now()).slice(-5)}`;
+const genId = p => p === "PT" ? `PT-${crypto.randomUUID()}` : `${p}-${String(Date.now()).slice(-5)}`;
 const today = () => new Date().toISOString().split("T")[0];
 const isValidISODate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || "")) && !Number.isNaN(new Date(`${value}T00:00:00Z`).getTime()) && new Date(`${value}T00:00:00Z`).toISOString().slice(0,10) === String(value);
 const formatDateMMDDYYYY = (value = today()) => {
@@ -5872,7 +5882,7 @@ function Parts({ state, dispatch }) {
     const key=String(p.partNumber||"").trim().toLowerCase();
     if(key)(groups[key] ||= []).push(p);
     return groups;
-  },{})).filter(group=>group.length>1);
+  },Object.create(null))).filter(group=>group.length>1);
   const reconcileDuplicates=()=>{
     if(!duplicateGroups.length)return alert("No duplicate part numbers found.");
     const group=duplicateGroups[0];
@@ -5882,13 +5892,15 @@ function Parts({ state, dispatch }) {
     const index=Number(chosen)-1;
     if(!Number.isInteger(index)||index<0||index>=group.length)return alert("Invalid selection; nothing changed.");
     const keep=group[index];
-    if(group.some(p=>String(p.unit||"ea").toLowerCase()!==String(keep.unit||"ea").toLowerCase()))return alert("Unit types differ. Correct the units before merging.");
+    if(group.some(p=>String(p.unit||"ea").trim().toLowerCase()!==String(keep.unit||"ea").trim().toLowerCase()))return alert("Unit types differ. Correct the units before merging.");
+    const groupIds=new Set(group.map(p=>String(p.id??"")).filter(Boolean));
+    if(parts.some(p=>!group.includes(p) && groupIds.has(String(p.id)))) return alert("A record ID is shared with a different part number. Nothing was merged because its work-order references need review.");
     const raw=prompt(`Physical stock reconciliation for ${keep.partNumber}:\nCurrent duplicate counts: ${group.map(p=>p.qty||0).join(" + ")}\n\nEnter the VERIFIED total physically on hand. Counts are NOT automatically added because duplicates may represent the same stock.`,String(keep.qty||0));
     if(raw===null)return;
     const qty=Number(raw);
-    if(!Number.isFinite(qty)||qty<0)return alert("Enter a valid nonnegative physical quantity.");
+    if(!raw.trim() || !Number.isFinite(qty)||qty<0)return alert("Enter a valid nonnegative physical quantity.");
     if(!confirm(`MERGE ${group.length} records for ${keep.partNumber}?\nKeep ID: ${keep.id}\nRemove ${group.length-1} duplicate records\nSet stock to ${qty} ${keep.unit||"ea"}\n\nExisting work order part references will be redirected. Back up your data before proceeding.`))return;
-    dispatch({type:"MERGE_DUPLICATE_PARTS",payload:{keepId:keep.id,removeIds:group.filter(p=>p.id!==keep.id).map(p=>p.id),finalQty:qty}});
+    dispatch({type:"MERGE_DUPLICATE_PARTS",payload:{keepIndex:parts.indexOf(keep),partNumber:keep.partNumber,expectedParts:JSON.stringify(parts),mergedId:keep.id || genId("PT"),finalQty:qty}});
   };
   const del = id => { if(confirm("Delete part?")) dispatch({type:"DELETE_PART",payload:id}); };
 
