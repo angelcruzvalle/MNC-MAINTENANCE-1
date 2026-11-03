@@ -1106,6 +1106,24 @@ function usageTrackingIsOff(eq={}) {
   return trackRaw === false || trackRaw === 0 || String(trackRaw).trim().toLowerCase() === "false" || usageRaw === "n/a" || usageRaw === "na" || usageRaw === "none" || usageRaw === "off";
 }
 
+// Resolve the same current meter baseline used by work-order validation.
+function currentWorkOrderUsage(state={}, equipmentId) {
+  const asset=(state.equipment||[]).flatMap(eq=>[eq,...(eq.attachments||[])]).find(eq=>String(eq.id)===String(equipmentId));
+  const logs=(state.usageLogs||[]).filter(l=>String(l.equipmentId)===String(equipmentId));
+  const reading=(values)=>{
+    const valid=values.filter(v=>v!==null && v!==undefined && String(v).trim()!=="").map(Number).filter(v=>Number.isFinite(v)&&v>=0);
+    return valid.length ? String(Math.max(...valid)) : "";
+  };
+  return {hours:reading([asset?.currentHours,asset?.hours,...logs.map(l=>l.hours)]),mileage:reading([asset?.currentMileage,asset?.mileage,...logs.map(l=>l.mileage)])};
+}
+function refreshOpenWorkOrderUsage(state, wo) {
+  if(wo.usageNA || /^(completed|closed)$/i.test(String(wo.status||""))) return wo;
+  const asset=(state.equipment||[]).flatMap(eq=>[eq,...(eq.attachments||[])]).find(eq=>String(eq.id)===String(wo.equipment));
+  if(asset && usageTrackingIsOff(asset)) return wo;
+  const current=currentWorkOrderUsage(state,wo.equipment);
+  return {...wo,usageHours:current.hours!==""?current.hours:wo.usageHours,usageMileage:current.mileage!==""?current.mileage:wo.usageMileage};
+}
+
 function equipmentUsageSummary(state={}, eq={}) {
   if (usageTrackingIsOff(eq)) {
     return { type:"na", value:null, label:"Hours", display:"N/A", hours:null, miles:null };
@@ -2861,17 +2879,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
 
   const openAdd = () => openAddForType("Repair");
   const pickType = (typeId) => openAddForType(typeId);
-  const latestUsageForEquipment = (equipmentId) => {
-    const logs = (state.usageLogs||[])
-      .filter(l=>String(l.equipmentId)===String(equipmentId))
-      .sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")) || String(b.id||"").localeCompare(String(a.id||"")));
-    const latestHoursLog = logs.find(l=>String(l.hours ?? "").trim());
-    const latestMileageLog = logs.find(l=>String(l.mileage ?? "").trim());
-    return {
-      hours: latestHoursLog ? String(latestHoursLog.hours) : "",
-      mileage: latestMileageLog ? String(latestMileageLog.mileage) : "",
-    };
-  };
+  const latestUsageForEquipment = (equipmentId) => currentWorkOrderUsage(state, equipmentId);
 
   const pickEquipment = (item) => {
     const eq = state.equipment.find(e=>e.id===item.id);
@@ -2899,13 +2907,14 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
   }, [initialWORequest?.requestId]);
 
   /* Click row to open the editable Work Order form */
-  const openEdit = (wo) => {
+  const openEdit = (savedWO) => {
+    const wo = refreshOpenWorkOrderUsage(state, savedWO);
     setDetailWO(null);
     setEditMode(false);
     const directEq = state.equipment.find(e=>e.id===wo.equipment);
     const attachmentParent = !directEq ? state.equipment.find(e=>(e.attachments||[]).some(a=>String(a.id)===String(wo.equipment))) : null;
     const attachment = attachmentParent ? (attachmentParent.attachments||[]).find(a=>String(a.id)===String(wo.equipment)) : null;
-    const eq = directEq || attachmentParent;
+    const eq = attachment || directEq;
     const hasAnyUsageReading = !!String(wo.usageHours||"").trim() || !!String(wo.usageMileage||"").trim();
     const needsManualUsagePrompt = (wo.woType === "Inspection") && eq && !eq.trackUsage && !hasAnyUsageReading && !wo.usageNA;
     setForm({
