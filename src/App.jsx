@@ -1482,9 +1482,14 @@ function reducer(state, { type, payload }) {
       return { ...state, parts: [payload,...state.parts] };
     }
     case "UPDATE_PART": {
-      const sku=String(payload.partNumber||"").trim().toLowerCase();
-      if(sku && (state.parts||[]).some(p=>String(p.id)!==String(payload.id) && String(p.partNumber||"").trim().toLowerCase()===sku)) return state;
-      return { ...state, parts: state.parts.map(p => p.id===payload.id ? payload : p) };
+      const existing = (state.parts||[]).find(p=>String(p.id)===String(payload.id));
+      if(!existing) return state;
+      const updated = {...existing, ...payload};
+      const sku=String(updated.partNumber||"").trim().toLowerCase();
+      const previousSku=String(existing.partNumber||"").trim().toLowerCase();
+      // Existing duplicate SKUs must not block unrelated edits, including alert preferences.
+      if(sku !== previousSku && sku && (state.parts||[]).some(p=>String(p.id)!==String(payload.id) && String(p.partNumber||"").trim().toLowerCase()===sku)) return state;
+      return { ...state, parts: state.parts.map(p => String(p.id)===String(payload.id) ? updated : p) };
     }
     case "MERGE_DUPLICATE_PARTS": {
       const {keepId,removeIds,finalQty}=payload||{};
@@ -5843,10 +5848,17 @@ function Parts({ state, dispatch }) {
   const openAdd  = () => { setForm({qty:0,minQty:1,unit:"ea",unitCost:0,lowStockAlert:true,modelFit:"",equipmentId:""}); setModal("add"); };
   const openEdit = p  => { setForm({...p}); setModal(p); };
   const save = () => {
+    const existing = modal === "add" ? null : (state.parts||[]).find(p=>String(p.id)===String(form.id));
+    const alertOnly = existing && Object.keys({...existing,...form}).every(key => key === "lowStockAlert" || JSON.stringify(existing[key]) === JSON.stringify(form[key]));
+    if(alertOnly) {
+      dispatch({type:"UPDATE_PART",payload:{id:existing.id,lowStockAlert:form.lowStockAlert!==false}});
+      setModal(null);
+      return;
+    }
     if(!form.name) return alert("Nomenclature required.");
     if(!String(form.location||"").trim()) return alert("Choose a Parts Storage Location. Add storage locations in Settings first.");
     const sku = String(form.partNumber||"").trim().toLowerCase();
-    if(sku && parts.some(p=>String(p.partNumber||"").trim().toLowerCase()===sku && String(p.id)!==String(form.id||""))) {
+    if(sku && (!existing || sku !== String(existing.partNumber||"").trim().toLowerCase()) && parts.some(p=>String(p.partNumber||"").trim().toLowerCase()===sku && String(p.id)!==String(form.id||""))) {
       alert(`Part #${form.partNumber} already exists in inventory. Edit the existing part or receive stock against it instead of creating a duplicate.`);
       return;
     }
@@ -6110,7 +6122,7 @@ function Parts({ state, dispatch }) {
             <Field label="Unit Cost ($)" half><input style={inp} {...decimalInputAttrs()} value={form.unitCost ?? ""} onChange={e=>setForm(f=>({...f,unitCost:sanitizeDecimalInput(e.target.value)}))} /></Field>
             <Field label="Qty on Hand" half><input style={inp} type="number" value={form.qty||0} onChange={F("qty")} /></Field>
             <Field label="Unit Type" half><select style={sel} value={form.unit||"ea"} onChange={e=>handleUnitSelectChange(e.target.value, form.unit||"ea", v=>setForm(f=>({...f,unit:v})))}>{getUnitOptionsFromState(state).map(u=><option key={u} value={u}>{u}</option>)}<option value="__new_unit__">+ Add new...</option></select></Field>
-            <Field label="Min Qty (Low Stock)" half><input style={inp} type="number" value={form.minQty||1} onChange={F("minQty")} /></Field>
+            <Field label="Min Qty (Low Stock)" half><input style={inp} type="number" value={form.minQty ?? 1} onChange={F("minQty")} /></Field>
             <div style={{ marginBottom:14, gridColumn:"span 2", display:"flex", alignItems:"center", gap:12 }}>
               <label style={{ fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext }}>Low Stock Alert:</label>
               <button type="button" onClick={()=>setForm(f=>({...f,lowStockAlert:!(f.lowStockAlert!==false)}))}
