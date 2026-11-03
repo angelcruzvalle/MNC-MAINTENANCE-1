@@ -996,7 +996,7 @@ function adjustLubricantsForWO(lubricants=[], partsUsed=[], direction=-1) {
   (partsUsed||[]).filter(x=>x?.kind==="lubricant"&&x.lubricantId).forEach(item=>{
     const gallons=+(item.gallons||0);
     if(!gallons) return;
-    next=next.map(l=>l.id===item.lubricantId?{...l,onHand:Math.max(0,+(l.onHand||0)+(direction*gallons))}:l);
+    next=next.map(l=>l.id===item.lubricantId?{...l,onHand:+(l.onHand||0)+(direction*gallons)}:l);
   });
   return next;
 }
@@ -1218,18 +1218,19 @@ function normalizeMaintForgeSingleSite(input={}) {
 // Keep the equipment service baseline synchronized with completed Service Work Orders.
 // Only a newer service can replace the existing baseline; never lower current meters.
 function syncCompletedServiceBaseline(equipment, wo) {
-  if (!wo || String(wo.status || "").toLowerCase() !== "completed" || !/service/i.test(String(wo.woType || wo.type || ""))) return equipment;
+  if (!wo || String(wo.status || "").toLowerCase() !== "completed" || !/service|prevent/i.test(String(wo.woType || wo.type || ""))) return equipment;
   const eqId = String(wo.equipment || wo.equipmentId || "");
   const date = String(wo.completed || wo.completedDate || wo.dateCompleted || wo.closedDate || "").slice(0, 10);
   if (!eqId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return equipment;
-  return equipment.map(eq => {
+  const updateAsset = (eq) => {
     if (String(eq.id) !== eqId || (eq.pmBaselineDate && String(eq.pmBaselineDate).slice(0,10) > date)) return eq;
     const mode = String(eq.usageType || "hours").toLowerCase();
     const off = usageTrackingIsOff(eq);
     const meter = mode === "mileage" ? Number(wo.usageMileage) : Number(wo.usageHours);
-    const hasMeter = !off && Number.isFinite(meter) && meter >= 0 && (mode === "mileage" ? wo.usageMileage : wo.usageHours) !== undefined && (mode === "mileage" ? wo.usageMileage : wo.usageHours) !== "";
+    const hasMeter = !off && !wo.usageNA && (mode === "mileage" ? wo.usageMileage : wo.usageHours) != null && Number.isFinite(meter) && meter >= 0 && (mode === "mileage" ? wo.usageMileage : wo.usageHours) !== undefined && (mode === "mileage" ? wo.usageMileage : wo.usageHours) !== "";
     return { ...eq, pmBaselineDate:date, ...(hasMeter ? {pmBaselineUsage:meter} : {}) };
-  });
+  };
+  return equipment.map(eq => ({ ...updateAsset(eq), ...(Array.isArray(eq.attachments) ? {attachments:eq.attachments.map(updateAsset)} : {}) }));
 }
 
 function reducer(state, { type, payload }) {
@@ -1239,12 +1240,17 @@ function reducer(state, { type, payload }) {
   if(type === "ADD_WO") payload = stampLocation(payload || {}, state);
   if(facilityScopedUpdateTypes.has(type)) payload = stampLocation(payload || {}, state);
   switch(type) {
-    case "REPLACE_STATE":   return normalizeMaintForgeSingleSite({ ...state, ...payload });
+    case "REPLACE_STATE": {
+      const restored = normalizeMaintForgeSingleSite({ ...state, ...payload });
+      // Recover missing service baselines from dated history without replaying inventory or schedules.
+      const equipment = (restored.workOrders || []).reduce(syncCompletedServiceBaseline, restored.equipment || []);
+      return { ...restored, equipment };
+    }
     case "READ_NOTIF":    return { ...state, notifications: state.notifications.map(n => n.id===payload ? {...n,read:true} : n) };
     case "READ_ALL":      return { ...state, notifications: state.notifications.map(n => ({...n,read:true})) };
     case "ADD_NOTIFICATION": return { ...state, notifications:[makeNotification(payload), ...(state.notifications||[])] };
     case "ADD_WO": {
-      const shouldConsume = payload.status === "Completed" && !payload.inventoryConsumed;
+      const shouldConsume = payload.status === "Completed" && !payload.inventoryConsumed && !payload.historicalImport;
       const savedWO = shouldConsume ? { ...payload, inventoryConsumed:true } : payload;
       const equipmentStatus = savedWO.status==="Completed" ? "Fully Operational" : (savedWO.equipmentStatus || null);
       const equipment = equipmentStatus
@@ -1265,7 +1271,7 @@ function reducer(state, { type, payload }) {
       // Inventory is consumed only when the WO closes/completes.
       // If a completed WO is reopened, restore those parts. If closed again, consume again.
       if(prevWO) {
-        if(!wasConsumed && willBeCompleted) {
+        if(!wasConsumed && willBeCompleted && !payload.historicalImport) {
           parts = adjustInventoryForWO(parts, payload.partsUsed, -1);
           lubricants = adjustLubricantsForWO(lubricants, payload.partsUsed, -1);
           payloadWithStatus = { ...payloadWithStatus, inventoryConsumed:true };
@@ -1679,7 +1685,7 @@ function reducer(state, { type, payload }) {
 
 const genId = p => `${p}-${String(Date.now()).slice(-5)}`;
 const today = () => new Date().toISOString().split("T")[0];
-const isValidISODate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || "")) && !Number.isNaN(new Date(`${value}T00:00:00`).getTime());
+const isValidISODate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || "")) && !Number.isNaN(new Date(`${value}T00:00:00Z`).getTime()) && new Date(`${value}T00:00:00Z`).toISOString().slice(0,10) === String(value);
 const formatDateMMDDYYYY = (value = today()) => {
   const iso = isValidISODate(String(value || "").slice(0,10)) ? String(value).slice(0,10) : today();
   const [yyyy, mm, dd] = iso.split("-");
@@ -2186,7 +2192,7 @@ function DocUploader({ documents=[], onChange, label="Documents", category, phot
 /* -- NOTIFICATION PANEL -- */
 function NotifPanel({ notifications, dispatch, onClose }) {
   const unread = notifications.filter(n=>!n.read).length;
-  const [nowTick, setNowTick] = useState(Date.now());
+  const [nowTick, setNowTick] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNowTick(Date.now()), 30000);
     return () => clearInterval(id);
@@ -2219,7 +2225,7 @@ function NotifPanel({ notifications, dispatch, onClose }) {
 }
 
 /* -- HEADER -- */
-function Header({ notifications, dispatch, currentPage, onMenuToggle }) {
+function Header({ notifications, dispatch, currentPage, onMenuToggle, settings={} }) {
   const [showNotif, setShowNotif] = useState(false);
   const unread = notifications.filter(n=>!n.read).length;
   return (
@@ -4443,7 +4449,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
 
 
   const printHistoryWO = (wo) => {
-    const eq = state.equipment.find(e => e.id === wo.equipment) || {};
+    const eq = state.equipment.flatMap(e => [e, ...(e.attachments || [])]).find(e => String(e.id) === String(wo.equipment)) || {};
     const gs = state.settings || {};
     const historyCompanyLogo = resolveWorkOrderBrandLogo(state, wo, eq || {});
     const historyLocationName = (() => {
@@ -4571,7 +4577,11 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
           </div>
         </section>
         <section class="section"><div class="section-title">Description</div><div class="textBlock">${h(desc)||"&nbsp;"}</div></section>
-        <section class="section"><div class="section-title">Work Details</div><div class="textBlock tall"><b>Problem Reported / Work Description</b><br>${h(wo.description || wo.faultDescription)||"&nbsp;"}<br><br><b>Mechanic Notes / Work Performed</b><br>${h(wo.mechanicNotes)||"&nbsp;"}</div></section>
+        <section class="section"><div class="section-title">Work Details</div><div class="textBlock tall"><b>Problem Reported / Work Description</b><br>${h(wo.description || wo.faultDescription)||"&nbsp;"}<br><br><b>Mechanic Notes / Work Performed</b><br>${h(wo.mechanicNotes || wo.workPerformed)||"&nbsp;"}</div></section>
+        ${typeLower.includes("service") || typeLower.includes("prevent") ? (() => {
+          const steps = Array.isArray(wo.taskProcedureSnapshot?.steps) ? wo.taskProcedureSnapshot.steps : normalizeStepLines(wo.serviceStepLines || wo.serviceChecklist || wo.serviceSteps || "");
+          return steps.length ? `<section class="section"><div class="section-title">Service Procedures — Completion Status</div><table class="data-table"><thead><tr><th>Status</th><th>Procedure / Work Details</th></tr></thead><tbody>${steps.map((step,i)=>`<tr><td>${wo.serviceStepCompleted?.[i]?"[X] Done":"[ ] Pending"}</td><td>${h(step)}</td></tr>`).join("")}</tbody></table></section>` : "";
+        })() : ""}
         ${typeLower.includes("inspection") && inspectionRowsForPrint.length ? `<section class="section"><div class="section-title">Inspection Checklist</div><table class="data-table"><thead><tr><th style="width:55%">Step</th><th style="width:15%">Pass / Fail</th><th style="width:30%">Comment</th></tr></thead><tbody>${inspectionRowsForPrint.map((r,i)=>`<tr><td>${i+1}. ${h(r.step)||"&nbsp;"}</td><td><b>${h(r.result)||"—"}</b></td><td>${h(r.comment)||"—"}</td></tr>`).join("")}</tbody></table></section>` : ""}
         <section class="section" data-print-item="Parts and Labor Summary">
           <div class="summaryTitle">Parts and Labor Summary</div>
@@ -9259,7 +9269,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
   const [reviewRequest, setReviewRequest] = useState(null);
 
   useEffect(()=>{
-    if(isOperatorPortal || !activeSession?.user?.id) return;
+    if(isOperatorPortal || !session?.user?.id) return;
     let cancelled = false;
     async function loadPublicRequests(){
       try {
@@ -9292,7 +9302,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
       } catch(e) { console.warn("Public WO requests load failed:", e); }
     }
     loadPublicRequests();
-  }, [isOperatorPortal, activeSession?.user?.id]);
+  }, [isOperatorPortal, session?.user?.id]);
 
   useEffect(()=>{
     const missing = allLocations.filter(f=>!facilityQrIds[f]);
@@ -9307,7 +9317,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
     if(isOperatorPortal && facilityFromToken && facility !== facilityFromToken) setLocation(facilityFromToken);
   }, [portalToken, facilityFromToken]);
   useEffect(()=>{
-    if(isOperatorPortal || !activeSession?.user?.id) return;
+    if(isOperatorPortal || !session?.user?.id) return;
     const timer = setTimeout(()=>{
       (allLocations||[]).forEach(fac=>{
         const token = getLocationQrToken(settings, fac);
@@ -9315,7 +9325,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
       });
     }, 600);
     return ()=>clearTimeout(timer);
-  }, [isOperatorPortal, activeSession?.user?.id, allLocations.join("|"), JSON.stringify(facilityQrIds), (state.equipment||[]).length, settings.companyName]);
+  }, [isOperatorPortal, session?.user?.id, allLocations.join("|"), JSON.stringify(facilityQrIds), (state.equipment||[]).length, settings.companyName]);
 
 
   const exactEqForLocation = equipmentSource.filter(e=>equipmentMatchesLocation(e, facility));
@@ -9359,7 +9369,7 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
       photos: requestForm.photos || [],
       status:"New",
       portalToken,
-      ownerUserId: publicPortal?.owner_user_id || activeSession?.user?.id || "",
+      ownerUserId: publicPortal?.owner_user_id || session?.user?.id || "",
     };
     if(isOperatorPortal && publicMode) {
       const ok = await submitPublicWORequest(req);
@@ -9406,8 +9416,8 @@ function WorkOrderRequests({ state, dispatch, session, publicPortal=null, public
 
   const printQR = async (fac) => {
     const token = getLocationQrToken(settings, fac);
-    const url = requestUrlForLocation(fac, settings, activeSession?.user?.id || "");
-    await upsertWORequestPortal({ token, ownerUserId:activeSession?.user?.id, facility:fac, settings, equipment:state.equipment||[] });
+    const url = requestUrlForLocation(fac, settings, session?.user?.id || "");
+    await upsertWORequestPortal({ token, ownerUserId:session?.user?.id, facility:fac, settings, equipment:state.equipment||[] });
     const win = window.open("","_blank");
     if(!win) { alert("Pop-up blocked. Allow pop-ups to print the QR code."); return; }
     win.document.write(`<html><head><title>Work Order Request QR</title><style>
@@ -9994,7 +10004,7 @@ function PerformanceActivity({ state }) {
   const printReport=()=>{
     const win=window.open("","_blank","width=1000,height=760"); if(!win)return;
     const row=(a,b)=>`<tr><td>${a}</td><td style="text-align:right;font-weight:700">${b}</td></tr>`;
-    win.document.write(`<!doctype html><html><head><title>Performance & Activity Report</title><style>body{font-family:Arial,sans-serif;padding:28px;color:#111}*{box-sizing:border-box}.head{border:2px solid #000;background:#dbeafe;padding:14px 16px}h1{margin:0;font-size:22px}.meta{margin-top:6px;font-size:12px}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #000;padding:8px 10px;font-size:12px}th{background:#dbeafe;text-align:left}.note{font-size:10px;margin-top:12px;color:#333}@media print{button{display:none}}</style></head><body><div class="head"><h1>MaintForge — Maintenance Performance & Activity Report</h1><div class="meta">${label} · ${facilityLabel}</div></div><table><tr><th>Activity</th><th style="text-align:right">Period Total</th></tr>${row("Repairs Completed",repairs.length)}${row("Services / Preventive Maintenance",services.length)}${row("Inspections Completed",inspections.length)}${row("Total Work Orders Completed",completed.length)}${row("Labor Hours",laborHours.toFixed(1)+" hrs")}${row("Parts Consumed",partsConsumed.toLocaleString())}${row("Parts Consumed Value",moneyFmt(partsConsumedValue))}${row("Maintenance Spending",moneyFmt(maintenanceSpend))}</table><div class="note">Maintenance Spending follows MaintForge Work Order spending settings. Purchase spending is shown separately and is not added again to Maintenance Spending, avoiding double-counting parts that were purchased and later consumed.</div><button onclick="window.print()" style="margin-top:18px;padding:9px 16px">Print / Save PDF</button></body></html>`); win.document.close();
+    win.document.write(`<!doctype html><html><head><title>Performance & Activity Report</title><style>body{font-family:Arial,sans-serif;padding:28px;color:#111}*{box-sizing:border-box}.head{border:2px solid #000;background:#dbeafe;padding:14px 16px}h1{margin:0;font-size:22px}.meta{margin-top:6px;font-size:12px}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #000;padding:8px 10px;font-size:12px}th{background:#dbeafe;text-align:left}.note{font-size:10px;margin-top:12px;color:#333}@media print{button{display:none}}</style></head><body><div class="head"><h1>MaintForge — Maintenance Performance & Activity Report</h1><div class="meta">${htmlEscape(label)} · ${htmlEscape(facilityLabel)}</div></div><table><tr><th>Activity</th><th style="text-align:right">Period Total</th></tr>${row("Repairs Completed",repairs.length)}${row("Services / Preventive Maintenance",services.length)}${row("Inspections Completed",inspections.length)}${row("Total Work Orders Completed",completed.length)}${row("Labor Hours",laborHours.toFixed(1)+" hrs")}${row("Parts Consumed",partsConsumed.toLocaleString())}${row("Parts Consumed Value",moneyFmt(partsConsumedValue))}${row("Maintenance Spending",moneyFmt(maintenanceSpend))}</table><div class="note">Maintenance Spending follows MaintForge Work Order spending settings. Purchase spending is shown separately and is not added again to Maintenance Spending, avoiding double-counting parts that were purchased and later consumed.</div><button onclick="window.print()" style="margin-top:18px;padding:9px 16px">Print / Save PDF</button></body></html>`); win.document.close();
   };
   const topEq=Object.entries(completed.reduce((a,w)=>{const id=w.equipment||"Unknown";a[id]=(a[id]||0)+1;return a;},{})).sort((a,b)=>b[1]-a[1]).slice(0,8);
   return <div>
@@ -10002,7 +10012,7 @@ function PerformanceActivity({ state }) {
     <Card style={{padding:14,marginBottom:16}}><div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"end"}}>
       <label style={{fontSize:11,fontWeight:700}}>PERIOD<select style={{...sel,display:"block",marginTop:4,minWidth:150}} value={periodMode} onChange={e=>setPeriodMode(e.target.value)}><option value="month">Month</option><option value="quarter">Quarter</option><option value="fy">Fiscal Year</option><option value="year">Calendar Year</option><option value="lifetime">Lifetime</option><option value="custom">Custom</option></select></label>
       {periodMode==="month"&&<label style={{fontSize:11,fontWeight:700}}>MONTH<input style={{...inp,display:"block",marginTop:4}} type="month" value={month} onChange={e=>setMonth(e.target.value)}/></label>}
-      {(periodMode==="fy"||periodMode==="quarter"||periodMode==="year")&&<label style={{fontSize:11,fontWeight:700}}>FISCAL YEAR<input style={{...inp,display:"block",marginTop:4,width:110}} type="number" value={fy} onChange={e=>setFy(+e.target.value||currentFY)}/></label>}
+      {(periodMode==="fy"||periodMode==="quarter"||periodMode==="year")&&<label style={{fontSize:11,fontWeight:700}}>{periodMode==="year"?"CALENDAR YEAR":"FISCAL YEAR"}<input style={{...inp,display:"block",marginTop:4,width:110}} type="number" value={fy} onChange={e=>setFy(+e.target.value||currentFY)}/></label>}
       {periodMode==="quarter"&&<label style={{fontSize:11,fontWeight:700}}>QUARTER<select style={{...sel,display:"block",marginTop:4}} value={quarter} onChange={e=>setQuarter(+e.target.value)}>{[1,2,3,4].map(q=><option key={q} value={q}>Q{q}</option>)}</select></label>}
       {periodMode==="custom"&&<><label style={{fontSize:11,fontWeight:700}}>FROM<input style={{...inp,display:"block",marginTop:4}} type="date" value={customStart} onChange={e=>setCustomStart(e.target.value)}/></label><label style={{fontSize:11,fontWeight:700}}>TO<input style={{...inp,display:"block",marginTop:4}} type="date" value={customEnd} onChange={e=>setCustomEnd(e.target.value)}/></label></>}
       <label style={{fontSize:11,fontWeight:700}}>FACILITY<select style={{...sel,display:"block",marginTop:4,minWidth:190}} value={facility} onChange={e=>setFacility(e.target.value)}><option value="all">All Facilities</option>{(state.locations||[]).map(l=><option key={l.id} value={l.id}>{l.name||l.id}</option>)}</select></label>
