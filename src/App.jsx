@@ -6715,6 +6715,7 @@ function equipmentServiceSchedule(state, eq) {
 
 function EquipmentPMSchedule({state,dispatch}) {
   const [search,setSearch]=useState("");
+  const [collapsed,setCollapsed]=useState(false);
   const [editing,setEditing]=useState(null);
   const [draft,setDraft]=useState({});
   const fields=[["lastDate","Last service date","date"],["nextDate","Next service date","date"],["lastHours","Last service hours","number"],["nextHours","Next service hours","number"],["lastMileage","Last service mileage","number"],["nextMileage","Next service mileage","number"]];
@@ -6733,15 +6734,35 @@ function EquipmentPMSchedule({state,dispatch}) {
     }
     dispatch({type:"SET_PM_SCHEDULE_OVERRIDES",payload:{id:selected.id,overrides}});setEditing(null);
   };
-  const show=(row,prefix)=>[ ["Date",row.values[`${prefix}Date`],`${prefix}Date`],["Hours",row.values[`${prefix}Hours`],`${prefix}Hours`],["Mileage",row.values[`${prefix}Mileage`],`${prefix}Mileage`] ].map(([label,value,key])=><div key={key} style={{marginBottom:5}}><b>{label}:</b> {value!==""&&value!=null?String(value):"—"}{row.manual[key]!==undefined&&row.manual[key]!==""&&<span style={{fontSize:10,color:T.accent}}> · Manual</span>}</div>);
+  const cell={padding:"10px 12px",border:`1px solid ${T.border}`,verticalAlign:"middle"};
+  const header={...cell,fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:.5,whiteSpace:"nowrap",background:T.grayLt,color:T.subtext};
+  const reading=(row,key)=>{
+    const value=row.values[key];
+    const manual=row.manual[key]!==undefined&&row.manual[key]!=="";
+    const text=value===""||value==null?"—":key.endsWith("Date")?String(value):Number(value).toLocaleString(undefined,{maximumFractionDigits:2});
+    return <><span style={{fontVariantNumeric:"tabular-nums",fontWeight:600}}>{text}</span>{manual&&<div style={{fontSize:9,color:T.accent,marginTop:3,fontWeight:700}}>MANUAL</div>}</>;
+  };
   return <Card style={{marginBottom:20}}>
-    <h3 style={{margin:"0 0 8px",fontSize:16}}>Preventative Maintenance Schedule</h3>
-    <p style={{fontSize:12,color:T.subtext}}>All equipment · Last service comes from completed services and baselines. Next service shows the earliest assigned due date, hours, and mileage. Any trigger can become due first. Manual values stay in place until cleared.</p>
-    <input aria-label="Search maintenance schedule" style={{...inp,maxWidth:360,marginBottom:12}} placeholder="Search equipment number or name" value={search} onChange={e=>setSearch(e.target.value)}/>
-    <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}><thead><tr>{["Equipment","Last Service","Next Service","Source / Edit"].map(h=><th key={h} style={{padding:10,textAlign:"left",borderBottom:`1px solid ${T.border}`}}>{h}</th>)}</tr></thead><tbody>
-      {equipment.map(eq=>{const row=equipmentServiceSchedule(state,eq);return <tr key={eq.id}><td style={{padding:10,borderBottom:`1px solid ${T.border}`,overflowWrap:"anywhere"}}><b>{eq.id}</b><div>{eq.name||eq.nomenclature||"Equipment"}</div></td><td style={{padding:10,borderBottom:`1px solid ${T.border}`}}>{show(row,"last")}</td><td style={{padding:10,borderBottom:`1px solid ${T.border}`}}>{show(row,"next")}</td><td style={{padding:10,borderBottom:`1px solid ${T.border}`}}><div style={{marginBottom:8}}>{row.taskCount?`${row.taskCount} assigned task(s)` : "No assigned task"}</div><Btn small variant="secondary" onClick={()=>{setEditing(eq.id);setDraft({...eq.pmScheduleOverrides});}}>Edit Schedule</Btn></td></tr>;})}
-      {!equipment.length&&<tr><td colSpan={4} style={{padding:16}}>No matching equipment.</td></tr>}
-    </tbody></table></div>
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}>
+      <div><h3 style={{margin:0,fontSize:16}}>Preventative Maintenance Schedule</h3><div style={{fontSize:11,color:T.muted,marginTop:4}}>{(state.equipment||[]).length} equipment · Last and next service</div></div>
+      <button type="button" aria-expanded={!collapsed} aria-controls="equipment-pm-schedule-grid" onClick={()=>setCollapsed(v=>!v)} style={{padding:"8px 12px",border:`1px solid ${T.border}`,borderRadius:7,background:T.grayLt,color:T.text,cursor:"pointer",fontWeight:700}}>{collapsed?"＋ Expand":"− Minimize"}</button>
+    </div>
+    <div id="equipment-pm-schedule-grid" hidden={collapsed}>
+      <p style={{fontSize:12,color:T.subtext,lineHeight:1.5}}>System values update from service history and assigned tasks. Manual entries are marked below. Next service shows the earliest due date, hours, and mileage; any trigger can become due first.</p>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap",marginBottom:12}}><input aria-label="Search maintenance schedule" style={{...inp,maxWidth:360}} placeholder="Search equipment number or name" value={search} onChange={e=>setSearch(e.target.value)}/><span style={{fontSize:11,color:T.muted}}>{equipment.length} shown · Use Edit to enter manual values</span></div>
+      <div role="region" aria-label="Equipment maintenance schedule spreadsheet" tabIndex={0} style={{overflowX:"auto",border:`1px solid ${T.border}`,borderRadius:8}}>
+        <table style={{width:"100%",minWidth:1030,borderCollapse:"collapse",fontSize:12,background:T.card}}>
+          <thead><tr><th scope="col" rowSpan={2} style={{...header,textAlign:"left"}}>Equipment #</th><th scope="col" rowSpan={2} style={{...header,textAlign:"left",minWidth:180}}>Equipment Name</th><th scope="colgroup" colSpan={3} style={{...header,textAlign:"center",background:T.accentLt,color:T.accent}}>Last Service</th><th scope="colgroup" colSpan={3} style={{...header,textAlign:"center",background:T.greenLt,color:T.green}}>Next Service</th><th scope="col" rowSpan={2} style={{...header,textAlign:"left"}}>Tasks / Edit</th></tr>
+          <tr>{["Last","Next"].flatMap(group=>["Date","Hours","Mileage"].map(label=><th key={group+label} scope="col" style={{...header,textAlign:label==="Date"?"center":"right"}}>{label}</th>))}</tr></thead>
+          <tbody>{equipment.map((eq,index)=>{const row=equipmentServiceSchedule(state,eq);return <tr key={eq.id} style={{background:index%2?T.grayLt:T.card}}>
+            <th scope="row" style={{...cell,textAlign:"left",fontFamily:T.mono,whiteSpace:"nowrap",color:T.accent}}>{eq.id}</th>
+            <td style={{...cell,minWidth:180,maxWidth:260,overflowWrap:"anywhere",fontWeight:600}}>{eq.name||eq.nomenclature||"Equipment"}</td>
+            {["lastDate","lastHours","lastMileage","nextDate","nextHours","nextMileage"].map(key=><td key={key} style={{...cell,textAlign:key.endsWith("Date")?"center":"right",whiteSpace:"nowrap",minWidth:key.endsWith("Date")?115:85}}>{reading(row,key)}</td>)}
+            <td style={{...cell,whiteSpace:"nowrap"}}><div style={{fontSize:10,color:T.muted,marginBottom:6}}>{row.taskCount?`${row.taskCount} assigned task(s)`:"No assigned task"}</div><Btn small variant="secondary" onClick={()=>{setEditing(eq.id);setDraft({...eq.pmScheduleOverrides});}}>Edit</Btn></td>
+          </tr>;})}{!equipment.length&&<tr><td colSpan={9} style={{...cell,padding:24,textAlign:"center",color:T.muted}}>No matching equipment.</td></tr>}</tbody>
+        </table>
+      </div>
+    </div>
     {selected&&<Modal title={`Service Schedule — ${selected.name||selected.id}`} onClose={()=>setEditing(null)}>
       <p style={{fontSize:12}}>Enter only the values you want to set manually. Leave a field blank to use system information. These entries do not change your assigned tasks or current meters.</p>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>{fields.map(([key,label,type])=><Field key={key} label={label}><input style={inp} type={type} min={type==="number"?0:undefined} step={type==="number"?"any":undefined} value={draft[key]??""} onChange={e=>setDraft(d=>({...d,[key]:e.target.value}))}/><div style={{fontSize:11,color:T.muted}}>System: {String(equipmentServiceSchedule(state,selected).automatic[key]??"")||"Not available"}</div></Field>)}</div>
