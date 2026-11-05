@@ -1269,6 +1269,15 @@ function reducer(state, { type, payload }) {
       const equipment = (restored.workOrders || []).reduce((equipment,wo)=>syncCompletedServiceBaseline(equipment,wo,true), restored.equipment || []);
       return { ...restored, equipment };
     }
+    case "SYNC_MANUAL_PM_WARNINGS": {
+      const due=manualPMScheduleWarnings(state,payload);
+      const old=state.notifications||[];
+      const byId=new Map(old.filter(n=>n.manualPMSchedule).map(n=>[n.id,n]));
+      const active=due.map(n=>byId.get(n.id)||makeNotification({...n,read:false}));
+      const other=old.filter(n=>!n.manualPMSchedule);
+      if(active.length===byId.size&&due.every(n=>byId.has(n.id)))return state;
+      return {...state,notifications:[...active,...other]};
+    }
     case "READ_NOTIF":    return { ...state, notifications: state.notifications.map(n => n.id===payload ? {...n,read:true} : n) };
     case "READ_ALL":      return { ...state, notifications: state.notifications.map(n => ({...n,read:true})) };
     case "ADD_NOTIFICATION": return { ...state, notifications:[makeNotification(payload), ...(state.notifications||[])] };
@@ -3004,19 +3013,20 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
     return false;
   };
 
-  const save = (isEdit) => {
-    if(!form.equipment) return alert("Equipment required.");
-    if(!(form.faultDescription||"").trim()) return alert("Description required.");
-    const usageModeReq = String(form.usageType||"hours").toLowerCase();
-    const selectedEquipment = state.equipment.find(e=>e.id===form.equipment);
-    const selectedAttachmentParent = !selectedEquipment ? state.equipment.find(e=>(e.attachments||[]).some(a=>String(a.id)===String(form.equipment))) : null;
-    const selectedAttachment = selectedAttachmentParent ? (selectedAttachmentParent.attachments||[]).find(a=>String(a.id)===String(form.equipment)) : null;
+  const save = (isEdit, completeNow=false) => {
+    const inputForm = completeNow ? {...form,status:"Completed"} : form;
+    if(!inputForm.equipment) return alert("Equipment required.");
+    if(!(inputForm.faultDescription||"").trim()) return alert("Description required.");
+    const usageModeReq = String(inputForm.usageType||"hours").toLowerCase();
+    const selectedEquipment = state.equipment.find(e=>e.id===inputForm.equipment);
+    const selectedAttachmentParent = !selectedEquipment ? state.equipment.find(e=>(e.attachments||[]).some(a=>String(a.id)===String(inputForm.equipment))) : null;
+    const selectedAttachment = selectedAttachmentParent ? (selectedAttachmentParent.attachments||[]).find(a=>String(a.id)===String(inputForm.equipment)) : null;
     const selectedAsset = selectedAttachment || selectedEquipment;
-    const latestUsage = latestUsageForEquipment(form.equipment);
-    const formWithLatestUsage = applyDefaultMechanic(form.usageNA ? form : {
-      ...form,
-      usageHours: String(form.usageHours ?? "").trim() || latestUsage.hours,
-      usageMileage: String(form.usageMileage ?? "").trim() || latestUsage.mileage,
+    const latestUsage = latestUsageForEquipment(inputForm.equipment);
+    const formWithLatestUsage = applyDefaultMechanic(inputForm.usageNA ? inputForm : {
+      ...inputForm,
+      usageHours: String(inputForm.usageHours ?? "").trim() || latestUsage.hours,
+      usageMileage: String(inputForm.usageMileage ?? "").trim() || latestUsage.mileage,
     });
     const hoursEntered = !!String(formWithLatestUsage.usageHours||"").trim();
     const mileageEntered = !!String(formWithLatestUsage.usageMileage||"").trim();
@@ -4021,6 +4031,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
 
   return (
     <div>
+      <ManualPMWarning state={state}/>
       {/* Due service / inspection notifications */}
       {(duePMItems.length>0 || dueInspectionItems.length>0) && <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:10,marginBottom:14}}>
         {duePMItems.length>0 && <Card><div style={{fontWeight:800,fontSize:14,marginBottom:8}}>🔧 Services Due / Overdue ({duePMItems.length})</div>{pmDueGroups.map(({key,schedules})=>{const sch=schedules[0];const eq=resolveMaintainableAsset(sch.equipmentId);const labels=schedules.map(x=>(state.pmTasks||[]).find(t=>String(t.id)===String(x.taskId))?.name||x.task||"PM Service");return <div key={key} style={{padding:"9px 0",borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",gap:10,alignItems:"center"}}><div><b>{eq?.name||sch.equipmentId}</b><div style={{fontSize:12,color:T.muted}}>{labels.join(" + ")} · {schedules.length>1?"Exact same scheduled trigger · ":""}{sch.nextDueDate||sch.nextDueUsage||"now"}</div></div><Btn small onClick={()=>createDuePMWO(sch,schedules)}>{schedules.length>1?`Create Combined WO (${schedules.length})`:"Create WO"}</Btn></div>})}</Card>}
@@ -4178,6 +4189,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
           {renderWOForm()}
           <div style={{ display:"flex", gap:8, justifyContent:"flex-end", marginTop:8 }}>
             <Btn variant="secondary" onClick={closeWOEditor}>Cancel</Btn>
+            {state.workOrders.find(w=>String(w.id)===String(form.id))?.status!=="Completed"&&<Btn variant="secondary" onClick={()=>save(true,true)} style={{color:T.green,borderColor:T.green}}>Complete Work Order</Btn>}
             <Btn onClick={()=>save(true)}>Save Work Order Changes</Btn>
           </div>
         </Modal>
@@ -6758,12 +6770,11 @@ function pmScheduleReportHTML(state) {
       const manual=row.manual[key]!==undefined&&row.manual[key]!=="";
       return `<td class="${key.endsWith("Date")?"date":"number"}">${value===""||value==null?"—":h(key.endsWith("Date")?String(value):Number(value).toLocaleString(undefined,{maximumFractionDigits:2}))}${manual?'<small>Manual</small>':""}</td>`;
     }).join("");
-    const tasks=(state.pmSchedules||[]).filter(s=>String(s.equipmentId)===String(eq.id)).map(s=>s.task || (state.pmTasks||[]).find(t=>String(t.id)===String(s.taskId))?.name || "Assigned task");
-    return `<tr><td><b>${h(eq.id||"")}</b></td><td>${h(eq.name||eq.nomenclature||"Equipment")}</td>${cells}<td>${tasks.length?tasks.map(h).join("<br>"):"No assigned task"}</td></tr>`;
+    return `<tr><td><b>${h(eq.id||"")}</b></td><td>${h(eq.name||eq.nomenclature||"Equipment")}</td>${cells}</tr>`;
   }).join("");
   return `<!doctype html><html><head><meta charset="utf-8"><title>Preventative Maintenance Schedule</title><style>
   *{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#172033;margin:24px;font-size:11px}h1{font-size:22px;margin:8px 0}.company{font-size:14px;font-weight:bold}.meta,.note{color:#475569;line-height:1.5;margin:10px 0}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #94a3b8;padding:7px 6px;overflow-wrap:anywhere;vertical-align:top}th{background:#e2e8f0;font-size:10px}.last{background:#dbeafe}.next{background:#dcfce7}tbody tr:nth-child(even){background:#f8fafc}.number{text-align:right;font-variant-numeric:tabular-nums}.date{text-align:center}small{display:block;font-size:8px;color:#475569;margin-top:3px}thead{display:table-header-group}tr{break-inside:avoid}button{padding:10px 16px;margin-right:8px;cursor:pointer}.actions{margin:16px 0}@page{size:letter landscape;margin:.35in}@media print{body{margin:0;font-size:9px}.actions{display:none}th,td{padding:5px 4px}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
-  </style></head><body><div class="company">${h(state.settings?.companyName||"MaintForge")}</div><h1>Preventative Maintenance Schedule</h1><div class="meta">${h(state.settings?.siteName||"")} · Generated ${h(new Date().toLocaleString())} · ${equipment.length} equipment</div><div class="note">Last service is based on recorded service history and baselines. Next service is the earliest assigned date, hours and mileage; any trigger can become due first and values may come from different tasks. Manual values are marked. A dash means no recorded value—not that maintenance is unnecessary.</div><table><colgroup><col style="width:9%"><col style="width:17%"><col span="6" style="width:9%"><col style="width:20%"></colgroup><thead><tr><th rowspan="2">Equipment #</th><th rowspan="2">Equipment Name</th><th colspan="3" class="last">Last Service</th><th colspan="3" class="next">Next Service</th><th rowspan="2">Assigned Tasks</th></tr><tr><th>Date</th><th>Hours</th><th>Mileage</th><th>Date</th><th>Hours</th><th>Mileage</th></tr></thead><tbody>${rows||'<tr><td colspan="9">No equipment recorded.</td></tr>'}</tbody></table><div class="actions"><button onclick="window.print()">Print / Save PDF</button><button onclick="window.close()">Close</button></div></body></html>`;
+  </style></head><body><div class="company">${h(state.settings?.companyName||"MaintForge")}</div><h1>Preventative Maintenance Schedule</h1><div class="meta">${h(state.settings?.siteName||"")} · Generated ${h(new Date().toLocaleString())} · ${equipment.length} equipment</div><div class="note">Last service is based on recorded service history and baselines. Next service is the earliest assigned date, hours and mileage; any trigger can become due first and values may come from different tasks. Manual values are marked. A dash means no recorded value—not that maintenance is unnecessary.</div><table><colgroup><col style="width:10%"><col style="width:24%"><col span="6" style="width:11%"></colgroup><thead><tr><th rowspan="2">Equipment #</th><th rowspan="2">Equipment Name</th><th colspan="3" class="last">Last Service</th><th colspan="3" class="next">Next Service</th></tr><tr><th>Date</th><th>Hours</th><th>Mileage</th><th>Date</th><th>Hours</th><th>Mileage</th></tr></thead><tbody>${rows||'<tr><td colspan="8">No equipment recorded.</td></tr>'}</tbody></table><div class="actions"><button onclick="window.print()">Print / Save PDF</button><button onclick="window.close()">Close</button></div></body></html>`;
 }
 function printPMSchedule(state) {
   const html=pmScheduleReportHTML(state);
@@ -6775,26 +6786,53 @@ function ReportPMSchedule({state}) {
   return <EquipmentPMSchedule state={state} readOnly={true}/>;
 }
 
+function updatePMCellOverride(state, eq, key, raw) {
+  const allowed=["lastDate","lastHours","lastMileage","nextDate","nextHours","nextMileage"];
+  if(!allowed.includes(key))return {error:"Unknown schedule field."};
+  const value=String(raw??"").trim();
+  const overrides={...(eq.pmScheduleOverrides||{})};
+  if(!value) {delete overrides[key];return {overrides};}
+  if(key.endsWith("Date")?!isValidISODate(value):(!Number.isFinite(Number(value))||Number(value)<0))return {error:"Enter a valid date or a nonnegative reading."};
+  overrides[key]=key.endsWith("Date")?value:Number(value);
+  const lastKey=key.replace(/^next/,"last");
+  const last=overrides[lastKey]??equipmentServiceSchedule(state,eq).automatic[lastKey];
+  if(key.startsWith("next")&&last!==""&&last!=null&&overrides[key]<last)return {error:"Next service cannot be earlier than last service."};
+  return {overrides};
+}
+function localPMDate() {
+  const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function manualPMScheduleWarnings(state, asOf=localPMDate()) {
+  return (state.equipment||[]).flatMap(eq=>{
+    const manual=eq.pmScheduleOverrides||{};
+    const current=currentWorkOrderUsage(state,eq.id);
+    return [["nextDate","date",asOf],["nextHours","hours",current.hours],["nextMileage","mileage",current.mileage]].flatMap(([key,label,reading])=>{
+      const target=manual[key];
+      if(target===undefined||target===null||String(target).trim()===""||reading==="")return [];
+      const due=key==="nextDate"?isValidISODate(String(target))&&String(target)<=asOf:Number.isFinite(Number(target))&&Number(target)>=0&&Number(reading)>=Number(target);
+      return due?[{id:`MANUAL-PM:${encodeURIComponent(String(eq.id))}:${key}:${encodeURIComponent(String(target))}`,equipmentId:eq.id,type:"pm",manualPMSchedule:true,msg:`PM due — ${eq.id} ${eq.name||eq.nomenclature||""}: manual service ${label} ${target} reached.`,target,key}]:[];
+    });
+  });
+}
+function ManualPMWarning({state}) {
+  const warnings=manualPMScheduleWarnings(state);
+  if(!warnings.length)return null;
+  return <div role="alert" style={{background:T.redLt,border:`1px solid ${T.red}`,borderRadius:8,padding:"12px 16px",marginBottom:16,color:T.red}}><b>⚠ Preventative maintenance due — manual schedule</b>{warnings.map(w=><div key={w.id} style={{fontSize:12,marginTop:5}}>{w.msg}</div>)}<div style={{fontSize:11,marginTop:7}}>Review the service and update its next-service target when completed.</div></div>;
+}
+
 function EquipmentPMSchedule({state,dispatch,readOnly=false}) {
   const [search,setSearch]=useState("");
   const [collapsed,setCollapsed]=useState(false);
   const [editing,setEditing]=useState(null);
-  const [draft,setDraft]=useState({});
-  const fields=[["lastDate","Last service date","date"],["nextDate","Next service date","date"],["lastHours","Last service hours","number"],["nextHours","Next service hours","number"],["lastMileage","Last service mileage","number"],["nextMileage","Next service mileage","number"]];
+  const [draft,setDraft]=useState("");
+  const [cellError,setCellError]=useState("");
+  const [savedMessage,setSavedMessage]=useState("");
   const equipment=(state.equipment||[]).filter(e=>`${e.id} ${e.name||e.nomenclature||""}`.toLowerCase().includes(search.toLowerCase())).sort((a,b)=>String(a.id).localeCompare(String(b.id),undefined,{numeric:true}));
-  const selected=(state.equipment||[]).find(e=>String(e.id)===String(editing));
-  const save=()=>{
-    const overrides={};
-    for(const [key,label,type] of fields){
-      const value=String(draft[key]??"").trim();if(!value)continue;
-      if(type==="date"?!isValidISODate(value):(!Number.isFinite(Number(value))||Number(value)<0))return alert(`Enter a valid ${label.toLowerCase()}.`);
-      overrides[key]=type==="date"?value:Number(value);
-    }
-    for(const [last,next,label] of [["lastDate","nextDate","date"],["lastHours","nextHours","hours"],["lastMileage","nextMileage","mileage"]]){
-      const auto=equipmentServiceSchedule(state,selected).automatic;
-      if(overrides[next]!==undefined && (overrides[last]??auto[last])!=="" && overrides[next]<(overrides[last]??auto[last]))return alert(`Next service ${label} cannot be earlier than last service ${label}.`);
-    }
-    dispatch({type:"SET_PM_SCHEDULE_OVERRIDES",payload:{id:selected.id,overrides}});setEditing(null);
+  const saveCell=(eq,key)=>{
+    const result=updatePMCellOverride(state,eq,key,draft);
+    if(result.error){setCellError(result.error);return;}
+    dispatch({type:"SET_PM_SCHEDULE_OVERRIDES",payload:{id:eq.id,overrides:result.overrides}});
+    setEditing(null);setCellError("");setSavedMessage(`Saved schedule for ${eq.id}.`);
   };
   const cell={padding:"10px 12px",border:`1px solid ${T.border}`,verticalAlign:"middle"};
   const header={...cell,fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:.5,whiteSpace:"nowrap",background:T.grayLt,color:T.subtext};
@@ -6812,25 +6850,24 @@ function EquipmentPMSchedule({state,dispatch,readOnly=false}) {
     </div>
     <div id="equipment-pm-schedule-grid" hidden={collapsed}>
       <p style={{fontSize:12,color:T.subtext,lineHeight:1.5}}>System values update from service history and assigned tasks. Manual entries are marked below. Next service shows the earliest due date, hours, and mileage; any trigger can become due first.</p>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap",marginBottom:12}}><input aria-label="Search maintenance schedule" style={{...inp,maxWidth:360}} placeholder="Search equipment number or name" value={search} onChange={e=>setSearch(e.target.value)}/><span style={{fontSize:11,color:T.muted}}>{equipment.length} shown · {readOnly?"Full report includes every equipment item":"Use Edit to enter manual values"}</span></div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap",marginBottom:12}}><input aria-label="Search maintenance schedule" style={{...inp,maxWidth:360}} placeholder="Search equipment number or name" value={search} onChange={e=>setSearch(e.target.value)}/><span style={{fontSize:11,color:T.muted}}>{equipment.length} shown · {readOnly?"Full report includes every equipment item":"Click a cell · Enter saves · Escape cancels · Blank uses system value"}</span></div>
       <div role="region" aria-label="Equipment maintenance schedule spreadsheet" tabIndex={0} style={{overflowX:"auto",border:`1px solid ${T.border}`,borderRadius:8}}>
-        <table style={{width:"100%",minWidth:1030,borderCollapse:"collapse",fontSize:12,background:T.card}}>
-          <thead><tr><th scope="col" rowSpan={2} style={{...header,textAlign:"left"}}>Equipment #</th><th scope="col" rowSpan={2} style={{...header,textAlign:"left",minWidth:180}}>Equipment Name</th><th scope="colgroup" colSpan={3} style={{...header,textAlign:"center",background:T.accentLt,color:T.accent}}>Last Service</th><th scope="colgroup" colSpan={3} style={{...header,textAlign:"center",background:T.greenLt,color:T.green}}>Next Service</th><th scope="col" rowSpan={2} style={{...header,textAlign:"left"}}>Tasks / Edit</th></tr>
+        <table style={{width:"100%",minWidth:900,borderCollapse:"collapse",fontSize:12,background:T.card}}>
+          <thead><tr><th scope="col" rowSpan={2} style={{...header,textAlign:"left"}}>Equipment #</th><th scope="col" rowSpan={2} style={{...header,textAlign:"left",minWidth:180}}>Equipment Name</th><th scope="colgroup" colSpan={3} style={{...header,textAlign:"center",background:T.accentLt,color:T.accent}}>Last Service</th><th scope="colgroup" colSpan={3} style={{...header,textAlign:"center",background:T.greenLt,color:T.green}}>Next Service</th></tr>
           <tr>{["Last","Next"].flatMap(group=>["Date","Hours","Mileage"].map(label=><th key={group+label} scope="col" style={{...header,textAlign:label==="Date"?"center":"right"}}>{label}</th>))}</tr></thead>
           <tbody>{equipment.map((eq,index)=>{const row=equipmentServiceSchedule(state,eq);return <tr key={eq.id} style={{background:index%2?T.grayLt:T.card}}>
             <th scope="row" style={{...cell,textAlign:"left",fontFamily:T.mono,whiteSpace:"nowrap",color:T.accent}}>{eq.id}</th>
             <td style={{...cell,minWidth:180,maxWidth:260,overflowWrap:"anywhere",fontWeight:600}}>{eq.name||eq.nomenclature||"Equipment"}</td>
-            {["lastDate","lastHours","lastMileage","nextDate","nextHours","nextMileage"].map(key=><td key={key} style={{...cell,textAlign:key.endsWith("Date")?"center":"right",whiteSpace:"nowrap",minWidth:key.endsWith("Date")?115:85}}>{reading(row,key)}</td>)}
-            <td style={{...cell,whiteSpace:"nowrap"}}><div style={{fontSize:10,color:T.muted,marginBottom:6}}>{row.taskCount?`${row.taskCount} assigned task(s)`:"No assigned task"}</div>{!readOnly&&<Btn small variant="secondary" onClick={()=>{setEditing(eq.id);setDraft({...eq.pmScheduleOverrides});}}>Edit</Btn>}</td>
-          </tr>;})}{!equipment.length&&<tr><td colSpan={9} style={{...cell,padding:24,textAlign:"center",color:T.muted}}>No matching equipment.</td></tr>}</tbody>
+            {["lastDate","lastHours","lastMileage","nextDate","nextHours","nextMileage"].map(key=><td key={key} style={{...cell,textAlign:key.endsWith("Date")?"center":"right",whiteSpace:"nowrap",minWidth:key.endsWith("Date")?115:85}}>{readOnly?reading(row,key):editing?.id===eq.id&&editing.key===key?<div>
+              <input autoFocus aria-label={`${eq.id} ${key}`} style={{...inp,width:key.endsWith("Date")?145:100,padding:5}} type={key.endsWith("Date")?"date":"number"} min={key.endsWith("Date")?undefined:0} step="any" value={draft} onChange={e=>{setDraft(e.target.value);setCellError("");}} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();if(e.currentTarget.validity.badInput){setCellError("Enter a valid value.");return;}saveCell(eq,key);}else if(e.key==="Escape"){e.preventDefault();setEditing(null);setCellError("");}}} onBlur={()=>{setEditing(null);setCellError("");}}/>
+              {cellError&&<div role="alert" style={{fontSize:11,color:T.red,whiteSpace:"normal",marginTop:4}}>{cellError}</div>}
+            </div>:<button type="button" aria-label={`Edit ${eq.id} ${key}`} title="Click to edit; Enter saves" onClick={()=>{setEditing({id:eq.id,key});setDraft(String(row.values[key]??""));setCellError("");setSavedMessage("");}} style={{display:"block",width:"100%",minHeight:32,border:0,background:"transparent",color:"inherit",textAlign:"inherit",cursor:"text",font:"inherit",padding:0}}>{reading(row,key)}</button>}</td>)}
+
+          </tr>;})}{!equipment.length&&<tr><td colSpan={8} style={{...cell,padding:24,textAlign:"center",color:T.muted}}>No matching equipment.</td></tr>}</tbody>
         </table>
       </div>
     </div>
-    {selected&&<Modal title={`Service Schedule — ${selected.name||selected.id}`} onClose={()=>setEditing(null)}>
-      <p style={{fontSize:12}}>Enter only the values you want to set manually. Leave a field blank to use system information. These entries do not change your assigned tasks or current meters.</p>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>{fields.map(([key,label,type])=><Field key={key} label={label}><input style={inp} type={type} min={type==="number"?0:undefined} step={type==="number"?"any":undefined} value={draft[key]??""} onChange={e=>setDraft(d=>({...d,[key]:e.target.value}))}/><div style={{fontSize:11,color:T.muted}}>System: {String(equipmentServiceSchedule(state,selected).automatic[key]??"")||"Not available"}</div></Field>)}</div>
-      <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end",marginTop:12}}><Btn variant="secondary" onClick={()=>setDraft({})}>Use System Values</Btn><Btn variant="secondary" onClick={()=>setEditing(null)}>Cancel</Btn><Btn onClick={save}>Save Schedule</Btn></div>
-    </Modal>}
+    <div role="status" aria-live="polite" style={{fontSize:11,color:T.green,marginTop:savedMessage?8:0}}>{savedMessage}</div>
   </Card>;
 }
 
@@ -7421,6 +7458,7 @@ function PM({ state, dispatch }) {
 
   return (
     <div>
+      <ManualPMWarning state={state}/>
       {/* Auto-trigger banner */}
       {triggered.length>0 && (
         <div style={{ background:T.redLt, border:`1px solid ${T.red}`, borderRadius:8, padding:"12px 16px", marginBottom:16, display:"flex", gap:10, alignItems:"center" }}>
@@ -11368,6 +11406,15 @@ export default function App() {
     if(!dataLoaded || !activeSession) return;
     writeMFLocal(MF_LAST_FACILITY_KEY, state.activeLocationId || "__all");
   }, [dataLoaded, activeSession?.user?.id, state.activeLocationId]);
+
+  useEffect(()=>{
+    if(!dataLoaded || !activeSession || ownerRecovery?.locked)return;
+    const refresh=()=>dispatch({type:"SYNC_MANUAL_PM_WARNINGS",payload:localPMDate()});
+    refresh();
+    const timer=setInterval(refresh,60000);
+    window.addEventListener("focus",refresh);
+    return ()=>{clearInterval(timer);window.removeEventListener("focus",refresh);};
+  },[dataLoaded,activeSession?.user?.id,ownerRecovery?.locked,state.equipment,state.usageLogs]);
 
   const activeLocationLabel = locationNameForId(state, state.activeLocationId || "__all");
   const visibleState = scopedStateForActiveLocation(state);
