@@ -1235,7 +1235,7 @@ function normalizeMaintForgeSingleSite(input={}) {
 
 // Keep the equipment service baseline synchronized with completed Service Work Orders.
 // Only a newer service can replace the existing baseline; never lower current meters.
-function syncCompletedServiceBaseline(equipment, wo) {
+function syncCompletedServiceBaseline(equipment, wo, preserveManual=false) {
   if (!wo || String(wo.status || "").toLowerCase() !== "completed" || !/service|prevent/i.test(String(wo.woType || wo.type || ""))) return equipment;
   const eqId = String(wo.equipment || wo.equipmentId || "");
   const date = String(wo.completed || wo.completedDate || wo.dateCompleted || wo.closedDate || "").slice(0, 10);
@@ -1246,7 +1246,12 @@ function syncCompletedServiceBaseline(equipment, wo) {
     const off = usageTrackingIsOff(eq);
     const meter = mode === "mileage" ? Number(wo.usageMileage) : Number(wo.usageHours);
     const hasMeter = !off && !wo.usageNA && (mode === "mileage" ? wo.usageMileage : wo.usageHours) != null && Number.isFinite(meter) && meter >= 0 && (mode === "mileage" ? wo.usageMileage : wo.usageHours) !== undefined && (mode === "mileage" ? wo.usageMileage : wo.usageHours) !== "";
-    return { ...eq, pmBaselineDate:date, ...(hasMeter ? {pmBaselineUsage:meter} : {}) };
+    // A completed service supersedes manual last-service entries, but not manual next targets.
+    const overrides={...(eq.pmScheduleOverrides||{})};
+    if(!preserveManual && (!overrides.lastDate || String(overrides.lastDate)<=date)) {
+      delete overrides.lastDate; delete overrides.lastHours; delete overrides.lastMileage;
+    }
+    return { ...eq, pmBaselineDate:date, ...(hasMeter ? {pmBaselineUsage:meter} : {}), ...(eq.pmScheduleOverrides ? {pmScheduleOverrides:overrides} : {}) };
   };
   return equipment.map(eq => ({ ...updateAsset(eq), ...(Array.isArray(eq.attachments) ? {attachments:eq.attachments.map(updateAsset)} : {}) }));
 }
@@ -1261,7 +1266,7 @@ function reducer(state, { type, payload }) {
     case "REPLACE_STATE": {
       const restored = normalizeMaintForgeSingleSite({ ...state, ...payload });
       // Recover missing service baselines from dated history without replaying inventory or schedules.
-      const equipment = (restored.workOrders || []).reduce(syncCompletedServiceBaseline, restored.equipment || []);
+      const equipment = (restored.workOrders || []).reduce((equipment,wo)=>syncCompletedServiceBaseline(equipment,wo,true), restored.equipment || []);
       return { ...restored, equipment };
     }
     case "READ_NOTIF":    return { ...state, notifications: state.notifications.map(n => n.id===payload ? {...n,read:true} : n) };
@@ -1721,7 +1726,7 @@ function reducer(state, { type, payload }) {
   }
 }
 
-const genId = p => p === "PT" ? `PT-${crypto.randomUUID()}` : `${p}-${String(Date.now()).slice(-5)}`;
+const genId = p => ["PT","IS"].includes(p) ? `${p}-${crypto.randomUUID()}` : `${p}-${String(Date.now()).slice(-5)}`;
 const today = () => new Date().toISOString().split("T")[0];
 const isValidISODate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || "")) && !Number.isNaN(new Date(`${value}T00:00:00Z`).getTime()) && new Date(`${value}T00:00:00Z`).toISOString().slice(0,10) === String(value);
 const formatDateMMDDYYYY = (value = today()) => {
@@ -2322,6 +2327,7 @@ const NAV = [
 const NAV_REPORTS = [
   { id:"reports_deadline",    icon:"🚨", label:"Deadline Equipment" },
   { id:"reports_parts_inv",   icon:"📦", label:"Parts Inventory Report" },
+  { id:"reports_pm_schedule", icon:"📅", label:"PM Schedule Report" },
   { id:"reports_pm",          icon:"🔧", label:"PM Report" },
   { id:"reports_usage",       icon:"📊", label:"Usage Report" },
   { id:"reports_fuel",        icon:"⛽", label:"Fuel Report" },
@@ -6205,6 +6211,40 @@ function Parts({ state, dispatch }) {
 
 
 /* INSPECTIONS */
+function assignmentSearchMatches(item, query) {
+  const text=[item.id,item.name,item.nomenclature,item.make,item.model,item.parentName,item.description,item.frequency].filter(v=>v!=null).join(" ").toLowerCase();
+  return String(query||"").trim().toLowerCase().split(/\s+/).filter(Boolean).every(word=>text.includes(word));
+}
+function updateAssignmentSelection(selected, ids, checked) {
+  const keys=new Set(ids.map(String));
+  return checked ? [...selected,...ids.filter(id=>!selected.some(value=>String(value)===String(id)))] : selected.filter(id=>!keys.has(String(id)));
+}
+function AssignmentSearchPicker({items,selected=[],onChange,label,equipment=false}) {
+  const [query,setQuery]=useState("");
+  const shown=items.filter(item=>assignmentSearchMatches(item,query));
+  const hiddenSelected=selected.filter(id=>!shown.some(item=>String(item.id)===String(id))).length;
+  return <div>
+    <input type="search" aria-label={`Search ${label}`} style={{...inp,marginBottom:8}} placeholder={equipment?"Search equipment number, name, or model":"Search task name or description"} value={query} onChange={e=>setQuery(e.target.value)}/>
+    <div style={{fontSize:11,color:T.muted,marginBottom:6}}>{shown.length} shown · {selected.length} selected{hiddenSelected?` (${hiddenSelected} outside this search)`:""}</div>
+    <div role="group" aria-label={`Choose ${label}`} style={{border:`1px solid ${T.border}`,borderRadius:7,maxHeight:240,minHeight:150,overflowY:"auto",padding:6,background:T.card}}>
+      {shown.map(item=>{const checked=selected.some(id=>String(id)===String(item.id));return <label key={item.id} style={{display:"flex",gap:9,alignItems:"flex-start",padding:"9px 8px",marginBottom:3,borderRadius:5,background:checked?T.accentLt:T.card,cursor:"pointer",fontSize:12}}>
+        <input type="checkbox" checked={checked} onChange={e=>onChange(updateAssignmentSelection(selected,[item.id],e.target.checked))} style={{marginTop:2,flexShrink:0}}/>
+        <span style={{overflowWrap:"anywhere"}}>{equipment?`${item.id} — ${item.name||item.nomenclature||"Equipment"}`:item.name}{equipment&&item.assetType==="Attachment"&&<small> (Attachment on {item.parentName})</small>}</span>
+      </label>;})}
+      {!shown.length&&<div style={{padding:10,color:T.muted}}>No matching {label}. Try another search.</div>}
+    </div>
+    <div style={{display:"flex",gap:8,marginTop:6,flexWrap:"wrap"}}><Btn variant="secondary" disabled={!shown.length} onClick={()=>onChange(updateAssignmentSelection(selected,shown.map(item=>item.id),true))}>{query.trim()?"Select Search Results":"Select All"}</Btn><Btn variant="secondary" disabled={!selected.length} onClick={()=>onChange([])}>Clear All Selections</Btn>{query&&<Btn variant="secondary" onClick={()=>setQuery("")}>Clear Search</Btn>}</div>
+  </div>;
+}
+
+function toggleInspectionAssignment(form, kind, id, checked) {
+  const listKey=kind==="equipment"?"equipmentIds":"taskIds";
+  const singleKey=kind==="equipment"?"equipmentId":"taskId";
+  const previous=form[listKey]||[];
+  const ids=checked ? [...previous.filter(value=>String(value)!==String(id)),id] : previous.filter(value=>String(value)!==String(id));
+  return {...form,[listKey]:ids,[singleKey]:ids[0]??""};
+}
+
 function Inspections({ state, dispatch }) {
   const equipment = [
     ...(state.equipment||[]),
@@ -6653,16 +6693,10 @@ function Inspections({ state, dispatch }) {
             ) : (
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(260px, 1fr))", gap:12 }}>
                 <Field label={`Equipment (${(scheduleForm.equipmentIds||[]).length} selected)`}>
-                  <select multiple size={Math.min(8, Math.max(4, equipment.length || 4))} style={{...inp, minHeight:150}} value={scheduleForm.equipmentIds||[]} onChange={e=>{ const ids=getSelectedValues(e); setScheduleForm(f=>({...f,equipmentIds:ids,equipmentId:ids[0]||""})); }}>
-                    {equipment.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name || e.nomenclature}</option>)}
-                  </select>
-                  <div style={{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" }}><Btn variant="secondary" onClick={()=>setScheduleForm(f=>({...f,equipmentIds:equipment.map(e=>e.id),equipmentId:equipment[0]?.id||""}))}>Select All Equipment</Btn><Btn variant="secondary" onClick={()=>setScheduleForm(f=>({...f,equipmentIds:[],equipmentId:""}))}>Clear</Btn></div>
+                  <AssignmentSearchPicker label="equipment" items={equipment} selected={scheduleForm.equipmentIds||[]} equipment={true} onChange={ids=>setScheduleForm(f=>({...f,equipmentIds:ids,equipmentId:ids[0]||""}))}/>
                 </Field>
                 <Field label={`Inspection Tasks (${(scheduleForm.taskIds||[]).length} selected)`}>
-                  <select multiple size={Math.min(8, Math.max(4, tasks.length || 4))} style={{...inp, minHeight:150}} value={scheduleForm.taskIds||[]} onChange={e=>{ const ids=getSelectedValues(e); const first=ids[0]||""; setScheduleForm(f=>({...f,taskIds:ids,taskId:first})); }}>
-                    {tasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-                  </select>
-                  <div style={{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" }}><Btn variant="secondary" onClick={()=>{ const ids=tasks.map(t=>t.id); setScheduleForm(f=>({...f,taskIds:ids,taskId:ids[0]||""})); }}>Select All Tasks</Btn><Btn variant="secondary" onClick={()=>setScheduleForm(f=>({...f,taskIds:[],taskId:""}))}>Clear</Btn></div>
+                  <AssignmentSearchPicker label="inspection tasks" items={tasks} selected={scheduleForm.taskIds||[]} equipment={false} onChange={ids=>setScheduleForm(f=>({...f,taskIds:ids,taskId:ids[0]||""}))}/>
                 </Field>
               </div>
             )}
@@ -6697,7 +6731,7 @@ function equipmentServiceSchedule(state, eq) {
   events.push({date:eq.pmBaselineDate||"",hours:eq.usageType!=="mileage"?eq.pmBaselineUsage:"",mileage:eq.usageType==="mileage"?eq.pmBaselineUsage:""});
   schedules.forEach(s=>events.push({date:s.lastDoneDate||"",hours:s.usageType!=="mileage"?s.lastDoneUsage:"",mileage:s.usageType==="mileage"?s.lastDoneUsage:""}));
   events.sort((a,b)=>String(b.date).localeCompare(String(a.date)));
-  const latest=events.find(e=>present(e.date)) || {};
+  const latest=events.find(e=>present(e.date)) || events.find(e=>present(e.hours)||present(e.mileage)) || {};
   const next={date:[],hours:[],mileage:[]};
   schedules.forEach(s=>{
     const triggers=Array.isArray(s.triggers)&&s.triggers.length?s.triggers:[{type:s.triggerType==="usage"?(s.usageType||"hours"):"time",nextDueDate:s.nextDueDate,nextDueUsage:s.nextDueUsage}];
@@ -6713,7 +6747,35 @@ function equipmentServiceSchedule(state, eq) {
   return {automatic,values,manual,taskCount:schedules.length};
 }
 
-function EquipmentPMSchedule({state,dispatch}) {
+function pmScheduleReportHTML(state) {
+  const h=htmlEscape;
+  const equipment=[...(state.equipment||[])].sort((a,b)=>String(a.id).localeCompare(String(b.id),undefined,{numeric:true}));
+  const keys=["lastDate","lastHours","lastMileage","nextDate","nextHours","nextMileage"];
+  const rows=equipment.map(eq=>{
+    const row=equipmentServiceSchedule(state,eq);
+    const cells=keys.map(key=>{
+      const value=row.values[key];
+      const manual=row.manual[key]!==undefined&&row.manual[key]!=="";
+      return `<td class="${key.endsWith("Date")?"date":"number"}">${value===""||value==null?"—":h(key.endsWith("Date")?String(value):Number(value).toLocaleString(undefined,{maximumFractionDigits:2}))}${manual?'<small>Manual</small>':""}</td>`;
+    }).join("");
+    const tasks=(state.pmSchedules||[]).filter(s=>String(s.equipmentId)===String(eq.id)).map(s=>s.task || (state.pmTasks||[]).find(t=>String(t.id)===String(s.taskId))?.name || "Assigned task");
+    return `<tr><td><b>${h(eq.id||"")}</b></td><td>${h(eq.name||eq.nomenclature||"Equipment")}</td>${cells}<td>${tasks.length?tasks.map(h).join("<br>"):"No assigned task"}</td></tr>`;
+  }).join("");
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Preventative Maintenance Schedule</title><style>
+  *{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#172033;margin:24px;font-size:11px}h1{font-size:22px;margin:8px 0}.company{font-size:14px;font-weight:bold}.meta,.note{color:#475569;line-height:1.5;margin:10px 0}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:1px solid #94a3b8;padding:7px 6px;overflow-wrap:anywhere;vertical-align:top}th{background:#e2e8f0;font-size:10px}.last{background:#dbeafe}.next{background:#dcfce7}tbody tr:nth-child(even){background:#f8fafc}.number{text-align:right;font-variant-numeric:tabular-nums}.date{text-align:center}small{display:block;font-size:8px;color:#475569;margin-top:3px}thead{display:table-header-group}tr{break-inside:avoid}button{padding:10px 16px;margin-right:8px;cursor:pointer}.actions{margin:16px 0}@page{size:letter landscape;margin:.35in}@media print{body{margin:0;font-size:9px}.actions{display:none}th,td{padding:5px 4px}*{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  </style></head><body><div class="company">${h(state.settings?.companyName||"MaintForge")}</div><h1>Preventative Maintenance Schedule</h1><div class="meta">${h(state.settings?.siteName||"")} · Generated ${h(new Date().toLocaleString())} · ${equipment.length} equipment</div><div class="note">Last service is based on recorded service history and baselines. Next service is the earliest assigned date, hours and mileage; any trigger can become due first and values may come from different tasks. Manual values are marked. A dash means no recorded value—not that maintenance is unnecessary.</div><table><colgroup><col style="width:9%"><col style="width:17%"><col span="6" style="width:9%"><col style="width:20%"></colgroup><thead><tr><th rowspan="2">Equipment #</th><th rowspan="2">Equipment Name</th><th colspan="3" class="last">Last Service</th><th colspan="3" class="next">Next Service</th><th rowspan="2">Assigned Tasks</th></tr><tr><th>Date</th><th>Hours</th><th>Mileage</th><th>Date</th><th>Hours</th><th>Mileage</th></tr></thead><tbody>${rows||'<tr><td colspan="9">No equipment recorded.</td></tr>'}</tbody></table><div class="actions"><button onclick="window.print()">Print / Save PDF</button><button onclick="window.close()">Close</button></div></body></html>`;
+}
+function printPMSchedule(state) {
+  const html=pmScheduleReportHTML(state);
+  const win=window.open("","_blank","width=1200,height=800");
+  if(!win)return alert("Please allow pop-ups to print the maintenance schedule.");
+  win.document.write(html);win.document.close();win.focus();
+}
+function ReportPMSchedule({state}) {
+  return <EquipmentPMSchedule state={state} readOnly={true}/>;
+}
+
+function EquipmentPMSchedule({state,dispatch,readOnly=false}) {
   const [search,setSearch]=useState("");
   const [collapsed,setCollapsed]=useState(false);
   const [editing,setEditing]=useState(null);
@@ -6745,11 +6807,12 @@ function EquipmentPMSchedule({state,dispatch}) {
   return <Card style={{marginBottom:20}}>
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}>
       <div><h3 style={{margin:0,fontSize:16}}>Preventative Maintenance Schedule</h3><div style={{fontSize:11,color:T.muted,marginTop:4}}>{(state.equipment||[]).length} equipment · Last and next service</div></div>
-      <button type="button" aria-expanded={!collapsed} aria-controls="equipment-pm-schedule-grid" onClick={()=>setCollapsed(v=>!v)} style={{padding:"8px 12px",border:`1px solid ${T.border}`,borderRadius:7,background:T.grayLt,color:T.text,cursor:"pointer",fontWeight:700}}>{collapsed?"＋ Expand":"− Minimize"}</button>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}><Btn variant="secondary" onClick={()=>printPMSchedule(state)}>Print Full Schedule / PDF</Btn>
+      <button type="button" aria-expanded={!collapsed} aria-controls="equipment-pm-schedule-grid" onClick={()=>setCollapsed(v=>!v)} style={{padding:"8px 12px",border:`1px solid ${T.border}`,borderRadius:7,background:T.grayLt,color:T.text,cursor:"pointer",fontWeight:700}}>{collapsed?"＋ Expand":"− Minimize"}</button></div>
     </div>
     <div id="equipment-pm-schedule-grid" hidden={collapsed}>
       <p style={{fontSize:12,color:T.subtext,lineHeight:1.5}}>System values update from service history and assigned tasks. Manual entries are marked below. Next service shows the earliest due date, hours, and mileage; any trigger can become due first.</p>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap",marginBottom:12}}><input aria-label="Search maintenance schedule" style={{...inp,maxWidth:360}} placeholder="Search equipment number or name" value={search} onChange={e=>setSearch(e.target.value)}/><span style={{fontSize:11,color:T.muted}}>{equipment.length} shown · Use Edit to enter manual values</span></div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap",marginBottom:12}}><input aria-label="Search maintenance schedule" style={{...inp,maxWidth:360}} placeholder="Search equipment number or name" value={search} onChange={e=>setSearch(e.target.value)}/><span style={{fontSize:11,color:T.muted}}>{equipment.length} shown · {readOnly?"Full report includes every equipment item":"Use Edit to enter manual values"}</span></div>
       <div role="region" aria-label="Equipment maintenance schedule spreadsheet" tabIndex={0} style={{overflowX:"auto",border:`1px solid ${T.border}`,borderRadius:8}}>
         <table style={{width:"100%",minWidth:1030,borderCollapse:"collapse",fontSize:12,background:T.card}}>
           <thead><tr><th scope="col" rowSpan={2} style={{...header,textAlign:"left"}}>Equipment #</th><th scope="col" rowSpan={2} style={{...header,textAlign:"left",minWidth:180}}>Equipment Name</th><th scope="colgroup" colSpan={3} style={{...header,textAlign:"center",background:T.accentLt,color:T.accent}}>Last Service</th><th scope="colgroup" colSpan={3} style={{...header,textAlign:"center",background:T.greenLt,color:T.green}}>Next Service</th><th scope="col" rowSpan={2} style={{...header,textAlign:"left"}}>Tasks / Edit</th></tr>
@@ -6758,7 +6821,7 @@ function EquipmentPMSchedule({state,dispatch}) {
             <th scope="row" style={{...cell,textAlign:"left",fontFamily:T.mono,whiteSpace:"nowrap",color:T.accent}}>{eq.id}</th>
             <td style={{...cell,minWidth:180,maxWidth:260,overflowWrap:"anywhere",fontWeight:600}}>{eq.name||eq.nomenclature||"Equipment"}</td>
             {["lastDate","lastHours","lastMileage","nextDate","nextHours","nextMileage"].map(key=><td key={key} style={{...cell,textAlign:key.endsWith("Date")?"center":"right",whiteSpace:"nowrap",minWidth:key.endsWith("Date")?115:85}}>{reading(row,key)}</td>)}
-            <td style={{...cell,whiteSpace:"nowrap"}}><div style={{fontSize:10,color:T.muted,marginBottom:6}}>{row.taskCount?`${row.taskCount} assigned task(s)`:"No assigned task"}</div><Btn small variant="secondary" onClick={()=>{setEditing(eq.id);setDraft({...eq.pmScheduleOverrides});}}>Edit</Btn></td>
+            <td style={{...cell,whiteSpace:"nowrap"}}><div style={{fontSize:10,color:T.muted,marginBottom:6}}>{row.taskCount?`${row.taskCount} assigned task(s)`:"No assigned task"}</div>{!readOnly&&<Btn small variant="secondary" onClick={()=>{setEditing(eq.id);setDraft({...eq.pmScheduleOverrides});}}>Edit</Btn>}</td>
           </tr>;})}{!equipment.length&&<tr><td colSpan={9} style={{...cell,padding:24,textAlign:"center",color:T.muted}}>No matching equipment.</td></tr>}</tbody>
         </table>
       </div>
@@ -7358,7 +7421,6 @@ function PM({ state, dispatch }) {
 
   return (
     <div>
-      <EquipmentPMSchedule state={state} dispatch={dispatch}/>
       {/* Auto-trigger banner */}
       {triggered.length>0 && (
         <div style={{ background:T.redLt, border:`1px solid ${T.red}`, borderRadius:8, padding:"12px 16px", marginBottom:16, display:"flex", gap:10, alignItems:"center" }}>
@@ -7368,6 +7430,8 @@ function PM({ state, dispatch }) {
           </div>
         </div>
       )}
+
+      <EquipmentPMSchedule state={state} dispatch={dispatch}/>
 
       <div className="mf-pm-actions" style={{ display:"flex", gap:8, justifyContent:"flex-end", marginBottom:16 }}>
         <Btn variant="secondary" onClick={()=>{ setSelectedTaskId(pmTasks[0]?.id||null); setShowTaskLib(true); }}>
@@ -7786,22 +7850,13 @@ function PM({ state, dispatch }) {
               <div style={{ gridColumn:"span 2", display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(280px, 1fr))", gap:14, marginBottom:14 }}>
                 <div>
                   <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Equipment * ({(schForm.equipmentIds||[]).length} selected)</label>
-                  <select multiple size={Math.min(9, Math.max(5, maintainableAssets.length || 5))} style={{...sel, minHeight:165}} value={schForm.equipmentIds||[]} onChange={e=>{ const ids=getSelectedValues(e); setSchForm(f=>({...f,equipmentIds:ids,equipmentId:ids[0]||""})); }}>
-                    {maintainableAssets.map(e=><option key={e.id} value={e.id}>{e.id} — {e.name || e.nomenclature}{e.assetType==="Attachment"?` (Attachment on ${e.parentName})`:""}</option>)}
-                  </select>
-                  <div style={{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" }}><Btn variant="secondary" onClick={()=>setSchForm(f=>({...f,equipmentIds:maintainableAssets.map(e=>e.id),equipmentId:maintainableAssets[0]?.id||""}))}>Select All Equipment</Btn><Btn variant="secondary" onClick={()=>setSchForm(f=>({...f,equipmentIds:[],equipmentId:""}))}>Clear</Btn></div>
+                  <AssignmentSearchPicker label="equipment" items={maintainableAssets} selected={schForm.equipmentIds||[]} equipment={true} onChange={ids=>setSchForm(f=>({...f,equipmentIds:ids,equipmentId:ids[0]||""}))}/>
+
                 </div>
                 <div>
                   <label style={{ display:"block", fontFamily:T.sans, fontSize:12, fontWeight:600, color:T.subtext, marginBottom:5 }}>Service Tasks ({(schForm.taskIds||[]).length} selected)</label>
-                  <select multiple size={Math.min(9, Math.max(5, pmTasks.length || 5))} style={{...sel, minHeight:165}} value={schForm.taskIds||[]} onChange={e=>{
-                    const ids=getSelectedValues(e);
-                    const first=ids[0]||"";
-                    const t = pmTasks.find(t=>t.id===first);
-                    setSchForm(f=>({...f,taskIds:ids,taskId:first,task:t?.name||"",...(t?getTaskTriggerSettings(t):{})}));
-                  }}>
-                    {pmTasks.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}
-                  </select>
-                  <div style={{ display:"flex", gap:8, marginTop:6, flexWrap:"wrap" }}><Btn variant="secondary" onClick={()=>{ const ids=pmTasks.map(t=>t.id); const first=ids[0]||""; const t=pmTasks.find(x=>x.id===first); setSchForm(f=>({...f,taskIds:ids,taskId:first,task:t?.name||"",...(t?getTaskTriggerSettings(t):{})})); }}>Select All Tasks</Btn><Btn variant="secondary" onClick={()=>setSchForm(f=>({...f,taskIds:[],taskId:"",task:""}))}>Clear</Btn></div>
+                  <AssignmentSearchPicker label="service tasks" items={pmTasks} selected={schForm.taskIds||[]} equipment={false} onChange={ids=>{const first=ids[0]||"";const t=pmTasks.find(t=>String(t.id)===String(first));setSchForm(f=>({...f,taskIds:ids,taskId:first,task:t?.name||"",...(t?getTaskTriggerSettings(t):{})}));}}/>
+
                 </div>
               </div>
             )}
@@ -10156,6 +10211,7 @@ const PAGE_TITLES = {
   inventory:        "Equipment Inventory List",
   reports_deadline: "Deadline Equipment Report",
   reports_parts_inv:"Parts Inventory Report",
+  reports_pm_schedule: "Preventative Maintenance Schedule Report",
   reports_pm:       "PM Reports",
   reports_usage:    "Usage Report",
   reports_fuel:     "Fuel Report",
@@ -11344,6 +11400,7 @@ export default function App() {
     inventory:        <EquipmentInventory state={visibleState} dispatch={dispatch} />,
     reports_deadline: <ReportDeadline   state={visibleState} />,
     reports_parts_inv:<ReportPartsInv   state={visibleState} />,
+    reports_pm_schedule: <ReportPMSchedule state={visibleState} />,
     reports_pm:       <ReportPM         state={visibleState} />,
     reports_usage:    <ReportUsage      state={visibleState} />,
     reports_fuel:     <ReportFuel       state={visibleState} />,
