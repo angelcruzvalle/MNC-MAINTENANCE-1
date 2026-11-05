@@ -1336,7 +1336,10 @@ function reducer(state, { type, payload }) {
               if(n){ if(unit==="days")d.setDate(d.getDate()+n); if(unit==="weeks")d.setDate(d.getDate()+n*7); if(unit==="months")d.setMonth(d.getMonth()+n); if(unit==="years")d.setFullYear(d.getFullYear()+n); }
               return {...t,nextDueDate:n?d.toISOString().split("T")[0]:"",nextDueUsage:""};
             }
-            return {...t,nextDueDate:"",nextDueUsage:(t.usageMode==="at" ? +(t.usageInterval||0) : curU+(+(t.usageInterval||sch.usageInterval||0)))};
+            const triggerMeter = t.type === "mileage"
+              ? Math.max(0, Number(linkedEq.currentMileage??linkedEq.mileage)||0, Number(payload.usageMileage)||0, ...logs.map(l=>Number(l.mileage)||0))
+              : t.type === "hours" ? Math.max(0, Number(linkedEq.currentHours??linkedEq.hours)||0, Number(payload.usageHours)||0, ...logs.map(l=>Number(l.hours)||0)) : curU;
+            return {...t,nextDueDate:"",nextDueUsage:(t.usageMode==="at" ? +(t.usageInterval||0) : triggerMeter+(+(t.usageInterval||sch.usageInterval||0)))};
           });
           const advancedSch = { ...sch, triggers:advancedTriggers, lastDoneDate:doneDate, lastDoneUsage:curU,
             nextDueDate: advancedTriggers.find(t=>(t.type||"time")==="time")?.nextDueDate || "",
@@ -1423,6 +1426,8 @@ function reducer(state, { type, payload }) {
       return { ...state, workOrders:(state.workOrders||[]).filter(w => String(w.id)!==String(payload)), inspectionSchedules };
     }
     case "ADD_EQ":        return { ...state, equipment: [payload,...state.equipment] };
+    case "SET_PM_SCHEDULE_OVERRIDES":
+      return {...state,equipment:(state.equipment||[]).map(eq=>String(eq.id)===String(payload.id)?{...eq,pmScheduleOverrides:{...payload.overrides}}:eq)};
     case "UPDATE_EQ": {
       const originalId = payload._originalId || payload.id;
       const cleanPayload = { ...payload };
@@ -2114,7 +2119,7 @@ function HelpCenter({ state, onClose }) {
     ["Company settings", "Open Settings to update the company name, location, contact information, company logo, labor rate, and defaults."],
     ["Manage equipment", "Open Equipment to add or edit equipment, usage type, status, area/building, attachments, and equipment details."],
     ["Manage inventory", "Open Parts or Equipment Inventory to manage parts, quantities, units, reorder levels, vendors, and linked items."],
-    ["Preventive maintenance", "Open Preventive Maintenance to build PM tasks, assign them to equipment, and set time or usage triggers."],
+    ["Preventative maintenance", "Open Preventative Maintenance to build PM tasks, assign them to equipment, and set time or usage triggers."],
     ["Inspections", "Open Inspections to create templates, add steps, assign them to equipment, and track due dates."],
     ["Create a work order", "Open Work Orders, choose equipment, enter the work details, priority, usage, parts, labor, pictures, and save."],
     ["Complete a work order", "Open the work order, enter work performed, labor, parts used, usage, notes, and mark it Completed."],
@@ -2307,7 +2312,7 @@ const NAV = [
   { id:"equipment",  icon:"🚜", label:"Equipment" },
   { id:"inventory",  icon:"📋", label:"Equipment Inventory" },
   { id:"parts",      icon:"📦", label:"Parts / Lubricants Inventory" },
-  { id:"pm",         icon:"🔧", label:"Preventive Maint." },
+  { id:"pm",         icon:"🔧", label:"Preventative Maint." },
   { id:"usage",      icon:"📊", label:"Usage Tracking" },
   { id:"fuel",       icon:"⛽", label:"Fuel Tracking" },
   { id:"spending",   icon:"💰", label:"Spending & Costs" },
@@ -2694,7 +2699,7 @@ function WorkOrders({ state, dispatch, woSettings, initialWORequest, onConsumeWO
   const isDarkMode = T.bg === DARK_THEME.bg;
   const WO_TYPES = [
     { id:"Repair",     label:"Repair Work Order",     icon:"🛠", desc:"Fault repairs and breakdown response",     color:isDarkMode?T.red:"#7f1d1d", bg:isDarkMode?T.redLt:"#fef2f2" },
-    { id:"Service",    label:"Service Work Order",    icon:"🧰", desc:"Preventive maintenance service generated from PM tasks", color:T.accent, bg:isDarkMode?T.accentLt:"#eff6ff" },
+    { id:"Service",    label:"Service Work Order",    icon:"🧰", desc:"Preventative maintenance service generated from PM tasks", color:T.accent, bg:isDarkMode?T.accentLt:"#eff6ff" },
     { id:"Inspection", label:"Inspection Work Order", icon:"🔍", desc:"Equipment inspection generated from inspection tasks", color:T.green, bg:isDarkMode?T.greenLt:"#ecfdf5" },
   ];
 
@@ -4841,7 +4846,7 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
       </div>
 
       <div style={{ gridColumn:"span 2", marginBottom:14, background:T.grayLt, borderRadius:8, padding:"12px 14px", border:`1px solid ${T.border}` }}>
-        <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:800, color:T.text }}>Preventive Maintenance Baseline</div>
+        <div style={{ fontFamily:T.sans, fontSize:13, fontWeight:800, color:T.text }}>Preventative Maintenance Baseline</div>
         <div style={{ fontFamily:T.sans, fontSize:11, color:T.muted, margin:"3px 0 10px" }}>Use the equipment’s real last-service information so new PM assignments calculate from its maintenance history instead of from zero or the date it was added to MaintForge.</div>
         <div className="mf-mobile-form" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 12px" }}>
           <Field label="Last Service Date"><input style={inp} type="date" value={form.pmBaselineDate||""} onChange={e=>setForm(f=>({...f,pmBaselineDate:e.target.value}))} /></Field>
@@ -5381,8 +5386,8 @@ function Equipment({ state, dispatch, onCreateAttachmentWO }) {
             </div>
 
             <div style={{ marginBottom:18 }}>
-              <h5 style={{ margin:"0 0 10px", fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, textTransform:"uppercase", letterSpacing:.4 }}>Service History / Preventive Maintenance</h5>
-              {renderHistoryTable(serviceHistory, "No closed service or preventive maintenance work orders for this equipment yet.", "Service Work Order")}
+              <h5 style={{ margin:"0 0 10px", fontFamily:T.sans, fontSize:12, fontWeight:800, color:T.text, textTransform:"uppercase", letterSpacing:.4 }}>Service History / Preventative Maintenance</h5>
+              {renderHistoryTable(serviceHistory, "No closed service or preventative maintenance work orders for this equipment yet.", "Service Work Order")}
             </div>
 
             <div style={{ marginBottom:18 }}>
@@ -6684,6 +6689,67 @@ function Inspections({ state, dispatch }) {
   );
 }
 
+function equipmentServiceSchedule(state, eq) {
+  const present=v=>v!==null && v!==undefined && String(v).trim()!=="";
+  const schedules=(state.pmSchedules||[]).filter(s=>String(s.equipmentId)===String(eq.id));
+  const completed=(state.workOrders||[]).filter(w=>String(w.equipment||w.equipmentId)===String(eq.id) && /^(completed|closed)$/i.test(w.status||"") && /service|prevent/i.test(w.woType||w.type||""));
+  const events=completed.map(w=>({date:w.completed||w.completedDate||w.closedDate||"",hours:w.usageNA?"":w.usageHours,mileage:w.usageNA?"":w.usageMileage}));
+  events.push({date:eq.pmBaselineDate||"",hours:eq.usageType!=="mileage"?eq.pmBaselineUsage:"",mileage:eq.usageType==="mileage"?eq.pmBaselineUsage:""});
+  schedules.forEach(s=>events.push({date:s.lastDoneDate||"",hours:s.usageType!=="mileage"?s.lastDoneUsage:"",mileage:s.usageType==="mileage"?s.lastDoneUsage:""}));
+  events.sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+  const latest=events.find(e=>present(e.date)) || {};
+  const next={date:[],hours:[],mileage:[]};
+  schedules.forEach(s=>{
+    const triggers=Array.isArray(s.triggers)&&s.triggers.length?s.triggers:[{type:s.triggerType==="usage"?(s.usageType||"hours"):"time",nextDueDate:s.nextDueDate,nextDueUsage:s.nextDueUsage}];
+    triggers.forEach(t=>{
+      const kind=t.type==="usage"?(s.usageType||"hours"):(t.type||"time");
+      if(kind==="time"||kind==="date") {const d=t.nextDueDate||s.nextDueDate;if(d)next.date.push(d);}
+      else if(next[kind] && present(t.nextDueUsage??s.nextDueUsage) && Number.isFinite(Number(t.nextDueUsage??s.nextDueUsage))) next[kind].push(Number(t.nextDueUsage??s.nextDueUsage));
+    });
+  });
+  const automatic={lastDate:latest.date||"",lastHours:latest.hours??"",lastMileage:latest.mileage??"",nextDate:next.date.sort()[0]||"",nextHours:next.hours.length?Math.min(...next.hours):"",nextMileage:next.mileage.length?Math.min(...next.mileage):""};
+  const manual=eq.pmScheduleOverrides||{};
+  const values=Object.fromEntries(Object.entries(automatic).map(([key,value])=>[key,present(manual[key])?manual[key]:value]));
+  return {automatic,values,manual,taskCount:schedules.length};
+}
+
+function EquipmentPMSchedule({state,dispatch}) {
+  const [search,setSearch]=useState("");
+  const [editing,setEditing]=useState(null);
+  const [draft,setDraft]=useState({});
+  const fields=[["lastDate","Last service date","date"],["nextDate","Next service date","date"],["lastHours","Last service hours","number"],["nextHours","Next service hours","number"],["lastMileage","Last service mileage","number"],["nextMileage","Next service mileage","number"]];
+  const equipment=(state.equipment||[]).filter(e=>`${e.id} ${e.name||e.nomenclature||""}`.toLowerCase().includes(search.toLowerCase())).sort((a,b)=>String(a.id).localeCompare(String(b.id),undefined,{numeric:true}));
+  const selected=(state.equipment||[]).find(e=>String(e.id)===String(editing));
+  const save=()=>{
+    const overrides={};
+    for(const [key,label,type] of fields){
+      const value=String(draft[key]??"").trim();if(!value)continue;
+      if(type==="date"?!isValidISODate(value):(!Number.isFinite(Number(value))||Number(value)<0))return alert(`Enter a valid ${label.toLowerCase()}.`);
+      overrides[key]=type==="date"?value:Number(value);
+    }
+    for(const [last,next,label] of [["lastDate","nextDate","date"],["lastHours","nextHours","hours"],["lastMileage","nextMileage","mileage"]]){
+      const auto=equipmentServiceSchedule(state,selected).automatic;
+      if(overrides[next]!==undefined && (overrides[last]??auto[last])!=="" && overrides[next]<(overrides[last]??auto[last]))return alert(`Next service ${label} cannot be earlier than last service ${label}.`);
+    }
+    dispatch({type:"SET_PM_SCHEDULE_OVERRIDES",payload:{id:selected.id,overrides}});setEditing(null);
+  };
+  const show=(row,prefix)=>[ ["Date",row.values[`${prefix}Date`],`${prefix}Date`],["Hours",row.values[`${prefix}Hours`],`${prefix}Hours`],["Mileage",row.values[`${prefix}Mileage`],`${prefix}Mileage`] ].map(([label,value,key])=><div key={key} style={{marginBottom:5}}><b>{label}:</b> {value!==""&&value!=null?String(value):"—"}{row.manual[key]!==undefined&&row.manual[key]!==""&&<span style={{fontSize:10,color:T.accent}}> · Manual</span>}</div>);
+  return <Card style={{marginBottom:20}}>
+    <h3 style={{margin:"0 0 8px",fontSize:16}}>Preventative Maintenance Schedule</h3>
+    <p style={{fontSize:12,color:T.subtext}}>All equipment · Last service comes from completed services and baselines. Next service shows the earliest assigned due date, hours, and mileage. Any trigger can become due first. Manual values stay in place until cleared.</p>
+    <input aria-label="Search maintenance schedule" style={{...inp,maxWidth:360,marginBottom:12}} placeholder="Search equipment number or name" value={search} onChange={e=>setSearch(e.target.value)}/>
+    <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}><thead><tr>{["Equipment","Last Service","Next Service","Source / Edit"].map(h=><th key={h} style={{padding:10,textAlign:"left",borderBottom:`1px solid ${T.border}`}}>{h}</th>)}</tr></thead><tbody>
+      {equipment.map(eq=>{const row=equipmentServiceSchedule(state,eq);return <tr key={eq.id}><td style={{padding:10,borderBottom:`1px solid ${T.border}`,overflowWrap:"anywhere"}}><b>{eq.id}</b><div>{eq.name||eq.nomenclature||"Equipment"}</div></td><td style={{padding:10,borderBottom:`1px solid ${T.border}`}}>{show(row,"last")}</td><td style={{padding:10,borderBottom:`1px solid ${T.border}`}}>{show(row,"next")}</td><td style={{padding:10,borderBottom:`1px solid ${T.border}`}}><div style={{marginBottom:8}}>{row.taskCount?`${row.taskCount} assigned task(s)` : "No assigned task"}</div><Btn small variant="secondary" onClick={()=>{setEditing(eq.id);setDraft({...eq.pmScheduleOverrides});}}>Edit Schedule</Btn></td></tr>;})}
+      {!equipment.length&&<tr><td colSpan={4} style={{padding:16}}>No matching equipment.</td></tr>}
+    </tbody></table></div>
+    {selected&&<Modal title={`Service Schedule — ${selected.name||selected.id}`} onClose={()=>setEditing(null)}>
+      <p style={{fontSize:12}}>Enter only the values you want to set manually. Leave a field blank to use system information. These entries do not change your assigned tasks or current meters.</p>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12}}>{fields.map(([key,label,type])=><Field key={key} label={label}><input style={inp} type={type} min={type==="number"?0:undefined} step={type==="number"?"any":undefined} value={draft[key]??""} onChange={e=>setDraft(d=>({...d,[key]:e.target.value}))}/><div style={{fontSize:11,color:T.muted}}>System: {String(equipmentServiceSchedule(state,selected).automatic[key]??"")||"Not available"}</div></Field>)}</div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",justifyContent:"flex-end",marginTop:12}}><Btn variant="secondary" onClick={()=>setDraft({})}>Use System Values</Btn><Btn variant="secondary" onClick={()=>setEditing(null)}>Cancel</Btn><Btn onClick={save}>Save Schedule</Btn></div>
+    </Modal>}
+  </Card>;
+}
+
 function PM({ state, dispatch }) {
   const [modal, setModal]         = useState(null); /* null | "edit" | "schedule" | "manualTrigger" */
   const [form, setForm]           = useState({});
@@ -7271,6 +7337,7 @@ function PM({ state, dispatch }) {
 
   return (
     <div>
+      <EquipmentPMSchedule state={state} dispatch={dispatch}/>
       {/* Auto-trigger banner */}
       {triggered.length>0 && (
         <div style={{ background:T.redLt, border:`1px solid ${T.red}`, borderRadius:8, padding:"12px 16px", marginBottom:16, display:"flex", gap:10, alignItems:"center" }}>
@@ -7295,7 +7362,7 @@ function PM({ state, dispatch }) {
       <div style={{ border:`1px solid ${T.border}`, borderRadius:14, background:T.card, overflow:"hidden", marginBottom:18, boxShadow:"0 1px 2px rgba(15,23,42,.04)" }}>
         <div style={{ display:"flex", justifyContent:"space-between", gap:12, alignItems:"center", padding:"12px 14px", background:T.grayLt, borderBottom:`1px solid ${T.border}` }}>
           <div>
-            <h3 style={{ margin:0, fontFamily:T.sans, fontSize:16, color:T.text }}>Assigned Preventive Maintenance</h3>
+            <h3 style={{ margin:0, fontFamily:T.sans, fontSize:16, color:T.text }}>Assigned Preventative Maintenance</h3>
             <div style={{ fontFamily:T.sans, fontSize:12, color:T.muted, marginTop:3 }}>PM tasks currently linked to equipment, like the inspection assignments list.</div>
           </div>
           <div style={{ fontFamily:T.mono, fontSize:11, color:T.muted }}>{assignedPMRows.length} assigned</div>
@@ -7663,7 +7730,7 @@ function PM({ state, dispatch }) {
 
       {/* Create Maintenance Schedule */}
       {modal==="schedule"&&(
-        <Modal title={schForm.id?"Edit Assigned Preventive Maintenance":"Task-to-Equipment"} maxWidth={920} onClose={()=>setModal(null)}>
+        <Modal title={schForm.id?"Edit Assigned Preventative Maintenance":"Task-to-Equipment"} maxWidth={920} onClose={()=>setModal(null)}>
           <p style={{ margin:"0 0 14px", fontFamily:T.sans, fontSize:13, color:T.subtext }}>
             Assign a PM task to equipment. The trigger comes from the task itself; this screen only links the task to the equipment.
           </p>
@@ -8766,7 +8833,7 @@ function ReportPM({ state }) {
     win.document.write(`<!DOCTYPE html><html><head><title>PM Report</title>
       <style>body{font-family:Arial,sans-serif;padding:24px}h2{font-size:14px;margin:16px 0 6px}table{width:100%;border-collapse:collapse;font-size:12px}th{background:#1a1a2e;color:#fff;padding:6px 10px;text-align:left;font-size:11px;text-transform:uppercase}td{padding:6px 10px;border-bottom:1px solid #e5e7eb}@media print{button{display:none}}</style>
       </head><body>
-      ${reportHeaderHTML(state, "Preventive Maintenance Report")}
+      ${reportHeaderHTML(state, "Preventative Maintenance Report")}
       <p style="color:#666;font-size:12px">Look-ahead: ${lookAheadDays} days</p>
       ${overdue.length?`<h2 style="color:#dc2626">OVERDUE (${overdue.length})</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(overdue)}</table>`:""}
       ${dueSoon.length?`<h2 style="color:#d97706">DUE WITHIN ${lookAheadDays} DAYS (${dueSoon.length})</h2><table><tr><th>Equipment #</th><th>Nomenclature</th><th>Task</th><th>Interval</th><th>Last Done</th><th>Due</th><th>Status</th></tr>${pmRows(dueSoon)}</table>`:""}
@@ -10037,7 +10104,7 @@ function PerformanceActivity({ state }) {
   const printReport=()=>{
     const win=window.open("","_blank","width=1000,height=760"); if(!win)return;
     const row=(a,b)=>`<tr><td>${a}</td><td style="text-align:right;font-weight:700">${b}</td></tr>`;
-    win.document.write(`<!doctype html><html><head><title>Performance & Activity Report</title><style>body{font-family:Arial,sans-serif;padding:28px;color:#111}*{box-sizing:border-box}.head{border:2px solid #000;background:#dbeafe;padding:14px 16px}h1{margin:0;font-size:22px}.meta{margin-top:6px;font-size:12px}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #000;padding:8px 10px;font-size:12px}th{background:#dbeafe;text-align:left}.note{font-size:10px;margin-top:12px;color:#333}@media print{button{display:none}}</style></head><body><div class="head"><h1>MaintForge — Maintenance Performance & Activity Report</h1><div class="meta">${htmlEscape(label)} · ${htmlEscape(facilityLabel)}</div></div><table><tr><th>Activity</th><th style="text-align:right">Period Total</th></tr>${row("Repairs Completed",repairs.length)}${row("Services / Preventive Maintenance",services.length)}${row("Inspections Completed",inspections.length)}${row("Total Work Orders Completed",completed.length)}${row("Labor Hours",laborHours.toFixed(1)+" hrs")}${row("Parts Consumed",partsConsumed.toLocaleString())}${row("Parts Consumed Value",moneyFmt(partsConsumedValue))}${row("Maintenance Spending",moneyFmt(maintenanceSpend))}</table><div class="note">Maintenance Spending follows MaintForge Work Order spending settings. Purchase spending is shown separately and is not added again to Maintenance Spending, avoiding double-counting parts that were purchased and later consumed.</div><button onclick="window.print()" style="margin-top:18px;padding:9px 16px">Print / Save PDF</button></body></html>`); win.document.close();
+    win.document.write(`<!doctype html><html><head><title>Performance & Activity Report</title><style>body{font-family:Arial,sans-serif;padding:28px;color:#111}*{box-sizing:border-box}.head{border:2px solid #000;background:#dbeafe;padding:14px 16px}h1{margin:0;font-size:22px}.meta{margin-top:6px;font-size:12px}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #000;padding:8px 10px;font-size:12px}th{background:#dbeafe;text-align:left}.note{font-size:10px;margin-top:12px;color:#333}@media print{button{display:none}}</style></head><body><div class="head"><h1>MaintForge — Maintenance Performance & Activity Report</h1><div class="meta">${htmlEscape(label)} · ${htmlEscape(facilityLabel)}</div></div><table><tr><th>Activity</th><th style="text-align:right">Period Total</th></tr>${row("Repairs Completed",repairs.length)}${row("Services / Preventative Maintenance",services.length)}${row("Inspections Completed",inspections.length)}${row("Total Work Orders Completed",completed.length)}${row("Labor Hours",laborHours.toFixed(1)+" hrs")}${row("Parts Consumed",partsConsumed.toLocaleString())}${row("Parts Consumed Value",moneyFmt(partsConsumedValue))}${row("Maintenance Spending",moneyFmt(maintenanceSpend))}</table><div class="note">Maintenance Spending follows MaintForge Work Order spending settings. Purchase spending is shown separately and is not added again to Maintenance Spending, avoiding double-counting parts that were purchased and later consumed.</div><button onclick="window.print()" style="margin-top:18px;padding:9px 16px">Print / Save PDF</button></body></html>`); win.document.close();
   };
   const topEq=Object.entries(completed.reduce((a,w)=>{const id=w.equipment||"Unknown";a[id]=(a[id]||0)+1;return a;},{})).sort((a,b)=>b[1]-a[1]).slice(0,8);
   return <div>
@@ -10060,7 +10127,7 @@ const PAGE_TITLES = {
   workorders:       "Work Orders",
   equipment:        "Equipment",
   parts:            "Parts / Lubricants Inventory",
-  pm:               "Preventive Maintenance",
+  pm:               "Preventative Maintenance",
   usage:            "Usage Tracking",
   fuel:             "Fuel Tracking",
   spending:         "Spending & Costs",
